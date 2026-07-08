@@ -11,5 +11,8 @@
   "devDependencies": {
     "@types/node": "^26.1.0",
     "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3"
   }
 }
