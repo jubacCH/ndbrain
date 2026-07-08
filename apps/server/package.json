@@ -9,10 +9,12 @@
     "dev": "node --experimental-strip-types src/main.ts"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.0",
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
     "gray-matter": "^4.0.3",
     "simple-git": "^3.36.0"
   }
