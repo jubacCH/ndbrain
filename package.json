@@ -1,0 +1,15 @@
+{
+  "name": "ndbrain",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
