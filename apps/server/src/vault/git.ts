@@ -1,4 +1,4 @@
-import { simpleGit, type SimpleGit } from "simple-git";
+import { simpleGit, CheckRepoActions, type SimpleGit } from "simple-git";
 
 export interface HistoryEntry {
   hash: string;
@@ -16,7 +16,7 @@ export class VaultGit {
   }
 
   async init(): Promise<void> {
-    if (!(await this.git.checkIsRepo())) {
+    if (!(await this.git.checkIsRepo(CheckRepoActions.IS_REPO_ROOT))) {
       await this.git.init(["-b", "main"]);
       await this.git.addConfig("user.name", "ndbrain");
       await this.git.addConfig("user.email", "system@ndbrain.local");
