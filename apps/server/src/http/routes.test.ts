@@ -80,6 +80,13 @@ describe("REST /api/v1", () => {
     expect(missing.statusCode).toBe(404);
   });
 
+  it("rejects writes into the .git directory with 400", async () => {
+    const res = await app.inject(
+      authed({ method: "PUT", url: "/api/v1/notes/.git/x.md", payload: { content: "x" } }),
+    );
+    expect(res.statusCode).toBe(400);
+  });
+
   it("moves a note via notes-move and preserves history", async () => {
     await app.inject(authed({ method: "PUT", url: "/api/v1/notes/src.md", payload: { content: "# Src" } }));
     const move = await app.inject(

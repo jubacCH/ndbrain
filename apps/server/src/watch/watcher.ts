@@ -31,7 +31,7 @@ export class VaultWatcher {
 
   async start(): Promise<void> {
     this.fsWatcher = watch(this.vault.rootDir, {
-      ignored: (p) => p.includes(`${sep}.git`) || p.endsWith(".tmp"),
+      ignored: (p) => p.split(sep).includes(".git") || p.endsWith(".tmp"),
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 20 },
     });

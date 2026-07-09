@@ -13,6 +13,9 @@ export class Vault {
     if (!norm.endsWith(".md")) throw new VaultPathError(`not a markdown path: ${path}`);
     if (norm.startsWith("/") || norm.startsWith("..") || norm.includes("/../"))
       throw new VaultPathError(`unsafe path: ${path}`);
+    // Reject any path that touches the git metadata dir: writes there would be
+    // indexed but never committed, bypassing the audit trail.
+    if (norm.split("/").includes(".git")) throw new VaultPathError(`unsafe path: ${path}`);
     return norm;
   }
 
@@ -58,6 +61,8 @@ export class Vault {
     return entries
       .filter((e) => e.isFile() && e.name.endsWith(".md"))
       .map((e) => join(e.parentPath, e.name).slice(this.rootDir.length + 1).replaceAll(sep, "/"))
+      // Never surface git metadata as notes (list() reads the FS directly).
+      .filter((rel) => !rel.split("/").includes(".git"))
       .sort();
   }
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -84,6 +84,15 @@ describe("VaultWatcher", () => {
     await svc.move("a.md", "b.md", "julian");
     await flush();
     expect(seen).not.toHaveBeenCalled();
+  });
+
+  it("does not ignore paths merely containing '.git' as a substring (e.g. .github/)", async () => {
+    const seen = vi.fn();
+    watcher.onExternalChange = seen;
+    await mkdir(join(dir, ".github"), { recursive: true });
+    await writeFile(join(dir, ".github", "notes.md"), "# CI notes");
+    await flush();
+    expect(seen).toHaveBeenCalledWith(".github/notes.md");
   });
 
   it("keeps watching after a handler error", async () => {
