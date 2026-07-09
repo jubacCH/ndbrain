@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { VaultGit } from "./git.js";
+import { InvalidActorError, VaultGit } from "./git.js";
 
 let dir: string;
 let git: VaultGit;
@@ -40,6 +40,21 @@ describe("VaultGit", () => {
     await git.commitChange("update a only", "julian", ["a.md"]);
     expect(await git.historyFor("a.md")).toHaveLength(1);
     expect(await git.historyFor("b.md")).toHaveLength(0);
+  });
+
+  it("rejects an actor containing shell/format-breaking characters", async () => {
+    await writeFile(join(dir, "a.md"), "v1");
+    await expect(git.commitChange("m", "bad name <x>")).rejects.toBeInstanceOf(InvalidActorError);
+    await expect(git.commitChange("m", "line\nbreak")).rejects.toBeInstanceOf(InvalidActorError);
+  });
+
+  it("accepts the 'external' actor and normal key-style names", async () => {
+    await writeFile(join(dir, "a.md"), "v1");
+    await git.commitChange("update a.md", "external");
+    await writeFile(join(dir, "a.md"), "v2");
+    await git.commitChange("update a.md", "myai-key.v2");
+    const history = await git.historyFor("a.md");
+    expect(history.map((h) => h.author)).toEqual(["myai-key.v2", "external"]);
   });
 
   it("creates its own repo even when nested inside another git repo", async () => {

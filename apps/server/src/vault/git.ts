@@ -1,5 +1,11 @@
 import { simpleGit, CheckRepoActions, type SimpleGit } from "simple-git";
 
+/** Thrown when a commit actor contains characters unsafe for git --author interpolation. */
+export class InvalidActorError extends Error {}
+
+/** Actors must be simple key/username tokens so they cannot break the --author string. */
+const ACTOR_PATTERN = /^[A-Za-z0-9._-]+$/;
+
 export interface HistoryEntry {
   hash: string;
   message: string;
@@ -25,6 +31,7 @@ export class VaultGit {
   }
 
   async commitChange(message: string, author: string, paths?: string[]): Promise<void> {
+    if (!ACTOR_PATTERN.test(author)) throw new InvalidActorError(`invalid actor: ${author}`);
     if (paths && paths.length > 0) {
       await this.git.add(["-A", "--", ...paths]);
     } else {
