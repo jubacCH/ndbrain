@@ -125,6 +125,17 @@ describe("NoteTools.listNotes", () => {
     const result = await tools.listNotes(caller("myai-key", myaiWriter));
     expect(result.paths).toEqual(["myai/a.md"]);
   });
+
+  it("logs allowed=0 and rethrows when the underlying vault op throws unexpectedly, so every call still logs a row", async () => {
+    const boom = new Error("disk on fire");
+    vault.list = async () => {
+      throw boom;
+    };
+    await expect(tools.listNotes(caller("myai-key", myaiWriter))).rejects.toBe(boom);
+    const rows = accessLogRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ tool: "list_notes", allowed: 0 });
+  });
 });
 
 describe("NoteTools.searchNotes", () => {
@@ -150,6 +161,12 @@ describe("NoteTools.buildContext", () => {
     const result = await tools.buildContext(caller("myai-key", myaiWriter), { path: "other/secret.md" });
     expect(result).toEqual({ found: false });
     expect(accessLogRows()[0]).toMatchObject({ tool: "build_context", allowed: 0 });
+  });
+
+  it("returns not-found for a missing but in-scope note, still logged as allowed (not conflated with a denial)", async () => {
+    const result = await tools.buildContext(caller("myai-key", myaiWriter), { path: "myai/nope.md" });
+    expect(result).toEqual({ found: false });
+    expect(accessLogRows()[0]).toMatchObject({ tool: "build_context", target: "myai/nope.md", allowed: 1 });
   });
 
   it("filters backlinks to the caller's scope", async () => {

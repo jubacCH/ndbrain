@@ -48,6 +48,14 @@ export interface BuildContextResult {
  * - `buildContext`'s backlinks are filtered to the caller's scope: `backlinksOf` itself
  *   has no namespace filter, so without this a scoped key could learn of the
  *   existence/path of out-of-scope notes that merely link into its namespace.
+ * - An in-scope read of a nonexistent note is a permitted access, not a denial: once the
+ *   scope check passes, `readNote`/`buildContext` log `allowed=1` regardless of whether
+ *   the note exists, so an in-scope miss is never conflated with an out-of-scope probe
+ *   (which still logs `allowed=0`) — conflating the two would blunt intrusion detection.
+ * - Every tool call logs exactly one `access_log` row, including when the underlying
+ *   read throws unexpectedly after the scope check: reads guard their core operation
+ *   with a try/catch that logs `allowed=0` and rethrows, mirroring how `guardedMutation`
+ *   already does this for mutations.
  */
 export class NoteTools {
   private db: Database;
@@ -62,10 +70,16 @@ export class NoteTools {
 
   /** Full-text search, always scoped to the caller's namespace regardless of input. */
   searchNotes(caller: Caller, args: { query: string; limit?: number }): { hits: SearchHit[] } {
-    const hits = searchNotesIndex(this.db, args.query, {
-      namespace: caller.scope.namespace,
-      limit: args.limit,
-    });
+    let hits: SearchHit[];
+    try {
+      hits = searchNotesIndex(this.db, args.query, {
+        namespace: caller.scope.namespace,
+        limit: args.limit,
+      });
+    } catch (err) {
+      logAccess(this.db, caller.keyId, "search_notes", null, false);
+      throw err;
+    }
     logAccess(this.db, caller.keyId, "search_notes", null, true);
     return { hits };
   }
@@ -83,7 +97,13 @@ export class NoteTools {
       logAccess(this.db, caller.keyId, "read_note", safePath, false);
       return { found: false };
     }
-    const content = await this.notes.read(safePath);
+    let content: string | null;
+    try {
+      content = await this.notes.read(safePath);
+    } catch (err) {
+      logAccess(this.db, caller.keyId, "read_note", safePath, false);
+      throw err;
+    }
     logAccess(this.db, caller.keyId, "read_note", safePath, true);
     if (content === null) return { found: false };
     return { found: true, path: safePath, content };
@@ -91,7 +111,13 @@ export class NoteTools {
 
   /** Lists all vault paths visible to the caller, filtered to their namespace. */
   async listNotes(caller: Caller): Promise<{ paths: string[] }> {
-    const all = await this.vault.list();
+    let all: string[];
+    try {
+      all = await this.vault.list();
+    } catch (err) {
+      logAccess(this.db, caller.keyId, "list_notes", null, false);
+      throw err;
+    }
     const paths = all.filter((p) => isPathInScope(caller.scope, p));
     logAccess(this.db, caller.keyId, "list_notes", null, true);
     return { paths };
@@ -111,12 +137,21 @@ export class NoteTools {
       logAccess(this.db, caller.keyId, "build_context", safePath, false);
       return { found: false };
     }
-    const result: ContextResult | null = await buildContextIndex(
-      { db: this.db, read: (p) => this.notes.read(p) },
-      safePath,
-      { namespace: caller.scope.namespace },
-    );
-    logAccess(this.db, caller.keyId, "build_context", safePath, result !== null);
+    let result: ContextResult | null;
+    try {
+      result = await buildContextIndex(
+        { db: this.db, read: (p) => this.notes.read(p) },
+        safePath,
+        { namespace: caller.scope.namespace },
+      );
+    } catch (err) {
+      logAccess(this.db, caller.keyId, "build_context", safePath, false);
+      throw err;
+    }
+    // An in-scope call is logged as allowed regardless of whether the note exists —
+    // "in scope but missing" is a permitted access, not a denial, and conflating the
+    // two with an out-of-scope probe (also allowed=0) would blunt intrusion detection.
+    logAccess(this.db, caller.keyId, "build_context", safePath, true);
     if (result === null) return { found: false };
     return {
       found: true,

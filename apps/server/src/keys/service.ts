@@ -61,6 +61,13 @@ export class ApiKeyService {
       throw new DuplicateKeyNameError(`key name already exists: ${name}`);
     }
 
+    // Normalize a non-empty namespace to always end with "/". isPathInScope does a plain
+    // string-prefix match, so a bare "myai" would also match sibling paths like
+    // "myaixyz.md" — a scope escape. An empty namespace means "whole vault" and stays
+    // empty. Normalizing here (rather than trusting callers) closes the footgun at the
+    // one place every key is created.
+    const normalizedNamespace = namespace !== "" && !namespace.endsWith("/") ? `${namespace}/` : namespace;
+
     const key = `ndb_${randomBytes(32).toString("hex")}`;
     const keyHash = hash(key);
 
@@ -72,7 +79,7 @@ export class ApiKeyService {
         .prepare(
           "INSERT INTO api_keys (name, key_hash, namespace, can_write, expires_at) VALUES (?, ?, ?, ?, ?)",
         )
-        .run(name, keyHash, namespace, canWrite ? 1 : 0, normalizedExpiresAt);
+        .run(name, keyHash, normalizedNamespace, canWrite ? 1 : 0, normalizedExpiresAt);
     } catch (error) {
       // Map UNIQUE constraint violation to DuplicateKeyNameError for consistent caller handling.
       if (error instanceof Error && error.message.includes("UNIQUE constraint failed")) {

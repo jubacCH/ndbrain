@@ -47,6 +47,27 @@ describe("ApiKeyService", () => {
       const result = await service.validate(key);
       expect(result).not.toBeNull();
     });
+
+    it("normalizes a namespace without a trailing slash, so it can't prefix-match siblings like 'myaixyz.md'", async () => {
+      const service = makeService();
+      const key = await service.create("k", "myai", false);
+      const result = await service.validate(key);
+      expect(result!.scope.namespace).toBe("myai/");
+    });
+
+    it("leaves an empty namespace (whole-vault scope) untouched", async () => {
+      const service = makeService();
+      const key = await service.create("k", "", false);
+      const result = await service.validate(key);
+      expect(result!.scope.namespace).toBe("");
+    });
+
+    it("leaves an already-slash-terminated namespace untouched", async () => {
+      const service = makeService();
+      const key = await service.create("k", "myai/", false);
+      const result = await service.validate(key);
+      expect(result!.scope.namespace).toBe("myai/");
+    });
   });
 
   describe("validate", () => {

@@ -92,14 +92,19 @@ async function createKey(args: string[], keys: ApiKeyService): Promise<KeyCliRes
   try {
     const key = await keys.create(name, scope, canWrite, expiresAt);
 
-    // Build warning for scope without trailing slash
+    // ApiKeyService.create normalizes a non-empty, slash-less scope to end with "/" (a
+    // bare "myai" would otherwise prefix-match siblings like "myaixyz.md" — see
+    // service.ts). Mirror that same normalization here purely to report what was
+    // actually stored; this is informational now, not a warning, since it's auto-fixed.
+    const normalizedScope = scope !== "" && !scope.endsWith("/") ? `${scope}/` : scope;
+
     let out = "";
-    if (scope !== "" && !scope.endsWith("/")) {
-      out += `Warning: scope "${scope}" has no trailing slash; it will match any path starting with "${scope}" (e.g. "${scope}x/..."). Use "${scope}/" to scope to a folder.\n`;
+    if (normalizedScope !== scope) {
+      out += `Note: scope normalized to "${normalizedScope}".\n`;
     }
 
     out +=
-      `Created key "${name}" (scope="${scope}", write=${canWrite})\n` +
+      `Created key "${name}" (scope="${normalizedScope}", write=${canWrite})\n` +
       `${key}\n\n` +
       `This key is shown only now and cannot be retrieved again — store it securely.\n`;
     return { code: 0, out };

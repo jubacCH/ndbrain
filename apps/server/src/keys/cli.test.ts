@@ -82,26 +82,31 @@ describe("runKeyCli", () => {
       expect(keys.list()).toHaveLength(0);
     });
 
-    it("warns on a scope without trailing slash", async () => {
+    it("normalizes a scope without trailing slash and reports it as an informational note, not a warning", async () => {
       const keys = makeService();
       const result = await runKeyCli(["key", "create", "myai", "--scope", "myai"], { keys });
       expect(result.code).toBe(0);
-      expect(result.out).toContain('Warning: scope "myai" has no trailing slash');
-      expect(result.out).toContain('Use "myai/" to scope to a folder');
+      expect(result.out).toContain('Note: scope normalized to "myai/"');
+      expect(result.out).not.toContain("Warning");
+      const key = result.out.match(/ndb_[0-9a-f]{64}/)![0];
+      const validated = await keys.validate(key);
+      expect(validated!.scope.namespace).toBe("myai/");
     });
 
-    it("does not warn on a scope with trailing slash", async () => {
+    it("does not note anything for a scope already ending with a trailing slash", async () => {
       const keys = makeService();
       const result = await runKeyCli(["key", "create", "myai", "--scope", "myai/"], { keys });
       expect(result.code).toBe(0);
       expect(result.out).not.toContain("Warning");
+      expect(result.out).not.toContain("Note: scope normalized");
     });
 
-    it("does not warn on an empty scope", async () => {
+    it("does not note anything for an empty scope (whole vault, stays unwarned)", async () => {
       const keys = makeService();
       const result = await runKeyCli(["key", "create", "myai", "--scope", ""], { keys });
       expect(result.code).toBe(0);
       expect(result.out).not.toContain("Warning");
+      expect(result.out).not.toContain("Note: scope normalized");
     });
   });
 
