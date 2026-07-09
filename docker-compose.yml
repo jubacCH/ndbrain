@@ -1,0 +1,9 @@
+services:
+  ndbrain:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      NDBRAIN_ADMIN_USER: julian
+      NDBRAIN_ADMIN_PASSWORD: change-me
+    volumes:
+      - ./data:/data
