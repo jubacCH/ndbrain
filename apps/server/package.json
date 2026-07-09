@@ -14,6 +14,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "argon2": "^0.44.0",
     "better-sqlite3": "^12.11.1",
     "chokidar": "^5.0.0",
     "gray-matter": "^4.0.3",
