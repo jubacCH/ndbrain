@@ -79,4 +79,18 @@ describe("REST /api/v1", () => {
     const missing = await app.inject(authed({ method: "GET", url: "/api/v1/notes/nope.md" }));
     expect(missing.statusCode).toBe(404);
   });
+
+  it("moves a note via notes-move and preserves history", async () => {
+    await app.inject(authed({ method: "PUT", url: "/api/v1/notes/src.md", payload: { content: "# Src" } }));
+    const move = await app.inject(
+      authed({ method: "POST", url: "/api/v1/notes-move", payload: { from: "src.md", to: "dst/moved.md" } }),
+    );
+    expect(move.statusCode).toBe(204);
+    const gone = await app.inject(authed({ method: "GET", url: "/api/v1/notes/src.md" }));
+    expect(gone.statusCode).toBe(404);
+    const there = await app.inject(authed({ method: "GET", url: "/api/v1/notes/dst/moved.md" }));
+    expect(there.json().content).toBe("# Src");
+    const hist = await app.inject(authed({ method: "GET", url: "/api/v1/history/dst/moved.md" }));
+    expect(hist.json().history.length).toBeGreaterThanOrEqual(2);
+  });
 });

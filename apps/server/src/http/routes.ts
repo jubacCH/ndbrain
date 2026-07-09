@@ -45,6 +45,7 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     return reply.code(removed ? 204 : 404).send();
   });
 
+  // Body-based move (from/to) instead of a path wildcard: Fastify forbids mid-path wildcards.
   app.post("/api/v1/notes-move", async (req, reply) => {
     const { from, to } = req.body as { from: string; to: string };
     await deps.notes.move(deps.vault.assertSafePath(from), deps.vault.assertSafePath(to), actor(req));
