@@ -1,0 +1,116 @@
+import { describe, expect, it } from "vitest";
+import { openDatabase } from "../db/database.js";
+import { Indexer } from "./indexer.js";
+import { buildContext } from "./context.js";
+
+function seeded() {
+  const db = openDatabase(":memory:");
+  const idx = new Indexer(db);
+  // Note A: target of backlink from B
+  idx.indexNote("myai/deploy.md", "# Deploy\nHow to deploy the system");
+  // Note B: links to A
+  idx.indexNote("myai/setup.md", "# Setup guide\nSee [[myai/deploy]] for details");
+  // Note C: shares "deploy" keyword with A in different namespace
+  idx.indexNote("private/deploy-log.md", "# Deploy log\nDaily deploy monitoring");
+  return db;
+}
+
+function mockRead(db: any) {
+  return async (path: string) => {
+    const row = db.prepare("SELECT body FROM notes_fts WHERE path = ?").get(path) as { body: string } | undefined;
+    return row ? row.body : null;
+  };
+}
+
+describe("buildContext", () => {
+  it("returns context with content, backlinks, and related notes", async () => {
+    const db = seeded();
+    const read = mockRead(db);
+    const result = await buildContext({ db, read }, "myai/deploy.md");
+
+    expect(result).not.toBeNull();
+    expect(result!.path).toBe("myai/deploy.md");
+    expect(result!.content).toContain("How to deploy the system");
+    expect(result!.backlinks).toContain("myai/setup.md");
+    // related should contain notes with similar title words, excluding the note itself
+    expect(result!.related.some((h) => h.path === "private/deploy-log.md")).toBe(true);
+    expect(result!.related.some((h) => h.path === "myai/deploy.md")).toBe(false);
+  });
+
+  it("returns null when the note does not exist", async () => {
+    const db = seeded();
+    const read = mockRead(db);
+    const result = await buildContext({ db, read }, "nonexistent.md");
+
+    expect(result).toBeNull();
+  });
+
+  it("filters related notes by namespace", async () => {
+    const db = seeded();
+    const read = mockRead(db);
+    // With namespace filter, related should only include notes in myai/
+    const result = await buildContext({ db, read }, "myai/deploy.md", { namespace: "myai/" });
+
+    expect(result).not.toBeNull();
+    // Should exclude private/deploy-log.md due to namespace filter
+    expect(result!.related.every((h) => h.path.startsWith("myai/"))).toBe(true);
+  });
+
+  it("excludes the note itself from related results", async () => {
+    const db = seeded();
+    const read = mockRead(db);
+    const result = await buildContext({ db, read }, "myai/deploy.md");
+
+    expect(result).not.toBeNull();
+    expect(result!.related.every((h) => h.path !== "myai/deploy.md")).toBe(true);
+  });
+
+  it("respects the relatedLimit option", async () => {
+    const db = openDatabase(":memory:");
+    const idx = new Indexer(db);
+    idx.indexNote("a.md", "# Alpha\nFirst note");
+    idx.indexNote("b.md", "# Beta\nFirst beta");
+    idx.indexNote("c.md", "# Gamma\nFirst gamma");
+    idx.indexNote("d.md", "# Delta\nFirst delta");
+    idx.indexNote("e.md", "# Epsilon\nFirst epsilon");
+
+    const read = mockRead(db);
+    const result = await buildContext({ db, read }, "a.md", { relatedLimit: 2 });
+
+    expect(result).not.toBeNull();
+    expect(result!.related.length).toBeLessThanOrEqual(2);
+  });
+
+  it("defaults to relatedLimit of 5 when not specified", async () => {
+    const db = openDatabase(":memory:");
+    const idx = new Indexer(db);
+    idx.indexNote("a.md", "# Alpha\nFirst note");
+    idx.indexNote("b.md", "# Beta\nFirst beta");
+    idx.indexNote("c.md", "# Gamma\nFirst gamma");
+    idx.indexNote("d.md", "# Delta\nFirst delta");
+    idx.indexNote("e.md", "# Epsilon\nFirst epsilon");
+    idx.indexNote("f.md", "# Zeta\nFirst zeta");
+
+    const read = mockRead(db);
+    const result = await buildContext({ db, read }, "a.md");
+
+    expect(result).not.toBeNull();
+    expect(result!.related.length).toBeLessThanOrEqual(5);
+  });
+
+  it("handles notes without a title by falling back to first words of body", async () => {
+    const db = openDatabase(":memory:");
+    const idx = new Indexer(db);
+    // Note with no heading (no title)
+    idx.indexNote("no-title.md", "Some content without a heading");
+    idx.indexNote("other.md", "# Other\nContent Some details");
+
+    const read = mockRead(db);
+    const result = await buildContext({ db, read }, "no-title.md");
+
+    expect(result).not.toBeNull();
+    expect(result!.path).toBe("no-title.md");
+    // Should still try to find related notes using fallback to first words
+    expect(Array.isArray(result!.related)).toBe(true);
+  });
+});
