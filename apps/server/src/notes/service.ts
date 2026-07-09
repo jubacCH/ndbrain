@@ -65,10 +65,11 @@ export class NoteService {
     return this.mutex.run(async () => {
       const content = await this.vault.read(path);
       if (content === null) throw new NoteNotFoundError(`note not found: ${path}`);
+      if (find === "") throw new EditTargetNotFoundError(`find string must not be empty`);
       const occurrences = content.split(find).length - 1;
       if (occurrences === 0) throw new EditTargetNotFoundError(`edit target not found in ${path}`);
       if (occurrences > 1) throw new EditAmbiguousError(`edit target ambiguous in ${path}`);
-      const updated = content.replace(find, replace);
+      const updated = content.replace(find, () => replace);
       await this.#writeInner(path, updated, actor);
     });
   }

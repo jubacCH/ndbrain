@@ -7,7 +7,17 @@ export class NoteNotFoundError extends Error {}
 export class NoteExistsError extends Error {}
 
 /** Thrown when editNote's `find` string does not occur in the note. */
-export class EditTargetNotFoundError extends Error {}
+export class EditTargetNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EditTargetNotFoundError";
+  }
+}
 
 /** Thrown when editNote's `find` string occurs more than once in the note. */
-export class EditAmbiguousError extends Error {}
+export class EditAmbiguousError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EditAmbiguousError";
+  }
+}

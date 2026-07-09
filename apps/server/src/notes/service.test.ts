@@ -156,4 +156,22 @@ describe("NoteService", () => {
     expect(await svc.read("new.md")).toBe("# New");
     expect((await git.historyFor("new.md"))[0].author).toBe("julian");
   });
+
+  it("editNote replaces with literal string containing $ special chars", async () => {
+    await svc.write("e.md", "price: 100", "julian");
+    await svc.editNote("e.md", "100", "$&-100 costs $$", "julian");
+    expect(await svc.read("e.md")).toBe("price: $&-100 costs $$");
+  });
+
+  it("editNote rejects with EditTargetNotFoundError when find is empty", async () => {
+    await svc.write("e.md", "foo", "julian");
+    await expect(svc.editNote("e.md", "", "bar", "julian")).rejects.toBeInstanceOf(
+      EditTargetNotFoundError,
+    );
+    expect(await svc.read("e.md")).toBe("foo");
+  });
+
+  it("EditAmbiguousError has correct name property", () => {
+    expect(new EditAmbiguousError("test").name).toBe("EditAmbiguousError");
+  });
 });
