@@ -18,9 +18,9 @@ export interface ContextResult {
  * @param opts - Optional namespace filter and related notes limit
  * @returns ContextResult if the note exists, null otherwise
  *
- * Related notes are found via FTS5 full-text search on the note's title tokens
- * (or first words of the body if no title). This provides textual similarity but
- * not semantic similarity (embeddings are Plan 5). Related results are:
+ * Related notes are found via FTS5 full-text search (OR-mode recall) on the note's
+ * title tokens (or first words of the body if no title). This provides textual
+ * similarity but not semantic similarity (embeddings are Plan 5). Related results are:
  * - Namespace-filtered (if namespace is provided)
  * - Exclude the note itself
  * - Limited to relatedLimit (default 5)
@@ -32,7 +32,11 @@ export async function buildContext(
 ): Promise<ContextResult | null> {
   const { db, read } = deps;
   const namespace = opts?.namespace;
-  const relatedLimit = opts?.relatedLimit ?? 5;
+  // Guard against unbounded/invalid relatedLimit input (mirrors the limit guard in search.ts).
+  const relatedLimit =
+    typeof opts?.relatedLimit === "number" && Number.isFinite(opts.relatedLimit) && opts.relatedLimit > 0
+      ? opts.relatedLimit
+      : 5;
 
   // Read the note content
   const content = await read(path);
@@ -55,10 +59,13 @@ export async function buildContext(
     query = words.join(" ");
   }
 
-  // Search for related notes using the query
+  // Search for related notes using the query. OR mode is used so a multi-word title
+  // (e.g. "Deploy Guide") surfaces notes sharing ANY token, not requiring ALL tokens —
+  // otherwise textually-related recall is needlessly narrow.
   const relatedHits = searchNotes(db, query, {
     namespace,
     limit: relatedLimit + 1, // Request one extra since we'll filter out the note itself
+    match: "or",
   });
 
   // Filter out the note itself from related results

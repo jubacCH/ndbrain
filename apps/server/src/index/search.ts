@@ -7,22 +7,26 @@ export interface SearchHit {
   rank: number;
 }
 
-/** Converts a raw user query into a safe FTS5 query: each token becomes a quoted phrase. */
-function toFtsQuery(input: string): string {
-  return input
+/**
+ * Converts a raw user query into a safe FTS5 query: each token becomes a quoted phrase.
+ * `match: "and"` (default) joins tokens implicitly (FTS5 AND), requiring every token to match.
+ * `match: "or"` joins tokens with explicit OR, matching any token.
+ */
+function toFtsQuery(input: string, match: "and" | "or" = "and"): string {
+  const phrases = input
     .split(/\s+/)
     .filter(Boolean)
-    .map((t) => `"${t.replaceAll('"', '""')}"`)
-    .join(" ");
+    .map((t) => `"${t.replaceAll('"', '""')}"`);
+  return phrases.join(match === "or" ? " OR " : " ");
 }
 
 /** Full-text search over the vault via FTS5 with bm25 ranking and optional namespace filter. */
 export function searchNotes(
   db: Database,
   query: string,
-  opts: { namespace?: string; limit?: number } = {},
+  opts: { namespace?: string; limit?: number; match?: "and" | "or" } = {},
 ): SearchHit[] {
-  const ftsQuery = toFtsQuery(query);
+  const ftsQuery = toFtsQuery(query, opts.match ?? "and");
   if (!ftsQuery) return [];
   // Guard against unbounded/empty results from bad input.
   const limit =

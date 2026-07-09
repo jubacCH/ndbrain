@@ -98,6 +98,41 @@ describe("buildContext", () => {
     expect(result!.related.length).toBeLessThanOrEqual(5);
   });
 
+  it("surfaces related notes sharing only one title word via OR recall", async () => {
+    const db = openDatabase(":memory:");
+    const idx = new Indexer(db);
+    idx.indexNote("deploy-guide.md", "# Deploy Guide\nHow to roll out the stack");
+    idx.indexNote("deploy-notes.md", "# Deploy Notes\nMisc deployment notes");
+    idx.indexNote("guide-index.md", "# Guide Index\nIndex of all guides");
+    idx.indexNote("unrelated.md", "# Something Else\nCompletely different topic entirely");
+
+    const read = mockRead(db);
+    const result = await buildContext({ db, read }, "deploy-guide.md");
+
+    expect(result).not.toBeNull();
+    // Neither related note shares BOTH title words with "Deploy Guide" — only
+    // OR-mode recall surfaces them.
+    expect(result!.related.some((h) => h.path === "deploy-notes.md")).toBe(true);
+    expect(result!.related.some((h) => h.path === "guide-index.md")).toBe(true);
+  });
+
+  it("falls back to relatedLimit of 5 for non-finite or non-positive relatedLimit", async () => {
+    const db = openDatabase(":memory:");
+    const idx = new Indexer(db);
+    idx.indexNote("a.md", "# Alpha\nFirst note");
+    idx.indexNote("b.md", "# Beta\nFirst beta");
+    idx.indexNote("c.md", "# Gamma\nFirst gamma");
+    idx.indexNote("d.md", "# Delta\nFirst delta");
+    idx.indexNote("e.md", "# Epsilon\nFirst epsilon");
+    idx.indexNote("f.md", "# Zeta\nFirst zeta");
+
+    const read = mockRead(db);
+    const result = await buildContext({ db, read }, "a.md", { relatedLimit: -1 });
+
+    expect(result).not.toBeNull();
+    expect(result!.related.length).toBeLessThanOrEqual(5);
+  });
+
   it("handles notes without a title by falling back to first words of body", async () => {
     const db = openDatabase(":memory:");
     const idx = new Indexer(db);

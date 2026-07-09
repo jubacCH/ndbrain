@@ -62,6 +62,21 @@ describe("searchNotes", () => {
     expect(searchNotes(seeded(), "")).toEqual([]);
     expect(searchNotes(seeded(), "   ")).toEqual([]);
   });
+
+  it("match: 'or' finds notes containing any token, not just all tokens", () => {
+    const db = openDatabase(":memory:");
+    const idx = new Indexer(db);
+    idx.indexNote("only-deploy.md", "# Only\nWe deploy things here");
+    idx.indexNote("only-guide.md", "# Only\nThis is a guide for stuff");
+    idx.indexNote("neither.md", "# Neither\nUnrelated content entirely");
+
+    const orHits = searchNotes(db, "deploy guide", { match: "or" });
+    expect(orHits.map((h) => h.path).sort()).toEqual(["only-deploy.md", "only-guide.md"]);
+
+    // Default (AND) mode requires both tokens; neither note alone qualifies.
+    const andHits = searchNotes(db, "deploy guide");
+    expect(andHits.length).toBe(0);
+  });
 });
 
 describe("backlinksOf", () => {
