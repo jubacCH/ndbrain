@@ -170,7 +170,11 @@ function buildMcpServerForCaller(deps: McpDeps, caller: Caller): Server {
       if (isToolDomainError(err)) {
         return { content: [{ type: "text" as const, text: err.message }], isError: true };
       }
-      throw err;
+      // Catch non-typed errors: log them server-side for debugging, but return a generic
+      // error response to the agent. This prevents leaking internal details (SQLite errors,
+      // filesystem paths, etc.) to the calling agent.
+      console.error(`[MCP] Unexpected error in tool ${name}:`, err);
+      return { content: [{ type: "text" as const, text: "internal error" }], isError: true };
     }
   });
 
@@ -211,7 +215,15 @@ export function createMcpHandler(deps: McpDeps) {
       void server.close();
     });
 
-    await server.connect(transport);
-    await transport.handleRequest(req.raw, reply.raw, req.body);
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req.raw, reply.raw, req.body);
+    } catch (err) {
+      // After hijack(), Fastify can't send a reply. If server.connect() or
+      // transport.handleRequest() fails, the client may hang until timeout.
+      // Log the error for debugging and force-close the raw socket to fail fast.
+      console.error("[MCP] Error in hijacked request handling:", err);
+      reply.raw.destroy();
+    }
   };
 }

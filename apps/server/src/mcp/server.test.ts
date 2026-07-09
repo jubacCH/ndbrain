@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { openDatabase } from "../db/database.js";
 import { Indexer } from "../index/indexer.js";
@@ -119,5 +119,32 @@ describe("POST /mcp", () => {
     expect(body.result.isError).toBe(true);
 
     expect(await new Vault(dir).read("other/x.md")).toBeNull();
+  });
+
+  it("sanitizes non-typed errors and does not leak internal details", async () => {
+    // Get the server to inject a stub into the NoteTools instance.
+    // We'll make a tool call that will trigger our stub, which throws an internal error.
+    const res = await postMcp(
+      rpc("tools/call", { name: "search_notes", arguments: { query: "test" } }),
+      agentKey,
+    );
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    // This first call should succeed normally.
+    expect(body.result.isError).toBeFalsy();
+
+    // Now make a second call with a malformed argument that will cause an internal error.
+    // The search_notes method expects { query: string; limit?: number }, so passing
+    // a non-string query that forces the index search to throw an internal error.
+    // We'll use an integer where a string is expected to trigger an internal error.
+    const res2 = await postMcp(
+      rpc("tools/call", { name: "search_notes", arguments: { query: 12345 } }),
+      agentKey,
+    );
+    expect(res2.statusCode).toBe(200);
+    const body2 = res2.json();
+    expect(body2.result.isError).toBe(true);
+    // The message should be "internal error", not containing any internal details.
+    expect(body2.result.content[0].text).toBe("internal error");
   });
 });
