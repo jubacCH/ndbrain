@@ -84,9 +84,21 @@ async function createKey(args: string[], keys: ApiKeyService): Promise<KeyCliRes
   const canWrite = flags.write === true;
   const expiresAt = typeof flags.expires === "string" ? flags.expires : undefined;
 
+  // Validate --expires date if provided
+  if (expiresAt !== undefined && Number.isNaN(new Date(expiresAt).getTime())) {
+    return { code: 1, out: `Error: invalid --expires date: ${expiresAt}\n` };
+  }
+
   try {
     const key = await keys.create(name, scope, canWrite, expiresAt);
-    const out =
+
+    // Build warning for scope without trailing slash
+    let out = "";
+    if (scope !== "" && !scope.endsWith("/")) {
+      out += `Warning: scope "${scope}" has no trailing slash; it will match any path starting with "${scope}" (e.g. "${scope}x/..."). Use "${scope}/" to scope to a folder.\n`;
+    }
+
+    out +=
       `Created key "${name}" (scope="${scope}", write=${canWrite})\n` +
       `${key}\n\n` +
       `This key is shown only now and cannot be retrieved again — store it securely.\n`;

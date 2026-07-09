@@ -70,6 +70,39 @@ describe("runKeyCli", () => {
       const result = await runKeyCli(["key", "create", "bad name!", "--scope", "x/"], { keys });
       expect(result.code).toBe(1);
     });
+
+    it("fails with code 1 on an invalid --expires date", async () => {
+      const keys = makeService();
+      const result = await runKeyCli(
+        ["key", "create", "x", "--scope", "x/", "--expires", "notadate"],
+        { keys },
+      );
+      expect(result.code).toBe(1);
+      expect(result.out).toContain("Error: invalid --expires date: notadate");
+      expect(keys.list()).toHaveLength(0);
+    });
+
+    it("warns on a scope without trailing slash", async () => {
+      const keys = makeService();
+      const result = await runKeyCli(["key", "create", "myai", "--scope", "myai"], { keys });
+      expect(result.code).toBe(0);
+      expect(result.out).toContain('Warning: scope "myai" has no trailing slash');
+      expect(result.out).toContain('Use "myai/" to scope to a folder');
+    });
+
+    it("does not warn on a scope with trailing slash", async () => {
+      const keys = makeService();
+      const result = await runKeyCli(["key", "create", "myai", "--scope", "myai/"], { keys });
+      expect(result.code).toBe(0);
+      expect(result.out).not.toContain("Warning");
+    });
+
+    it("does not warn on an empty scope", async () => {
+      const keys = makeService();
+      const result = await runKeyCli(["key", "create", "myai", "--scope", ""], { keys });
+      expect(result.code).toBe(0);
+      expect(result.out).not.toContain("Warning");
+    });
   });
 
   describe("key list", () => {
