@@ -8,6 +8,7 @@ export class NoteService {
     private vault: Vault,
     private git: VaultGit,
     private indexer: Indexer,
+    private watcher?: { markOwnWrite(path: string, content: string): void },
   ) {}
 
   read(path: string): Promise<string | null> {
@@ -15,6 +16,7 @@ export class NoteService {
   }
 
   async write(path: string, content: string, actor: string): Promise<void> {
+    this.watcher?.markOwnWrite(path, content);
     await this.vault.write(path, content);
     await this.git.commitChange(`note: update ${path}`, actor);
     this.indexer.indexNote(path, content);
