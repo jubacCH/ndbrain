@@ -32,12 +32,20 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     return { path, content };
   });
 
-  app.put("/api/v1/notes/*", async (req, reply) => {
-    const path = deps.vault.assertSafePath(wildcardPath(req));
-    const { content } = req.body as { content: string };
-    await deps.notes.write(path, content, actor(req));
-    return reply.code(204).send();
-  });
+  app.put(
+    "/api/v1/notes/*",
+    {
+      schema: {
+        body: { type: "object", required: ["content"], properties: { content: { type: "string" } } },
+      },
+    },
+    async (req, reply) => {
+      const path = deps.vault.assertSafePath(wildcardPath(req));
+      const { content } = req.body as { content: string };
+      await deps.notes.write(path, content, actor(req));
+      return reply.code(204).send();
+    },
+  );
 
   app.delete("/api/v1/notes/*", async (req, reply) => {
     const path = deps.vault.assertSafePath(wildcardPath(req));
@@ -46,16 +54,36 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   });
 
   // Body-based move (from/to) instead of a path wildcard: Fastify forbids mid-path wildcards.
-  app.post("/api/v1/notes-move", async (req, reply) => {
-    const { from, to } = req.body as { from: string; to: string };
-    await deps.notes.move(deps.vault.assertSafePath(from), deps.vault.assertSafePath(to), actor(req));
-    return reply.code(204).send();
-  });
+  app.post(
+    "/api/v1/notes-move",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["from", "to"],
+          properties: { from: { type: "string" }, to: { type: "string" } },
+        },
+      },
+    },
+    async (req, reply) => {
+      const { from, to } = req.body as { from: string; to: string };
+      await deps.notes.move(deps.vault.assertSafePath(from), deps.vault.assertSafePath(to), actor(req));
+      return reply.code(204).send();
+    },
+  );
 
-  app.get("/api/v1/search", async (req) => {
-    const { q } = req.query as { q: string };
-    return { hits: searchNotes(deps.db, q) };
-  });
+  app.get(
+    "/api/v1/search",
+    {
+      schema: {
+        querystring: { type: "object", required: ["q"], properties: { q: { type: "string" } } },
+      },
+    },
+    async (req) => {
+      const { q } = req.query as { q: string };
+      return { hits: searchNotes(deps.db, q) };
+    },
+  );
 
   app.get("/api/v1/backlinks/*", async (req) => {
     return { backlinks: backlinksOf(deps.db, deps.vault.assertSafePath(wildcardPath(req))) };

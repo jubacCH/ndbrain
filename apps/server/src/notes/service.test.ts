@@ -7,6 +7,7 @@ import { Indexer } from "../index/indexer.js";
 import { Vault } from "../vault/files.js";
 import { VaultGit } from "../vault/git.js";
 import { NoteService } from "./service.js";
+import { NoteExistsError, NoteNotFoundError } from "./errors.js";
 
 let dir: string;
 let db: Database;
@@ -41,6 +42,18 @@ describe("NoteService", () => {
     expect(history[0].author).toBe("julian");
     expect(history[0].message).toBe("note: move a.md -> b/c.md");
     expect(history[1].message).toBe("note: update a.md");
+  });
+
+  it("move rejects with NoteNotFoundError when the source is missing", async () => {
+    await expect(svc.move("nope.md", "x.md", "julian")).rejects.toBeInstanceOf(NoteNotFoundError);
+  });
+
+  it("move rejects with NoteExistsError and leaves the target untouched", async () => {
+    await svc.write("a.md", "# A", "julian");
+    await svc.write("b.md", "# B", "julian");
+    await expect(svc.move("a.md", "b.md", "julian")).rejects.toBeInstanceOf(NoteExistsError);
+    expect(await svc.read("b.md")).toBe("# B");
+    expect(await svc.read("a.md")).toBe("# A");
   });
 
   it("remove deletes file and index rows", async () => {

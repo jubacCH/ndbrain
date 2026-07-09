@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { openDatabase } from "../db/database.js";
 import { Indexer } from "../index/indexer.js";
@@ -14,6 +14,7 @@ import { buildServer } from "./server.js";
 let dir: string;
 let app: FastifyInstance;
 let token: string;
+let notes: NoteService;
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "ndbrain-http-"));
@@ -24,7 +25,8 @@ beforeEach(async () => {
   const indexer = new Indexer(db);
   const auth = new AuthService(db);
   await auth.createUser("julian", "secret123");
-  app = buildServer({ notes: new NoteService(vault, git, indexer), auth, db, git, indexer, vault });
+  notes = new NoteService(vault, git, indexer);
+  app = buildServer({ notes, auth, db, git, indexer, vault });
   const login = await app.inject({
     method: "POST",
     url: "/api/v1/auth/login",
@@ -85,6 +87,55 @@ describe("REST /api/v1", () => {
       authed({ method: "PUT", url: "/api/v1/notes/.git/x.md", payload: { content: "x" } }),
     );
     expect(res.statusCode).toBe(400);
+  });
+
+  it("returns 404 when moving a note whose source is missing", async () => {
+    const res = await app.inject(
+      authed({ method: "POST", url: "/api/v1/notes-move", payload: { from: "nope.md", to: "x.md" } }),
+    );
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("returns 409 when the move target already exists and leaves it untouched", async () => {
+    await app.inject(authed({ method: "PUT", url: "/api/v1/notes/a.md", payload: { content: "# A" } }));
+    await app.inject(authed({ method: "PUT", url: "/api/v1/notes/b.md", payload: { content: "# B" } }));
+    const res = await app.inject(
+      authed({ method: "POST", url: "/api/v1/notes-move", payload: { from: "a.md", to: "b.md" } }),
+    );
+    expect(res.statusCode).toBe(409);
+    const b = await app.inject(authed({ method: "GET", url: "/api/v1/notes/b.md" }));
+    expect(b.json().content).toBe("# B");
+  });
+
+  it("returns 400 for a search without the required q parameter", async () => {
+    const res = await app.inject(authed({ method: "GET", url: "/api/v1/search" }));
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("returns 400 when the note content is not a string", async () => {
+    const res = await app.inject(
+      authed({ method: "PUT", url: "/api/v1/notes/x.md", payload: { content: 123 } }),
+    );
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("returns 400 for a malformed JSON body", async () => {
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/notes/x.md",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      payload: "{ not valid json",
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("maps an unexpected internal error to 500 without leaking the raw message", async () => {
+    vi.spyOn(notes, "write").mockRejectedValueOnce(new Error("secret-internal-detail-42"));
+    const res = await app.inject(
+      authed({ method: "PUT", url: "/api/v1/notes/x.md", payload: { content: "y" } }),
+    );
+    expect(res.statusCode).toBe(500);
+    expect(res.body).not.toContain("secret-internal-detail-42");
   });
 
   it("moves a note via notes-move and preserves history", async () => {
