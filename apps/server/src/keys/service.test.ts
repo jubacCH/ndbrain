@@ -9,10 +9,10 @@ function makeService() {
 
 describe("ApiKeyService", () => {
   describe("create", () => {
-    it("returns a plaintext key in ndb_<32hex> format", async () => {
+    it("returns a plaintext key in ndb_<64hex> format (256-bit)", async () => {
       const service = makeService();
       const key = await service.create("myai", "myai/", true);
-      expect(key).toMatch(/^ndb_[0-9a-f]{32}$/);
+      expect(key).toMatch(/^ndb_[0-9a-f]{64}$/);
     });
 
     it("throws InvalidKeyNameError for names with disallowed characters", async () => {
@@ -30,6 +30,22 @@ describe("ApiKeyService", () => {
       const service = makeService();
       await service.create("myai", "myai/", true);
       await expect(service.create("myai", "other/", false)).rejects.toThrow(DuplicateKeyNameError);
+    });
+
+    it("normalizes expiresAt to UTC ISO string", async () => {
+      const service = makeService();
+      const past = new Date(Date.now() - 1_000).toISOString();
+      const key = await service.create("expired-key", "test/", false, past);
+      const result = await service.validate(key);
+      expect(result).toBeNull();
+    });
+
+    it("stores future expiry correctly in UTC", async () => {
+      const service = makeService();
+      const future = new Date(Date.now() + 3600_000).toISOString();
+      const key = await service.create("future-key", "test/", false, future);
+      const result = await service.validate(key);
+      expect(result).not.toBeNull();
     });
   });
 

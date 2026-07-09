@@ -44,7 +44,7 @@ interface ApiKeyRow {
  * KEY DESIGN DECISION: keys are looked up by sha256(key), not argon2. Password hashes
  * (argon2) are deliberately slow and non-indexable, which is right for low-entropy
  * human-chosen secrets but wrong here: API keys are 256-bit high-entropy random values
- * (`ndb_<32 hex>` = 16 random bytes), so brute-forcing the hash is infeasible regardless
+ * (`ndb_<64 hex>` = 32 random bytes), so brute-forcing the hash is infeasible regardless
  * of hash speed. Storing sha256(key) in an indexed column lets validate() do a direct
  * `WHERE key_hash = ?` lookup (O(1)) instead of loading every row to run argon2.verify
  * against each one.
@@ -61,14 +61,25 @@ export class ApiKeyService {
       throw new DuplicateKeyNameError(`key name already exists: ${name}`);
     }
 
-    const key = `ndb_${randomBytes(16).toString("hex")}`;
+    const key = `ndb_${randomBytes(32).toString("hex")}`;
     const keyHash = hash(key);
 
-    this.db
-      .prepare(
-        "INSERT INTO api_keys (name, key_hash, namespace, can_write, expires_at) VALUES (?, ?, ?, ?, ?)",
-      )
-      .run(name, keyHash, namespace, canWrite ? 1 : 0, expiresAt ?? null);
+    // Normalize expiresAt to UTC ISO string for timezone-robust comparison in validate().
+    const normalizedExpiresAt = expiresAt ? new Date(expiresAt).toISOString() : null;
+
+    try {
+      this.db
+        .prepare(
+          "INSERT INTO api_keys (name, key_hash, namespace, can_write, expires_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(name, keyHash, namespace, canWrite ? 1 : 0, normalizedExpiresAt);
+    } catch (error) {
+      // Map UNIQUE constraint violation to DuplicateKeyNameError for consistent caller handling.
+      if (error instanceof Error && error.message.includes("UNIQUE constraint failed")) {
+        throw new DuplicateKeyNameError(`key name already exists: ${name}`);
+      }
+      throw error;
+    }
 
     return key;
   }
