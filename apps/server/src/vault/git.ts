@@ -37,9 +37,12 @@ export class VaultGit {
     });
   }
 
+  /**
+   * Fetch git history for a file. History follows renames: a moved note keeps its pre-move history.
+   */
   async historyFor(path: string): Promise<HistoryEntry[]> {
     try {
-      const log = await this.git.log({ file: path, "--no-follow": null });
+      const log = await this.git.log({ file: path });
       return log.all.map((e) => ({
         hash: e.hash,
         message: e.message,

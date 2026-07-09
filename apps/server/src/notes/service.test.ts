@@ -37,9 +37,10 @@ describe("NoteService", () => {
     expect(db.prepare("SELECT count(*) c FROM notes WHERE path='b/c.md'").get()).toEqual({ c: 1 });
     expect(db.prepare("SELECT count(*) c FROM notes WHERE path='a.md'").get()).toEqual({ c: 0 });
     const history = await git.historyFor("b/c.md");
-    expect(history).toHaveLength(1);
+    expect(history).toHaveLength(2);
     expect(history[0].author).toBe("julian");
     expect(history[0].message).toBe("note: move a.md -> b/c.md");
+    expect(history[1].message).toBe("note: update a.md");
   });
 
   it("remove deletes file and index rows", async () => {
