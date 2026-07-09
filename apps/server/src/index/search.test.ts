@@ -1,0 +1,33 @@
+import { describe, expect, it } from "vitest";
+import { openDatabase } from "../db/database.js";
+import { Indexer } from "./indexer.js";
+import { backlinksOf, searchNotes } from "./search.js";
+
+function seeded() {
+  const db = openDatabase(":memory:");
+  const idx = new Indexer(db);
+  idx.indexNote("myai/deploy.md", "# Deploy Guide\nHow to deploy the homelab stack");
+  idx.indexNote("private/journal.md", "# Journal\ndeploy thoughts");
+  idx.indexNote("myai/ref.md", "# Ref\nSee [[myai/deploy]] for details");
+  return db;
+}
+
+describe("searchNotes", () => {
+  it("finds notes with snippets, ranked", () => {
+    const hits = searchNotes(seeded(), "deploy");
+    expect(hits.length).toBe(3);
+    expect(hits[0].snippet).toContain("deploy");
+  });
+
+  it("filters by namespace prefix", () => {
+    const hits = searchNotes(seeded(), "deploy", { namespace: "myai/" });
+    expect(hits.every((h) => h.path.startsWith("myai/"))).toBe(true);
+    expect(hits.length).toBe(2);
+  });
+});
+
+describe("backlinksOf", () => {
+  it("returns sources linking to a note (with or without .md)", () => {
+    expect(backlinksOf(seeded(), "myai/deploy.md")).toEqual(["myai/ref.md"]);
+  });
+});
