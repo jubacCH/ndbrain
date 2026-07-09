@@ -24,6 +24,25 @@ describe("searchNotes", () => {
     expect(hits.every((h) => h.path.startsWith("myai/"))).toBe(true);
     expect(hits.length).toBe(2);
   });
+
+  it("does not treat LIKE metacharacters in namespace as wildcards", () => {
+    const db = openDatabase(":memory:");
+    const idx = new Indexer(db);
+    idx.indexNote("my_notes/a.md", "# A\nwidget details");
+    idx.indexNote("myXnotes/b.md", "# B\nwidget details");
+    const hits = searchNotes(db, "widget", { namespace: "my_notes/" });
+    expect(hits.map((h) => h.path)).toEqual(["my_notes/a.md"]);
+  });
+
+  it("does not throw on a query containing a lone double quote and still finds matches", () => {
+    const hits = searchNotes(seeded(), 'deploy "');
+    expect(hits.some((h) => h.path === "myai/deploy.md")).toBe(true);
+  });
+
+  it("returns an empty array for an empty or whitespace-only query", () => {
+    expect(searchNotes(seeded(), "")).toEqual([]);
+    expect(searchNotes(seeded(), "   ")).toEqual([]);
+  });
 });
 
 describe("backlinksOf", () => {
