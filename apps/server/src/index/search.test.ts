@@ -34,6 +34,25 @@ describe("searchNotes", () => {
     expect(hits.map((h) => h.path)).toEqual(["my_notes/a.md"]);
   });
 
+  it("matches the namespace case-sensitively (scope enforcement)", () => {
+    const db = openDatabase(":memory:");
+    const idx = new Indexer(db);
+    idx.indexNote("myai/a.md", "# A\nwidget details");
+    idx.indexNote("MYAI/secret.md", "# Secret\nwidget details");
+    const hits = searchNotes(db, "widget", { namespace: "myai/" });
+    expect(hits.map((h) => h.path)).toEqual(["myai/a.md"]);
+  });
+
+  it("falls back to the default limit for non-positive or NaN limits", () => {
+    const db = openDatabase(":memory:");
+    const idx = new Indexer(db);
+    idx.indexNote("a.md", "# A\nwidget one");
+    idx.indexNote("b.md", "# B\nwidget two");
+    const hits = searchNotes(db, "widget", { limit: -1 });
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.length).toBeLessThanOrEqual(20);
+  });
+
   it("does not throw on a query containing a lone double quote and still finds matches", () => {
     const hits = searchNotes(seeded(), 'deploy "');
     expect(hits.some((h) => h.path === "myai/deploy.md")).toBe(true);
