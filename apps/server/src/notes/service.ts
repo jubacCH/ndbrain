@@ -8,7 +8,7 @@ export class NoteService {
     private vault: Vault,
     private git: VaultGit,
     private indexer: Indexer,
-    private watcher?: { markOwnWrite(path: string, content: string): void },
+    private watcher?: { markOwnWrite(path: string, content: string): void; markOwnRemove(path: string): void },
   ) {}
 
   read(path: string): Promise<string | null> {
@@ -18,22 +18,25 @@ export class NoteService {
   async write(path: string, content: string, actor: string): Promise<void> {
     this.watcher?.markOwnWrite(path, content);
     await this.vault.write(path, content);
-    await this.git.commitChange(`note: update ${path}`, actor);
+    await this.git.commitChange(`note: update ${path}`, actor, [path]);
     this.indexer.indexNote(path, content);
   }
 
   async move(from: string, to: string, actor: string): Promise<void> {
     const raw = await this.vault.read(from);
     if (raw === null) throw new Error(`note not found: ${from}`);
+    this.watcher?.markOwnRemove(from);
+    this.watcher?.markOwnWrite(to, raw);
     await this.vault.move(from, to);
-    await this.git.commitChange(`note: move ${from} -> ${to}`, actor);
+    await this.git.commitChange(`note: move ${from} -> ${to}`, actor, [from, to]);
     this.indexer.renameNote(from, to, raw);
   }
 
   async remove(path: string, actor: string): Promise<boolean> {
+    this.watcher?.markOwnRemove(path);
     const removed = await this.vault.remove(path);
     if (removed) {
-      await this.git.commitChange(`note: delete ${path}`, actor);
+      await this.git.commitChange(`note: delete ${path}`, actor, [path]);
       this.indexer.removeNote(path);
     }
     return removed;

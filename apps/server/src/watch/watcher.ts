@@ -12,6 +12,7 @@ const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 export class VaultWatcher {
   private fsWatcher: FSWatcher | null = null;
   private ownWrites = new Map<string, string>();
+  private ownRemoves = new Set<string>();
   onExternalChange?: (path: string) => void;
 
   constructor(
@@ -24,6 +25,10 @@ export class VaultWatcher {
     this.ownWrites.set(path, hash(content));
   }
 
+  markOwnRemove(path: string): void {
+    this.ownRemoves.add(path);
+  }
+
   async start(): Promise<void> {
     this.fsWatcher = watch(this.vault.rootDir, {
       ignored: (p) => p.includes(`${sep}.git`) || p.endsWith(".tmp"),
@@ -32,18 +37,40 @@ export class VaultWatcher {
     });
     const handle = async (absPath: string) => {
       const rel = relative(this.vault.rootDir, absPath).replaceAll(sep, "/");
-      if (!rel.endsWith(".md")) return;
-      const raw = await this.vault.read(rel);
-      if (raw === null) return;
-      if (this.ownWrites.get(rel) === hash(raw)) {
-        this.ownWrites.delete(rel);
-        return;
+      try {
+        if (!rel.endsWith(".md")) return;
+        const raw = await this.vault.read(rel);
+        if (raw === null) return;
+        if (this.ownWrites.get(rel) === hash(raw)) {
+          this.ownWrites.delete(rel);
+          return;
+        }
+        this.indexer.indexNote(rel, raw);
+        await this.git.commitChange(`note: external change ${rel}`, "external", [rel]);
+        this.onExternalChange?.(rel);
+      } catch (err) {
+        console.error("[ndbrain] watcher error for %s:", rel, err);
       }
-      this.indexer.indexNote(rel, raw);
-      await this.git.commitChange(`note: external change ${rel}`, "external");
-      this.onExternalChange?.(rel);
     };
-    this.fsWatcher.on("add", handle).on("change", handle);
+    const handleUnlink = async (absPath: string) => {
+      const rel = relative(this.vault.rootDir, absPath).replaceAll(sep, "/");
+      try {
+        if (!rel.endsWith(".md")) return;
+        if (this.ownRemoves.has(rel)) {
+          this.ownRemoves.delete(rel);
+          return;
+        }
+        this.indexer.removeNote(rel);
+        await this.git.commitChange(`note: external delete ${rel}`, "external", [rel]);
+        this.onExternalChange?.(rel);
+      } catch (err) {
+        console.error("[ndbrain] watcher error for %s:", rel, err);
+      }
+    };
+    this.fsWatcher
+      .on("add", (p) => void handle(p))
+      .on("change", (p) => void handle(p))
+      .on("unlink", (p) => void handleUnlink(p));
     await new Promise<void>((resolve) => this.fsWatcher!.once("ready", () => resolve()));
   }
 

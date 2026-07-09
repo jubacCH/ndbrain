@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDatabase, type Database } from "../db/database.js";
 import { Indexer } from "../index/indexer.js";
 import { Vault } from "../vault/files.js";
@@ -42,5 +42,30 @@ describe("NoteService", () => {
     await svc.write("a.md", "x", "julian");
     expect(await svc.remove("a.md", "julian")).toBe(true);
     expect(db.prepare("SELECT count(*) c FROM notes").get()).toEqual({ c: 0 });
+  });
+
+  it("write marks the path as an own write via the watcher", async () => {
+    const watcher = { markOwnWrite: vi.fn(), markOwnRemove: vi.fn() };
+    const wired = new NoteService(new Vault(dir), git, new Indexer(db), watcher);
+    await wired.write("w.md", "# W", "julian");
+    expect(watcher.markOwnWrite).toHaveBeenCalledWith("w.md", "# W");
+  });
+
+  it("move marks the source as an own remove and the target as an own write via the watcher", async () => {
+    const watcher = { markOwnWrite: vi.fn(), markOwnRemove: vi.fn() };
+    const wired = new NoteService(new Vault(dir), git, new Indexer(db), watcher);
+    await wired.write("m.md", "# M", "julian");
+    watcher.markOwnWrite.mockClear();
+    await wired.move("m.md", "n.md", "julian");
+    expect(watcher.markOwnRemove).toHaveBeenCalledWith("m.md");
+    expect(watcher.markOwnWrite).toHaveBeenCalledWith("n.md", "# M");
+  });
+
+  it("remove marks the path as an own remove via the watcher", async () => {
+    const watcher = { markOwnWrite: vi.fn(), markOwnRemove: vi.fn() };
+    const wired = new NoteService(new Vault(dir), git, new Indexer(db), watcher);
+    await wired.write("r.md", "# R", "julian");
+    await wired.remove("r.md", "julian");
+    expect(watcher.markOwnRemove).toHaveBeenCalledWith("r.md");
   });
 });

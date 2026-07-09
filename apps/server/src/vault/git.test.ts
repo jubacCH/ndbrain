@@ -34,6 +34,14 @@ describe("VaultGit", () => {
     await expect(git.historyFor("a.md")).resolves.toEqual([]);
   });
 
+  it("stages only the given paths when a pathspec is provided", async () => {
+    await writeFile(join(dir, "a.md"), "v1");
+    await writeFile(join(dir, "b.md"), "v1");
+    await git.commitChange("update a only", "julian", ["a.md"]);
+    expect(await git.historyFor("a.md")).toHaveLength(1);
+    expect(await git.historyFor("b.md")).toHaveLength(0);
+  });
+
   it("creates its own repo even when nested inside another git repo", async () => {
     const outer = await mkdtemp(join(tmpdir(), "ndbrain-outer-"));
     const outerGit = new VaultGit(outer);

@@ -24,10 +24,14 @@ export class VaultGit {
     }
   }
 
-  async commitChange(message: string, author: string): Promise<void> {
-    await this.git.add(["-A"]);
+  async commitChange(message: string, author: string, paths?: string[]): Promise<void> {
+    if (paths && paths.length > 0) {
+      await this.git.add(["-A", "--", ...paths]);
+    } else {
+      await this.git.add(["-A"]);
+    }
     const status = await this.git.status();
-    if (status.staged.length === 0 && status.files.length === 0) return;
+    if (status.staged.length === 0) return;
     await this.git.commit(message, undefined, {
       "--author": `${author} <${author}@ndbrain.local>`,
     });
