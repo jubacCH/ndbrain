@@ -1,6 +1,8 @@
 services:
   ndbrain:
     build: .
+    # Run under an init so SIGTERM reaches Node and graceful shutdown can run.
+    init: true
     ports: ["3000:3000"]
     environment:
       NDBRAIN_ADMIN_USER: julian

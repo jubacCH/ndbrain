@@ -9,6 +9,7 @@ import { VaultGit } from "./vault/git.js";
 import { VaultWatcher } from "./watch/watcher.js";
 import { AuthService } from "./http/auth.js";
 import { buildServer } from "./http/server.js";
+import { createShutdown } from "./shutdown.js";
 
 const config = loadConfig(process.env);
 await mkdir(config.vaultDir, { recursive: true });
@@ -35,3 +36,18 @@ await watcher.start();
 const app = buildServer({ notes, auth, db, git, indexer, vault });
 await app.listen({ port: config.port, host: "0.0.0.0" });
 console.log(`ndbrain listening on :${config.port}`);
+
+// Graceful shutdown: drain requests, stop the watcher, close the db, then exit.
+// Idempotent, so a repeated signal cannot trigger a double close.
+const shutdown = createShutdown({ app, watcher, db });
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => {
+    void shutdown().then(
+      () => process.exit(0),
+      (err) => {
+        console.error("[ndbrain] shutdown error:", err);
+        process.exit(1);
+      },
+    );
+  });
+}
