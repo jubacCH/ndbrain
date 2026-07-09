@@ -3,6 +3,7 @@ import { loadConfig } from "./config.js";
 import { openDatabase } from "./db/database.js";
 import { Indexer } from "./index/indexer.js";
 import { NoteService } from "./notes/service.js";
+import { Mutex } from "./notes/mutex.js";
 import { Vault } from "./vault/files.js";
 import { VaultGit } from "./vault/git.js";
 import { VaultWatcher } from "./watch/watcher.js";
@@ -17,8 +18,10 @@ const vault = new Vault(config.vaultDir);
 const git = new VaultGit(config.vaultDir);
 await git.init();
 const indexer = new Indexer(db);
-const watcher = new VaultWatcher(vault, indexer, git);
-const notes = new NoteService(vault, git, indexer, watcher);
+// One shared mutation queue so external-change and API-driven commits serialize together.
+const mutex = new Mutex();
+const watcher = new VaultWatcher(vault, indexer, git, mutex);
+const notes = new NoteService(vault, git, indexer, watcher, mutex);
 const auth = new AuthService(db);
 
 if (!auth.hasUsers() && config.adminUser && config.adminPassword) {

@@ -62,6 +62,22 @@ describe("NoteService", () => {
     expect(db.prepare("SELECT count(*) c FROM notes").get()).toEqual({ c: 0 });
   });
 
+  it("serializes concurrent writes so each commit keeps its own actor", async () => {
+    // Without a shared mutation queue the two commitChange sequences interleave:
+    // one commit sweeps the other's staged file under the wrong author (or leaves
+    // it as a no-op). The mutex must make both commits land under their own actor.
+    await Promise.all([
+      svc.write("p1.md", "# One", "actor-one"),
+      svc.write("p2.md", "# Two", "actor-two"),
+    ]);
+    const h1 = await git.historyFor("p1.md");
+    const h2 = await git.historyFor("p2.md");
+    expect(h1).toHaveLength(1);
+    expect(h2).toHaveLength(1);
+    expect(h1[0].author).toBe("actor-one");
+    expect(h2[0].author).toBe("actor-two");
+  });
+
   it("write marks the path as an own write via the watcher", async () => {
     const watcher = { markOwnWrite: vi.fn(), markOwnRemove: vi.fn() };
     const wired = new NoteService(new Vault(dir), git, new Indexer(db), watcher);

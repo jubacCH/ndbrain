@@ -4,6 +4,7 @@ import { relative, sep } from "node:path";
 import type { Vault } from "../vault/files.js";
 import type { Indexer } from "../index/indexer.js";
 import type { VaultGit } from "../vault/git.js";
+import { Mutex } from "../notes/mutex.js";
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -19,6 +20,8 @@ export class VaultWatcher {
     private vault: Vault,
     private indexer: Indexer,
     private git: VaultGit,
+    // Shared with NoteService so external-change commits serialize with API-driven ones.
+    private mutex: Mutex = new Mutex(),
   ) {}
 
   markOwnWrite(path: string, content: string): void {
@@ -45,8 +48,10 @@ export class VaultWatcher {
           this.ownWrites.delete(rel);
           return;
         }
-        this.indexer.indexNote(rel, raw);
-        await this.git.commitChange(`note: external change ${rel}`, "external", [rel]);
+        await this.mutex.run(async () => {
+          this.indexer.indexNote(rel, raw);
+          await this.git.commitChange(`note: external change ${rel}`, "external", [rel]);
+        });
         this.onExternalChange?.(rel);
       } catch (err) {
         console.error("[ndbrain] watcher error for %s:", rel, err);
@@ -60,8 +65,10 @@ export class VaultWatcher {
           this.ownRemoves.delete(rel);
           return;
         }
-        this.indexer.removeNote(rel);
-        await this.git.commitChange(`note: external delete ${rel}`, "external", [rel]);
+        await this.mutex.run(async () => {
+          this.indexer.removeNote(rel);
+          await this.git.commitChange(`note: external delete ${rel}`, "external", [rel]);
+        });
         this.onExternalChange?.(rel);
       } catch (err) {
         console.error("[ndbrain] watcher error for %s:", rel, err);

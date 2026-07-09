@@ -2,6 +2,7 @@ import type { Vault } from "../vault/files.js";
 import type { VaultGit } from "../vault/git.js";
 import type { Indexer } from "../index/indexer.js";
 import { NoteExistsError, NoteNotFoundError } from "./errors.js";
+import { Mutex } from "./mutex.js";
 
 /** The single write path for all vault mutations: filesystem -> git commit -> index.
  *
@@ -16,38 +17,46 @@ export class NoteService {
     private git: VaultGit,
     private indexer: Indexer,
     private watcher?: { markOwnWrite(path: string, content: string): void; markOwnRemove(path: string): void },
+    // Shared serialization queue; a private one keeps existing callers backward-compatible.
+    private mutex: Mutex = new Mutex(),
   ) {}
 
   read(path: string): Promise<string | null> {
     return this.vault.read(path);
   }
 
-  async write(path: string, content: string, actor: string): Promise<void> {
-    this.watcher?.markOwnWrite(path, content);
-    await this.vault.write(path, content);
-    await this.git.commitChange(`note: update ${path}`, actor, [path]);
-    this.indexer.indexNote(path, content);
+  write(path: string, content: string, actor: string): Promise<void> {
+    return this.mutex.run(async () => {
+      this.watcher?.markOwnWrite(path, content);
+      await this.vault.write(path, content);
+      await this.git.commitChange(`note: update ${path}`, actor, [path]);
+      this.indexer.indexNote(path, content);
+    });
   }
 
-  async move(from: string, to: string, actor: string): Promise<void> {
-    const raw = await this.vault.read(from);
-    if (raw === null) throw new NoteNotFoundError(`note not found: ${from}`);
-    if ((await this.vault.read(to)) !== null)
-      throw new NoteExistsError(`note already exists: ${to}`);
-    this.watcher?.markOwnRemove(from);
-    this.watcher?.markOwnWrite(to, raw);
-    await this.vault.move(from, to);
-    await this.git.commitChange(`note: move ${from} -> ${to}`, actor, [from, to]);
-    this.indexer.renameNote(from, to, raw);
+  move(from: string, to: string, actor: string): Promise<void> {
+    return this.mutex.run(async () => {
+      const raw = await this.vault.read(from);
+      if (raw === null) throw new NoteNotFoundError(`note not found: ${from}`);
+      if ((await this.vault.read(to)) !== null)
+        throw new NoteExistsError(`note already exists: ${to}`);
+      this.watcher?.markOwnRemove(from);
+      this.watcher?.markOwnWrite(to, raw);
+      await this.vault.move(from, to);
+      await this.git.commitChange(`note: move ${from} -> ${to}`, actor, [from, to]);
+      this.indexer.renameNote(from, to, raw);
+    });
   }
 
-  async remove(path: string, actor: string): Promise<boolean> {
-    this.watcher?.markOwnRemove(path);
-    const removed = await this.vault.remove(path);
-    if (removed) {
-      await this.git.commitChange(`note: delete ${path}`, actor, [path]);
-      this.indexer.removeNote(path);
-    }
-    return removed;
+  remove(path: string, actor: string): Promise<boolean> {
+    return this.mutex.run(async () => {
+      this.watcher?.markOwnRemove(path);
+      const removed = await this.vault.remove(path);
+      if (removed) {
+        await this.git.commitChange(`note: delete ${path}`, actor, [path]);
+        this.indexer.removeNote(path);
+      }
+      return removed;
+    });
   }
 }
