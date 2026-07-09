@@ -7,7 +7,12 @@ import { Indexer } from "../index/indexer.js";
 import { Vault } from "../vault/files.js";
 import { VaultGit } from "../vault/git.js";
 import { NoteService } from "./service.js";
-import { NoteExistsError, NoteNotFoundError } from "./errors.js";
+import {
+  EditAmbiguousError,
+  EditTargetNotFoundError,
+  NoteExistsError,
+  NoteNotFoundError,
+} from "./errors.js";
 
 let dir: string;
 let db: Database;
@@ -101,5 +106,54 @@ describe("NoteService", () => {
     await wired.write("r.md", "# R", "julian");
     await wired.remove("r.md", "julian");
     expect(watcher.markOwnRemove).toHaveBeenCalledWith("r.md");
+  });
+
+  it("editNote replaces the single occurrence of find with replace", async () => {
+    await svc.write("e.md", "# Title\n\nhello world", "julian");
+    await svc.editNote("e.md", "hello world", "goodbye world", "julian");
+    expect(await svc.read("e.md")).toBe("# Title\n\ngoodbye world");
+  });
+
+  it("editNote rejects with EditAmbiguousError when find occurs more than once", async () => {
+    await svc.write("e.md", "foo foo", "julian");
+    await expect(svc.editNote("e.md", "foo", "bar", "julian")).rejects.toBeInstanceOf(
+      EditAmbiguousError,
+    );
+    expect(await svc.read("e.md")).toBe("foo foo");
+  });
+
+  it("editNote rejects with EditTargetNotFoundError when find is absent", async () => {
+    await svc.write("e.md", "foo", "julian");
+    await expect(svc.editNote("e.md", "bar", "baz", "julian")).rejects.toBeInstanceOf(
+      EditTargetNotFoundError,
+    );
+    expect(await svc.read("e.md")).toBe("foo");
+  });
+
+  it("editNote rejects with NoteNotFoundError when the note does not exist", async () => {
+    await expect(svc.editNote("nope.md", "foo", "bar", "julian")).rejects.toBeInstanceOf(
+      NoteNotFoundError,
+    );
+  });
+
+  it("editNote produces exactly one git commit authored by actor", async () => {
+    await svc.write("e.md", "foo", "julian");
+    await svc.editNote("e.md", "foo", "bar", "actor-edit");
+    const history = await git.historyFor("e.md");
+    expect(history).toHaveLength(2);
+    expect(history[0].author).toBe("actor-edit");
+    expect(history[0].message).toBe("note: update e.md");
+  });
+
+  it("appendNote appends content with a newline separator to an existing note", async () => {
+    await svc.write("a.md", "line one", "julian");
+    await svc.appendNote("a.md", "line two", "julian");
+    expect(await svc.read("a.md")).toBe("line one\nline two");
+  });
+
+  it("appendNote creates the note when it does not exist", async () => {
+    await svc.appendNote("new.md", "# New", "julian");
+    expect(await svc.read("new.md")).toBe("# New");
+    expect((await git.historyFor("new.md"))[0].author).toBe("julian");
   });
 });
