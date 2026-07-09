@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { backlinksOf, searchNotes } from "../index/search.js";
+import { createMcpHandler } from "../mcp/server.js";
 import type { ServerDeps } from "./server.js";
 
 const wildcardPath = (req: any): string => decodeURIComponent(req.params["*"]);
@@ -96,4 +97,8 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   app.post("/api/v1/reindex", async () => {
     return { count: await deps.indexer.reindexAll(deps.vault) };
   });
+
+  // MCP Streamable HTTP (agent-key auth, not session cookie — see the onRequest exemption
+  // in server.ts and createMcpHandler's own 401 handling).
+  app.all("/mcp", createMcpHandler(deps));
 }

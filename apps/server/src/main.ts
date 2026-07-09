@@ -8,6 +8,7 @@ import { Vault } from "./vault/files.js";
 import { VaultGit } from "./vault/git.js";
 import { VaultWatcher } from "./watch/watcher.js";
 import { AuthService } from "./http/auth.js";
+import { ApiKeyService } from "./keys/service.js";
 import { buildServer } from "./http/server.js";
 import { createShutdown } from "./shutdown.js";
 
@@ -24,6 +25,7 @@ const mutex = new Mutex();
 const watcher = new VaultWatcher(vault, indexer, git, mutex);
 const notes = new NoteService(vault, git, indexer, watcher, mutex);
 const auth = new AuthService(db);
+const apiKeys = new ApiKeyService(db);
 
 if (!auth.hasUsers() && config.adminUser && config.adminPassword) {
   await auth.createUser(config.adminUser, config.adminPassword);
@@ -33,7 +35,7 @@ if (!auth.hasUsers() && config.adminUser && config.adminPassword) {
 await indexer.reindexAll(vault);
 await watcher.start();
 
-const app = buildServer({ notes, auth, db, git, indexer, vault });
+const app = buildServer({ notes, auth, db, git, indexer, vault, apiKeys });
 await app.listen({ port: config.port, host: "0.0.0.0" });
 console.log(`ndbrain listening on :${config.port}`);
 

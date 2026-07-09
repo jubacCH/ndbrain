@@ -7,6 +7,7 @@ import type { Vault } from "../vault/files.js";
 import { VaultPathError } from "../vault/files.js";
 import { NoteExistsError, NoteNotFoundError } from "../notes/errors.js";
 import type { VaultGit } from "../vault/git.js";
+import type { ApiKeyService } from "../keys/service.js";
 import type { AuthService } from "./auth.js";
 import { registerRoutes } from "./routes.js";
 
@@ -17,6 +18,7 @@ export interface ServerDeps {
   git: VaultGit;
   indexer: Indexer;
   vault: Vault;
+  apiKeys: ApiKeyService;
 }
 
 export function buildServer(deps: ServerDeps): FastifyInstance {
@@ -26,6 +28,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   app.addHook("onRequest", async (req, reply) => {
     if (req.url === "/api/v1/auth/login") return;
+    // MCP uses agent-key auth (Bearer -> ApiKeyService.validate), not the session cookie —
+    // see mcp/server.ts's own 401 handling.
+    if (req.url === "/mcp") return;
     const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "");
     const token = bearer ?? req.cookies["ndbrain_session"];
     const session = token ? deps.auth.validateSession(token) : null;

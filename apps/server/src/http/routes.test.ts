@@ -9,6 +9,7 @@ import { NoteService } from "../notes/service.js";
 import { Vault } from "../vault/files.js";
 import { VaultGit } from "../vault/git.js";
 import { AuthService } from "./auth.js";
+import { ApiKeyService } from "../keys/service.js";
 import { buildServer } from "./server.js";
 
 let dir: string;
@@ -26,7 +27,8 @@ beforeEach(async () => {
   const auth = new AuthService(db);
   await auth.createUser("julian", "secret123");
   notes = new NoteService(vault, git, indexer);
-  app = buildServer({ notes, auth, db, git, indexer, vault });
+  const apiKeys = new ApiKeyService(db);
+  app = buildServer({ notes, auth, db, git, indexer, vault, apiKeys });
   const login = await app.inject({
     method: "POST",
     url: "/api/v1/auth/login",
