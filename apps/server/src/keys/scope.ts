@@ -1,5 +1,10 @@
 /** Domain error for scope violations (read-only or out-of-scope mutations). */
-export class ScopeError extends Error {}
+export class ScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ScopeError";
+  }
+}
 
 /** API key scope: namespace prefix and write permission. */
 export interface Scope {
@@ -19,6 +24,11 @@ export interface Scope {
  * Note: Namespaces follow the convention of ending with "/" (or being empty)
  * to avoid unintended partial-segment matches (e.g., "my" would not match
  * "myai/x.md" if the namespace did not end with "/").
+ *
+ * Precondition: path must already be a vault-safe relative path (as produced by
+ * Vault.assertSafePath, which rejects "..", absolute and non-.md paths). This
+ * function does NOT normalize; callers MUST validate the path first, so scope
+ * checks and filesystem access agree.
  *
  * @param scope Scope to test.
  * @param path Path to check.

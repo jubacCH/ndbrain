@@ -32,6 +32,13 @@ describe("Scope", () => {
     });
   });
 
+  describe("ScopeError", () => {
+    it("sets .name to 'ScopeError' for audit logging", () => {
+      const err = new ScopeError("test message");
+      expect(err.name).toBe("ScopeError");
+    });
+  });
+
   describe("assertWritable", () => {
     it("throws ScopeError when scope is read-only (canWrite=false)", () => {
       const scope: Scope = { namespace: "myai/", canWrite: false };
@@ -71,6 +78,15 @@ describe("Scope", () => {
     it("throws when empty namespace but canWrite=false", () => {
       const scope: Scope = { namespace: "", canWrite: false };
       expect(() => assertWritable(scope, "a.md")).toThrow(ScopeError);
+    });
+
+    // Regression test: namespaces MUST end with "/" to avoid partial-segment matches.
+    // Without the trailing slash, "my" would match "myai/x.md", creating a security footgun.
+    // This test pins the documented convention so callers know they must include "/" or risk collisions.
+    it("documents namespace-slash convention: 'myai' without slash matches 'myaixyz.md' (why trailing slash is required)", () => {
+      const scope: Scope = { namespace: "myai", canWrite: true };
+      expect(isPathInScope(scope, "myaixyz.md")).toBe(true);
+      // ^ This is why isPathInScope docstring says namespaces should end with "/".
     });
   });
 });
