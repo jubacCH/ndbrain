@@ -31,7 +31,7 @@ export class VaultGit {
       await this.git.add(["-A"]);
     }
     const status = await this.git.status();
-    if (status.staged.length === 0) return;
+    if (status.staged.length === 0 && status.renamed.length === 0) return;
     await this.git.commit(message, undefined, {
       "--author": `${author} <${author}@ndbrain.local>`,
     });
@@ -39,7 +39,7 @@ export class VaultGit {
 
   async historyFor(path: string): Promise<HistoryEntry[]> {
     try {
-      const log = await this.git.log({ file: path });
+      const log = await this.git.log({ file: path, "--no-follow": null });
       return log.all.map((e) => ({
         hash: e.hash,
         message: e.message,
