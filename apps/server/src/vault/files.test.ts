@@ -47,6 +47,17 @@ describe("Vault", () => {
     expect(() => vault.assertSafePath("a/.git/x.md")).toThrow(VaultPathError);
   });
 
+  it("rejects .git segments case-insensitively (case-insensitive filesystem bypass)", () => {
+    expect(() => vault.assertSafePath(".GIT/config.md")).toThrow(VaultPathError);
+    expect(() => vault.assertSafePath("a/.Git/x.md")).toThrow(VaultPathError);
+    expect(() => vault.assertSafePath("b/.gIt/notes.md")).toThrow(VaultPathError);
+  });
+
+  it("allows .github/ and normal paths", () => {
+    expect(() => vault.assertSafePath(".github/notes.md")).not.toThrow();
+    expect(() => vault.assertSafePath("docs/x.md")).not.toThrow();
+  });
+
   it("never lists markdown files placed under .git/", async () => {
     await vault.write("a.md", "a");
     await mkdir(join(dir, ".git", "sub"), { recursive: true });

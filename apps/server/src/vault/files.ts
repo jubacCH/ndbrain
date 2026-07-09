@@ -15,7 +15,9 @@ export class Vault {
       throw new VaultPathError(`unsafe path: ${path}`);
     // Reject any path that touches the git metadata dir: writes there would be
     // indexed but never committed, bypassing the audit trail.
-    if (norm.split("/").includes(".git")) throw new VaultPathError(`unsafe path: ${path}`);
+    // Check case-insensitively to prevent bypass on case-insensitive filesystems (macOS, Windows).
+    if (norm.split("/").some((s) => s.toLowerCase() === ".git"))
+      throw new VaultPathError(`unsafe path: ${path}`);
     return norm;
   }
 
@@ -62,7 +64,8 @@ export class Vault {
       .filter((e) => e.isFile() && e.name.endsWith(".md"))
       .map((e) => join(e.parentPath, e.name).slice(this.rootDir.length + 1).replaceAll(sep, "/"))
       // Never surface git metadata as notes (list() reads the FS directly).
-      .filter((rel) => !rel.split("/").includes(".git"))
+      // Check case-insensitively to prevent leakage on case-insensitive filesystems.
+      .filter((rel) => !rel.split("/").some((s) => s.toLowerCase() === ".git"))
       .sort();
   }
 }
