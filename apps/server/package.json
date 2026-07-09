@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "ndbrain": "dist/bin/ndbrain.js"
+  },
   "scripts": {
     "test": "vitest run",
     "build": "tsc -p tsconfig.json",
