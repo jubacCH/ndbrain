@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { Awareness } from "y-protocols/awareness";
+import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protocols/awareness";
 import {
   agentAwarenessClientId,
   agentAwarenessColor,
@@ -9,9 +9,10 @@ import {
 } from "./awareness.js";
 
 describe("agent awareness", () => {
-  it("agentAwarenessClientId is deterministic per actor and never collides with a real (non-negative) Yjs client id", () => {
+  it("agentAwarenessClientId is deterministic per actor and is a non-negative uint32 (lossless for lib0's writeVarUint)", () => {
     expect(agentAwarenessClientId("myai")).toBe(agentAwarenessClientId("myai"));
-    expect(agentAwarenessClientId("myai")).toBeLessThan(0);
+    expect(agentAwarenessClientId("myai")).toBeGreaterThanOrEqual(0);
+    expect(agentAwarenessClientId("myai")).toBeLessThanOrEqual(0xffffffff);
     expect(agentAwarenessClientId("myai")).not.toBe(agentAwarenessClientId("other-agent"));
   });
 
@@ -81,5 +82,27 @@ describe("agent awareness", () => {
 
     expect(awareness.getStates().has(agentAwarenessClientId("myai"))).toBe(false);
     expect(awareness.getStates().has(agentAwarenessClientId("other-agent"))).toBe(true);
+  });
+
+  it("survives a real encodeAwarenessUpdate/applyAwarenessUpdate round trip (wire broadcast) without truncating the client id", () => {
+    const doc = new Y.Doc();
+    const awareness = new Awareness(doc);
+    setAgentAwarenessState(awareness, "myai");
+
+    const clientId = agentAwarenessClientId("myai");
+    const encoded = encodeAwarenessUpdate(awareness, [clientId]);
+
+    // Simulate a separate client receiving the broadcast over the wire.
+    const remoteDoc = new Y.Doc();
+    const remoteAwareness = new Awareness(remoteDoc);
+    applyAwarenessUpdate(remoteAwareness, encoded, null);
+
+    const remoteStates = remoteAwareness.getStates();
+    expect(remoteStates.get(clientId)).toEqual({
+      user: { name: "myai", agent: true, color: agentAwarenessColor("myai") },
+    });
+    // Guard against silent truncation into the [0, 127] range that a negative
+    // clientId would produce on the wire (lib0's writeVarUint is unsigned).
+    expect(remoteStates.has(clientId)).toBe(true);
   });
 });

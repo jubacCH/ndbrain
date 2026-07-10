@@ -32,15 +32,30 @@ export function agentAwarenessColor(actor: string): string {
 }
 
 /**
- * Deterministic per-actor client id for the transient agent-awareness entry,
- * always NEGATIVE so it can never collide with a real Yjs client id (Yjs
- * generates `doc.clientID` as a non-negative 32-bit integer, see `yjs`'s
- * `Doc` constructor). Deterministic (not random) so re-applying/clearing the
- * same actor's state always targets the same map entry instead of leaking a
- * new one on every write.
+ * Deterministic per-actor client id for the transient agent-awareness entry.
+ *
+ * MUST be a non-negative uint32: Hocuspocus broadcasts awareness updates via
+ * y-protocols' `encodeAwarenessUpdate`, which writes the client id with
+ * lib0's `writeVarUint` - an UNSIGNED varint encoder. A negative id is not a
+ * valid input for it: it gets silently truncated to `id & 0x7f` (a single
+ * byte, i.e. some value in [0, 127]) on the wire, so a "negative id" is not
+ * actually preserved end-to-end and does NOT reliably avoid collisions with
+ * real client ids in that truncated range - it makes them more likely.
+ *
+ * A server-injected id lives in the exact same uint32 space as real Yjs
+ * `doc.clientID`s (a random non-negative 32-bit integer, see `yjs`'s `Doc`
+ * constructor), so there is no id we can pick here that's PROVABLY
+ * collision-free. Instead we derive a deterministic per-actor uint32 from a
+ * hash of `actor`, accepting a ~1/2^32 chance of colliding with a real
+ * client's id - astronomically better than the ~1/128 the broken
+ * negative-id/truncation scheme actually produced on the wire.
+ *
+ * Deterministic (not random) so re-applying/clearing the same actor's state
+ * always targets the same map entry instead of leaking a new one on every
+ * write.
  */
 export function agentAwarenessClientId(actor: string): number {
-  return -1 - (hashString(actor) % 0x7fffffff);
+  return hashString(actor);
 }
 
 /**
@@ -64,12 +79,26 @@ export function agentAwarenessClientId(actor: string): number {
  * `y-protocols@1.0.7` source) - the exact public contract `Document` (and
  * any real client's `Awareness` instance) listens for, not a fake/shadow
  * mechanism.
+ *
+ * The clock for a brand-new client id starts at 1, NOT 0: a receiving
+ * `Awareness` instance that has never heard of this client id defaults its
+ * notion of that id's clock to 0 (see y-protocols' `applyAwarenessUpdate`,
+ * `currClock = clientMeta === undefined ? 0 : clientMeta.clock`), and only
+ * accepts an update whose clock is STRICTLY greater (or an equal-clock
+ * removal). A first write encoded at clock 0 is therefore indistinguishable
+ * from "nothing new" and gets silently dropped by every peer that hasn't
+ * already seen this client id - including a client connecting after the
+ * write, which Hocuspocus bootstraps via a full `encodeAwarenessUpdate` dump
+ * of every current client id (see `@hocuspocus/server`'s
+ * `applyQueryAwarenessMessage`/`Document.awarenessMessage`). Verified via a
+ * real `encodeAwarenessUpdate`/`applyAwarenessUpdate` round trip in this
+ * module's tests.
  */
 export function setAgentAwarenessState(awareness: Awareness, actor: string): void {
   const clientId = agentAwarenessClientId(actor);
   const state = { user: { name: actor, agent: true, color: agentAwarenessColor(actor) } };
   const isNew = !awareness.states.has(clientId);
-  const prevClock = awareness.meta.get(clientId)?.clock ?? -1;
+  const prevClock = awareness.meta.get(clientId)?.clock ?? 0;
   awareness.states.set(clientId, state);
   awareness.meta.set(clientId, { clock: prevClock + 1, lastUpdated: Date.now() });
   const changed = { added: isNew ? [clientId] : [], updated: isNew ? [] : [clientId], removed: [] };
