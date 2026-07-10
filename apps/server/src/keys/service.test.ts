@@ -138,17 +138,37 @@ describe("ApiKeyService", () => {
   });
 
   describe("revoke", () => {
-    it("removes the key and returns true", async () => {
+    it("soft-revokes: the key stops validating, but the row survives for audit resolution", async () => {
       const service = makeService();
       const key = await service.create("myai", "myai/", true);
       expect(service.revoke("myai")).toBe(true);
-      expect(service.list()).toHaveLength(0);
       expect(await service.validate(key)).toBeNull();
+    });
+
+    it("hides a revoked key from list() by default", async () => {
+      const service = makeService();
+      await service.create("myai", "myai/", true);
+      service.revoke("myai");
+      expect(service.list()).toHaveLength(0);
     });
 
     it("returns false for an unknown name", () => {
       const service = makeService();
       expect(service.revoke("does-not-exist")).toBe(false);
+    });
+
+    it("returns false when revoking an already-revoked key", async () => {
+      const service = makeService();
+      await service.create("myai", "myai/", true);
+      expect(service.revoke("myai")).toBe(true);
+      expect(service.revoke("myai")).toBe(false);
+    });
+
+    it("keeps a revoked name blamed: it cannot be reused for a new key", async () => {
+      const service = makeService();
+      await service.create("myai", "myai/", true);
+      service.revoke("myai");
+      await expect(service.create("myai", "other/", false)).rejects.toThrow(DuplicateKeyNameError);
     });
   });
 });

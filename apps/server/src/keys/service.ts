@@ -36,6 +36,7 @@ interface ApiKeyRow {
   created_at: string;
   expires_at: string | null;
   last_used_at: string | null;
+  revoked_at: string | null;
 }
 
 /**
@@ -97,6 +98,7 @@ export class ApiKeyService {
       | ApiKeyRow
       | undefined;
     if (!row) return null;
+    if (row.revoked_at !== null) return null;
     if (row.expires_at !== null && new Date(row.expires_at).getTime() <= Date.now()) {
       return null;
     }
@@ -112,12 +114,15 @@ export class ApiKeyService {
     };
   }
 
+  /** Lists non-revoked keys only. Revoked rows are hard-hidden here (matching the old
+   *  hard-delete behavior for this call) but deliberately survive in the table itself —
+   *  see `revoke()` — so `access_log.key_id` stays resolvable and the name stays blamed. */
   list(): ApiKeyListEntry[] {
     const rows = this.db
       .prepare(
-        "SELECT id, name, namespace, can_write, created_at, expires_at, last_used_at FROM api_keys ORDER BY id",
+        "SELECT id, name, namespace, can_write, created_at, expires_at, last_used_at FROM api_keys WHERE revoked_at IS NULL ORDER BY id",
       )
-      .all() as Omit<ApiKeyRow, "key_hash">[];
+      .all() as Omit<ApiKeyRow, "key_hash" | "revoked_at">[];
 
     return rows.map((row) => ({
       id: row.id,
@@ -130,8 +135,19 @@ export class ApiKeyService {
     }));
   }
 
+  /**
+   * Soft-revoke: stamps `revoked_at` instead of deleting the row. A hard DELETE would
+   * dangle `access_log.key_id` (the audit trail would point at nothing, and the key
+   * name — used as the git commit author, see VaultGit — would become unresolvable),
+   * and would free the UNIQUE(name) slot for reuse, letting a new key inherit an old
+   * key's blame. The UNIQUE constraint deliberately keeps a revoked name unavailable.
+   *
+   * Returns true only if a currently-active (non-revoked) key with this name existed.
+   */
   revoke(name: string): boolean {
-    const result = this.db.prepare("DELETE FROM api_keys WHERE name = ?").run(name);
+    const result = this.db
+      .prepare("UPDATE api_keys SET revoked_at = datetime('now') WHERE name = ? AND revoked_at IS NULL")
+      .run(name);
     return result.changes > 0;
   }
 }
