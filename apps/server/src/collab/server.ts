@@ -36,6 +36,14 @@ export interface HocuspocusHandle {
   configuration: { extensions: Array<{ afterUnloadDocument?(payload: unknown): unknown }> };
 }
 
+export interface FlushOptions {
+  /** Timeout in milliseconds for the flush operation (default: 5000ms).
+   *  If documents don't drain within this time, the promise resolves anyway
+   *  with a warning logged, ensuring the shutdown sequence completes even if
+   *  a document hangs. */
+  timeoutMs?: number;
+}
+
 /**
  * Closes every live collab connection and forces any pending debounced
  * `onStoreDocument` calls to run immediately, then resolves once every currently-loaded
@@ -65,16 +73,52 @@ export interface HocuspocusHandle {
  *   `flushPendingStores()` cannot itself be preempted by the microtask queue, so as long
  *   as nothing here `await`s, this ordering is safe regardless of how many microtask
  *   hops Hocuspocus's own debounce/save-mutex/unload chain takes internally.
+ *
+ * A bounded timeout ensures this promise always resolves within a reasonable time, even if
+ * a document hangs (e.g., a store callback never completes, or unload is blocked). On timeout,
+ * a warning is logged and the promise resolves anyway, allowing the shutdown sequence to
+ * continue instead of hanging the process until SIGKILL. The timeout is cleared if documents
+ * drain before the deadline, so normal completion doesn't incur unnecessary delay.
  */
-export function flushHocuspocusStores(hocuspocus: HocuspocusHandle): Promise<void> {
+export function flushHocuspocusStores(hocuspocus: HocuspocusHandle, opts: FlushOptions = {}): Promise<void> {
+  const timeoutMs = opts.timeoutMs ?? 5000;
   return new Promise((resolve) => {
-    if (hocuspocus.getDocumentsCount() === 0) {
+    let timeoutHandle: NodeJS.Timeout | undefined;
+
+    // Set up the cleanup function that clears the timeout.
+    const cleanup = () => {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = undefined;
+      }
+    };
+
+    const resolveAndCleanup = () => {
+      cleanup();
       resolve();
+    };
+
+    if (hocuspocus.getDocumentsCount() === 0) {
+      resolveAndCleanup();
       return;
     }
+
+    // Set the timeout immediately before adding the extension.
+    // If documents don't drain by then, we resolve anyway and log a warning.
+    timeoutHandle = setTimeout(() => {
+      timeoutHandle = undefined;
+      const pendingCount = hocuspocus.getDocumentsCount();
+      console.warn(
+        `[ndbrain] shutdown flush timed out after ${timeoutMs}ms with ${pendingCount} document(s) still pending, proceeding anyway`,
+      );
+      resolveAndCleanup();
+    }, timeoutMs);
+
     hocuspocus.configuration.extensions.push({
       afterUnloadDocument: () => {
-        if (hocuspocus.getDocumentsCount() === 0) resolve();
+        if (hocuspocus.getDocumentsCount() === 0) {
+          resolveAndCleanup();
+        }
       },
     });
     hocuspocus.flushPendingStores();

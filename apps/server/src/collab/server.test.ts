@@ -247,5 +247,60 @@ describe("createCollabServer", () => {
       expect(server.getDocumentsCount()).toBe(0);
       expect(await notes.read("myai/a.md")).toBe("flush me # A");
     });
+
+    it("resolves within the timeout even if a document never unloads, logging a warning", async () => {
+      // Create a mock Hocuspocus-like stub whose getDocumentsCount never reaches 0.
+      // This simulates the failure case: a document hangs in memory (store hangs,
+      // unload never completes, etc.) and shutdown must still finish instead of hanging
+      // the entire process until SIGKILL.
+      const neverDrains = {
+        getDocumentsCount: () => 1, // Always reports 1 document pending
+        closeConnections: () => {},
+        flushPendingStores: () => {},
+        configuration: { extensions: [] },
+      };
+
+      const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      // flushHocuspocusStores with a short timeout (default 5s, but we use less for the test).
+      // The key assertion: it RESOLVES (doesn't reject) within a bounded time.
+      const startTime = Date.now();
+      await expect(flushHocuspocusStores(neverDrains, { timeoutMs: 50 })).resolves.toBeUndefined();
+      const elapsed = Date.now() - startTime;
+
+      // Should resolve roughly within the timeout (allow some jitter).
+      expect(elapsed).toBeLessThan(500);
+
+      // Verify a warning was logged about the timeout.
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("shutdown flush timed out"),
+      );
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it("clears the timeout timer when documents drain before the deadline", async () => {
+      const server = createCollabServer(deps, { debounce: 10, maxDebounce: 50 });
+      await notes.write("myai/a.md", "# A", "julian");
+
+      const direct = await server.openDirectConnection("myai/a.md");
+      await direct.transact((document) => {
+        document.getText("content").insert(0, "quick drain ");
+      });
+      // Disconnect without forcing — document will still unload via Hocuspocus's own logic.
+      await direct.disconnect({ unloadImmediately: false });
+      expect(server.getDocumentsCount()).toBe(1);
+
+      // flushHocuspocusStores with a long timeout that would normally require waiting.
+      // Since the document drains quickly (fast debounce), it should resolve well before
+      // the timeout, proving the timer was cleared.
+      const startTime = Date.now();
+      await flushHocuspocusStores(server, { timeoutMs: 10_000 });
+      const elapsed = Date.now() - startTime;
+
+      // Should resolve in well under 10s (should be ~100-200ms with debounce=10).
+      expect(elapsed).toBeLessThan(2000);
+      expect(server.getDocumentsCount()).toBe(0);
+    });
   });
 });
