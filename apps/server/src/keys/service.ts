@@ -8,11 +8,13 @@ export class InvalidKeyNameError extends Error {}
 /** Thrown when a key name is already in use. */
 export class DuplicateKeyNameError extends Error {}
 
+/** Thrown when an expiry date is invalid or malformed. */
+export class InvalidExpiryError extends Error {}
+
 /** Key names double as the git commit author (see VaultGit), so the same pattern applies. */
 const NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 export interface ApiKeyListEntry {
-  id: number;
   name: string;
   namespace: string;
   canWrite: boolean;
@@ -73,7 +75,14 @@ export class ApiKeyService {
     const keyHash = hash(key);
 
     // Normalize expiresAt to UTC ISO string for timezone-robust comparison in validate().
-    const normalizedExpiresAt = expiresAt ? new Date(expiresAt).toISOString() : null;
+    let normalizedExpiresAt: string | null = null;
+    if (expiresAt) {
+      const expiryDate = new Date(expiresAt);
+      if (Number.isNaN(expiryDate.getTime())) {
+        throw new InvalidExpiryError(`invalid expiry date: ${expiresAt}`);
+      }
+      normalizedExpiresAt = expiryDate.toISOString();
+    }
 
     try {
       this.db
@@ -120,12 +129,11 @@ export class ApiKeyService {
   list(): ApiKeyListEntry[] {
     const rows = this.db
       .prepare(
-        "SELECT id, name, namespace, can_write, created_at, expires_at, last_used_at FROM api_keys WHERE revoked_at IS NULL ORDER BY id",
+        "SELECT name, namespace, can_write, created_at, expires_at, last_used_at FROM api_keys WHERE revoked_at IS NULL ORDER BY name",
       )
-      .all() as Omit<ApiKeyRow, "key_hash" | "revoked_at">[];
+      .all() as Omit<ApiKeyRow, "id" | "key_hash" | "revoked_at">[];
 
     return rows.map((row) => ({
-      id: row.id,
       name: row.name,
       namespace: row.namespace,
       canWrite: row.can_write === 1,

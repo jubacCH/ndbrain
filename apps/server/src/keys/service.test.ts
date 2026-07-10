@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../db/database.js";
-import { ApiKeyService, InvalidKeyNameError, DuplicateKeyNameError } from "./service.js";
+import { ApiKeyService, InvalidKeyNameError, DuplicateKeyNameError, InvalidExpiryError } from "./service.js";
 
 function makeService() {
   const db = openDatabase(":memory:");
@@ -68,6 +68,16 @@ describe("ApiKeyService", () => {
       const result = await service.validate(key);
       expect(result!.scope.namespace).toBe("myai/");
     });
+
+    it("throws InvalidExpiryError when expiresAt is a malformed date string", async () => {
+      const service = makeService();
+      await expect(service.create("test", "", false, "garbage")).rejects.toThrow(InvalidExpiryError);
+    });
+
+    it("throws InvalidExpiryError when expiresAt is an invalid date", async () => {
+      const service = makeService();
+      await expect(service.create("test", "", false, "not-a-date")).rejects.toThrow(InvalidExpiryError);
+    });
   });
 
   describe("validate", () => {
@@ -134,6 +144,13 @@ describe("ApiKeyService", () => {
       expect(entry.expiresAt).toBeNull();
       expect(entry).not.toHaveProperty("keyHash");
       expect(entry).not.toHaveProperty("key_hash");
+    });
+
+    it("does not include the internal id", async () => {
+      const service = makeService();
+      await service.create("myai", "myai/", true);
+      const entries = service.list();
+      expect(entries[0]).not.toHaveProperty("id");
     });
   });
 

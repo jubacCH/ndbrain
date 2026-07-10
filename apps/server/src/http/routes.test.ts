@@ -237,6 +237,59 @@ describe("REST /api/v1/keys", () => {
     const list = await app.inject(authed({ method: "GET", url: "/api/v1/keys" }));
     expect(list.json().keys).toEqual([]);
   });
+
+  it("returns 400 with malformed expiresAt instead of 500", async () => {
+    const res = await app.inject(
+      authed({
+        method: "POST",
+        url: "/api/v1/keys",
+        payload: { name: "bad-expiry", namespace: "", canWrite: false, expiresAt: "garbage" },
+      }),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("invalid_expiry");
+  });
+
+  it("does not include the internal id in list responses", async () => {
+    await app.inject(
+      authed({
+        method: "POST",
+        url: "/api/v1/keys",
+        payload: { name: "test-key", namespace: "test/", canWrite: false },
+      }),
+    );
+    const list = await app.inject(authed({ method: "GET", url: "/api/v1/keys" }));
+    expect(list.statusCode).toBe(200);
+    expect(list.json().keys[0]).not.toHaveProperty("id");
+  });
+
+  it("prevents an API key from accessing key-management endpoints (401)", async () => {
+    // Mint a real API key via the service.
+    const apiKey = await apiKeys.create("agent-test", "myai/", true);
+
+    // Try to use it as Bearer auth on /api/v1/keys endpoints.
+    const getKeys = await app.inject({
+      method: "GET",
+      url: "/api/v1/keys",
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    expect(getKeys.statusCode).toBe(401);
+
+    const postKeys = await app.inject({
+      method: "POST",
+      url: "/api/v1/keys",
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { name: "should-fail", namespace: "", canWrite: false },
+    });
+    expect(postKeys.statusCode).toBe(401);
+
+    const deleteKeys = await app.inject({
+      method: "DELETE",
+      url: "/api/v1/keys/agent-test",
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    expect(deleteKeys.statusCode).toBe(401);
+  });
 });
 
 describe("REST /api/v1/audit", () => {
