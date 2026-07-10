@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { openDatabase } from "../db/database.js";
 import { AuthService } from "../http/auth.js";
 import { ApiKeyService } from "../keys/service.js";
-import { authenticateCollab } from "./auth.js";
+import { authenticateCollab, CollabAuthError } from "./auth.js";
 
 function makeDeps() {
   const db = openDatabase(":memory:");
@@ -18,20 +18,41 @@ describe("authenticateCollab", () => {
 
       const result = await authenticateCollab(deps, { token, documentName: "notes/x.md" });
 
-      expect(result).toEqual({ actor: "julian", readOnly: false });
+      expect(result).toEqual({
+        actor: "julian",
+        readOnly: false,
+        documentName: "notes/x.md",
+      });
     });
 
-    it("throws for a valid session but a malformed/traversal documentName", async () => {
+    it("returns the canonical (normalized) documentName", async () => {
+      const deps = makeDeps();
+      await deps.auth.createUser("julian", "secret123");
+      const token = (await deps.auth.login("julian", "secret123"))!;
+
+      const result = await authenticateCollab(deps, {
+        token,
+        documentName: "myai/./x.md",
+      });
+
+      expect(result).toEqual({
+        actor: "julian",
+        readOnly: false,
+        documentName: "myai/x.md",
+      });
+    });
+
+    it("throws CollabAuthError for a valid session but a malformed/traversal documentName", async () => {
       const deps = makeDeps();
       await deps.auth.createUser("julian", "secret123");
       const token = (await deps.auth.login("julian", "secret123"))!;
 
       await expect(
         authenticateCollab(deps, { token, documentName: "../etc/passwd.md" }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(CollabAuthError);
       await expect(
         authenticateCollab(deps, { token, documentName: "notes/x.txt" }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(CollabAuthError);
     });
   });
 
@@ -40,18 +61,32 @@ describe("authenticateCollab", () => {
       const deps = makeDeps();
       const key = await deps.apiKeys.create("myai-agent", "myai/", true);
 
-      const result = await authenticateCollab(deps, { token: key, documentName: "myai/notes.md" });
+      const result = await authenticateCollab(deps, {
+        token: key,
+        documentName: "myai/notes.md",
+      });
 
-      expect(result).toEqual({ actor: "myai-agent", readOnly: false });
+      expect(result).toEqual({
+        actor: "myai-agent",
+        readOnly: false,
+        documentName: "myai/notes.md",
+      });
     });
 
     it("authenticates a read-only key in-scope as read-only", async () => {
       const deps = makeDeps();
       const key = await deps.apiKeys.create("reader", "myai/", false);
 
-      const result = await authenticateCollab(deps, { token: key, documentName: "myai/notes.md" });
+      const result = await authenticateCollab(deps, {
+        token: key,
+        documentName: "myai/notes.md",
+      });
 
-      expect(result).toEqual({ actor: "reader", readOnly: true });
+      expect(result).toEqual({
+        actor: "reader",
+        readOnly: true,
+        documentName: "myai/notes.md",
+      });
     });
 
     it("throws when the doc is out of the key's scope", async () => {
@@ -74,6 +109,15 @@ describe("authenticateCollab", () => {
       await expect(
         authenticateCollab(deps, { token: key, documentName: "myai/../other.md" }),
       ).rejects.toThrow();
+    });
+
+    it("throws CollabAuthError for malformed/traversal paths", async () => {
+      const deps = makeDeps();
+      const key = await deps.apiKeys.create("myai-agent", "myai/", true);
+
+      await expect(
+        authenticateCollab(deps, { token: key, documentName: "../etc/passwd.md" }),
+      ).rejects.toThrow(CollabAuthError);
     });
 
     it("throws for an expired key", async () => {

@@ -1,7 +1,7 @@
 import type { AuthService } from "../http/auth.js";
 import type { ApiKeyService } from "../keys/service.js";
 import { isPathInScope } from "../keys/scope.js";
-import { Vault } from "../vault/files.js";
+import { Vault, VaultPathError } from "../vault/files.js";
 
 /** Thrown for any authentication/authorization failure. Hocuspocus's
  *  `onAuthenticate` hook rejects the connection when this handler throws, so
@@ -17,6 +17,10 @@ export interface CollabAuthResult {
   actor: string;
   /** true if this connection may only read (read-only API key scope). */
   readOnly: boolean;
+  /** Canonical (normalized) document name. Clients should key their
+   *  Y.Docs by this normalized name to avoid duplicate docs for
+   *  equivalent paths (e.g., "myai/x.md" and "myai/./x.md"). */
+  documentName: string;
 }
 
 // Reuse Vault purely for `assertSafePath`, which is a pure string check and
@@ -45,6 +49,10 @@ const pathValidator = new Vault("");
  *   Out-of-scope throws the same generic error as "doesn't exist" so the
  *   connection reveals nothing about the vault's contents.
  *
+ * On success, returns the canonical (normalized) document name so the caller
+ * can key the Y.Doc by the normalized path, preventing duplicate docs for
+ * equivalent paths.
+ *
  * Any failure (no token, invalid/expired/revoked token, out-of-scope doc,
  * malformed doc path) throws `CollabAuthError`, which the Hocuspocus
  * `onAuthenticate` hook maps to a rejected connection.
@@ -63,18 +71,40 @@ export async function authenticateCollab(
     // assertSafePath before the scope check: it normalizes the path, so a
     // traversal segment is rejected outright rather than compared (and
     // potentially prefix-matched) as raw text.
-    const safePath = pathValidator.assertSafePath(documentName);
+    let safePath: string;
+    try {
+      safePath = pathValidator.assertSafePath(documentName);
+    } catch (err) {
+      if (err instanceof VaultPathError) {
+        throw new CollabAuthError("invalid document path");
+      }
+      throw err;
+    }
+
     if (!isPathInScope(validated.scope, safePath)) {
       throw new CollabAuthError("document out of scope");
     }
 
-    return { actor: validated.name, readOnly: !validated.scope.canWrite };
+    return {
+      actor: validated.name,
+      readOnly: !validated.scope.canWrite,
+      documentName: safePath,
+    };
   }
 
   const session = deps.auth.validateSession(token);
   if (!session) throw new CollabAuthError("invalid session");
 
   // No scope check for humans, but the path still must be well-formed.
-  pathValidator.assertSafePath(documentName);
-  return { actor: session.username, readOnly: false };
+  let safePath: string;
+  try {
+    safePath = pathValidator.assertSafePath(documentName);
+  } catch (err) {
+    if (err instanceof VaultPathError) {
+      throw new CollabAuthError("invalid document path");
+    }
+    throw err;
+  }
+
+  return { actor: session.username, readOnly: false, documentName: safePath };
 }
