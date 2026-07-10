@@ -2,7 +2,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as Y from "yjs";
 import { openDatabase, type Database } from "../db/database.js";
+import { DocumentManager } from "../collab/document-manager.js";
 import { Indexer } from "../index/indexer.js";
 import { Vault } from "../vault/files.js";
 import { VaultGit } from "../vault/git.js";
@@ -173,5 +175,95 @@ describe("NoteService", () => {
 
   it("EditAmbiguousError has correct name property", () => {
     expect(new EditAmbiguousError("test").name).toBe("EditAmbiguousError");
+  });
+
+  describe("live-doc routing (docManager hook)", () => {
+    it("write on a live doc lands in the Y.Doc and index, skips the direct commit, and the doc's later store persists it exactly once", async () => {
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db));
+      const manager = new DocumentManager({ notes: wired });
+      wired.setDocManager(manager);
+
+      await wired.write("myai/live-a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/live-a.md", ydoc);
+
+      const before = await git.historyFor("myai/live-a.md");
+      await wired.write("myai/live-a.md", "# New", "myai");
+
+      // Landed in the live doc...
+      expect(manager.getText(ydoc).toString()).toBe("# New");
+      // ...index updated immediately...
+      expect(db.prepare("SELECT title FROM notes WHERE path='myai/live-a.md'").get()).toEqual({
+        title: "New",
+      });
+      // ...but no direct file write/commit happened yet.
+      expect(await wired.read("myai/live-a.md")).toBe("# A");
+      expect((await git.historyFor("myai/live-a.md")).length).toBe(before.length);
+
+      // The doc's own (debounced, here manually flushed) store persists it later,
+      // exactly once, attributed to the agent that made the live edit.
+      await manager.store("myai/live-a.md", ydoc);
+      const history = await git.historyFor("myai/live-a.md");
+      expect(history.length).toBe(before.length + 1);
+      expect(history[0]?.author).toBe("myai");
+      expect(await wired.read("myai/live-a.md")).toBe("# New");
+    });
+
+    it("write without a live doc uses the unchanged direct path even with docManager wired", async () => {
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db));
+      const manager = new DocumentManager({ notes: wired });
+      wired.setDocManager(manager);
+
+      await wired.write("myai/live-b.md", "# B", "julian");
+
+      expect(await wired.read("myai/live-b.md")).toBe("# B");
+      expect((await git.historyFor("myai/live-b.md"))[0].author).toBe("julian");
+    });
+
+    it("editNote on a live doc reads and edits the live doc's current content, not the (possibly stale) file", async () => {
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db));
+      const manager = new DocumentManager({ notes: wired });
+      wired.setDocManager(manager);
+
+      await wired.write("myai/live-e.md", "hello world", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/live-e.md", ydoc);
+      // A live edit that exists only in the doc, not yet persisted to disk.
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, "!!!");
+      expect(await wired.read("myai/live-e.md")).toBe("hello world");
+
+      await wired.editNote("myai/live-e.md", "world!!!", "brain", "myai-agent");
+
+      expect(manager.getText(ydoc).toString()).toBe("hello brain");
+      // Still no direct file write for the live path.
+      expect(await wired.read("myai/live-e.md")).toBe("hello world");
+    });
+
+    it("appendNote on a live doc appends to the live doc's current content", async () => {
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db));
+      const manager = new DocumentManager({ notes: wired });
+      wired.setDocManager(manager);
+
+      await wired.write("myai/live-ap.md", "line one", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/live-ap.md", ydoc);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " (live)");
+
+      await wired.appendNote("myai/live-ap.md", "line two", "myai-agent");
+
+      expect(manager.getText(ydoc).toString()).toBe("line one (live)\nline two");
+      expect(await wired.read("myai/live-ap.md")).toBe("line one");
+    });
+
+    it("appendNote falls back to the direct path when docManager is set but the path is not live", async () => {
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db));
+      const manager = new DocumentManager({ notes: wired });
+      wired.setDocManager(manager);
+
+      await wired.appendNote("myai/live-np.md", "hello", "julian");
+
+      expect(await wired.read("myai/live-np.md")).toBe("hello");
+      expect((await git.historyFor("myai/live-np.md"))[0].author).toBe("julian");
+    });
   });
 });

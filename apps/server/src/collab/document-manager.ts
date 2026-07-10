@@ -101,6 +101,52 @@ export class DocumentManager {
     applyExternalChange(ydoc, this.getText(ydoc), newMarkdown);
   }
 
+  /** Returns the live doc's current markdown for `path`, or `undefined` if `path`
+   *  isn't live. Used by `NoteService` so `editNote`/`appendNote` read the actually-
+   *  displayed content of a live doc instead of a possibly-stale file. */
+  getLiveMarkdown(path: string): string | undefined {
+    const ydoc = this.live.get(path);
+    return ydoc ? readMarkdown(this.getText(ydoc)) : undefined;
+  }
+
+  /**
+   * Routes an MCP/REST-originated write from `NoteService` into `path`'s live
+   * Y.Doc, if one is open, instead of letting it bypass the collab doc and write
+   * the file directly — so connected clients see the agent's edit live, with
+   * cursors/relative positions preserved (same prefix/suffix diff as `applyExternal`).
+   *
+   * Called from INSIDE `NoteService`'s `mutex.run` (its write/editNote/appendNote
+   * critical section). This method stays a synchronous, in-memory-only mutation of
+   * the Y.Doc plus a `lastWriter` bookkeeping update — it never calls back into
+   * `NoteService` (no `store`/`write`/`writeDirect` here), so there is no
+   * reentrancy or deadlock risk against the non-reentrant `Mutex`. The actual file
+   * persistence happens later, out of band, whenever the doc's debounced store
+   * (`scheduleStore`/`store`) next fires — which is exactly why `store` below calls
+   * `notes.writeDirect` rather than `notes.write`: routing the doc's own persisting
+   * write back through `write()` would re-enter this method (the path is still
+   * live), no-op against the already-matching content, and skip the file write
+   * forever.
+   *
+   * Returns `true` if `path` is live (the write landed in the doc; the caller must
+   * NOT also write the file directly) or `false` if not live (the caller should run
+   * its normal direct-write path).
+   *
+   * Awareness TODO (Task 8): the spec also asks for a transient awareness entry so
+   * connected clients can render "<actor> edited". Not implemented here: awareness
+   * in Hocuspocus lives on the per-connection `awareness` protocol object handed to
+   * `onConnect`/`onLoadDocument` hooks, which `DocumentManager` has no handle on —
+   * Task 8 is what wires the Hocuspocus connection context this needs. Faking it
+   * (e.g. stashing a plain map here) wouldn't reach any connected client, so this is
+   * left as a documented gap rather than a fake implementation.
+   */
+  applyAgentWrite(path: string, newMarkdown: string, actor: string): boolean {
+    const ydoc = this.live.get(path);
+    if (!ydoc) return false;
+    applyExternalChange(ydoc, this.getText(ydoc), newMarkdown);
+    this.lastWriter.set(path, actor);
+    return true;
+  }
+
   /**
    * Serializes `ydoc`'s content and persists it to `path` through `NoteService`
    * (git commit + index + shared mutex + watcher own-write suppression).
@@ -111,8 +157,14 @@ export class DocumentManager {
    * redundant filesystem write and index update.
    *
    * `actor` is optional: if omitted, falls back to the last explicit actor
-   * seen for this path (via a prior `store`/`scheduleStore` call), and to
-   * `"collab"` if none is known yet.
+   * seen for this path (via a prior `store`/`scheduleStore` call, or an
+   * `applyAgentWrite` call attributing an agent write) — and to `"collab"`
+   * if none is known yet.
+   *
+   * Persists via `notes.writeDirect` (not `notes.write`): `path` is live by
+   * construction whenever a doc is being stored, so routing through `write`
+   * would loop back into `applyAgentWrite` and never reach disk — see that
+   * method's doc comment for the full explanation.
    */
   async store(path: string, ydoc: Y.Doc, actor?: string): Promise<void> {
     pathValidator.assertSafePath(path);
@@ -120,7 +172,7 @@ export class DocumentManager {
     const markdown = readMarkdown(this.getText(ydoc));
     const current = await this.deps.notes.read(path);
     if (current === markdown) return;
-    await this.deps.notes.write(path, markdown, resolvedActor);
+    await this.deps.notes.writeDirect(path, markdown, resolvedActor);
   }
 
   /**

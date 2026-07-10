@@ -165,6 +165,38 @@ describe("DocumentManager", () => {
     });
   });
 
+  describe("applyAgentWrite / getLiveMarkdown", () => {
+    it("returns false and does nothing when the path is not live", () => {
+      expect(manager.applyAgentWrite("myai/not-live.md", "# X", "myai")).toBe(false);
+      expect(manager.getLiveMarkdown("myai/not-live.md")).toBeUndefined();
+    });
+
+    it("applies the write into the live Y.Doc and records last-writer, without persisting yet", async () => {
+      await notes.write("myai/a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+
+      const before = await git.historyFor("myai/a.md");
+      const applied = manager.applyAgentWrite("myai/a.md", "# New", "myai");
+
+      expect(applied).toBe(true);
+      expect(manager.getText(ydoc).toString()).toBe("# New");
+      expect(manager.getLiveMarkdown("myai/a.md")).toBe("# New");
+      // No direct file write/commit happened yet — that's the doc store's job.
+      const after = await git.historyFor("myai/a.md");
+      expect(after.length).toBe(before.length);
+      expect(await notes.read("myai/a.md")).toBe("# A");
+
+      // The recorded last-writer is used as the fallback attribution for a
+      // later store call without an explicit actor.
+      await manager.store("myai/a.md", ydoc);
+      const history = await git.historyFor("myai/a.md");
+      expect(history.length).toBe(before.length + 1);
+      expect(history[0]?.author).toBe("myai");
+      expect(await notes.read("myai/a.md")).toBe("# New");
+    });
+  });
+
   describe("scheduleStore / flush / flushAll", () => {
     it("collapses 3 rapid schedules into exactly one commit after flush", async () => {
       await notes.write("myai/a.md", "# A", "julian");
