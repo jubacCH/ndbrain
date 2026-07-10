@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { connect as netConnect } from "node:net";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { FastifyInstance } from "fastify";
 import * as Y from "yjs";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import { WebSocket } from "ws";
@@ -16,16 +15,18 @@ import { VaultGit } from "../vault/git.js";
 import { AuthService } from "./auth.js";
 import { ApiKeyService } from "../keys/service.js";
 import { DocumentManager } from "../collab/document-manager.js";
-import { buildServer } from "./server.js";
+import { buildServer, type NdbrainServer } from "./server.js";
+import { createShutdown } from "../shutdown.js";
 
 let dir: string;
-let app: FastifyInstance;
+let app: NdbrainServer;
 let db: Database;
 let notes: NoteService;
 let apiKeys: ApiKeyService;
 let wsUrl: string;
 let openProviders: HocuspocusProvider[];
 let capturedSockets: WebSocket[];
+let documents: DocumentManager;
 
 /** Real WS client, real network round trip through `/collab` - no mocking of
  *  Hocuspocus or the wire protocol. */
@@ -88,7 +89,7 @@ beforeEach(async () => {
   const indexer = new Indexer(db);
   const auth = new AuthService(db);
   notes = new NoteService(vault, git, indexer);
-  const documents = new DocumentManager({ notes });
+  documents = new DocumentManager({ notes });
   apiKeys = new ApiKeyService(db);
   openProviders = [];
   capturedSockets = [];
@@ -281,4 +282,52 @@ describe("/collab WebSocket upgrade", () => {
     expect(docWriter.getText("content").toString()).toBe("seed");
     expect(await notes.read("myai/ro.md")).toBe("seed");
   });
+
+  it("a real shutdown resolves within a bounded time and persists a pending edit, even with an open collab client (C2)", async () => {
+    // Own generous test timeout: the 5000ms *internal* race below is the actual
+    // assertion under test (bounded shutdown); this just gives it room to lose.
+    await notes.write("myai/shutdown.md", "", "julian");
+    const token = await apiKeys.create("myai-agent", "myai/", true);
+
+    const doc = new Y.Doc();
+    const provider = connect("myai/shutdown.md", token, doc);
+    await waitForEvent(provider, "synced");
+
+    // Edit, then wait for it to actually reach the SERVER over the wire (a bounded
+    // real wait for a deterministic condition, not a fixed sleep) before shutting
+    // down - deliberately NOT waiting out this suite's 20ms debounce on top of that.
+    // Shutdown must force the pending store itself, not rely on having gotten lucky
+    // with timing, but it also isn't meant to survive an edit that hasn't even
+    // reached the server yet (that's plain network transit, not a debounce window).
+    doc.getText("content").insert(0, "persisted before exit");
+    await expect
+      .poll(() => documents.getLiveMarkdown("myai/shutdown.md"), { timeout: 2000, interval: 10 })
+      .toBe("persisted before exit");
+
+    const shutdown = createShutdown({
+      app,
+      watcher: { stop: async () => {} },
+      db: { close: () => {} },
+      documents,
+      hocuspocus: app.hocuspocus,
+      closeCollabSockets: app.closeCollabSockets,
+    });
+
+    const start = Date.now();
+    await Promise.race([
+      shutdown(),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error("shutdown did not resolve in time")), 5000),
+      ),
+    ]);
+    expect(Date.now() - start).toBeLessThan(5000);
+
+    expect(await notes.read("myai/shutdown.md")).toBe("persisted before exit");
+
+    // This test's own `shutdown()` already closed `app` - drop it from `openProviders`
+    // handling too so `afterEach`'s own `app.close()` (idempotent) and provider
+    // teardown don't have anything surprising left to do.
+    provider.destroy();
+    openProviders.splice(openProviders.indexOf(provider), 1);
+  }, 8000);
 });

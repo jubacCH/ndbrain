@@ -12,6 +12,7 @@ import type { VaultGit } from "../vault/git.js";
 import type { ApiKeyService } from "../keys/service.js";
 import type { AuthService } from "./auth.js";
 import { registerRoutes } from "./routes.js";
+import type { Hocuspocus } from "@hocuspocus/server";
 import { createCollabServer, type CollabServerOptions } from "../collab/server.js";
 import type { DocumentManager } from "../collab/document-manager.js";
 
@@ -67,7 +68,14 @@ function toFetchRequest(req: IncomingMessage): Request {
   return new Request(url, { headers, method: req.method ?? "GET" });
 }
 
-export function buildServer(deps: ServerDeps): FastifyInstance {
+/** A built server exposes the underlying live Hocuspocus instance and a way to force-
+ *  close every raw `/collab` socket, alongside the plain Fastify app (see C2), so
+ *  `main.ts`/`shutdown.ts` can disconnect clients, flush pending collab-doc stores and
+ *  unblock `app.close()` on shutdown - `mountCollab` otherwise keeps both trapped in its
+ *  own local scope with no way out. */
+export type NdbrainServer = FastifyInstance & CollabMount;
+
+export function buildServer(deps: ServerDeps): NdbrainServer {
   // coerceTypes off so schema type mismatches (e.g. numeric content) are rejected, not coerced.
   const app = Fastify({ logger: false, ajv: { customOptions: { coerceTypes: false } } });
   app.register(cookie);
@@ -116,8 +124,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   });
 
   registerRoutes(app, deps);
-  mountCollab(app, deps);
-  return app;
+  const collab = mountCollab(app, deps);
+  return Object.assign(app, collab);
+}
+
+/** Return value of `mountCollab`: the live Hocuspocus instance plus a way to forcibly
+ *  close every currently-open raw `/collab` socket (see C2 and `closeCollabSockets`'s
+ *  own doc comment on why this is necessary at all). */
+export interface CollabMount {
+  hocuspocus: Hocuspocus;
+  closeCollabSockets(): void;
 }
 
 /**
@@ -142,12 +158,22 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
  * longer auto-rejects upgrade requests on other paths — we own all of them now,
  * so non-`/collab` upgrades are explicitly rejected (never silently hung).
  */
-function mountCollab(app: FastifyInstance, deps: ServerDeps): void {
+function mountCollab(app: FastifyInstance, deps: ServerDeps): CollabMount {
   const hocuspocus = createCollabServer(
     { auth: deps.auth, apiKeys: deps.apiKeys, documents: deps.documents },
     deps.collabOptions,
   );
   const wss = new WebSocketServer({ noServer: true });
+  // Tracks every currently-open raw `/collab` socket (see C2): Node's own
+  // `server.closeAllConnections()` was verified (empirically, against a real upgraded
+  // socket) to NOT reach a socket that has gone through an 'upgrade' event - it stays
+  // reported as an open connection indefinitely, which is exactly what makes Fastify
+  // 5's `app.close()` hang. We own this upgrade wiring ourselves (no
+  // `@fastify/websocket`), so we track and close these sockets ourselves too, instead
+  // of relying on Hocuspocus's `closeConnections()` (which only closes its *logical*
+  // per-document `Connection`, never the underlying socket - see `ShutdownDeps.app`'s
+  // doc comment in `shutdown.ts`) or Node's built-in connection tracking.
+  const liveSockets = new Set<WebSocket>();
 
   // C1 hardening: a raw TCP client controls every byte of this callback's inputs before
   // any auth runs (Host header, WS handshake headers, ...). `new URL` inside
@@ -173,7 +199,9 @@ function mountCollab(app: FastifyInstance, deps: ServerDeps): void {
           ws.on("message", (data: Buffer) => {
             connection.handleMessage(new Uint8Array(data));
           });
+          liveSockets.add(ws);
           ws.on("close", (code: number, reason: Buffer) => {
+            liveSockets.delete(ws);
             connection.handleClose({ code, reason: reason.toString() });
           });
           // Critical: handle socket errors to prevent process crash. Without this handler,
@@ -196,4 +224,12 @@ function mountCollab(app: FastifyInstance, deps: ServerDeps): void {
       socket.destroy();
     }
   });
+
+  return {
+    hocuspocus,
+    closeCollabSockets: () => {
+      for (const ws of liveSockets) ws.terminate();
+      liveSockets.clear();
+    },
+  };
 }

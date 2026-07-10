@@ -49,7 +49,14 @@ console.log(`ndbrain listening on :${config.port}`);
 
 // Graceful shutdown: drain requests, stop the watcher, close the db, then exit.
 // Idempotent, so a repeated signal cannot trigger a double close.
-const shutdown = createShutdown({ app, watcher, db, documents });
+const shutdown = createShutdown({
+  app,
+  watcher,
+  db,
+  documents,
+  hocuspocus: app.hocuspocus,
+  closeCollabSockets: app.closeCollabSockets,
+});
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {
     void shutdown().then(

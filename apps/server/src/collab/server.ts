@@ -20,6 +20,68 @@ export interface CollabServerDeps {
 }
 
 /**
+ * The minimal duck-typed surface of a `Hocuspocus` instance that shutdown needs (see
+ * `shutdown.ts`/`flushHocuspocusStores`). A real `Hocuspocus` instance structurally
+ * satisfies this; kept separate from the concrete class so tests can pass a lightweight
+ * fake instead of standing up a real one just to test shutdown's call ordering.
+ */
+export interface HocuspocusHandle {
+  getDocumentsCount(): number;
+  closeConnections(documentName?: string): void;
+  flushPendingStores(): void;
+  // Method-shorthand syntax (not a `afterUnloadDocument?: (payload) => unknown` property)
+  // deliberately: TS checks method-shorthand parameters bivariantly, so a real
+  // `Hocuspocus.configuration.extensions` (whose `afterUnloadDocument` takes the much
+  // more specific `afterUnloadDocumentPayload`) stays structurally assignable here.
+  configuration: { extensions: Array<{ afterUnloadDocument?(payload: unknown): unknown }> };
+}
+
+/**
+ * Closes every live collab connection and forces any pending debounced
+ * `onStoreDocument` calls to run immediately, then resolves once every currently-loaded
+ * document has fully unloaded (i.e. every forced store has actually landed) - so a
+ * caller (shutdown.ts, see C2) can safely proceed to `app.close()`/close the database
+ * right after, instead of racing an in-flight debounced store.
+ *
+ * `hocuspocus.closeConnections()` is expected to already have been called by the caller
+ * (a distinct, separately-observable step in the shutdown sequence); this only calls
+ * `flushPendingStores()` itself. Both verified against the installed
+ * `@hocuspocus/server@4.3.0` source (see `Server.destroy()`, the built-in HTTP-owning
+ * wrapper class we don't use - we own our own `/collab` upgrade handling in
+ * `http/server.ts` instead, but replicate its shutdown technique here):
+ *
+ * - `flushPendingStores()` immediately runs (`debouncer.executeNow`) every document's
+ *   still-debounced `onStoreDocument` call - the only way to force a pending store to
+ *   happen right now instead of waiting out its `debounce`/`maxDebounce` window.
+ * - Neither `flushPendingStores()` nor `closeConnections()` return a promise for the
+ *   triggered work - they fire the debounced/close callbacks synchronously but those
+ *   callbacks' own bodies (our `onStoreDocument`/`afterUnloadDocument` hooks) resolve
+ *   later, over one or more microtasks. The only after-the-fact signal that a forced
+ *   store (and the unload that follows it once `shouldUnloadDocument` is satisfied)
+ *   actually finished is `afterUnloadDocument` firing with `getDocumentsCount() === 0`.
+ * - The extension is pushed, and `getDocumentsCount()` checked, before
+ *   `flushPendingStores()` runs, so no `afterUnloadDocument` it (or the earlier
+ *   `closeConnections()`) triggers can be missed - synchronous code between here and
+ *   `flushPendingStores()` cannot itself be preempted by the microtask queue, so as long
+ *   as nothing here `await`s, this ordering is safe regardless of how many microtask
+ *   hops Hocuspocus's own debounce/save-mutex/unload chain takes internally.
+ */
+export function flushHocuspocusStores(hocuspocus: HocuspocusHandle): Promise<void> {
+  return new Promise((resolve) => {
+    if (hocuspocus.getDocumentsCount() === 0) {
+      resolve();
+      return;
+    }
+    hocuspocus.configuration.extensions.push({
+      afterUnloadDocument: () => {
+        if (hocuspocus.getDocumentsCount() === 0) resolve();
+      },
+    });
+    hocuspocus.flushPendingStores();
+  });
+}
+
+/**
  * Builds the real Hocuspocus collaboration server, wired to the actual
  * auth/persistence services: `onAuthenticate` -> `authenticateCollab` (T6),
  * `onLoadDocument`/`onStoreDocument`/`afterUnloadDocument` -> `DocumentManager`

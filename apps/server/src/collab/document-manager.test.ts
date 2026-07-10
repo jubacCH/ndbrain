@@ -326,6 +326,53 @@ describe("DocumentManager", () => {
       expect(after.length).toBe(before.length + 1);
     });
 
+    it("flushAll awaits a bare store() call in flight, even when it wasn't triggered via scheduleStore", async () => {
+      // Reproduces the production shutdown path: Hocuspocus's own onStoreDocument hook
+      // calls `documents.store(...)` directly (see collab/server.ts) - never through
+      // scheduleStore/runStore - so historically that promise was untracked by
+      // inFlight/inFlightByPath and flushAll() couldn't see it at all.
+      await notes.write("myai/a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " extra");
+
+      const before = await git.historyFor("myai/a.md");
+
+      const originalWriteDirect = notes.writeDirect.bind(notes);
+      let releaseWrite = () => {};
+      const writeGate = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      const writeSpy = vi
+        .spyOn(notes, "writeDirect")
+        .mockImplementation(async (path, content, actor) => {
+          await writeGate;
+          return originalWriteDirect(path, content, actor);
+        });
+
+      // Call store() directly and do NOT await it yet - mirrors onStoreDocument calling
+      // it and only awaiting inside its own hook chain, not from our shutdown code.
+      const storePromise = manager.store("myai/a.md", ydoc, "julian");
+
+      let flushAllSettled = false;
+      const flushAllPromise = manager.flushAll().then(() => {
+        flushAllSettled = true;
+      });
+
+      // Give flushAll a window to (wrongly) resolve early if store() isn't tracked.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(flushAllSettled).toBe(false);
+
+      releaseWrite();
+      await Promise.all([storePromise, flushAllPromise]);
+      expect(flushAllSettled).toBe(true);
+      writeSpy.mockRestore();
+
+      expect(await notes.read("myai/a.md")).toBe("# A extra");
+      const after = await git.historyFor("myai/a.md");
+      expect(after.length).toBe(before.length + 1);
+    });
+
     it("coalesces 3 rapid schedules into exactly one store() call from the real timer, not via flush", async () => {
       // Unlike the flush()-based coalescing test above (which would pass
       // even without clearTimeout, since flush() forces the store directly),

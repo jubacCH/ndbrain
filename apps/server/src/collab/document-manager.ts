@@ -165,14 +165,44 @@ export class DocumentManager {
    * construction whenever a doc is being stored, so routing through `write`
    * would loop back into `applyAgentWrite` and never reach disk — see that
    * method's doc comment for the full explanation.
+   *
+   * Tracked in `inFlight`/`inFlightByPath` (via `trackInFlight`) regardless of who
+   * calls it — in particular, Hocuspocus's own `onStoreDocument` hook
+   * (`collab/server.ts`) calls this directly, never through `scheduleStore`/`runStore`.
+   * Without this, `flushAll` (used on shutdown, see C2) couldn't see — and therefore
+   * couldn't await — a store already under way from that path, and a caller exiting
+   * right after `flushAll()` resolved could still race a commit that hadn't landed yet.
    */
-  async store(path: string, ydoc: Y.Doc, actor?: string): Promise<void> {
+  store(path: string, ydoc: Y.Doc, actor?: string): Promise<void> {
+    return this.trackInFlight(path, this.storeInner(path, ydoc, actor));
+  }
+
+  /** Unlocked/untracked body of `store` — see that method's doc comment. Split out so
+   *  both `store` (called directly, e.g. by `onStoreDocument`) and the debounce timer
+   *  path in `scheduleStore` go through the same `trackInFlight` registration. */
+  private async storeInner(path: string, ydoc: Y.Doc, actor?: string): Promise<void> {
     pathValidator.assertSafePath(path);
     const resolvedActor = this.resolveActor(path, actor);
     const markdown = readMarkdown(this.getText(ydoc));
     const current = await this.deps.notes.read(path);
     if (current === markdown) return;
     await this.deps.notes.writeDirect(path, markdown, resolvedActor);
+  }
+
+  /**
+   * Registers `promise` in `inFlight`/`inFlightByPath` for the duration of its
+   * execution, so `flush`/`flushAll` can await it regardless of what triggered it.
+   * Registration happens synchronously (no `await` before `inFlight.add`/
+   * `inFlightByPath.set` run), so a `flushAll()` called immediately after — even
+   * without awaiting the triggering call first — is guaranteed to see it.
+   */
+  private trackInFlight(path: string, promise: Promise<void>): Promise<void> {
+    this.inFlight.add(promise);
+    this.inFlightByPath.set(path, promise);
+    return promise.finally(() => {
+      this.inFlight.delete(promise);
+      if (this.inFlightByPath.get(path) === promise) this.inFlightByPath.delete(path);
+    });
   }
 
   /**
@@ -191,29 +221,17 @@ export class DocumentManager {
     if (existing) clearTimeout(existing.timer);
     const timer = setTimeout(() => {
       this.pending.delete(path);
-      this.runStore(path, ydoc, resolvedActor).catch((err) => {
+      // `store` (not a bare private helper) so this goes through the same
+      // `trackInFlight` registration as every other caller — this closes the shutdown
+      // data-loss window where the timer fires (removing its `pending` entry and
+      // starting the store as fire-and-forget) and `flushAll`/`flush` is then called
+      // before that store lands: both now find and await the tracked promise instead
+      // of seeing an empty `pending` map and returning early.
+      this.store(path, ydoc, resolvedActor).catch((err) => {
         console.error("[ndbrain] debounced store failed for %s:", path, err);
       });
     }, delayMs);
     this.pending.set(path, { timer, ydoc, actor: resolvedActor });
-  }
-
-  /**
-   * Runs `store` and tracks the resulting promise as in-flight for `path`
-   * until it settles. This closes the shutdown data-loss window where a
-   * debounce timer fires (removing its `pending` entry and starting the
-   * store as fire-and-forget) and `flushAll`/`flush` is then called before
-   * that store lands: both now find and await this promise instead of
-   * seeing an empty `pending` map and returning early.
-   */
-  private runStore(path: string, ydoc: Y.Doc, actor: string): Promise<void> {
-    const promise = this.store(path, ydoc, actor).finally(() => {
-      this.inFlight.delete(promise);
-      if (this.inFlightByPath.get(path) === promise) this.inFlightByPath.delete(path);
-    });
-    this.inFlight.add(promise);
-    this.inFlightByPath.set(path, promise);
-    return promise;
   }
 
   /**
@@ -227,7 +245,7 @@ export class DocumentManager {
     if (pending) {
       clearTimeout(pending.timer);
       this.pending.delete(path);
-      await this.runStore(path, pending.ydoc, pending.actor);
+      await this.store(path, pending.ydoc, pending.actor);
       return;
     }
     await this.inFlightByPath.get(path);

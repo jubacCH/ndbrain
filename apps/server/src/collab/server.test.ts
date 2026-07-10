@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { openDatabase, type Database } from "../db/database.js";
 import { Indexer } from "../index/indexer.js";
@@ -11,7 +11,7 @@ import { VaultGit } from "../vault/git.js";
 import { AuthService } from "../http/auth.js";
 import { ApiKeyService } from "../keys/service.js";
 import { DocumentManager } from "./document-manager.js";
-import { createCollabServer, type CollabServerDeps } from "./server.js";
+import { createCollabServer, flushHocuspocusStores, type CollabServerDeps } from "./server.js";
 
 let dir: string;
 let db: Database;
@@ -192,6 +192,60 @@ describe("createCollabServer", () => {
           context: {},
         } as never),
       ).rejects.toThrow();
+    });
+  });
+
+  describe("flushHocuspocusStores (C2)", () => {
+    it("resolves immediately when nothing is loaded", async () => {
+      const server = createCollabServer(deps);
+      await expect(flushHocuspocusStores(server)).resolves.toBeUndefined();
+    });
+
+    it("forces a still-pending debounced store to run and awaits its completion before resolving", async () => {
+      // A long debounce the test relies on NOT firing on its own — only
+      // `flushHocuspocusStores`'s forced `flushPendingStores()` should trigger it.
+      const server = createCollabServer(deps, { debounce: 60_000, maxDebounce: 60_000 });
+      await notes.write("myai/a.md", "# A", "julian");
+
+      const direct = await server.openDirectConnection("myai/a.md");
+      await direct.transact((document) => {
+        document.getText("content").insert(0, "flush me ");
+      });
+      // Disconnect WITHOUT forcing an immediate store: the debounced onStoreDocument
+      // stays pending and the document stays loaded (connections back to 0, but
+      // `unloadImmediately: false` means Hocuspocus won't unload it on its own).
+      await direct.disconnect({ unloadImmediately: false });
+      expect(server.getDocumentsCount()).toBe(1);
+
+      // Gate the real write so we can prove flushHocuspocusStores genuinely awaits
+      // the forced store instead of resolving as soon as it's merely triggered.
+      const originalWriteDirect = notes.writeDirect.bind(notes);
+      let releaseWrite = () => {};
+      const writeGate = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      const writeSpy = vi
+        .spyOn(notes, "writeDirect")
+        .mockImplementation(async (path, content, actor) => {
+          await writeGate;
+          return originalWriteDirect(path, content, actor);
+        });
+
+      let settled = false;
+      const flushPromise = flushHocuspocusStores(server).then(() => {
+        settled = true;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(settled).toBe(false);
+
+      releaseWrite();
+      await flushPromise;
+      writeSpy.mockRestore();
+
+      expect(settled).toBe(true);
+      expect(server.getDocumentsCount()).toBe(0);
+      expect(await notes.read("myai/a.md")).toBe("flush me # A");
     });
   });
 });
