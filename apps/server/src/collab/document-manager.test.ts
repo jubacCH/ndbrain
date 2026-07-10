@@ -67,4 +67,42 @@ describe("DocumentManager", () => {
 
     expect(manager.isLive("../evil.md")).toBe(false);
   });
+
+  it("second load of same path with same ydoc is idempotent and preserves in-memory edits", async () => {
+    await notes.write("myai/a.md", "# A", "julian");
+    const ydoc = new Y.Doc();
+    await manager.load("myai/a.md", ydoc);
+    expect(manager.getText(ydoc).toString()).toBe("# A");
+
+    // Mutate the live ytext in memory
+    manager.getText(ydoc).insert(manager.getText(ydoc).length, " extra");
+    expect(manager.getText(ydoc).toString()).toBe("# A extra");
+
+    // Load again — should be a no-op and preserve the in-memory edit
+    await manager.load("myai/a.md", ydoc);
+
+    // In-memory edit is preserved, not reset to file content
+    expect(manager.getText(ydoc).toString()).toBe("# A extra");
+    expect(manager.isLive("myai/a.md")).toBe(true);
+  });
+
+  it("load of same path with different ydoc is a no-op and keeps first-loaded ydoc", async () => {
+    await notes.write("myai/a.md", "# A", "julian");
+    const ydoc1 = new Y.Doc();
+    const ydoc2 = new Y.Doc();
+
+    // Load path with ydoc1
+    await manager.load("myai/a.md", ydoc1);
+    manager.getText(ydoc1).insert(manager.getText(ydoc1).length, " from ydoc1");
+    expect(manager.getText(ydoc1).toString()).toBe("# A from ydoc1");
+
+    // Try to load same path with ydoc2 — should be a no-op
+    await manager.load("myai/a.md", ydoc2);
+
+    // ydoc1 is still live with its content preserved
+    expect(manager.getText(ydoc1).toString()).toBe("# A from ydoc1");
+    expect(manager.isLive("myai/a.md")).toBe(true);
+    // ydoc2 is empty (never seeded)
+    expect(manager.getText(ydoc2).toString()).toBe("");
+  });
 });

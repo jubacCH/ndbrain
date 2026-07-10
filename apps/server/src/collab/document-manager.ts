@@ -6,9 +6,11 @@ import { seedYText } from "./serialize.js";
 /** The field name under which note content lives in every note's Y.Doc. */
 export const CONTENT_FIELD = "content";
 
-// `assertSafePath` is a pure path check (it never touches `rootDir`), so a
-// throwaway instance is enough to reuse it here without threading a `Vault`
-// dependency through `DocumentManager`'s constructor.
+// Reuse a Vault instance to access `assertSafePath` for path validation.
+// The empty string `rootDir` is safe because `assertSafePath` is a pure string check:
+// it validates format (.md suffix), rejects unsafe patterns (.., /../, /*, .git),
+// and never calls `abs()` (which is the only method that touches `rootDir`).
+// This avoids threading a `Vault` dependency through `DocumentManager`'s constructor.
 const pathValidator = new Vault("");
 
 /**
@@ -36,9 +38,18 @@ export class DocumentManager {
   /**
    * Seeds `ydoc`'s content from the note at `path` and registers it as live.
    * A missing note (new note) seeds an empty text rather than failing.
+   *
+   * This method is idempotent: if `path` is already live, returns early without
+   * re-reading the file or overwriting the registry. This guards against double-load
+   * scenarios (e.g., Hocuspocus calling onLoadDocument more than once for the same
+   * document) which would otherwise clobber unflushed in-memory edits.
+   * Semantics: first-load-wins; a second load with a different ydoc is a no-op.
    */
   async load(path: string, ydoc: Y.Doc): Promise<void> {
     pathValidator.assertSafePath(path);
+    // If this path is already live, return early without re-seeding or overwriting
+    // the registry. This preserves in-memory edits and keeps the first-loaded ydoc.
+    if (this.isLive(path)) return;
     const markdown = await this.deps.notes.read(path);
     seedYText(this.getText(ydoc), markdown ?? "");
     this.live.set(path, ydoc);
