@@ -15,14 +15,6 @@ import { registerRoutes } from "./routes.js";
 import { createCollabServer, type CollabServerOptions } from "../collab/server.js";
 import type { DocumentManager } from "../collab/document-manager.js";
 
-// Test-only: capture the last WebSocket created in handleUpgrade for testing
-// error handling in tests. Access via (globalThis as any)._ndbrain_test_lastWs
-if (globalThis.process?.env?.NODE_ENV !== "production") {
-  if (!(globalThis as any)._ndbrain_test_sockets) {
-    (globalThis as any)._ndbrain_test_sockets = [];
-  }
-}
-
 export interface ServerDeps {
   notes: NoteService;
   auth: AuthService;
@@ -35,6 +27,26 @@ export interface ServerDeps {
   /** Overrides for the Hocuspocus config (e.g. shorter `debounce`/`maxDebounce`
    *  in tests). Not used in production. */
   collabOptions?: CollabServerOptions;
+  /** Test-only observation hook: called with every `ws` completed on `/collab`, so tests
+   *  can reach into the server-side socket (e.g. to simulate a raw socket error) without
+   *  the production code path retaining any reference to it. Never passed in production -
+   *  no prod code path may accumulate sockets (see I4: this replaces a NODE_ENV-gated
+   *  global that leaked every socket forever outside Docker, where NODE_ENV is unset). */
+  onCollabSocket?: (ws: WebSocket) => void;
+}
+
+/** Builds the same-origin URL for a raw upgrade `req`, tolerating a malformed `Host`
+ *  header instead of letting `new URL` throw. A raw TCP client controls every byte of
+ *  the Host header field (e.g. a literal space), and this runs on every unauthenticated
+ *  `/collab` upgrade attempt - it must never crash the process (see C1 hardening). Falls
+ *  back to `localhost` as the authority when the client-supplied host doesn't parse. */
+function safeUpgradeUrl(req: IncomingMessage): URL {
+  const host = req.headers.host ?? "localhost";
+  try {
+    return new URL(req.url ?? "/", `http://${host}`);
+  } catch {
+    return new URL(req.url ?? "/", "http://localhost");
+  }
 }
 
 /** Builds a Fetch-API `Request` (Node 22 global) from a raw WS-upgrade
@@ -42,8 +54,7 @@ export interface ServerDeps {
  *  argument to `handleConnection` (verified: NOT `http.IncomingMessage`, see
  *  Task 1 spike / `onAuthenticatePayload.request: Request`). */
 function toFetchRequest(req: IncomingMessage): Request {
-  const host = req.headers.host ?? "localhost";
-  const url = new URL(req.url ?? "/", `http://${host}`);
+  const url = safeUpgradeUrl(req);
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
     if (value === undefined) continue;
@@ -133,37 +144,51 @@ function mountCollab(app: FastifyInstance, deps: ServerDeps): void {
   );
   const wss = new WebSocketServer({ noServer: true });
 
+  // C1 hardening: a raw TCP client controls every byte of this callback's inputs before
+  // any auth runs (Host header, WS handshake headers, ...). `new URL` inside
+  // `toFetchRequest` (a malformed Host, e.g. containing a space) or anything else in this
+  // path throwing synchronously must never escape as an uncaughtException - that would
+  // crash the whole process for every connected client on one bad unauthenticated
+  // request. Every branch below is therefore wrapped; on any failure we log and destroy
+  // the socket instead of rethrowing.
   app.server.on("upgrade", (req: IncomingMessage, socket, head) => {
-    const pathname = (req.url ?? "").split("?", 1)[0];
-    if (pathname !== "/collab") {
-      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(req, socket, head, (ws: WebSocket) => {
-      const request = toFetchRequest(req);
-      const connection = hocuspocus.handleConnection(ws, request);
-      // The Hocuspocus wire protocol is always binary frames; `ws` delivers
-      // message data as a `Buffer` (a `Uint8Array` subclass) by default.
-      ws.on("message", (data: Buffer) => {
-        connection.handleMessage(new Uint8Array(data));
-      });
-      ws.on("close", (code: number, reason: Buffer) => {
-        connection.handleClose({ code, reason: reason.toString() });
-      });
-      // Critical: handle socket errors to prevent process crash. Without this handler,
-      // any socket fault (ECONNRESET, TCP RST, protocol error) emits an uncaughtException
-      // that terminates the entire server. This mirrors the error handling in the
-      // reference Hocuspocus crossws server implementation.
-      ws.on("error", (err) => {
-        console.error("WebSocket error on /collab connection:", err.message);
-        // Do not rethrow: the error is logged and the individual connection
-        // tears down cleanly; the server process continues.
-      });
-      // Test-only: capture ws for error handling tests
-      if ((globalThis as any)._ndbrain_test_sockets) {
-        (globalThis as any)._ndbrain_test_sockets.push(ws);
+    try {
+      const pathname = (req.url ?? "").split("?", 1)[0];
+      if (pathname !== "/collab") {
+        socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+        socket.destroy();
+        return;
       }
-    });
+      wss.handleUpgrade(req, socket, head, (ws: WebSocket) => {
+        try {
+          const request = toFetchRequest(req);
+          const connection = hocuspocus.handleConnection(ws, request);
+          // The Hocuspocus wire protocol is always binary frames; `ws` delivers
+          // message data as a `Buffer` (a `Uint8Array` subclass) by default.
+          ws.on("message", (data: Buffer) => {
+            connection.handleMessage(new Uint8Array(data));
+          });
+          ws.on("close", (code: number, reason: Buffer) => {
+            connection.handleClose({ code, reason: reason.toString() });
+          });
+          // Critical: handle socket errors to prevent process crash. Without this handler,
+          // any socket fault (ECONNRESET, TCP RST, protocol error) emits an uncaughtException
+          // that terminates the entire server. This mirrors the error handling in the
+          // reference Hocuspocus crossws server implementation.
+          ws.on("error", (err) => {
+            console.error("WebSocket error on /collab connection:", err.message);
+            // Do not rethrow: the error is logged and the individual connection
+            // tears down cleanly; the server process continues.
+          });
+          deps.onCollabSocket?.(ws);
+        } catch (err) {
+          console.error("Error completing /collab upgrade:", err);
+          ws.close();
+        }
+      });
+    } catch (err) {
+      console.error("Error handling /collab upgrade:", err);
+      socket.destroy();
+    }
   });
 }

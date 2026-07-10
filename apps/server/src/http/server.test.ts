@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { connect as netConnect } from "node:net";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -24,6 +25,7 @@ let notes: NoteService;
 let apiKeys: ApiKeyService;
 let wsUrl: string;
 let openProviders: HocuspocusProvider[];
+let capturedSockets: WebSocket[];
 
 /** Real WS client, real network round trip through `/collab` - no mocking of
  *  Hocuspocus or the wire protocol. */
@@ -89,6 +91,7 @@ beforeEach(async () => {
   const documents = new DocumentManager({ notes });
   apiKeys = new ApiKeyService(db);
   openProviders = [];
+  capturedSockets = [];
   // Short debounce: some assertions below check that a real edit landed on disk.
   app = buildServer({
     notes,
@@ -100,6 +103,10 @@ beforeEach(async () => {
     apiKeys,
     documents,
     collabOptions: { debounce: 20, maxDebounce: 100 },
+    // Test-only observation hook (see I4): the injected replacement for the old
+    // NODE_ENV-gated global socket list, which leaked every socket in production
+    // whenever NODE_ENV was unset (bare `node`/systemd/LXC, not just Docker).
+    onCollabSocket: (ws) => capturedSockets.push(ws),
   });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const address = app.server.address() as AddressInfo;
@@ -123,16 +130,12 @@ describe("/collab WebSocket upgrade", () => {
     process.on("uncaughtException", errorHandler);
 
     try {
-      // Clear test WebSocket capture list before this test
-      (globalThis as any)._ndbrain_test_sockets = [];
-
       const doc = new Y.Doc();
       const provider = connect("myai/test.md", token, doc);
       await waitForEvent(provider, "synced");
 
-      // Grab the captured WebSocket from the server's handleUpgrade callback
-      const testSockets = (globalThis as any)._ndbrain_test_sockets as WebSocket[];
-      const capturedWs = testSockets[testSockets.length - 1];
+      // Grab the captured WebSocket via the injected onCollabSocket test hook.
+      const capturedWs = capturedSockets[capturedSockets.length - 1];
 
       if (!capturedWs) {
         throw new Error("Could not capture WebSocket from server handleUpgrade");
@@ -154,6 +157,60 @@ describe("/collab WebSocket upgrade", () => {
       expect(uncaughtErrors).toHaveLength(0);
     } finally {
       process.off("uncaughtException", errorHandler);
+    }
+  });
+
+  it("survives a raw WS upgrade request with a malformed Host header instead of crashing the process", async () => {
+    const address = app.server.address() as AddressInfo;
+
+    // Capture uncaught exceptions at the process level: `new URL(url, "http://" + host)`
+    // throws on a Host header containing a space, and that throw used to happen with no
+    // try/catch anywhere in the raw 'upgrade' callback chain, escaping as an
+    // uncaughtException that (without this listener) would kill the whole process.
+    const uncaughtErrors: Error[] = [];
+    const errorHandler = (err: Error) => uncaughtErrors.push(err);
+    process.on("uncaughtException", errorHandler);
+
+    let rawSocket: import("node:net").Socket | undefined;
+    try {
+      await new Promise<void>((resolve) => {
+        rawSocket = netConnect(address.port, "127.0.0.1", () => {
+          rawSocket!.write(
+            "GET /collab HTTP/1.1\r\n" +
+              "Host: bad host with spaces\r\n" +
+              "Upgrade: websocket\r\n" +
+              "Connection: Upgrade\r\n" +
+              "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+              "Sec-WebSocket-Version: 13\r\n" +
+              "\r\n",
+          );
+        });
+        // Any of these outcomes (reset, close, or a bounded timeout) is acceptable here -
+        // the point isn't what happens to this one malformed connection, it's that
+        // handling it must never take the whole process down.
+        rawSocket.on("error", () => resolve());
+        rawSocket.on("close", () => resolve());
+        rawSocket.on("data", () => resolve());
+        setTimeout(resolve, 500);
+      });
+
+      // Give the event loop a moment for a crash-inducing throw to have surfaced.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(uncaughtErrors).toHaveLength(0);
+
+      // The server must still be alive: a subsequent, well-formed WS connection succeeds.
+      const token = await apiKeys.create("myai-agent", "myai/", true);
+      const doc = new Y.Doc();
+      const provider = connect("myai/after-bad-host.md", token, doc);
+      await waitForEvent(provider, "synced", 3000);
+    } finally {
+      process.off("uncaughtException", errorHandler);
+      // The malformed-host request is tolerated (not rejected), so its raw socket is left
+      // open by the server (a legitimate, if unauthenticated, pending connection) - close it
+      // ourselves so it doesn't linger past this test and block `afterEach`'s `app.close()`
+      // (that hang is exactly C2's concern, not this test's; it isn't fixed yet at this
+      // point in the branch and shouldn't gate this unrelated C1 assertion).
+      rawSocket?.destroy();
     }
   });
 
