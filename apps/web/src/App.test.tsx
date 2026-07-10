@@ -28,12 +28,15 @@ describe("App", () => {
   });
 
   it("shows the authenticated shell when the session probe succeeds", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse(200, { notes: [] }));
+    // Two calls now hit `/notes`: the session probe in `useAuth`, and `NoteTree`'s
+    // own fetch once it mounts under the authed shell. Each `Response` body can
+    // only be read once, so build a fresh one per call rather than reusing one.
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(200, { notes: [] })));
     render(<App />);
 
-    expect(
-      await screen.findByRole("heading", { name: "ndBrain" }),
-    ).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/welcome, back/i)).toBeInTheDocument());
+    expect(await screen.findByText("ndBrain")).toBeInTheDocument();
+    expect(screen.getByText("Select a note to start editing.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/no notes yet/i)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
   });
 });

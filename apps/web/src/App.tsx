@@ -1,8 +1,39 @@
 import { AuthProvider, useAuth } from "./auth/useAuth";
 import { LoginView } from "./auth/LoginView";
+import { AppShell } from "./shell/AppShell";
+import { AppStateProvider, useAppState } from "./shell/AppState";
+import { NoteTree } from "./notes/NoteTree";
 
-function AppShell() {
-  const { loading, authenticated, username, logout } = useAuth();
+/** Main-slot placeholder until Task 6 renders the editor here, keyed on
+ *  `selectedPath`. Reads AppState directly so App doesn't need to prop-drill it. */
+function MainContent() {
+  const { selectedPath } = useAppState();
+
+  if (!selectedPath) {
+    return <p>Select a note to start editing.</p>;
+  }
+
+  // Task 6 replaces this with the collaborative editor for `selectedPath`.
+  return <p>Selected note: {selectedPath}</p>;
+}
+
+function AuthedShell() {
+  const { username, logout } = useAuth();
+
+  return (
+    <AppStateProvider>
+      <AppShell
+        sidebar={<NoteTree />}
+        main={<MainContent />}
+        username={username}
+        onLogout={() => void logout()}
+      />
+    </AppStateProvider>
+  );
+}
+
+function Gate() {
+  const { loading, authenticated } = useAuth();
 
   if (loading) {
     return (
@@ -16,23 +47,13 @@ function AppShell() {
     return <LoginView />;
   }
 
-  return (
-    <main>
-      <h1>ndBrain</h1>
-      {/* username is only known after an in-session login() — a probe-only session
-          (existing cookie on page reload) has no /whoami route to recover it from. */}
-      <p>Welcome, {username ?? "back"}.</p>
-      <button type="button" onClick={() => void logout()}>
-        Log out
-      </button>
-    </main>
-  );
+  return <AuthedShell />;
 }
 
 function App() {
   return (
     <AuthProvider>
-      <AppShell />
+      <Gate />
     </AuthProvider>
   );
 }
