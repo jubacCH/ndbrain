@@ -12,13 +12,14 @@ import { DocumentManager } from "./document-manager.js";
 
 let dir: string;
 let db: Database;
+let git: VaultGit;
 let notes: NoteService;
 let manager: DocumentManager;
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "ndbrain-docmgr-"));
   db = openDatabase(":memory:");
-  const git = new VaultGit(dir);
+  git = new VaultGit(dir);
   await git.init();
   notes = new NoteService(new Vault(dir), git, new Indexer(db));
   manager = new DocumentManager({ notes });
@@ -104,5 +105,114 @@ describe("DocumentManager", () => {
     expect(manager.isLive("myai/a.md")).toBe(true);
     // ydoc2 is empty (never seeded)
     expect(manager.getText(ydoc2).toString()).toBe("");
+  });
+
+  describe("store", () => {
+    it("writes the Y.Text content to the file and creates one git commit authored by the actor", async () => {
+      await notes.write("myai/a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " extra");
+
+      const before = await git.historyFor("myai/a.md");
+      await manager.store("myai/a.md", ydoc, "julian");
+
+      expect(await notes.read("myai/a.md")).toBe("# A extra");
+      const after = await git.historyFor("myai/a.md");
+      expect(after.length).toBe(before.length + 1);
+      expect(after[0]?.author).toBe("julian");
+    });
+
+    it("is a no-op (no new commit) when the serialized content matches the current file content", async () => {
+      await notes.write("myai/a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+
+      const before = await git.historyFor("myai/a.md");
+      await manager.store("myai/a.md", ydoc, "julian");
+      const after = await git.historyFor("myai/a.md");
+
+      expect(after.length).toBe(before.length);
+      expect(await notes.read("myai/a.md")).toBe("# A");
+    });
+
+    it("falls back to the 'collab' actor when none is provided and no prior writer is known", async () => {
+      const ydoc = new Y.Doc();
+      await manager.load("myai/new.md", ydoc);
+      manager.getText(ydoc).insert(0, "# New");
+
+      await manager.store("myai/new.md", ydoc);
+
+      const history = await git.historyFor("myai/new.md");
+      expect(history[0]?.author).toBe("collab");
+    });
+  });
+
+  describe("scheduleStore / flush / flushAll", () => {
+    it("collapses 3 rapid schedules into exactly one commit after flush", async () => {
+      await notes.write("myai/a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+
+      const before = await git.historyFor("myai/a.md");
+
+      manager.scheduleStore("myai/a.md", ydoc, "julian", 1500);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " one");
+      manager.scheduleStore("myai/a.md", ydoc, "julian", 1500);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " two");
+      manager.scheduleStore("myai/a.md", ydoc, "julian", 1500);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " three");
+
+      await manager.flush("myai/a.md");
+
+      expect(await notes.read("myai/a.md")).toBe("# A one two three");
+      const after = await git.historyFor("myai/a.md");
+      expect(after.length).toBe(before.length + 1);
+    });
+
+    it("flush is a no-op when nothing is pending for the path", async () => {
+      await notes.write("myai/a.md", "# A", "julian");
+      const before = await git.historyFor("myai/a.md");
+
+      await manager.flush("myai/a.md");
+
+      const after = await git.historyFor("myai/a.md");
+      expect(after.length).toBe(before.length);
+    });
+
+    it("flushAll flushes all pending paths", async () => {
+      await notes.write("myai/a.md", "# A", "julian");
+      await notes.write("myai/b.md", "# B", "julian");
+      const ydocA = new Y.Doc();
+      const ydocB = new Y.Doc();
+      await manager.load("myai/a.md", ydocA);
+      await manager.load("myai/b.md", ydocB);
+
+      manager.getText(ydocA).insert(manager.getText(ydocA).length, " a-extra");
+      manager.getText(ydocB).insert(manager.getText(ydocB).length, " b-extra");
+      manager.scheduleStore("myai/a.md", ydocA, "julian", 1500);
+      manager.scheduleStore("myai/b.md", ydocB, "julian", 1500);
+
+      await manager.flushAll();
+
+      expect(await notes.read("myai/a.md")).toBe("# A a-extra");
+      expect(await notes.read("myai/b.md")).toBe("# B b-extra");
+    });
+
+    it("uses the last explicit actor as the fallback for a later store without an actor", async () => {
+      await notes.write("myai/a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+
+      manager.scheduleStore("myai/a.md", ydoc, "julian", 1500);
+      await manager.flush("myai/a.md");
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " more");
+
+      // No actor passed this time — should fall back to the last known writer, "julian".
+      await manager.store("myai/a.md", ydoc);
+
+      const history = await git.historyFor("myai/a.md");
+      expect(history[0]?.author).toBe("julian");
+    });
   });
 });
