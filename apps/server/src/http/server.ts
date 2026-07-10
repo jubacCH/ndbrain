@@ -15,6 +15,14 @@ import { registerRoutes } from "./routes.js";
 import { createCollabServer, type CollabServerOptions } from "../collab/server.js";
 import type { DocumentManager } from "../collab/document-manager.js";
 
+// Test-only: capture the last WebSocket created in handleUpgrade for testing
+// error handling in tests. Access via (globalThis as any)._ndbrain_test_lastWs
+if (globalThis.process?.env?.NODE_ENV !== "production") {
+  if (!(globalThis as any)._ndbrain_test_sockets) {
+    (globalThis as any)._ndbrain_test_sockets = [];
+  }
+}
+
 export interface ServerDeps {
   notes: NoteService;
   auth: AuthService;
@@ -143,6 +151,19 @@ function mountCollab(app: FastifyInstance, deps: ServerDeps): void {
       ws.on("close", (code: number, reason: Buffer) => {
         connection.handleClose({ code, reason: reason.toString() });
       });
+      // Critical: handle socket errors to prevent process crash. Without this handler,
+      // any socket fault (ECONNRESET, TCP RST, protocol error) emits an uncaughtException
+      // that terminates the entire server. This mirrors the error handling in the
+      // reference Hocuspocus crossws server implementation.
+      ws.on("error", (err) => {
+        console.error("WebSocket error on /collab connection:", err.message);
+        // Do not rethrow: the error is logged and the individual connection
+        // tears down cleanly; the server process continues.
+      });
+      // Test-only: capture ws for error handling tests
+      if ((globalThis as any)._ndbrain_test_sockets) {
+        (globalThis as any)._ndbrain_test_sockets.push(ws);
+      }
     });
   });
 }

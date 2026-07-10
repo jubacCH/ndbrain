@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import * as Y from "yjs";
 import { HocuspocusProvider } from "@hocuspocus/provider";
+import { WebSocket } from "ws";
 import { openDatabase, type Database } from "../db/database.js";
 import { Indexer } from "../index/indexer.js";
 import { NoteService } from "../notes/service.js";
@@ -112,6 +113,50 @@ afterEach(async () => {
 });
 
 describe("/collab WebSocket upgrade", () => {
+  it("handles socket errors gracefully without crashing the server process", async () => {
+    await notes.write("myai/test.md", "", "julian");
+    const token = await apiKeys.create("myai-agent", "myai/", true);
+
+    // Capture uncaught exceptions at the process level
+    const uncaughtErrors: Error[] = [];
+    const errorHandler = (err: Error) => uncaughtErrors.push(err);
+    process.on("uncaughtException", errorHandler);
+
+    try {
+      // Clear test WebSocket capture list before this test
+      (globalThis as any)._ndbrain_test_sockets = [];
+
+      const doc = new Y.Doc();
+      const provider = connect("myai/test.md", token, doc);
+      await waitForEvent(provider, "synced");
+
+      // Grab the captured WebSocket from the server's handleUpgrade callback
+      const testSockets = (globalThis as any)._ndbrain_test_sockets as WebSocket[];
+      const capturedWs = testSockets[testSockets.length - 1];
+
+      if (!capturedWs) {
+        throw new Error("Could not capture WebSocket from server handleUpgrade");
+      }
+
+      // Emit an error event on the server-side socket that simulates ECONNRESET
+      capturedWs.emit("error", new Error("Simulated ECONNRESET: connection reset by peer"));
+
+      // Give any async error handling time to process
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Verify the server process is still alive and responsive
+      // by opening a new connection (if server crashed, this would fail)
+      const doc2 = new Y.Doc();
+      const provider2 = connect("myai/test.md", token, doc2);
+      await waitForEvent(provider2, "synced", 3000);
+
+      // If we successfully connected a second time, the server survived
+      expect(uncaughtErrors).toHaveLength(0);
+    } finally {
+      process.off("uncaughtException", errorHandler);
+    }
+  });
+
   it("syncs a real client edit to a second connected client over the real WS upgrade path", async () => {
     await notes.write("myai/live.md", "", "julian");
     const token = await apiKeys.create("myai-agent", "myai/", true);
