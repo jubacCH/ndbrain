@@ -8,6 +8,7 @@ import type { Vault } from "../vault/files.js";
 import { VaultPathError } from "../vault/files.js";
 import type { ApiKeyService } from "../keys/service.js";
 import { ScopeError } from "../keys/scope.js";
+import { logAccess } from "../audit/log.js";
 import {
   EditAmbiguousError,
   EditTargetNotFoundError,
@@ -123,6 +124,7 @@ function isToolDomainError(err: unknown): err is Error {
 }
 
 async function dispatch(
+  db: Database,
   tools: NoteTools,
   caller: Caller,
   name: string,
@@ -148,6 +150,10 @@ async function dispatch(
     case "delete_note":
       return tools.deleteNote(caller, args as { path: string });
     default:
+      // Not one of NoteTools' own methods, so it never went through their per-call
+      // logAccess — record the denied attempt here so an unknown-tool probe still
+      // leaves an audit trail.
+      logAccess(db, caller.keyId, name, null, false);
       throw new Error(`unknown tool: ${name}`);
   }
 }
@@ -164,7 +170,7 @@ function buildMcpServerForCaller(deps: McpDeps, caller: Caller): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
-      const result = await dispatch(tools, caller, name, (args ?? {}) as Record<string, unknown>);
+      const result = await dispatch(deps.db, tools, caller, name, (args ?? {}) as Record<string, unknown>);
       return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
     } catch (err) {
       if (isToolDomainError(err)) {
@@ -194,6 +200,10 @@ export function createMcpHandler(deps: McpDeps) {
     const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "");
     const validated = bearer ? await deps.apiKeys.validate(bearer) : null;
     if (!validated) {
+      // No caller identity to blame (missing/invalid/revoked/expired key), but the
+      // attempt itself is the most security-relevant thing to log: a failed probe would
+      // otherwise leave zero trace in access_log.
+      logAccess(deps.db, null, "auth", null, false);
       reply.code(401).send({ error: { code: "unauthorized", message: "invalid or missing agent key" } });
       return;
     }

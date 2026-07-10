@@ -16,6 +16,7 @@ let dir: string;
 let app: FastifyInstance;
 let agentKey: string;
 let baseUrl: string;
+let db: ReturnType<typeof openDatabase>;
 
 // Streamable-HTTP (stateless mode) requires this exact Accept header on every POST, and
 // application/json Content-Type; see @modelcontextprotocol/sdk webStandardStreamableHttp.js.
@@ -45,7 +46,7 @@ async function postMcp(payload: object, key?: string): Promise<{ statusCode: num
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "ndbrain-mcp-"));
-  const db = openDatabase(":memory:");
+  db = openDatabase(":memory:");
   const vault = new Vault(dir);
   const git = new VaultGit(dir);
   await git.init();
@@ -146,5 +147,46 @@ describe("POST /mcp", () => {
     expect(body2.result.isError).toBe(true);
     // The message should be "internal error", not containing any internal details.
     expect(body2.result.content[0].text).toBe("internal error");
+  });
+
+  it("logs a denied 'auth' access_log row when the Bearer key is missing/invalid", async () => {
+    const res = await postMcp(rpc("tools/list"), "ndb_totally-invalid");
+    expect(res.statusCode).toBe(401);
+
+    const row = db
+      .prepare("SELECT key_id, tool, allowed FROM access_log WHERE tool = 'auth'")
+      .get() as { key_id: number | null; tool: string; allowed: number } | undefined;
+    expect(row).toBeTruthy();
+    expect(row!.key_id).toBeNull();
+    expect(row!.allowed).toBe(0);
+  });
+
+  it("logs a denied access_log row for an unknown tool name", async () => {
+    const res = await postMcp(
+      rpc("tools/call", { name: "not_a_real_tool", arguments: {} }),
+      agentKey,
+    );
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.result.isError).toBe(true);
+
+    const row = db
+      .prepare("SELECT allowed FROM access_log WHERE tool = 'not_a_real_tool'")
+      .get() as { allowed: number } | undefined;
+    expect(row).toBeTruthy();
+    expect(row!.allowed).toBe(0);
+  });
+
+  it("exempts /mcp?query from session auth by pathname (not raw url), reaching key-auth 401", async () => {
+    const res = await fetch(`${baseUrl}/mcp?x=1`, {
+      method: "POST",
+      headers: mcpHeaders(),
+      body: JSON.stringify(rpc("tools/list")),
+    });
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    // The MCP handler's own 401 body, not the session hook's ("login required") — proves
+    // the request reached key-auth instead of being rejected earlier by the session hook.
+    expect(body.error.message).toBe("invalid or missing agent key");
   });
 });
