@@ -1,7 +1,7 @@
 import type * as Y from "yjs";
 import type { NoteService } from "../notes/service.js";
 import { Vault } from "../vault/files.js";
-import { readMarkdown, seedYText } from "./serialize.js";
+import { applyExternalChange, readMarkdown, seedYText } from "./serialize.js";
 
 /** The field name under which note content lives in every note's Y.Doc. */
 export const CONTENT_FIELD = "content";
@@ -30,11 +30,10 @@ interface PendingStore {
 const pathValidator = new Vault("");
 
 /**
- * Owns the live Y.Doc registry for open notes and the load/unload lifecycle
- * around Hocuspocus's `onLoadDocument`/`afterUnloadDocument` hooks.
- *
- * Persistence back to the vault (Task 4) and external-change rebase (Task 5)
- * are deliberately out of scope here — this is load + registry only.
+ * Owns the live Y.Doc registry for open notes, the load/unload lifecycle
+ * around Hocuspocus's `onLoadDocument`/`afterUnloadDocument` hooks, and
+ * persistence back to the vault (`store`/`scheduleStore`) plus rebasing
+ * external file changes into live docs (`applyExternal`).
  */
 export class DocumentManager {
   private readonly live = new Map<string, Y.Doc>();
@@ -86,6 +85,20 @@ export class DocumentManager {
   /** Removes the live registry entry for `path`. */
   unload(path: string): void {
     this.live.delete(path);
+  }
+
+  /**
+   * Rebases an out-of-band (external, e.g. Syncthing/Obsidian) file change
+   * into `path`'s live Y.Doc, if any, so connected clients see the edit live
+   * with cursors/relative positions preserved (Task 2's prefix/suffix diff).
+   *
+   * No-op if `path` isn't currently live: the vault watcher has already
+   * reindexed the file, and there's no in-memory doc to rebase.
+   */
+  applyExternal(path: string, newMarkdown: string): void {
+    const ydoc = this.live.get(path);
+    if (!ydoc) return;
+    applyExternalChange(ydoc, this.getText(ydoc), newMarkdown);
   }
 
   /**

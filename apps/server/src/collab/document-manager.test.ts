@@ -107,6 +107,23 @@ describe("DocumentManager", () => {
     expect(manager.getText(ydoc2).toString()).toBe("");
   });
 
+  describe("applyExternal", () => {
+    it("rebases a live Y.Doc's content onto an external change (prefix/suffix preserved)", async () => {
+      await notes.write("myai/a.md", "# A body", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+
+      manager.applyExternal("myai/a.md", "# A body extended");
+
+      expect(manager.getText(ydoc).toString()).toBe("# A body extended");
+    });
+
+    it("is a no-op for a path that is not live", () => {
+      expect(() => manager.applyExternal("myai/not-live.md", "# whatever")).not.toThrow();
+      expect(manager.isLive("myai/not-live.md")).toBe(false);
+    });
+  });
+
   describe("store", () => {
     it("writes the Y.Text content to the file and creates one git commit authored by the actor", async () => {
       await notes.write("myai/a.md", "# A", "julian");

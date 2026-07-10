@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as Y from "yjs";
+import { DocumentManager } from "../collab/document-manager.js";
 import { openDatabase } from "../db/database.js";
 import { Indexer } from "../index/indexer.js";
 import { NoteService } from "../notes/service.js";
@@ -112,5 +114,45 @@ describe("VaultWatcher", () => {
     await flush();
     expect(seen).toHaveBeenCalledWith("good.md");
     consoleError.mockRestore();
+  });
+
+  describe("onExternalChangeApply bridge (external file change -> live Y.Doc)", () => {
+    it("rebases an out-of-band file write into a live Y.Doc via applyExternal", async () => {
+      const notes = new NoteService(new Vault(dir), git, indexer, watcher);
+      const manager = new DocumentManager({ notes });
+      watcher.onExternalChangeApply = (path, markdown) => manager.applyExternal(path, markdown);
+
+      await notes.write("a.md", "# A", "julian");
+      await flush();
+      const ydoc = new Y.Doc();
+      await manager.load("a.md", ydoc);
+      expect(manager.getText(ydoc).toString()).toBe("# A");
+
+      // Out-of-band write bypassing NoteService entirely (simulates Obsidian/Syncthing).
+      await writeFile(join(dir, "a.md"), "# A\n\nExternal edit");
+      await flush();
+
+      expect(manager.getText(ydoc).toString()).toBe("# A\n\nExternal edit");
+    });
+
+    it("does not fire onExternalChangeApply for a DocumentManager.store of the live doc (no loop)", async () => {
+      const notes = new NoteService(new Vault(dir), git, indexer, watcher);
+      const manager = new DocumentManager({ notes });
+      const seen = vi.fn();
+      watcher.onExternalChangeApply = seen;
+
+      await notes.write("a.md", "# A", "julian");
+      await flush();
+      const ydoc = new Y.Doc();
+      await manager.load("a.md", ydoc);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " extra");
+
+      await manager.store("a.md", ydoc, "julian");
+      await flush();
+
+      expect(seen).not.toHaveBeenCalled();
+      // Own store must not be rebased back into itself either (no churn).
+      expect(manager.getText(ydoc).toString()).toBe("# A extra");
+    });
   });
 });

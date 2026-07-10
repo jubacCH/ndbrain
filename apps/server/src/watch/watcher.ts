@@ -15,6 +15,12 @@ export class VaultWatcher {
   private ownWrites = new Map<string, string>();
   private ownRemoves = new Set<string>();
   onExternalChange?: (path: string) => void;
+  // Bridge to DocumentManager.applyExternal (wired by main.ts): fired after
+  // reindex/commit with the fresh file content, so an open live Y.Doc can be
+  // rebased onto an out-of-band edit. Own writes never reach here — they're
+  // already filtered out by the ownWrites suppression below, same as
+  // onExternalChange.
+  onExternalChangeApply?: (path: string, markdown: string) => void;
 
   constructor(
     private vault: Vault,
@@ -53,6 +59,7 @@ export class VaultWatcher {
           await this.git.commitChange(`note: external change ${rel}`, "external", [rel]);
         });
         this.onExternalChange?.(rel);
+        this.onExternalChangeApply?.(rel, raw);
       } catch (err) {
         console.error("[ndbrain] watcher error for %s:", rel, err);
       }
