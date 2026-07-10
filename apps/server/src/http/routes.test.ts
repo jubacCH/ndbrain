@@ -11,6 +11,7 @@ import { VaultGit } from "../vault/git.js";
 import { AuthService } from "./auth.js";
 import { ApiKeyService } from "../keys/service.js";
 import { buildServer } from "./server.js";
+import { DocumentManager } from "../collab/document-manager.js";
 
 let dir: string;
 let app: FastifyInstance;
@@ -28,7 +29,8 @@ beforeEach(async () => {
   await auth.createUser("julian", "secret123");
   notes = new NoteService(vault, git, indexer);
   const apiKeys = new ApiKeyService(db);
-  app = buildServer({ notes, auth, db, git, indexer, vault, apiKeys });
+  const documents = new DocumentManager({ notes });
+  app = buildServer({ notes, auth, db, git, indexer, vault, apiKeys, documents });
   const login = await app.inject({
     method: "POST",
     url: "/api/v1/auth/login",

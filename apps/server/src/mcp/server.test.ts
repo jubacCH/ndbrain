@@ -11,6 +11,7 @@ import { VaultGit } from "../vault/git.js";
 import { AuthService } from "../http/auth.js";
 import { ApiKeyService } from "../keys/service.js";
 import { buildServer } from "../http/server.js";
+import { DocumentManager } from "../collab/document-manager.js";
 
 let dir: string;
 let app: FastifyInstance;
@@ -55,8 +56,9 @@ beforeEach(async () => {
   await auth.createUser("julian", "secret123");
   const notes = new NoteService(vault, git, indexer);
   const apiKeys = new ApiKeyService(db);
+  const documents = new DocumentManager({ notes });
   agentKey = await apiKeys.create("myai", "myai/", true);
-  app = buildServer({ notes, auth, db, git, indexer, vault, apiKeys });
+  app = buildServer({ notes, auth, db, git, indexer, vault, apiKeys, documents });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const address = app.server.address();
   if (address === null || typeof address === "string") throw new Error("expected a TCP address");

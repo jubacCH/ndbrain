@@ -11,6 +11,7 @@ import { AuthService } from "./http/auth.js";
 import { ApiKeyService } from "./keys/service.js";
 import { buildServer } from "./http/server.js";
 import { createShutdown } from "./shutdown.js";
+import { DocumentManager } from "./collab/document-manager.js";
 
 const config = loadConfig(process.env);
 await mkdir(config.vaultDir, { recursive: true });
@@ -26,6 +27,13 @@ const watcher = new VaultWatcher(vault, indexer, git, mutex);
 const notes = new NoteService(vault, git, indexer, watcher, mutex);
 const auth = new AuthService(db);
 const apiKeys = new ApiKeyService(db);
+const documents = new DocumentManager({ notes });
+// Late-bind both directions of the NoteService <-> DocumentManager bridge (see
+// each class's doc comment): agent/REST writes route into an open collab doc
+// instead of the file, and out-of-band file changes (Syncthing/Obsidian, via
+// the watcher) rebase into an open collab doc instead of being ignored.
+notes.setDocManager(documents);
+watcher.onExternalChangeApply = (path, markdown) => documents.applyExternal(path, markdown);
 
 if (!auth.hasUsers() && config.adminUser && config.adminPassword) {
   await auth.createUser(config.adminUser, config.adminPassword);
@@ -35,13 +43,13 @@ if (!auth.hasUsers() && config.adminUser && config.adminPassword) {
 await indexer.reindexAll(vault);
 await watcher.start();
 
-const app = buildServer({ notes, auth, db, git, indexer, vault, apiKeys });
+const app = buildServer({ notes, auth, db, git, indexer, vault, apiKeys, documents });
 await app.listen({ port: config.port, host: "0.0.0.0" });
 console.log(`ndbrain listening on :${config.port}`);
 
 // Graceful shutdown: drain requests, stop the watcher, close the db, then exit.
 // Idempotent, so a repeated signal cannot trigger a double close.
-const shutdown = createShutdown({ app, watcher, db });
+const shutdown = createShutdown({ app, watcher, db, documents });
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.once(signal, () => {
     void shutdown().then(
