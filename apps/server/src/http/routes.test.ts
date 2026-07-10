@@ -43,6 +43,18 @@ afterEach(async () => {
 
 const authed = (opts: object) => ({ ...opts, headers: { authorization: `Bearer ${token}` } });
 
+describe("REST /api/v1/auth", () => {
+  it("login with query string succeeds with valid credentials", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login?x=1",
+      payload: { username: "julian", password: "secret123" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toHaveProperty("token");
+  });
+});
+
 describe("REST /api/v1", () => {
   it("rejects unauthenticated requests", async () => {
     const res = await app.inject({ method: "GET", url: "/api/v1/notes" });

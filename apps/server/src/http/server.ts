@@ -27,13 +27,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.register(cookie);
 
   app.addHook("onRequest", async (req, reply) => {
-    if (req.url === "/api/v1/auth/login") return;
-    // MCP uses agent-key auth (Bearer -> ApiKeyService.validate), not the session cookie —
-    // see mcp/server.ts's own 401 handling. Compare on pathname only: req.url includes
-    // the query string, so a naive `=== "/mcp"` check would send `/mcp?x=1` through
-    // session auth instead of exempting it (it still gets key-auth in the MCP handler).
+    // Parse pathname once: req.url includes the query string, so split on '?' first.
+    // Both /api/v1/auth/login and /mcp should be exempted from session auth:
+    // - login authenticates by credentials (username/password), not session
+    // - MCP uses agent-key auth (Bearer -> ApiKeyService.validate), not the session cookie
+    // (see mcp/server.ts's own 401 handling).
     const pathname = req.url.split("?", 1)[0];
-    if (pathname === "/mcp") return;
+    if (pathname === "/api/v1/auth/login" || pathname === "/mcp") return;
     const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "");
     const token = bearer ?? req.cookies["ndbrain_session"];
     const session = token ? deps.auth.validateSession(token) : null;
