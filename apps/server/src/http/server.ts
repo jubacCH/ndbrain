@@ -7,7 +7,7 @@ import type { Indexer } from "../index/indexer.js";
 import type { NoteService } from "../notes/service.js";
 import type { Vault } from "../vault/files.js";
 import { VaultPathError } from "../vault/files.js";
-import { NoteExistsError, NoteNotFoundError } from "../notes/errors.js";
+import { NoteBusyError, NoteExistsError, NoteNotFoundError } from "../notes/errors.js";
 import type { VaultGit } from "../vault/git.js";
 import type { ApiKeyService } from "../keys/service.js";
 import type { AuthService } from "./auth.js";
@@ -100,6 +100,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       return reply.code(404).send({ error: { code: "not_found", message: err.message } });
     if (err instanceof NoteExistsError)
       return reply.code(409).send({ error: { code: "conflict", message: err.message } });
+    // I1: move/remove of a note currently open in a live collab doc - same 409 status as
+    // NoteExistsError (both are "can't do this mutation right now"), distinct code so a
+    // REST client can tell "try again shortly" (busy) apart from "target already exists".
+    if (err instanceof NoteBusyError)
+      return reply.code(409).send({ error: { code: "busy", message: err.message } });
     // Fastify client-side errors (validation, malformed body, unknown route): pass the
     // status through with a generic message, never the raw error text.
     const status = (err as { statusCode?: number }).statusCode;

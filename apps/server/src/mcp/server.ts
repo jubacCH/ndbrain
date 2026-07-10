@@ -12,6 +12,7 @@ import { logAccess } from "../audit/log.js";
 import {
   EditAmbiguousError,
   EditTargetNotFoundError,
+  NoteBusyError,
   NoteExistsError,
   NoteNotFoundError,
 } from "../notes/errors.js";
@@ -118,6 +119,7 @@ function isToolDomainError(err: unknown): err is Error {
     err instanceof VaultPathError ||
     err instanceof NoteNotFoundError ||
     err instanceof NoteExistsError ||
+    err instanceof NoteBusyError ||
     err instanceof EditTargetNotFoundError ||
     err instanceof EditAmbiguousError
   );

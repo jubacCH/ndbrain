@@ -4,6 +4,7 @@ import type { Indexer } from "../index/indexer.js";
 import {
   EditAmbiguousError,
   EditTargetNotFoundError,
+  NoteBusyError,
   NoteExistsError,
   NoteNotFoundError,
 } from "./errors.js";
@@ -23,6 +24,9 @@ export interface DocManagerHook {
    *  `path` is live (the write landed in the doc; the caller must NOT also write the file
    *  directly) or `false` if not live (the caller should fall back to a direct write). */
   applyAgentWrite(path: string, newMarkdown: string, actor: string): boolean;
+  /** Whether `path` currently has an open live collaboration doc. Used by `move`/`remove`
+   *  to refuse mutating a note out from under a live doc (see `NoteBusyError`). */
+  isLive(path: string): boolean;
 }
 
 /** The single write path for all vault mutations: filesystem -> git commit -> index.
@@ -116,8 +120,19 @@ export class NoteService {
     return this.mutex.run(() => this.#writeInner(path, content, actor));
   }
 
+  /**
+   * Moves/renames a note. Rejects with `NoteBusyError` (no file/index touched) if `from`
+   * is currently live: deleting the file at `from` while its doc is still open there
+   * would let the doc's own later debounced store write the file straight back under the
+   * old path, leaving the note duplicated under both `from` and `to`. This is the
+   * documented v1 decision (see I1 in the Plan 3 hardening report): refuse the mutation
+   * and let the caller retry once the note isn't being edited live, rather than trying to
+   * migrate/rebind the live doc onto the new path.
+   */
   move(from: string, to: string, actor: string): Promise<void> {
     return this.mutex.run(async () => {
+      if (this.docManager?.isLive(from))
+        throw new NoteBusyError(`note is open in a live session, try again later: ${from}`);
       const raw = await this.vault.read(from);
       if (raw === null) throw new NoteNotFoundError(`note not found: ${from}`);
       if ((await this.vault.read(to)) !== null)
@@ -168,8 +183,15 @@ export class NoteService {
     });
   }
 
+  /**
+   * Deletes a note. Rejects with `NoteBusyError` (no file/index touched) if `path` is
+   * currently live, for the same reason `move` does (see its doc comment): a live doc's
+   * later debounced store would otherwise resurrect the deleted file.
+   */
   remove(path: string, actor: string): Promise<boolean> {
     return this.mutex.run(async () => {
+      if (this.docManager?.isLive(path))
+        throw new NoteBusyError(`note is open in a live session, try again later: ${path}`);
       this.watcher?.markOwnRemove(path);
       const removed = await this.vault.remove(path);
       if (removed) {

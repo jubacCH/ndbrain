@@ -12,6 +12,7 @@ import { NoteService } from "./service.js";
 import {
   EditAmbiguousError,
   EditTargetNotFoundError,
+  NoteBusyError,
   NoteExistsError,
   NoteNotFoundError,
 } from "./errors.js";
@@ -264,6 +265,63 @@ describe("NoteService", () => {
 
       expect(await wired.read("myai/live-np.md")).toBe("hello");
       expect((await git.historyFor("myai/live-np.md"))[0].author).toBe("julian");
+    });
+
+    it("move rejects with NoteBusyError when the source is live, and leaves file/index untouched", async () => {
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db));
+      const manager = new DocumentManager({ notes: wired });
+      wired.setDocManager(manager);
+
+      await wired.write("myai/a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+      expect(manager.isLive("myai/a.md")).toBe(true);
+
+      const before = await git.historyFor("myai/a.md");
+      await expect(wired.move("myai/a.md", "myai/b.md", "julian")).rejects.toBeInstanceOf(
+        NoteBusyError,
+      );
+
+      expect(await wired.read("myai/a.md")).toBe("# A");
+      expect(await wired.read("myai/b.md")).toBeNull();
+      expect((await git.historyFor("myai/a.md")).length).toBe(before.length);
+      expect(db.prepare("SELECT count(*) c FROM notes WHERE path='myai/b.md'").get()).toEqual({
+        c: 0,
+      });
+    });
+
+    it("remove rejects with NoteBusyError when the path is live, and leaves file/index untouched", async () => {
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db));
+      const manager = new DocumentManager({ notes: wired });
+      wired.setDocManager(manager);
+
+      await wired.write("myai/a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+      expect(manager.isLive("myai/a.md")).toBe(true);
+
+      const before = await git.historyFor("myai/a.md");
+      await expect(wired.remove("myai/a.md", "julian")).rejects.toBeInstanceOf(NoteBusyError);
+
+      expect(await wired.read("myai/a.md")).toBe("# A");
+      expect((await git.historyFor("myai/a.md")).length).toBe(before.length);
+      expect(db.prepare("SELECT count(*) c FROM notes WHERE path='myai/a.md'").get()).toEqual({
+        c: 1,
+      });
+    });
+
+    it("move/remove of a non-live note are unaffected by a docManager being wired", async () => {
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db));
+      const manager = new DocumentManager({ notes: wired });
+      wired.setDocManager(manager);
+
+      await wired.write("myai/not-live.md", "# X", "julian");
+      await wired.move("myai/not-live.md", "myai/moved.md", "julian");
+      expect(await wired.read("myai/moved.md")).toBe("# X");
+
+      await wired.write("myai/to-remove.md", "# Y", "julian");
+      expect(await wired.remove("myai/to-remove.md", "julian")).toBe(true);
+      expect(await wired.read("myai/to-remove.md")).toBeNull();
     });
   });
 });
