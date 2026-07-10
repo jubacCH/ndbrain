@@ -15,6 +15,7 @@ import { registerRoutes } from "./routes.js";
 import type { Hocuspocus } from "@hocuspocus/server";
 import { createCollabServer, type CollabServerOptions } from "../collab/server.js";
 import type { DocumentManager } from "../collab/document-manager.js";
+import { registerStatic } from "./static.js";
 
 export interface ServerDeps {
   notes: NoteService;
@@ -34,6 +35,11 @@ export interface ServerDeps {
    *  no prod code path may accumulate sockets (see I4: this replaces a NODE_ENV-gated
    *  global that leaked every socket forever outside Docker, where NODE_ENV is unset). */
   onCollabSocket?: (ws: WebSocket) => void;
+  /** Overrides where the built web app is served from (see `http/static.ts`).
+   *  Tests point this at a temp fixture dir, or at a nonexistent path to
+   *  exercise the no-dist-yet guard; production leaves it unset and gets the
+   *  real `apps/web/dist`. */
+  webDistDir?: string;
 }
 
 /** Builds the same-origin URL for a raw upgrade `req`, tolerating a malformed `Host`
@@ -82,18 +88,24 @@ export function buildServer(deps: ServerDeps): NdbrainServer {
 
   app.addHook("onRequest", async (req, reply) => {
     // Parse pathname once: req.url includes the query string, so split on '?' first.
-    // /api/v1/auth/login, /mcp and /collab should all be exempted from session auth:
-    // - login authenticates by credentials (username/password), not session
-    // - MCP uses agent-key auth (Bearer -> ApiKeyService.validate), not the session cookie
-    // (see mcp/server.ts's own 401 handling).
-    // - /collab authenticates inside Hocuspocus's own onAuthenticate hook (see
-    // authenticateCollab), over the WebSocket wire protocol, not this HTTP hook. In
-    // practice a real WS upgrade never reaches this hook at all once the raw
-    // 'upgrade' handler below is registered (Node routes upgrade requests away from
-    // the 'request' event entirely) - this exemption only matters for a stray plain
-    // HTTP request to /collab (no Upgrade header), which should 404, not 401.
     const pathname = req.url.split("?", 1)[0];
-    if (pathname === "/api/v1/auth/login" || pathname === "/mcp" || pathname === "/collab") return;
+    // /mcp and /collab authenticate themselves, not via this session-cookie hook:
+    // - MCP uses agent-key auth (Bearer -> ApiKeyService.validate, see mcp/server.ts's
+    //   own 401 handling).
+    // - /collab authenticates inside Hocuspocus's own onAuthenticate hook (see
+    //   authenticateCollab), over the WebSocket wire protocol. In practice a real WS
+    //   upgrade never reaches this hook at all once the raw 'upgrade' handler below is
+    //   registered (Node routes upgrade requests away from the 'request' event
+    //   entirely) - this exemption only matters for a stray plain HTTP request to
+    //   /collab (no Upgrade header), which should 404, not 401.
+    if (pathname === "/mcp" || pathname === "/collab") return;
+    // Everything outside /api/* is either a built web asset or the SPA fallback (see
+    // static.ts) - both must be reachable unauthenticated. The SPA's own login screen
+    // is itself one of those assets, so gating them on a session would make it
+    // impossible to ever load the page that lets you create one.
+    if (!pathname.startsWith("/api/")) return;
+    // Login authenticates by credentials (username/password), not session.
+    if (pathname === "/api/v1/auth/login") return;
     const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "");
     const token = bearer ?? req.cookies["ndbrain_session"];
     const session = token ? deps.auth.validateSession(token) : null;
@@ -129,6 +141,11 @@ export function buildServer(deps: ServerDeps): NdbrainServer {
 
   registerRoutes(app, deps);
   const collab = mountCollab(app, deps);
+  // Registered last: its `setNotFoundHandler` fallback only ever runs for a request
+  // nothing above already matched, and this ordering keeps that intent explicit (see
+  // static.ts's own doc comment on why /api/* and friends can never actually be
+  // shadowed by it regardless of order).
+  registerStatic(app, deps.webDistDir);
   return Object.assign(app, collab);
 }
 

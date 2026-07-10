@@ -8,7 +8,9 @@ import { Indexer } from "../index/indexer.js";
 import { Vault } from "../vault/files.js";
 import { VaultGit } from "../vault/git.js";
 import { NoteService } from "../notes/service.js";
+import { Document } from "@hocuspocus/server";
 import { DocumentManager } from "./document-manager.js";
+import { agentAwarenessClientId, agentAwarenessColor } from "./awareness.js";
 
 let dir: string;
 let db: Database;
@@ -194,6 +196,72 @@ describe("DocumentManager", () => {
       expect(history.length).toBe(before.length + 1);
       expect(history[0]?.author).toBe("myai");
       expect(await notes.read("myai/a.md")).toBe("# New");
+    });
+  });
+
+  describe("applyAgentWrite agent awareness", () => {
+    // Uses a REAL Hocuspocus `Document` (not a plain `new Y.Doc()`) - it's the
+    // only doc type that carries a real y-protocols `Awareness` instance (see
+    // `Document.ts`'s constructor: `this.awareness = new Awareness(this)`),
+    // which is exactly the seam `load` picks up (see `LiveYDoc`).
+
+    it("sets a { user: { name, agent: true, color } } awareness state for the actor after applyAgentWrite", async () => {
+      await notes.write("myai/a.md", "# A", "julian");
+      const doc = new Document("myai/a.md");
+      await manager.load("myai/a.md", doc);
+
+      manager.applyAgentWrite("myai/a.md", "# New", "myai");
+
+      const clientId = agentAwarenessClientId("myai");
+      expect(doc.awareness.getStates().get(clientId)).toEqual({
+        user: { name: "myai", agent: true, color: agentAwarenessColor("myai") },
+      });
+    });
+
+    it("clears the actor's awareness state after the timeout", async () => {
+      await notes.write("myai/a.md", "# A", "julian");
+      const doc = new Document("myai/a.md");
+      await manager.load("myai/a.md", doc);
+
+      manager.applyAgentWrite("myai/a.md", "# New", "myai", 20);
+      const clientId = agentAwarenessClientId("myai");
+      expect(doc.awareness.getStates().has(clientId)).toBe(true);
+
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      expect(doc.awareness.getStates().has(clientId)).toBe(false);
+    });
+
+    it("a second applyAgentWrite before the timeout resets it instead of clearing early", async () => {
+      await notes.write("myai/a.md", "# A", "julian");
+      const doc = new Document("myai/a.md");
+      await manager.load("myai/a.md", doc);
+      const clientId = agentAwarenessClientId("myai");
+
+      manager.applyAgentWrite("myai/a.md", "# New", "myai", 40);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      // Still well within the first window - re-apply and confirm the timer restarts.
+      manager.applyAgentWrite("myai/a.md", "# Newer", "myai", 40);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      // 50ms have elapsed since the first call (which had a 40ms TTL) - if the
+      // first timer weren't cancelled, the state would already be cleared.
+      expect(doc.awareness.getStates().has(clientId)).toBe(true);
+
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(doc.awareness.getStates().has(clientId)).toBe(false);
+    });
+
+    it("is a no-op (no throw) for a plain Y.Doc with no awareness handle", async () => {
+      await notes.write("myai/b.md", "# B", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/b.md", ydoc);
+
+      expect(() => manager.applyAgentWrite("myai/b.md", "# New", "myai")).not.toThrow();
+    });
+
+    it("does not set awareness when the path isn't live", () => {
+      expect(manager.applyAgentWrite("myai/not-live.md", "# X", "myai")).toBe(false);
     });
   });
 
