@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { openDatabase } from "../db/database.js";
+import { openDatabase, type Database } from "../db/database.js";
 import { Indexer } from "../index/indexer.js";
 import { NoteService } from "../notes/service.js";
 import { Vault } from "../vault/files.js";
 import { VaultGit } from "../vault/git.js";
 import { AuthService } from "./auth.js";
 import { ApiKeyService } from "../keys/service.js";
+import { logAccess } from "../audit/log.js";
 import { buildServer } from "./server.js";
 import { DocumentManager } from "../collab/document-manager.js";
 
@@ -17,10 +18,12 @@ let dir: string;
 let app: FastifyInstance;
 let token: string;
 let notes: NoteService;
+let db: Database;
+let apiKeys: ApiKeyService;
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "ndbrain-http-"));
-  const db = openDatabase(":memory:");
+  db = openDatabase(":memory:");
   const vault = new Vault(dir);
   const git = new VaultGit(dir);
   await git.init();
@@ -28,7 +31,7 @@ beforeEach(async () => {
   const auth = new AuthService(db);
   await auth.createUser("julian", "secret123");
   notes = new NoteService(vault, git, indexer);
-  const apiKeys = new ApiKeyService(db);
+  apiKeys = new ApiKeyService(db);
   const documents = new DocumentManager({ notes });
   app = buildServer({ notes, auth, db, git, indexer, vault, apiKeys, documents });
   const login = await app.inject({
@@ -166,5 +169,135 @@ describe("REST /api/v1", () => {
     expect(there.json().content).toBe("# Src");
     const hist = await app.inject(authed({ method: "GET", url: "/api/v1/history/dst/moved.md" }));
     expect(hist.json().history.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("REST /api/v1/keys", () => {
+  it("rejects unauthenticated requests", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/v1/keys" });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("creates a key and lists it without the hash", async () => {
+    const create = await app.inject(
+      authed({
+        method: "POST",
+        url: "/api/v1/keys",
+        payload: { name: "agent-1", namespace: "myai/", canWrite: true },
+      }),
+    );
+    expect(create.statusCode).toBe(200);
+    expect(create.json().key).toMatch(/^ndb_[0-9a-f]{64}$/);
+
+    const list = await app.inject(authed({ method: "GET", url: "/api/v1/keys" }));
+    expect(list.statusCode).toBe(200);
+    expect(list.json().keys).toEqual([
+      expect.objectContaining({ name: "agent-1", namespace: "myai/", canWrite: true }),
+    ]);
+    expect(list.json().keys[0]).not.toHaveProperty("keyHash");
+    expect(list.json().keys[0]).not.toHaveProperty("key_hash");
+  });
+
+  it("returns 400 for an invalid key name", async () => {
+    const res = await app.inject(
+      authed({
+        method: "POST",
+        url: "/api/v1/keys",
+        payload: { name: "bad name!", namespace: "", canWrite: false },
+      }),
+    );
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("returns 409 for a duplicate key name", async () => {
+    await app.inject(
+      authed({ method: "POST", url: "/api/v1/keys", payload: { name: "dup", namespace: "", canWrite: false } }),
+    );
+    const res = await app.inject(
+      authed({ method: "POST", url: "/api/v1/keys", payload: { name: "dup", namespace: "", canWrite: false } }),
+    );
+    expect(res.statusCode).toBe(409);
+  });
+
+  it("returns 400 when the request body is missing required fields", async () => {
+    const res = await app.inject(authed({ method: "POST", url: "/api/v1/keys", payload: { name: "x" } }));
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("revokes a key: 204 when it existed, 404 when it did not", async () => {
+    await app.inject(
+      authed({ method: "POST", url: "/api/v1/keys", payload: { name: "gone", namespace: "", canWrite: false } }),
+    );
+    const del = await app.inject(authed({ method: "DELETE", url: "/api/v1/keys/gone" }));
+    expect(del.statusCode).toBe(204);
+
+    const missing = await app.inject(authed({ method: "DELETE", url: "/api/v1/keys/gone" }));
+    expect(missing.statusCode).toBe(404);
+
+    const list = await app.inject(authed({ method: "GET", url: "/api/v1/keys" }));
+    expect(list.json().keys).toEqual([]);
+  });
+});
+
+describe("REST /api/v1/audit", () => {
+  it("rejects unauthenticated requests", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/v1/audit" });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("resolves the key name via a join, newest first, and keeps names for revoked keys", async () => {
+    await apiKeys.create("agent-1", "", true);
+    const keyRow = db.prepare("SELECT id FROM api_keys WHERE name = ?").get("agent-1") as { id: number };
+
+    logAccess(db, keyRow.id, "search_notes", null, true);
+    logAccess(db, null, "auth", null, false);
+    logAccess(db, keyRow.id, "read_note", "a.md", true);
+
+    // Revoking the key must not break audit-log name resolution (soft-revoke).
+    apiKeys.revoke("agent-1");
+
+    const audit = await app.inject(authed({ method: "GET", url: "/api/v1/audit" }));
+    expect(audit.statusCode).toBe(200);
+    const entries = audit.json().entries as Array<{
+      keyName: string | null;
+      tool: string;
+      target: string | null;
+      allowed: boolean;
+      ts: string;
+    }>;
+    expect(entries).toHaveLength(3);
+    // Newest first.
+    expect(entries.map((e) => e.tool)).toEqual(["read_note", "auth", "search_notes"]);
+    expect(entries[0]).toMatchObject({ keyName: "agent-1", tool: "read_note", target: "a.md", allowed: true });
+    expect(entries[1]).toMatchObject({ keyName: null, tool: "auth", target: null, allowed: false });
+    expect(entries[2]).toMatchObject({ keyName: "agent-1", tool: "search_notes", target: null, allowed: true });
+  });
+
+  it("clamps the limit query param to a sane maximum", async () => {
+    const res = await app.inject(authed({ method: "GET", url: "/api/v1/audit?limit=999999" }));
+    expect(res.statusCode).toBe(200);
+    expect(Array.isArray(res.json().entries)).toBe(true);
+  });
+});
+
+describe("REST /api/v1/graph", () => {
+  it("rejects unauthenticated requests", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/v1/graph" });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("returns nodes and edges built from indexed notes and links", async () => {
+    await app.inject(authed({ method: "PUT", url: "/api/v1/notes/a.md", payload: { content: "# A\n[[b]]" } }));
+    await app.inject(authed({ method: "PUT", url: "/api/v1/notes/b.md", payload: { content: "# B" } }));
+
+    const res = await app.inject(authed({ method: "GET", url: "/api/v1/graph" }));
+    expect(res.statusCode).toBe(200);
+    expect(res.json().nodes).toEqual(
+      expect.arrayContaining([
+        { id: "a.md", title: "A" },
+        { id: "b.md", title: "B" },
+      ]),
+    );
+    expect(res.json().edges).toEqual([{ source: "a.md", target: "b.md" }]);
   });
 });

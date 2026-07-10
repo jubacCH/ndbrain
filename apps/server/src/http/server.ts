@@ -9,7 +9,7 @@ import type { Vault } from "../vault/files.js";
 import { VaultPathError } from "../vault/files.js";
 import { NoteBusyError, NoteExistsError, NoteNotFoundError } from "../notes/errors.js";
 import type { VaultGit } from "../vault/git.js";
-import type { ApiKeyService } from "../keys/service.js";
+import { DuplicateKeyNameError, InvalidKeyNameError, type ApiKeyService } from "../keys/service.js";
 import type { AuthService } from "./auth.js";
 import { registerRoutes } from "./routes.js";
 import type { Hocuspocus } from "@hocuspocus/server";
@@ -113,6 +113,10 @@ export function buildServer(deps: ServerDeps): NdbrainServer {
     // REST client can tell "try again shortly" (busy) apart from "target already exists".
     if (err instanceof NoteBusyError)
       return reply.code(409).send({ error: { code: "busy", message: err.message } });
+    if (err instanceof InvalidKeyNameError)
+      return reply.code(400).send({ error: { code: "invalid_key_name", message: err.message } });
+    if (err instanceof DuplicateKeyNameError)
+      return reply.code(409).send({ error: { code: "duplicate_key_name", message: err.message } });
     // Fastify client-side errors (validation, malformed body, unknown route): pass the
     // status through with a generic message, never the raw error text.
     const status = (err as { statusCode?: number }).statusCode;

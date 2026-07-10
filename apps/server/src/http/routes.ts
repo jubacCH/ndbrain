@@ -1,10 +1,22 @@
 import type { FastifyInstance } from "fastify";
 import { backlinksOf, searchNotes } from "../index/search.js";
+import { buildGraph } from "../index/graph.js";
 import { createMcpHandler } from "../mcp/server.js";
 import type { ServerDeps } from "./server.js";
 
 const wildcardPath = (req: any): string => decodeURIComponent(req.params["*"]);
 const actor = (req: any): string => req.session.username;
+
+const DEFAULT_AUDIT_LIMIT = 100;
+const MAX_AUDIT_LIMIT = 500;
+
+interface AuditRow {
+  ts: string;
+  keyName: string | null;
+  tool: string;
+  target: string | null;
+  allowed: number;
+}
 
 export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   app.post("/api/v1/auth/login", async (req, reply) => {
@@ -96,6 +108,89 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
 
   app.post("/api/v1/reindex", async () => {
     return { count: await deps.indexer.reindexAll(deps.vault) };
+  });
+
+  // Key management, audit trail and graph are all session-authed (humans manage keys
+  // and inspect the vault via the web UI), not agent-key-authed like /mcp — no extra
+  // work needed beyond registering under /api/v1, the onRequest hook in server.ts
+  // already requires a valid session for everything except the exempted paths.
+
+  app.get("/api/v1/keys", async () => {
+    return { keys: deps.apiKeys.list() };
+  });
+
+  app.post(
+    "/api/v1/keys",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["name", "namespace", "canWrite"],
+          properties: {
+            name: { type: "string" },
+            namespace: { type: "string" },
+            canWrite: { type: "boolean" },
+            expiresAt: { type: "string" },
+          },
+        },
+      },
+    },
+    async (req) => {
+      const { name, namespace, canWrite, expiresAt } = req.body as {
+        name: string;
+        namespace: string;
+        canWrite: boolean;
+        expiresAt?: string;
+      };
+      const key = await deps.apiKeys.create(name, namespace, canWrite, expiresAt);
+      return { key };
+    },
+  );
+
+  app.delete("/api/v1/keys/:name", async (req, reply) => {
+    const { name } = req.params as { name: string };
+    const revoked = deps.apiKeys.revoke(name);
+    return reply.code(revoked ? 204 : 404).send();
+  });
+
+  app.get(
+    "/api/v1/audit",
+    {
+      schema: {
+        querystring: { type: "object", properties: { limit: { type: "string" } } },
+      },
+    },
+    async (req) => {
+      const { limit } = req.query as { limit?: string };
+      const requested = limit ? Number.parseInt(limit, 10) : DEFAULT_AUDIT_LIMIT;
+      const bounded =
+        Number.isFinite(requested) && requested > 0 ? Math.min(requested, MAX_AUDIT_LIMIT) : DEFAULT_AUDIT_LIMIT;
+
+      const rows = deps.db
+        .prepare(
+          `SELECT access_log.ts AS ts, api_keys.name AS keyName, access_log.tool AS tool,
+                  access_log.target AS target, access_log.allowed AS allowed
+           FROM access_log
+           LEFT JOIN api_keys ON api_keys.id = access_log.key_id
+           ORDER BY access_log.id DESC
+           LIMIT ?`,
+        )
+        .all(bounded) as AuditRow[];
+
+      return {
+        entries: rows.map((row) => ({
+          ts: row.ts,
+          keyName: row.keyName,
+          tool: row.tool,
+          target: row.target,
+          allowed: row.allowed === 1,
+        })),
+      };
+    },
+  );
+
+  app.get("/api/v1/graph", async () => {
+    return buildGraph(deps.db);
   });
 
   // MCP Streamable HTTP (agent-key auth, not session cookie — see the onRequest exemption
