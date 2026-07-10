@@ -43,6 +43,13 @@ export class DocumentManager {
   private readonly lastWriter = new Map<string, string>();
   // Per-path debounce state for scheduleStore; at most one pending timer per path.
   private readonly pending = new Map<string, PendingStore>();
+  // Every currently-running store() promise, so flushAll can await commits
+  // already underway (e.g. one a debounce timer just started) instead of
+  // only seeing the (by-then-empty) `pending` map.
+  private readonly inFlight = new Set<Promise<void>>();
+  // Same promises, keyed by path, so flush(path) can await an in-flight
+  // store for that specific path even when nothing is left in `pending`.
+  private readonly inFlightByPath = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: { notes: NoteService }) {}
 
@@ -119,7 +126,7 @@ export class DocumentManager {
     if (existing) clearTimeout(existing.timer);
     const timer = setTimeout(() => {
       this.pending.delete(path);
-      this.store(path, ydoc, resolvedActor).catch((err) => {
+      this.runStore(path, ydoc, resolvedActor).catch((err) => {
         console.error("[ndbrain] debounced store failed for %s:", path, err);
       });
     }, delayMs);
@@ -127,21 +134,59 @@ export class DocumentManager {
   }
 
   /**
+   * Runs `store` and tracks the resulting promise as in-flight for `path`
+   * until it settles. This closes the shutdown data-loss window where a
+   * debounce timer fires (removing its `pending` entry and starting the
+   * store as fire-and-forget) and `flushAll`/`flush` is then called before
+   * that store lands: both now find and await this promise instead of
+   * seeing an empty `pending` map and returning early.
+   */
+  private runStore(path: string, ydoc: Y.Doc, actor: string): Promise<void> {
+    const promise = this.store(path, ydoc, actor).finally(() => {
+      this.inFlight.delete(promise);
+      if (this.inFlightByPath.get(path) === promise) this.inFlightByPath.delete(path);
+    });
+    this.inFlight.add(promise);
+    this.inFlightByPath.set(path, promise);
+    return promise;
+  }
+
+  /**
    * Immediately runs the pending debounced store for `path`, if any,
-   * cancelling its timer first so it doesn't also fire later. A no-op if
-   * nothing is pending for `path`.
+   * cancelling its timer first so it doesn't also fire later. If nothing is
+   * pending, awaits an in-flight store for `path` instead (one a debounce
+   * timer already started just before this call), if any; otherwise a no-op.
    */
   async flush(path: string): Promise<void> {
     const pending = this.pending.get(path);
-    if (!pending) return;
-    clearTimeout(pending.timer);
-    this.pending.delete(path);
-    await this.store(path, pending.ydoc, pending.actor);
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.pending.delete(path);
+      await this.runStore(path, pending.ydoc, pending.actor);
+      return;
+    }
+    await this.inFlightByPath.get(path);
   }
 
-  /** Flushes every path with a pending debounced store. For use on shutdown. */
+  /**
+   * Flushes every path with a pending debounced store, then awaits every
+   * store still in flight (including ones a timer already started, whose
+   * `pending` entry is already gone) — repeating until both are drained, in
+   * case awaiting settles triggers new stores. For use on shutdown: this is
+   * what guarantees a caller exiting right after `flushAll()` resolves can't
+   * lose a commit that was already underway when it was called.
+   */
   async flushAll(): Promise<void> {
-    await Promise.all([...this.pending.keys()].map((path) => this.flush(path)));
+    for (;;) {
+      const pendingPaths = [...this.pending.keys()];
+      if (pendingPaths.length > 0) {
+        await Promise.allSettled(pendingPaths.map((path) => this.flush(path)));
+      }
+      if (this.inFlight.size > 0) {
+        await Promise.allSettled([...this.inFlight]);
+      }
+      if (this.pending.size === 0 && this.inFlight.size === 0) break;
+    }
   }
 
   /** Resolves the actor to attribute a store to: an explicit `actor` also

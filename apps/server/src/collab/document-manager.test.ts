@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { openDatabase, type Database } from "../db/database.js";
 import { Indexer } from "../index/indexer.js";
@@ -213,6 +213,110 @@ describe("DocumentManager", () => {
 
       const history = await git.historyFor("myai/a.md");
       expect(history[0]?.author).toBe("julian");
+    });
+
+    // Note: these two tests use REAL timers with short `delayMs` overrides,
+    // not `vi.useFakeTimers()`. `store()` goes through `VaultGit`/simple-git,
+    // which spawns a real child process; vitest's fake timers hang that
+    // child process's I/O completion (confirmed experimentally — the tests
+    // below time out under fake timers), so real timers + short delays are
+    // used instead, per the fallback documented for this task.
+
+    it("flushAll awaits a store already in flight from a timer that fired just before it was called", async () => {
+      // Reproduces the shutdown data-loss window: the debounce timer fires and
+      // starts `store()` as fire-and-forget (removing its `pending` entry
+      // immediately), then `flushAll()` is called before that store settles.
+      // `flushAll()` must not see an empty `pending` map and return early — it
+      // must await the in-flight commit so a caller exiting right after
+      // `flushAll()` can't lose it.
+      await notes.write("myai/a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " extra");
+
+      const before = await git.historyFor("myai/a.md");
+
+      // Gate the real write so we can deterministically observe the store
+      // still being in flight at the moment flushAll is invoked.
+      const originalWrite = notes.write.bind(notes);
+      let releaseWrite = () => {};
+      const writeGate = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      const writeSpy = vi
+        .spyOn(notes, "write")
+        .mockImplementation(async (path, content, actor) => {
+          await writeGate;
+          return originalWrite(path, content, actor);
+        });
+
+      manager.scheduleStore("myai/a.md", ydoc, "julian", 10);
+
+      // Let the debounce timer fire; store() starts and immediately blocks
+      // inside the gated notes.write — it is now genuinely in flight, and
+      // its `pending` entry is already gone.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      let flushAllSettled = false;
+      const flushAllPromise = manager.flushAll().then(() => {
+        flushAllSettled = true;
+      });
+
+      // Give flushAll a window to (wrongly) resolve early if it doesn't
+      // await the in-flight store.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(flushAllSettled).toBe(false);
+
+      releaseWrite();
+      await flushAllPromise;
+      expect(flushAllSettled).toBe(true);
+      writeSpy.mockRestore();
+
+      expect(await notes.read("myai/a.md")).toBe("# A extra");
+      const after = await git.historyFor("myai/a.md");
+      expect(after.length).toBe(before.length + 1);
+    });
+
+    it("coalesces 3 rapid schedules into exactly one store() call from the real timer, not via flush", async () => {
+      // Unlike the flush()-based coalescing test above (which would pass
+      // even without clearTimeout, since flush() forces the store directly),
+      // this exercises the real setTimeout/clearTimeout path: each
+      // scheduleStore call must cancel the previous pending timer so only
+      // the last one ever fires.
+      //
+      // A plain "exactly one new commit" assertion alone would NOT actually
+      // prove coalescing here: store() is idempotent (skips the commit when
+      // content already matches disk), and Y.Doc mutations are in-place, so
+      // even if all 3 timers survived (no clearTimeout) and each called
+      // store() with the same, fully-mutated ydoc, only the first would
+      // produce a commit and the rest would be harmless no-ops — the commit
+      // count would be 1 either way. So the spy on store()'s call count is
+      // the real discriminator; the commit-count check is kept alongside it
+      // as the sanity check the task asked for.
+      await notes.write("myai/a.md", "# A", "julian");
+      const ydoc = new Y.Doc();
+      await manager.load("myai/a.md", ydoc);
+
+      const before = await git.historyFor("myai/a.md");
+      const delayMs = 30;
+      const storeSpy = vi.spyOn(manager, "store");
+
+      manager.scheduleStore("myai/a.md", ydoc, "julian", delayMs);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " one");
+      await new Promise((resolve) => setTimeout(resolve, delayMs / 3)); // well under delayMs
+      manager.scheduleStore("myai/a.md", ydoc, "julian", delayMs);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " two");
+      await new Promise((resolve) => setTimeout(resolve, delayMs / 3)); // well under delayMs
+      manager.scheduleStore("myai/a.md", ydoc, "julian", delayMs);
+      manager.getText(ydoc).insert(manager.getText(ydoc).length, " three");
+
+      // Let the single surviving timer actually fire and its store settle.
+      await new Promise((resolve) => setTimeout(resolve, delayMs + 100));
+
+      expect(storeSpy).toHaveBeenCalledTimes(1);
+      expect(await notes.read("myai/a.md")).toBe("# A one two three");
+      const after = await git.historyFor("myai/a.md");
+      expect(after.length).toBe(before.length + 1);
     });
   });
 });
