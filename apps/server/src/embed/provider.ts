@@ -12,6 +12,7 @@ const OPENAI_BATCH_SIZE = 96;
 
 const OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434";
 const OLLAMA_DEFAULT_MODEL = "nomic-embed-text";
+const OLLAMA_MAX_CONCURRENT_REQUESTS = 4;
 
 interface OpenAIEmbeddingItem {
   embedding: number[];
@@ -20,6 +21,39 @@ interface OpenAIEmbeddingItem {
 
 interface OpenAIEmbeddingResponse {
   data: OpenAIEmbeddingItem[];
+}
+
+/**
+ * Runs a mapper function over items with bounded concurrency.
+ * Preserves the order of results to match input order.
+ * If any promise rejects, the entire operation fails fast.
+ */
+async function mapWithConcurrencyLimit<T, R>(
+  items: T[],
+  maxConcurrent: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  const processNext = async (): Promise<void> => {
+    if (nextIndex >= items.length) return;
+    const currentIndex = nextIndex++;
+    const item = items[currentIndex];
+    results[currentIndex] = await mapper(item, currentIndex);
+    // Recursively process next item if available
+    await processNext();
+  };
+
+  // Start up to maxConcurrent workers
+  const promises: Promise<void>[] = [];
+  for (let i = 0; i < Math.min(maxConcurrent, items.length); i++) {
+    promises.push(processNext());
+  }
+
+  // Wait for all to complete
+  await Promise.all(promises);
+  return results;
 }
 
 /** OpenAI-compatible embeddings provider (also works against local servers exposing the same API shape). */
@@ -110,7 +144,9 @@ class OllamaEmbeddingProvider implements EmbeddingProvider {
 
   async embed(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
-    const vectors = await Promise.all(texts.map((text) => this.embedOne(text)));
+    const vectors = await mapWithConcurrencyLimit(texts, OLLAMA_MAX_CONCURRENT_REQUESTS, (text) =>
+      this.embedOne(text),
+    );
     if (!this.hasExplicitDim && vectors[0]) this._dim = vectors[0].length;
     return vectors;
   }

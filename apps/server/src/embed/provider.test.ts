@@ -149,6 +149,40 @@ describe("createEmbeddingProvider - ollama", () => {
     const provider = createEmbeddingProvider({ provider: "ollama" });
     await expect(provider.embed(["a"])).rejects.toThrow(/500/);
   });
+
+  it("limits concurrent embedding requests to a bounded level and preserves order", async () => {
+    let maxConcurrency = 0;
+    let currentConcurrency = 0;
+
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      currentConcurrency++;
+      maxConcurrency = Math.max(maxConcurrency, currentConcurrency);
+
+      // Simulate some processing time
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const body = JSON.parse(init.body as string) as { prompt: string };
+      const index = parseInt(body.prompt.split("-")[1], 10);
+      currentConcurrency--;
+
+      return new Response(JSON.stringify({ embedding: [index] }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = createEmbeddingProvider({ provider: "ollama" });
+    const texts = Array.from({ length: 10 }, (_, i) => `text-${i}`);
+    const vectors = await provider.embed(texts);
+
+    // Verify results are in input order
+    expect(vectors).toHaveLength(10);
+    for (let i = 0; i < 10; i++) {
+      expect(vectors[i]).toEqual([i]);
+    }
+
+    // Verify concurrency was bounded (expect max 4 concurrent requests)
+    expect(maxConcurrency).toBeLessThanOrEqual(4);
+    expect(maxConcurrency).toBeGreaterThan(0);
+  });
 });
 
 describe("createEmbeddingProvider - none", () => {

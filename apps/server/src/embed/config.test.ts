@@ -31,4 +31,20 @@ describe("loadEmbeddingConfig", () => {
   it("reads the ollama provider", () => {
     expect(loadEmbeddingConfig({ NDBRAIN_EMBEDDING_PROVIDER: "ollama" })).toEqual({ provider: "ollama" });
   });
+
+  it("leaves dim undefined when NDBRAIN_EMBEDDING_DIM is malformed (NaN guard)", () => {
+    expect(loadEmbeddingConfig({ NDBRAIN_EMBEDDING_DIM: "abc" })).toEqual({ provider: "none" });
+  });
+
+  it("leaves dim undefined when NDBRAIN_EMBEDDING_DIM is zero", () => {
+    expect(loadEmbeddingConfig({ NDBRAIN_EMBEDDING_DIM: "0" })).toEqual({ provider: "none" });
+  });
+
+  it("leaves dim undefined when NDBRAIN_EMBEDDING_DIM is negative", () => {
+    expect(loadEmbeddingConfig({ NDBRAIN_EMBEDDING_DIM: "-5" })).toEqual({ provider: "none" });
+  });
+
+  it("sets dim when NDBRAIN_EMBEDDING_DIM is a valid positive integer", () => {
+    expect(loadEmbeddingConfig({ NDBRAIN_EMBEDDING_DIM: "1536" })).toEqual({ provider: "none", dim: 1536 });
+  });
 });
