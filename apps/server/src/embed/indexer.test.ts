@@ -36,6 +36,62 @@ function countChunks(db: Database, path: string): number {
   return (db.prepare("SELECT COUNT(*) as c FROM vec_chunks WHERE note_path = ?").get(path) as { c: number }).c;
 }
 
+/** Reads back the raw stored vectors for a path (ordered by chunk index), for exact-content assertions. */
+function getVectors(db: Database, path: string): number[][] {
+  const rows = db
+    .prepare("SELECT embedding FROM vec_chunks WHERE note_path = ? ORDER BY chunk_ix")
+    .all(path) as { embedding: Buffer }[];
+  return rows.map((row) => Array.from(new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4)));
+}
+
+/** Polls a real timer (not the injectable scheduler) until `condition` holds, so tests can interleave with an in-flight promise without knowing the exact number of microtask ticks the pump needs. */
+async function waitFor(condition: () => boolean, timeoutMs = 1000): Promise<void> {
+  const start = Date.now();
+  while (!condition()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor: timed out");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+/**
+ * Fake provider whose `embed` calls never resolve on their own: each call is queued and
+ * must be resolved explicitly via `resolveNext`/`rejectNext`, in FIFO order. Lets tests
+ * interleave `enqueue`/`removeNote` with an embed that's genuinely "in flight".
+ */
+class DeferredEmbeddingProvider implements EmbeddingProvider {
+  readonly id = "fake-deferred";
+  readonly dim = DIM;
+  private readonly waiting: Array<{
+    texts: string[];
+    resolve: (vectors: number[][]) => void;
+    reject: (err: unknown) => void;
+  }> = [];
+
+  embed(texts: string[]): Promise<number[][]> {
+    return new Promise((resolve, reject) => {
+      this.waiting.push({ texts, resolve, reject });
+    });
+  }
+
+  get pendingCount(): number {
+    return this.waiting.length;
+  }
+
+  /** Resolves the oldest still-pending call with vectors derived from its own texts. */
+  resolveNext(): void {
+    const next = this.waiting.shift();
+    if (!next) throw new Error("DeferredEmbeddingProvider: no pending embed call to resolve");
+    next.resolve(next.texts.map(vectorFor));
+  }
+
+  /** Rejects the oldest still-pending call. */
+  rejectNext(err: unknown): void {
+    const next = this.waiting.shift();
+    if (!next) throw new Error("DeferredEmbeddingProvider: no pending embed call to reject");
+    next.reject(err);
+  }
+}
+
 describe("EmbeddingIndexer", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
@@ -145,6 +201,90 @@ describe("EmbeddingIndexer", () => {
 
     expect(countChunks(db, "a.md")).toBe(1);
     expect(countChunks(db, "b.md")).toBe(1);
+  });
+
+  it("removeNote during an in-flight embed keeps the note deleted (no resurrection)", async () => {
+    const { db, store } = seeded();
+    const provider = new DeferredEmbeddingProvider();
+    const indexer = new EmbeddingIndexer(provider, store);
+
+    indexer.enqueue("a.md", "content that will be deleted mid-flight");
+    await waitFor(() => provider.pendingCount === 1);
+
+    indexer.removeNote("a.md");
+    provider.resolveNext();
+    await indexer.flush();
+
+    expect(countChunks(db, "a.md")).toBe(0);
+  });
+
+  it("supersedes an in-flight embed: the stale version's upsert is skipped and the newer version's content wins", async () => {
+    const { db, store } = seeded();
+    const provider = new DeferredEmbeddingProvider();
+    const indexer = new EmbeddingIndexer(provider, store);
+    // Spied rather than inferred from final DB state: with a serial pump, the *last*
+    // write always wins regardless of any skip logic, so only a call-count/content
+    // assertion on upsertNote actually proves v1's upsert was skipped (as opposed to
+    // harmlessly overwritten later).
+    const upsertSpy = vi.spyOn(store, "upsertNote");
+    const v1 = "first version, still embedding";
+    const v2 = "second version, supersedes v1 while it is in flight";
+
+    indexer.enqueue("a.md", v1);
+    await waitFor(() => provider.pendingCount === 1);
+
+    indexer.enqueue("a.md", v2);
+    provider.resolveNext(); // v1's embed resolves, but it's stale now: its upsert must be skipped
+    await waitFor(() => provider.pendingCount === 1); // pump moved on to embedding v2
+    provider.resolveNext(); // v2's embed resolves and stores
+    await indexer.flush();
+
+    expect(upsertSpy).toHaveBeenCalledTimes(1);
+    expect(upsertSpy.mock.calls[0][0]).toBe("a.md");
+    expect(countChunks(db, "a.md")).toBe(1);
+    expect(getVectors(db, "a.md")).toEqual([vectorFor(v2)]);
+  });
+
+  it("a stale scheduled retry does not clobber content that a later successful embed already stored (regression)", async () => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { db, store } = seeded();
+    const v1 = "first version, fails once then would retry";
+    const v2 = "second version, embeds and stores successfully";
+    // Keyed on content so we can tell which version a given embed call is for, and make
+    // v1 fail (to schedule a retry) while v2 always succeeds.
+    const provider = new FakeEmbeddingProvider(async (texts) => {
+      if (texts[0] === v1) throw new Error("simulated provider outage for v1");
+      return texts.map(vectorFor);
+    });
+    let scheduledRetry: (() => void) | undefined;
+    const indexer = new EmbeddingIndexer(provider, store, {
+      // Injectable scheduler: capture the retry callback instead of running it on a timer,
+      // so the test controls exactly when the stale retry fires relative to v2's success.
+      scheduler: (fn) => {
+        scheduledRetry = fn;
+      },
+    });
+
+    indexer.enqueue("a.md", v1);
+    // Can't use flush() here: the captured (not-yet-fired) retry timer is itself
+    // outstanding work by design, so flush() would never resolve until we fire it below.
+    await waitFor(() => scheduledRetry !== undefined); // v1 fails, retry scheduled (captured, not yet run)
+    expect(indexer.size()).toBe(1); // the pending retry timer counts as outstanding work
+
+    indexer.enqueue("a.md", v2);
+    await waitFor(() => countChunks(db, "a.md") === 1); // v2 embeds and stores successfully (flush() still blocked on the retry timer)
+
+    expect(countChunks(db, "a.md")).toBe(1);
+    expect(getVectors(db, "a.md")).toEqual([vectorFor(v2)]);
+
+    // Now fire v1's stale retry: its version no longer matches latestVersion, so it must
+    // not re-queue/re-embed/clobber v2's already-stored content.
+    scheduledRetry?.();
+    await indexer.flush();
+
+    expect(countChunks(db, "a.md")).toBe(1);
+    expect(getVectors(db, "a.md")).toEqual([vectorFor(v2)]);
+    expect(provider.calls.map((call) => call[0])).toEqual([v1, v2]);
   });
 
   it("size() reflects outstanding work and settles to 0 once flushed", async () => {

@@ -134,7 +134,7 @@ export class EmbeddingIndexer {
 
       this.processingCount++;
       try {
-        await this.embedAndStore(path, markdown);
+        await this.embedAndStore(path, markdown, version);
         this.retryAttempts.delete(path);
       } catch (err) {
         this.scheduleRetry(path, markdown, version, err);
@@ -144,9 +144,17 @@ export class EmbeddingIndexer {
     }
   }
 
-  private async embedAndStore(path: string, markdown: string): Promise<void> {
+  private async embedAndStore(path: string, markdown: string, version: number): Promise<void> {
     const chunks = chunkNote(markdown);
     const vectors = chunks.length > 0 ? await this.provider.embed(chunks.map((chunk) => chunk.text)) : [];
+    // The embed call above is the only await in this method, so it's the only place
+    // where a concurrent `removeNote` (path deleted) or a superseding `enqueue` (path
+    // re-queued under a newer version) could have happened while we were waiting on
+    // the provider. Re-check immediately before the write: if this job's version is no
+    // longer current, either the note was deleted (stand by the delete, don't
+    // resurrect it) or a newer job already owns this path's next store write (it will
+    // upsert its own, fresher content) — either way, skip this stale write.
+    if (this.latestVersion.get(path) !== version) return;
     this.store.upsertNote(
       path,
       chunks.map((chunk, i) => ({ ix: chunk.ix, vector: vectors[i] })),
