@@ -66,6 +66,23 @@ describe("REST /api/v1", () => {
     expect(res.statusCode).toBe(401);
   });
 
+  // C1: the session-auth gate used to test the RAW (percent-encoded) pathname while
+  // find-my-way routes on the DECODED pathname. "/%61pi/..." doesn't start with "/api/"
+  // (raw), so the gate returned early - but the router decodes "%61" -> "a" and ran the
+  // real /api/v1/... handler completely unauthenticated. Must 401 like the plain path.
+  it("rejects a percent-encoded path that decodes to /api/ (auth-gate bypass)", async () => {
+    const notesRes = await app.inject({ method: "GET", url: "/%61pi/v1/notes" });
+    expect(notesRes.statusCode).toBe(401);
+
+    const keysRes = await app.inject({ method: "GET", url: "/%61pi/v1/keys" });
+    expect(keysRes.statusCode).toBe(401);
+  });
+
+  it("still authenticates a percent-encoded /api/ path with a valid session", async () => {
+    const res = await app.inject(authed({ method: "GET", url: "/%61pi/v1/notes" }));
+    expect(res.statusCode).toBe(200);
+  });
+
   it("full note lifecycle: put, get, list, search, backlinks, history, delete", async () => {
     const put = await app.inject(
       authed({ method: "PUT", url: "/api/v1/notes/myai/a.md", payload: { content: "# Alpha\n[[myai/b]]" } }),

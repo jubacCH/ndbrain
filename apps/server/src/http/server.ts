@@ -88,7 +88,23 @@ export function buildServer(deps: ServerDeps): NdbrainServer {
 
   app.addHook("onRequest", async (req, reply) => {
     // Parse pathname once: req.url includes the query string, so split on '?' first.
-    const pathname = req.url.split("?", 1)[0];
+    // Decode it too (once - do NOT loop-decode): find-my-way (the router) matches routes
+    // against the DECODED path, so a raw comparison here would disagree with the router
+    // on requests like "/%61pi/v1/notes" - it doesn't start with "/api/" raw, so this hook
+    // would return early (skip auth), while the router decodes "%61" -> "a" and runs the
+    // real /api/v1/notes handler completely unauthenticated (see C1). A single decode
+    // aligns this gate with the router's single decode; double-encoding (e.g. "%2561")
+    // decodes once to the literal "%61", which still won't match "/api/" either way, so
+    // there is no bypass left to close by decoding more than once.
+    let pathname = req.url.split("?", 1)[0];
+    try {
+      pathname = decodeURIComponent(pathname);
+    } catch {
+      // Malformed percent-encoding: leave pathname as the raw (undecoded) string. It
+      // won't match "/api/" or any of the exemptions below, and find-my-way will itself
+      // fail to route it too (same malformed input), so this falls through to a 404 -
+      // never an auth bypass.
+    }
     // /mcp and /collab authenticate themselves, not via this session-cookie hook:
     // - MCP uses agent-key auth (Bearer -> ApiKeyService.validate, see mcp/server.ts's
     //   own 401 handling).
