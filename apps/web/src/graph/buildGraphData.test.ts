@@ -105,6 +105,24 @@ describe("localNeighborhood", () => {
     expect(result.links).toHaveLength(4);
   });
 
+  it("excludes links to a node id that has no matching entry in graph.nodes (dangling edge reference)", () => {
+    const graph: Graph = {
+      nodes: [
+        { id: "a.md", title: "A" },
+        { id: "b.md", title: "B" },
+      ],
+      edges: [
+        { source: "a.md", target: "b.md" },
+        { source: "b.md", target: "phantom.md" },
+      ],
+    };
+
+    const result = localNeighborhood(graph, "a.md", 2);
+
+    expect(result.nodes.map((n) => n.id).sort()).toEqual(["a.md", "b.md"]);
+    expect(result.links).toEqual([{ source: "a.md", target: "b.md" }]);
+  });
+
   it("ignores edges that duplicate the same pair (already-deduped upstream, but stay defensive)", () => {
     const graph: Graph = {
       nodes: [
