@@ -1,8 +1,33 @@
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../db/database.js";
 import { VectorStore } from "./store.js";
+import { EmbeddingIndexer } from "./indexer.js";
+import type { EmbeddingProvider } from "./provider.js";
 
 const DIM = 3;
+
+/**
+ * Replicates the real openai/ollama providers' lazy-dim contract (see provider.ts):
+ * `dim` reports 0 until the first `embed()` call resolves, at which point it reports
+ * the actual vector width returned by the remote API. `cfg.dim` (NDBRAIN_EMBEDDING_DIM)
+ * is deliberately left unset here, matching the documented docker-compose config that
+ * doesn't set it.
+ */
+class LazyDimEmbeddingProvider implements EmbeddingProvider {
+  readonly id = "lazy-dim-fake";
+  private _dim = 0;
+  constructor(private readonly vectorWidth: number) {}
+
+  get dim(): number {
+    return this._dim;
+  }
+
+  async embed(texts: string[]): Promise<number[][]> {
+    const vectors = texts.map(() => Array.from({ length: this.vectorWidth }, (_, i) => (i === 0 ? 1 : 0)));
+    this._dim = this.vectorWidth;
+    return vectors;
+  }
+}
 
 function seeded() {
   const db = openDatabase(":memory:");
@@ -143,6 +168,31 @@ describe("VectorStore", () => {
       store.upsertNote("a.md", [{ ix: 0, vector: [1, 0, 0] }]);
       store.deleteNote("a.md");
       expect(store.isEmpty()).toBe(true);
+    });
+  });
+
+  describe("self-adapting dimension (C1 regression)", () => {
+    it("replicates main.ts's boot wiring: a provider whose dim is unknown at construction still works end-to-end", async () => {
+      // This is exactly how main.ts wires things: loadEmbeddingConfig(process.env) with no
+      // NDBRAIN_EMBEDDING_DIM set -> createEmbeddingProvider(...) whose .dim reports 0 until
+      // the first embed() -> `new VectorStore(db)` with no dim hint. Against the old
+      // frozen-dim VectorStore(db, embedProvider.dim), dim would be permanently locked to 0
+      // and every upsert/search below would throw a dimension-mismatch error.
+      const db = openDatabase(":memory:");
+      const provider = new LazyDimEmbeddingProvider(5);
+      expect(provider.dim).toBe(0); // unknown until first embed, like openai/ollama
+
+      const store = new VectorStore(db); // no dim hint: must be learned, not required
+      const indexer = new EmbeddingIndexer(provider, store);
+
+      indexer.enqueue("a.md", "Some note content to embed.");
+      await indexer.flush();
+
+      // The store must have adopted the provider's real (5-wide) dim from the first
+      // embed, rather than staying frozen at an initial/unknown dim.
+      const [queryVector] = await provider.embed(["Some note content to embed."]);
+      const hits = store.search(queryVector, 5);
+      expect(hits.map((h) => h.path)).toEqual(["a.md"]);
     });
   });
 });

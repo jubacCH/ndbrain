@@ -33,7 +33,13 @@ const indexer = new Indexer(db);
 // provider is ever called, no added latency. See embed/provider.ts's `isNoneProvider`.
 const embeddingConfig = loadEmbeddingConfig(process.env);
 const embedProvider = createEmbeddingProvider(embeddingConfig);
-const embedStore = new VectorStore(db, embedProvider.dim);
+// Pass the config's dim (NDBRAIN_EMBEDDING_DIM), NOT embedProvider.dim: the openai/ollama
+// providers only learn their real dim lazily, from their first embed() call, so
+// embedProvider.dim reads 0 here regardless of the configured model. `embeddingConfig.dim`
+// is undefined unless the operator set an explicit override, which is exactly the
+// "optional hint, otherwise self-adapting" contract VectorStore expects (Plan 5 C1 fix) —
+// omitting it isn't an error, the store just learns its dim from the first vector it sees.
+const embedStore = new VectorStore(db, embeddingConfig.dim);
 const embedIndexer = new EmbeddingIndexer(embedProvider, embedStore);
 
 // One shared mutation queue so external-change and API-driven commits serialize together.

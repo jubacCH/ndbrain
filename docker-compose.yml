@@ -15,10 +15,14 @@ services:
       # NDBRAIN_EMBEDDING_PROVIDER: ollama
       # NDBRAIN_EMBEDDING_BASE_URL: http://ollama:11434
       # NDBRAIN_EMBEDDING_MODEL: nomic-embed-text
+      # NDBRAIN_EMBEDDING_DIM: 768
       # Or OpenAI-compatible:
       # NDBRAIN_EMBEDDING_PROVIDER: openai
       # NDBRAIN_EMBEDDING_BASE_URL: https://api.openai.com/v1
       # NDBRAIN_EMBEDDING_MODEL: text-embedding-3-small
       # NDBRAIN_EMBEDDING_API_KEY: sk-...
+      # NDBRAIN_EMBEDDING_DIM: 1536
+      # NDBRAIN_EMBEDDING_DIM is optional for both: the vector store auto-detects the
+      # model's real dimension from its first embedding if this is left unset.
     volumes:
       - ./data:/data
