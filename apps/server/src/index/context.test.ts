@@ -9,12 +9,14 @@ import { buildContext } from "./context.js";
 /** Fake embedding provider that always returns the same fixed vector, for deterministic fixtures. */
 class FakeEmbeddingProvider implements EmbeddingProvider {
   readonly id = "fake";
+  embedCallCount = 0;
   constructor(
     private readonly vector: number[],
     readonly dim: number = vector.length,
   ) {}
 
   async embed(texts: string[]): Promise<number[][]> {
+    this.embedCallCount++;
     return texts.map(() => this.vector);
   }
 }
@@ -166,7 +168,7 @@ describe("buildContext", () => {
   });
 
   describe("with an embedding provider + store", () => {
-    it("surfaces a lexically-unrelated but vector-neighbor note (vector-related, not FTS-title)", async () => {
+    it("surfaces a lexically-unrelated but vector-neighbor note (vector-related, not FTS-title), using ALREADY-STORED vectors without calling provider.embed", async () => {
       const db = openDatabase(":memory:");
       const idx = new Indexer(db);
       idx.indexNote("k8s-guide.md", "# Kubernetes Guide\nHow to run kubernetes clusters");
@@ -182,6 +184,10 @@ describe("buildContext", () => {
       expect(ftsOnly!.related.some((h) => h.path === "orchestration.md")).toBe(false);
 
       const store = new VectorStore(db, 3);
+      // Both the query note's OWN vector and its neighbor's vector are already stored
+      // (as the real EmbeddingIndexer would have done on write) - I2 fix: related is
+      // computed from these, never by re-embedding the note's content on the call.
+      store.upsertNote("k8s-guide.md", [{ ix: 0, vector: [1, 0, 0] }]);
       store.upsertNote("orchestration.md", [{ ix: 0, vector: [1, 0, 0] }]);
       const provider = new FakeEmbeddingProvider([1, 0, 0]);
 
@@ -189,6 +195,7 @@ describe("buildContext", () => {
 
       expect(result).not.toBeNull();
       expect(result!.related.some((h) => h.path === "orchestration.md")).toBe(true);
+      expect(provider.embedCallCount).toBe(0);
     });
 
     it("excludes the note itself and applies the namespace filter to vector-related", async () => {
@@ -214,26 +221,22 @@ describe("buildContext", () => {
       expect(result!.related.some((h) => h.path === "other/b.md")).toBe(false);
     });
 
-    it("falls back to FTS-title related when the embedding call fails", async () => {
+    it("falls back to FTS-title related, without ever calling provider.embed, when the note has no stored vectors yet", async () => {
       const db = openDatabase(":memory:");
       const idx = new Indexer(db);
       idx.indexNote("deploy-guide.md", "# Deploy Guide\nHow to roll out the stack");
       idx.indexNote("deploy-notes.md", "# Deploy Notes\nMisc deployment notes");
 
       const read = mockRead(db);
+      // No vectors upserted at all: the note was just written and not embedded yet.
       const store = new VectorStore(db, 3);
-      const brokenProvider: EmbeddingProvider = {
-        id: "broken",
-        dim: 3,
-        embed: async () => {
-          throw new Error("simulated provider outage");
-        },
-      };
+      const provider = new FakeEmbeddingProvider([1, 0, 0]);
 
-      const result = await buildContext({ db, read, provider: brokenProvider, store }, "deploy-guide.md");
+      const result = await buildContext({ db, read, provider, store }, "deploy-guide.md");
 
       expect(result).not.toBeNull();
       expect(result!.related.some((h) => h.path === "deploy-notes.md")).toBe(true);
+      expect(provider.embedCallCount).toBe(0);
     });
 
     it("with an explicit 'none' provider, keeps the FTS-title behavior unchanged", async () => {

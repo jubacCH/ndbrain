@@ -21,12 +21,20 @@ export interface BuildContextDeps {
    * independent of each other's presence — pass either, neither, or both.
    *
    * When both are given AND the provider isn't the `none` provider, `related` is
-   * computed EXCLUSIVELY from the vector neighbors of THIS note's own content
-   * (embedded fresh, then looked up via `store.search`) — the title-FTS strategy
-   * described below is NOT also run/merged in. This is a deliberate v1 simplification
-   * (vector-only, not vector+FTS-merged); a future revision could RRF-fuse the two the
-   * way `hybridSearch` does, if title-FTS recall turns out to still be worth keeping
-   * alongside semantic recall.
+   * computed EXCLUSIVELY from the vector neighbors of THIS note's own ALREADY-STORED
+   * chunk vectors (via `store.getNoteVectors` + `store.search`) — the title-FTS
+   * strategy described below is NOT also run/merged in. This is a deliberate v1
+   * simplification (vector-only, not vector+FTS-merged); a future revision could
+   * RRF-fuse the two the way `hybridSearch` does, if title-FTS recall turns out to
+   * still be worth keeping alongside semantic recall.
+   *
+   * `provider` is only used here to gate whether vector mode is attempted at all (its
+   * `embed` is never called by `buildContext` - see Plan 5 I2: re-embedding a note's
+   * full content on every `build_context` call added needless latency/cost and could
+   * fail outright on an oversized note, even though the note's chunk vectors were
+   * already sitting in the store from indexing). If the note has no stored vectors yet
+   * (e.g. just written, not embedded), this falls back to the FTS-title strategy below
+   * rather than embedding on the spot.
    *
    * Omit either field (or leave the provider as the `none` provider) to keep today's
    * FTS-title behavior below, unchanged — this is the default with no embedding
@@ -82,7 +90,7 @@ export async function buildContext(
 
   let related: SearchHit[] | undefined;
   if (provider && store && !isNoneProvider(provider)) {
-    related = await vectorRelated(db, provider, store, path, content, namespace, relatedLimit);
+    related = vectorRelated(db, store, path, namespace, relatedLimit);
   }
   if (!related) {
     related = ftsTitleRelated(db, path, content, namespace, relatedLimit);
@@ -99,22 +107,21 @@ export async function buildContext(
   };
 }
 
-/** Vector-neighbor `related`: embeds the note's own content and looks up its nearest
- *  neighbors in the store. Returns `undefined` (never throws) on any failure — a
- *  provider outage or store error falls back to `ftsTitleRelated` in the caller. */
-async function vectorRelated(
+/** Vector-neighbor `related`: uses the note's own ALREADY-STORED chunk vector(s) (its
+ *  first/best chunk) as the search query — zero provider calls, see Plan 5 I2. Returns
+ *  `undefined` (never throws) when the note has no stored vectors yet, or on any store
+ *  error — either falls back to `ftsTitleRelated` in the caller. */
+function vectorRelated(
   db: Database,
-  provider: EmbeddingProvider,
   store: VectorStore,
   path: string,
-  content: string,
   namespace: string | undefined,
   relatedLimit: number,
-): Promise<SearchHit[] | undefined> {
+): SearchHit[] | undefined {
   try {
-    const [vector] = await provider.embed([content]);
-    if (!vector) return undefined;
-    const hits = store.search(vector, relatedLimit + 1, namespace);
+    const [queryVector] = store.getNoteVectors(path);
+    if (!queryVector) return undefined;
+    const hits = store.search(queryVector, relatedLimit + 1, namespace);
     return hits
       .filter((hit) => hit.path !== path)
       .slice(0, relatedLimit)
