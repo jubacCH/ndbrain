@@ -138,6 +138,17 @@ describe("REST /api/v1", () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it("puts and gets a note whose path contains a literal % without a 500 (find-my-way already decodes wildcards)", async () => {
+    const put = await app.inject(
+      authed({ method: "PUT", url: "/api/v1/notes/100%25.md", payload: { content: "# Hundred percent" } }),
+    );
+    expect(put.statusCode).toBe(204);
+
+    const get = await app.inject(authed({ method: "GET", url: "/api/v1/notes/100%25.md" }));
+    expect(get.statusCode).toBe(200);
+    expect(get.json()).toMatchObject({ path: "100%.md", content: "# Hundred percent" });
+  });
+
   it("returns 400 for a malformed JSON body", async () => {
     const res = await app.inject({
       method: "PUT",

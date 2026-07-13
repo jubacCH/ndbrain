@@ -4,7 +4,12 @@ import { buildGraph } from "../index/graph.js";
 import { createMcpHandler } from "../mcp/server.js";
 import type { ServerDeps } from "./server.js";
 
-const wildcardPath = (req: any): string => decodeURIComponent(req.params["*"]);
+// find-my-way (Fastify's router) already URL-decodes wildcard route params before
+// handlers ever see them - decoding again here double-decoded any path containing a
+// literal `%` (e.g. "100%.md", already-decoded from "100%25.md" on the wire) into an
+// invalid percent-escape, which made `decodeURIComponent` throw a URIError that
+// bubbled up as an unhandled 500 instead of a normal note lookup.
+const wildcardPath = (req: any): string => req.params["*"];
 const actor = (req: any): string => req.session.username;
 
 const DEFAULT_AUDIT_LIMIT = 100;
