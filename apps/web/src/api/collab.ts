@@ -31,6 +31,12 @@
 
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
+import { deriveCollabWsUrl, getCollabWsUrl } from "./base-url";
+
+/** Re-exported for existing callers/tests that import it from here - the
+ *  implementation now lives in `base-url.ts` so `getCollabWsUrl` (which is
+ *  Tauri-aware) can share it as the browser/unconfigured-Tauri fallback. */
+export { deriveCollabWsUrl };
 
 /** Must match the server's `CONTENT_FIELD` constant (`apps/server/src/collab/
  *  document-manager.ts`) - the Y.Text field a note's markdown lives under. */
@@ -60,16 +66,6 @@ export interface CreateCollabProviderOptions {
   wsUrl?: string;
 }
 
-/** Derives the `/collab` WebSocket URL from the page's own location: `wss://`
- *  when the page itself is served over `https:`, `ws://` otherwise, same host -
- *  both the dev Vite proxy (`vite.config.ts`) and prod's same-origin static
- *  serving forward `/collab` to the real Hocuspocus server, so a relative,
- *  location-derived URL is correct in both environments without configuration. */
-export function deriveCollabWsUrl(loc: Pick<Location, "protocol" | "host">): string {
-  const scheme = loc.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${loc.host}/collab`;
-}
-
 /** Normalizes a note path into the canonical form the server's `assertSafePath`
  *  expects as a Hocuspocus `documentName`: no leading slash, no doubled
  *  separators. Callers already pass a clean vault-relative path in practice
@@ -85,11 +81,15 @@ export function normalizeNotePath(path: string): string {
  *  notes above) - callers observe `provider.on("status"/"awarenessUpdate"/...)`
  *  themselves (see `Editor.tsx`) rather than this factory exposing its own
  *  wrapped events, so it stays a thin, easily-fakeable construction seam for
- *  tests (`Editor`'s `providerFactory` prop). */
+ *  tests (`Editor`'s `providerFactory` prop).
+ *
+ *  Defaults `wsUrl` via `getCollabWsUrl` (`base-url.ts`): in the browser this
+ *  is exactly the old `deriveCollabWsUrl(window.location)` (no regression);
+ *  in Tauri it derives from the configured server URL instead. */
 export function createCollabProvider(opts: CreateCollabProviderOptions): CollabProviderHandle {
   const ydoc = new Y.Doc();
   const ytext = ydoc.getText(CONTENT_FIELD);
-  const url = opts.wsUrl ?? deriveCollabWsUrl(window.location);
+  const url = opts.wsUrl ?? getCollabWsUrl(opts.path);
 
   const provider = new HocuspocusProvider({
     url,

@@ -1,5 +1,7 @@
 /** Typed fetch wrapper for the `/api/v1` REST surface exposed by @ndbrain/server. */
 
+import { getApiBaseUrl } from "./base-url";
+
 const API_BASE = "/api/v1";
 
 /** Thrown for any 401 response — either bad login credentials or an expired/missing
@@ -232,7 +234,7 @@ export class ApiClient implements AuthClient {
 
   private async request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     const { method = "GET", body, parseJson = true, skipUnauthorizedHandler = false } = opts;
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(`${getApiBaseUrl()}${API_BASE}${path}`, {
       method,
       credentials: "include",
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
