@@ -1,8 +1,24 @@
 import { Hocuspocus, type Configuration } from "@hocuspocus/server";
+import cookiePlugin from "@fastify/cookie";
 import type { AuthService } from "../http/auth.js";
 import type { ApiKeyService } from "../keys/service.js";
 import type { DocumentManager } from "./document-manager.js";
 import { authenticateCollab, CollabAuthError } from "./auth.js";
+
+/** Extracts the `ndbrain_session` cookie value from a `/collab` WS upgrade's request
+ *  headers (I1). Reuses `@fastify/cookie`'s own parser (already a dependency, used
+ *  for the REST session cookie in `http/server.ts`) instead of hand-rolling `Cookie`
+ *  header parsing here too. Returns `undefined` when there's no `Cookie` header at
+ *  all, or no `ndbrain_session` value in it - both treated identically by the
+ *  caller (no cookie to fall back to). `requestHeaders` is optional here purely
+ *  for callers in tests that build a minimal `onAuthenticate` payload without it
+ *  (a real Hocuspocus connection always supplies it) - never crash the auth path
+ *  over a missing/malformed header object either way. */
+function readSessionCookie(requestHeaders?: Headers): string | undefined {
+  const cookieHeader = requestHeaders?.get("cookie");
+  if (!cookieHeader) return undefined;
+  return cookiePlugin.fastifyCookie.parse(cookieHeader)["ndbrain_session"];
+}
 
 export type CollabServerOptions = Partial<Configuration>;
 
@@ -185,10 +201,17 @@ export function flushHocuspocusStores(hocuspocus: HocuspocusHandle, opts: FlushO
  */
 export function createCollabServer(deps: CollabServerDeps, opts: CollabServerOptions = {}): Hocuspocus {
   return new Hocuspocus<CollabContext>({
-    async onAuthenticate({ token, documentName, connectionConfig }) {
+    async onAuthenticate({ token, documentName, connectionConfig, requestHeaders }) {
+      // I1: a page reload leaves the web client with a valid `ndbrain_session` cookie
+      // but no in-memory collab token yet - `token` arrives empty. The `/collab` WS
+      // upgrade is same-origin, so the cookie rides along on `requestHeaders` (a real
+      // `Headers` instance - verified against the installed `@hocuspocus/server@4.3.0`
+      // `onAuthenticatePayload` type). `authenticateCollab` only ever falls back to this
+      // when `token` itself is empty (see its own doc comment).
+      const sessionCookie = readSessionCookie(requestHeaders);
       const result = await authenticateCollab(
         { auth: deps.auth, apiKeys: deps.apiKeys },
-        { token, documentName },
+        { token, documentName, sessionCookie },
       );
       if (result.documentName !== documentName) {
         throw new CollabAuthError(`non-canonical document name: ${documentName}`);

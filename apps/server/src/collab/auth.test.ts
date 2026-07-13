@@ -141,6 +141,62 @@ describe("authenticateCollab", () => {
     });
   });
 
+  describe("session cookie fallback (I1: reload with no in-memory collab token)", () => {
+    it("authenticates via a valid session cookie when no token is supplied", async () => {
+      const deps = makeDeps();
+      await deps.auth.createUser("julian", "secret123");
+      const sessionCookie = (await deps.auth.login("julian", "secret123"))!;
+
+      const result = await authenticateCollab(deps, { documentName: "notes/x.md", sessionCookie });
+
+      expect(result).toEqual({ actor: "julian", readOnly: false, documentName: "notes/x.md" });
+    });
+
+    it("throws when the cookie is invalid and no token is supplied", async () => {
+      const deps = makeDeps();
+
+      await expect(
+        authenticateCollab(deps, { documentName: "notes/x.md", sessionCookie: "garbage" }),
+      ).rejects.toThrow(CollabAuthError);
+    });
+
+    it("assertSafePaths the documentName on the cookie-fallback path too (traversal -> throw)", async () => {
+      const deps = makeDeps();
+      await deps.auth.createUser("julian", "secret123");
+      const sessionCookie = (await deps.auth.login("julian", "secret123"))!;
+
+      await expect(
+        authenticateCollab(deps, { documentName: "../etc/passwd.md", sessionCookie }),
+      ).rejects.toThrow(CollabAuthError);
+    });
+
+    it("a valid api-key token still works when a session cookie is also present (token path, no fallback needed)", async () => {
+      const deps = makeDeps();
+      await deps.auth.createUser("julian", "secret123");
+      const sessionCookie = (await deps.auth.login("julian", "secret123"))!;
+      const key = await deps.apiKeys.create("myai-agent", "myai/", true);
+
+      const result = await authenticateCollab(deps, {
+        token: key,
+        documentName: "myai/notes.md",
+        sessionCookie,
+      });
+
+      expect(result).toEqual({ actor: "myai-agent", readOnly: false, documentName: "myai/notes.md" });
+    });
+
+    it("still rejects an out-of-scope api-key token even with a valid session cookie present (no silent escalation)", async () => {
+      const deps = makeDeps();
+      await deps.auth.createUser("julian", "secret123");
+      const sessionCookie = (await deps.auth.login("julian", "secret123"))!;
+      const key = await deps.apiKeys.create("myai-agent", "myai/", true);
+
+      await expect(
+        authenticateCollab(deps, { token: key, documentName: "other/notes.md", sessionCookie }),
+      ).rejects.toThrow();
+    });
+  });
+
   describe("no/invalid token", () => {
     it("throws when no token is provided", async () => {
       const deps = makeDeps();

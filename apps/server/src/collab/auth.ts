@@ -29,6 +29,20 @@ export interface CollabAuthResult {
 // here just to validate a path.
 const pathValidator = new Vault("");
 
+/** `Vault.assertSafePath`, wrapped to fail closed as `CollabAuthError` (never
+ *  leaking the raw `VaultPathError`) — shared by every branch below that needs
+ *  to normalize/validate `documentName` before trusting it. */
+function assertSafeDocumentPath(documentName: string): string {
+  try {
+    return pathValidator.assertSafePath(documentName);
+  } catch (err) {
+    if (err instanceof VaultPathError) {
+      throw new CollabAuthError("invalid document path");
+    }
+    throw err;
+  }
+}
+
 /**
  * Authenticates a Hocuspocus collab connection: `params.token` may be either
  * a human session token (from `AuthService.login`) or an agent API key
@@ -49,6 +63,21 @@ const pathValidator = new Vault("");
  *   Out-of-scope throws the same generic error as "doesn't exist" so the
  *   connection reveals nothing about the vault's contents.
  *
+ * `params.sessionCookie` (I1): a browser reload leaves the web client with a
+ * valid `ndbrain_session` cookie but no in-memory collab token yet (no
+ * `/whoami` round trip has happened before the Editor opens its `/collab`
+ * connection), so `token` arrives empty and the connection would otherwise be
+ * rejected outright until the user logs out and back in. This fallback is
+ * deliberately narrow: it only ever runs when NO `token` was supplied at all
+ * — a token that WAS supplied (an api-key, or a session token that turns out
+ * to be invalid/expired) is resolved entirely on its own branch above and
+ * never falls through to the cookie, so an out-of-scope or otherwise-rejected
+ * token can never silently escalate into full-vault human access just
+ * because a session cookie happens to also be present. A valid cookie
+ * authenticates at the same trust level as the existing session-token branch
+ * (full-vault read-write, canonical-path-checked); an invalid/missing cookie
+ * falls through to the same "missing token" rejection as before.
+ *
  * On success, returns the canonical (normalized) document name so the caller
  * can key the Y.Doc by the normalized path, preventing duplicate docs for
  * equivalent paths.
@@ -59,10 +88,20 @@ const pathValidator = new Vault("");
  */
 export async function authenticateCollab(
   deps: { auth: AuthService; apiKeys: ApiKeyService },
-  params: { token?: string; documentName: string },
+  params: { token?: string; documentName: string; sessionCookie?: string },
 ): Promise<CollabAuthResult> {
-  const { token, documentName } = params;
-  if (!token) throw new CollabAuthError("missing token");
+  const { token, documentName, sessionCookie } = params;
+
+  if (!token) {
+    if (sessionCookie) {
+      const session = deps.auth.validateSession(sessionCookie);
+      if (session) {
+        const safePath = assertSafeDocumentPath(documentName);
+        return { actor: session.username, readOnly: false, documentName: safePath };
+      }
+    }
+    throw new CollabAuthError("missing token");
+  }
 
   if (token.startsWith("ndb_")) {
     const validated = await deps.apiKeys.validate(token);
@@ -71,15 +110,7 @@ export async function authenticateCollab(
     // assertSafePath before the scope check: it normalizes the path, so a
     // traversal segment is rejected outright rather than compared (and
     // potentially prefix-matched) as raw text.
-    let safePath: string;
-    try {
-      safePath = pathValidator.assertSafePath(documentName);
-    } catch (err) {
-      if (err instanceof VaultPathError) {
-        throw new CollabAuthError("invalid document path");
-      }
-      throw err;
-    }
+    const safePath = assertSafeDocumentPath(documentName);
 
     if (!isPathInScope(validated.scope, safePath)) {
       throw new CollabAuthError("document out of scope");
@@ -96,15 +127,7 @@ export async function authenticateCollab(
   if (!session) throw new CollabAuthError("invalid session");
 
   // No scope check for humans, but the path still must be well-formed.
-  let safePath: string;
-  try {
-    safePath = pathValidator.assertSafePath(documentName);
-  } catch (err) {
-    if (err instanceof VaultPathError) {
-      throw new CollabAuthError("invalid document path");
-    }
-    throw err;
-  }
+  const safePath = assertSafeDocumentPath(documentName);
 
   return { actor: session.username, readOnly: false, documentName: safePath };
 }

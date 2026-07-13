@@ -193,6 +193,43 @@ describe("createCollabServer", () => {
         } as never),
       ).rejects.toThrow();
     });
+
+    // I1: on a page reload the web client has a valid `ndbrain_session` cookie (same-origin,
+    // so it rides along on the /collab WS upgrade headers) but no in-memory collab token yet
+    // (no /whoami round trip has happened before the Editor connects) - `token` arrives empty.
+    // `onAuthenticate` must extract the cookie from the real Hocuspocus `requestHeaders`
+    // (verified: a `Headers` instance, not the raw `http.IncomingMessage`) and fall back to it.
+    it("falls back to the ndbrain_session cookie on the upgrade request when no connection token is supplied", async () => {
+      await auth.createUser("julian", "secret123");
+      const sessionToken = (await auth.login("julian", "secret123"))!;
+      const server = createCollabServer(deps);
+      const connectionConfig = { readOnly: false, isAuthenticated: false };
+
+      const context = await server.hooks("onAuthenticate", {
+        token: "",
+        documentName: "myai/a.md",
+        connectionConfig,
+        context: {},
+        requestHeaders: new Headers({ cookie: `ndbrain_session=${sessionToken}` }),
+      } as never);
+
+      expect(context).toEqual({ actor: "julian" });
+      expect(connectionConfig.readOnly).toBe(false);
+    });
+
+    it("rejects when no connection token is supplied and the cookie is invalid", async () => {
+      const server = createCollabServer(deps);
+
+      await expect(
+        server.hooks("onAuthenticate", {
+          token: "",
+          documentName: "myai/a.md",
+          connectionConfig: { readOnly: false, isAuthenticated: false },
+          context: {},
+          requestHeaders: new Headers({ cookie: "ndbrain_session=garbage" }),
+        } as never),
+      ).rejects.toThrow();
+    });
   });
 
   describe("flushHocuspocusStores (C2)", () => {
