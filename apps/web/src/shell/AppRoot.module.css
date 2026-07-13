@@ -1,0 +1,18 @@
+.mainStack {
+  height: 100%;
+  min-height: 0;
+}
+
+.mainSlot {
+  height: 100%;
+  min-height: 0;
+}
+
+.hidden {
+  display: none;
+}
+
+.placeholder {
+  margin: 0;
+  color: var(--color-fg-muted);
+}

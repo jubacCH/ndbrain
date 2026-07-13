@@ -1,0 +1,57 @@
+.area {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.tabs {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.tab {
+  font: inherit;
+  font-size: 0.85rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem 0.9rem;
+  color: var(--color-fg-muted);
+}
+
+.tab:hover {
+  color: var(--color-fg);
+}
+
+.tab.active {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+.close {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.45rem 0.8rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-border);
+  background: none;
+  color: var(--color-fg);
+  cursor: pointer;
+}
+
+.close:hover {
+  border-color: var(--color-accent);
+}
+
+.hidden {
+  display: none;
+}
