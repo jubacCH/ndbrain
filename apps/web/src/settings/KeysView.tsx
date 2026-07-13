@@ -18,11 +18,17 @@ export interface KeysClient {
 
 export interface KeysViewProps {
   client?: KeysClient;
+  /** Whether this view is currently the visible one. Defaults to true (standalone
+   *  rendering/tests). `AppRoot` wires settings as a view-toggle rather than an
+   *  unmount-on-close route, so flipping this to false — the user closed Settings
+   *  or switched to the Audit tab — is what clears a freshly shown key secret,
+   *  not just an eventual component unmount. */
+  active?: boolean;
 }
 
 type LoadState = "loading" | "ready" | "error";
 
-export function KeysView({ client = apiClient }: KeysViewProps) {
+export function KeysView({ client = apiClient, active = true }: KeysViewProps) {
   const [keys, setKeys] = useState<ApiKeyListEntry[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
 
@@ -32,10 +38,18 @@ export function KeysView({ client = apiClient }: KeysViewProps) {
   const [expiresAt, setExpiresAt] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
   // The freshly created secret — held only in memory, cleared once the user
   // dismisses the banner. Never persisted or logged.
   const [newKey, setNewKey] = useState<string | null>(null);
+
+  // Also clear it the moment this view stops being the visible one (Settings
+  // closed, or the user switched away to another tab) — not only on unmount —
+  // so the secret never lingers in memory longer than it's actually shown.
+  useEffect(() => {
+    if (!active) setNewKey(null);
+  }, [active]);
 
   const refresh = useCallback(() => {
     setLoadState("loading");
@@ -75,8 +89,13 @@ export function KeysView({ client = apiClient }: KeysViewProps) {
 
   async function handleRevoke(keyName: string) {
     if (!confirm(`Revoke API key "${keyName}"? This cannot be undone.`)) return;
-    await client.revokeKey(keyName);
-    await refresh();
+    setRevokeError(null);
+    try {
+      await client.revokeKey(keyName);
+      await refresh();
+    } catch {
+      setRevokeError("Failed to revoke the key. Please try again.");
+    }
   }
 
   function handleCopy() {
@@ -140,6 +159,11 @@ export function KeysView({ client = apiClient }: KeysViewProps) {
         {createError && (
           <p className={styles.error} role="alert">
             {createError}
+          </p>
+        )}
+        {revokeError && (
+          <p className={styles.error} role="alert">
+            {revokeError}
           </p>
         )}
 

@@ -60,6 +60,14 @@
   font-size: 0.75rem;
 }
 
+.author {
+  font-weight: 500;
+}
+
+.date {
+  font-variant-numeric: tabular-nums;
+}
+
 .restore {
   font: inherit;
   font-size: 0.75rem;

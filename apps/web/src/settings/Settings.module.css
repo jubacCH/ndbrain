@@ -46,7 +46,8 @@
 }
 
 .field input[type="text"],
-.field input[type="datetime-local"] {
+.field input[type="datetime-local"],
+.field input[type="date"] {
   font: inherit;
   color: var(--color-fg);
   padding: 0.45rem 0.6rem;
@@ -182,7 +183,7 @@
 
 .badgeAllowed {
   background: rgba(46, 160, 67, 0.15);
-  color: #1f8a3b;
+  color: var(--color-success);
 }
 
 .badgeDenied {

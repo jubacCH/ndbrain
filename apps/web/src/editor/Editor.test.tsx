@@ -97,6 +97,21 @@ describe("<Editor>", () => {
     await waitFor(() => expect(screen.getByText("Offline")).toBeInTheDocument());
   });
 
+  it("shows a distinct authentication-failed status when the provider rejects the token", async () => {
+    const { handle } = makeFakeHandle();
+    const providerFactory: ProviderFactory = () => handle;
+
+    render(<Editor path="myai/deploy.md" token="stale-token" providerFactory={providerFactory} />);
+
+    (handle.provider as unknown as { emit(event: string, ...args: unknown[]): void }).emit(
+      "authenticationFailed",
+      { reason: "invalid token" },
+    );
+
+    await waitFor(() => expect(screen.getByText("Authentication failed")).toBeInTheDocument());
+    expect(screen.queryByText("Offline")).not.toBeInTheDocument();
+  });
+
   it("renders an agent activity line once an agent's awareness state appears", async () => {
     const { handle, awareness } = makeFakeHandle();
     const providerFactory: ProviderFactory = () => handle;

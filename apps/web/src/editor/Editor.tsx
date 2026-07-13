@@ -59,7 +59,7 @@ export interface EditorProps {
   providerFactory?: ProviderFactory;
 }
 
-type ConnectionStatus = "connecting" | "connected" | "offline";
+type ConnectionStatus = "connecting" | "connected" | "offline" | "authFailed";
 
 function statusLabel(status: ConnectionStatus): string {
   switch (status) {
@@ -69,6 +69,8 @@ function statusLabel(status: ConnectionStatus): string {
       return "Connecting…";
     case "offline":
       return "Offline";
+    case "authFailed":
+      return "Authentication failed";
   }
 }
 
@@ -108,7 +110,13 @@ export function Editor({ path, token, providerFactory = createCollabProvider }: 
     const onStatus = ({ status: nextStatus }: { status: string }) => {
       setStatus(nextStatus === "connected" ? "connected" : nextStatus === "connecting" ? "connecting" : "offline");
     };
+    // A bad/expired token doesn't surface via "status" at all — the socket stays
+    // in "connecting" and Hocuspocus just keeps retrying forever, which used to
+    // look identical to a normal reconnect. `authenticationFailed` fires once
+    // the server rejects the token, so it gets a distinct, non-retrying status.
+    const onAuthenticationFailed = () => setStatus("authFailed");
     provider.on("status", onStatus);
+    provider.on("authenticationFailed", onAuthenticationFailed);
     provider.on("awarenessUpdate", updatePeers);
     provider.on("awarenessChange", updatePeers);
 
@@ -123,6 +131,7 @@ export function Editor({ path, token, providerFactory = createCollabProvider }: 
     return () => {
       view.destroy();
       provider.off("status", onStatus);
+      provider.off("authenticationFailed", onAuthenticationFailed);
       provider.off("awarenessUpdate", updatePeers);
       provider.off("awarenessChange", updatePeers);
       handle.destroy();

@@ -145,4 +145,32 @@ describe("KeysView", () => {
 
     expect(revokeKey).not.toHaveBeenCalled();
   });
+
+  it("shows an error when revoking a key fails", async () => {
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+    const revokeKey = vi.fn().mockRejectedValue(new Error("boom"));
+    const client = makeClient({ listKeys: vi.fn().mockResolvedValue([KEY_A]), revokeKey });
+    render(<KeysView client={client} />);
+
+    await waitFor(() => expect(screen.getByText("ci-bot")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /revoke/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/failed to revoke/i);
+  });
+
+  it("clears the shown key secret once the view stops being active, not only on unmount", async () => {
+    const client = makeClient({ createKey: vi.fn().mockResolvedValue("ndb_temp") });
+    const { rerender } = render(<KeysView client={client} active />);
+    await waitFor(() => expect(screen.getByText(/no api keys yet/i)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: "k" } });
+    fireEvent.change(screen.getByLabelText(/namespace/i), { target: { value: "ns" } });
+    fireEvent.click(screen.getByRole("button", { name: /create key/i }));
+
+    await waitFor(() => expect(screen.getByDisplayValue("ndb_temp")).toBeInTheDocument());
+
+    rerender(<KeysView client={client} active={false} />);
+
+    expect(screen.queryByDisplayValue("ndb_temp")).not.toBeInTheDocument();
+  });
 });

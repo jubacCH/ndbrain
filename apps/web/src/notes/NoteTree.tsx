@@ -24,6 +24,7 @@ export function NoteTree({ client = apiClient }: NoteTreeProps = {}) {
   const { selectedPath, setSelectedPath } = useAppState();
   const [notes, setNotes] = useState<NoteSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
@@ -63,9 +64,14 @@ export function NoteTree({ client = apiClient }: NoteTreeProps = {}) {
 
     const fileName = path.split("/").pop() ?? path;
     const title = fileName.slice(0, -3);
-    await client.putNote(path, `# ${title}\n`);
-    await refresh();
-    setSelectedPath(path);
+    setCreateError(null);
+    try {
+      await client.putNote(path, `# ${title}\n`);
+      await refresh();
+      setSelectedPath(path);
+    } catch {
+      setCreateError("Failed to create the note.");
+    }
   }
 
   return (
@@ -81,6 +87,11 @@ export function NoteTree({ client = apiClient }: NoteTreeProps = {}) {
       {error && (
         <p className={styles.status} role="alert">
           {error}
+        </p>
+      )}
+      {createError && (
+        <p className={styles.status} role="alert">
+          {createError}
         </p>
       )}
       {notes !== null && !error && tree.length === 0 && (

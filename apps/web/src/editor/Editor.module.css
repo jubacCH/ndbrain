@@ -37,6 +37,10 @@
   background: var(--color-danger);
 }
 
+.statusDot.authFailed {
+  background: var(--color-danger);
+}
+
 .statusLabel {
   font-weight: 500;
 }

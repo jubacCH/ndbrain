@@ -137,4 +137,17 @@ describe("NoteTree", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/failed to load/i);
   });
+
+  it("surfaces an error and does not select the note when creating it fails", async () => {
+    const putNote = vi.fn().mockRejectedValue(new Error("boom"));
+    promptSpy.mockReturnValue("new-note.md");
+    const client = fakeClient({ putNote });
+    renderTree(client);
+
+    await screen.findByText(/no notes yet/i);
+    fireEvent.click(screen.getByText("+ New note"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/failed to create/i);
+    expect(screen.getByTestId("selected-path")).toHaveTextContent("none");
+  });
 });
