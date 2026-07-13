@@ -16,6 +16,16 @@ import type { Hocuspocus } from "@hocuspocus/server";
 import { createCollabServer, type CollabServerOptions } from "../collab/server.js";
 import type { DocumentManager } from "../collab/document-manager.js";
 import { registerStatic } from "./static.js";
+import type { EmbeddingProvider } from "../embed/provider.js";
+import type { VectorStore } from "../embed/store.js";
+
+/** The minimal shape `/api/v1/reindex-embeddings` needs to kick off a full re-embed —
+ *  deliberately a locally-defined structural shape (not the concrete `EmbeddingIndexer`
+ *  class) so this module stays decoupled from the embedding stack and trivially
+ *  fakeable in tests (mirrors `EmbedderHook` in notes/service.ts). */
+export interface ReindexAllHook {
+  reindexAll(notes: Array<{ path: string; markdown: string }>): Promise<void>;
+}
 
 export interface ServerDeps {
   notes: NoteService;
@@ -26,6 +36,15 @@ export interface ServerDeps {
   vault: Vault;
   apiKeys: ApiKeyService;
   documents: DocumentManager;
+  /** Embedding provider + vector store, threaded to `/api/v1/search` (hybrid) and the
+   *  MCP tools (see mcp/server.ts). Both optional; omit (or leave the provider as the
+   *  `none` provider) for today's FTS-only behavior — the no-regression default. */
+  embedProvider?: EmbeddingProvider;
+  embedStore?: VectorStore;
+  /** Drives `POST /api/v1/reindex-embeddings`. Optional; when absent (or when
+   *  `embedProvider` is unset/`none`), that endpoint returns 409 instead of doing
+   *  anything (see routes.ts). */
+  embedIndexer?: ReindexAllHook;
   /** Overrides for the Hocuspocus config (e.g. shorter `debounce`/`maxDebounce`
    *  in tests). Not used in production. */
   collabOptions?: CollabServerOptions;

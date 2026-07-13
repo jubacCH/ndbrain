@@ -125,4 +125,24 @@ describe("VectorStore", () => {
     expect(hits).toHaveLength(1);
     expect(hits[0].path).toBe("correct.md");
   });
+
+  describe("isEmpty", () => {
+    it("is true for a store with no vectors", () => {
+      const store = seeded();
+      expect(store.isEmpty()).toBe(true);
+    });
+
+    it("is false once any vector has been upserted", () => {
+      const store = seeded();
+      store.upsertNote("a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+      expect(store.isEmpty()).toBe(false);
+    });
+
+    it("is true again after the last note's vectors are deleted", () => {
+      const store = seeded();
+      store.upsertNote("a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+      store.deleteNote("a.md");
+      expect(store.isEmpty()).toBe(true);
+    });
+  });
 });

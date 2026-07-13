@@ -142,7 +142,7 @@ describe("NoteTools.searchNotes", () => {
   it("forces the caller namespace and finds no other/ note", async () => {
     await notes.write("myai/a.md", "# Alpha\nhello world", "seed");
     await notes.write("other/b.md", "# Alpha\nhello world", "seed");
-    const result = tools.searchNotes(caller("myai-key", myaiWriter), { query: "hello" });
+    const result = await tools.searchNotes(caller("myai-key", myaiWriter), { query: "hello" });
     expect(result.hits.map((h) => h.path)).toEqual(["myai/a.md"]);
     expect(accessLogRows()[0]).toMatchObject({ tool: "search_notes", allowed: 1 });
   });
@@ -150,7 +150,7 @@ describe("NoteTools.searchNotes", () => {
   it("a full-scope caller sees both namespaces (control: proves the myai/ filter above is real)", async () => {
     await notes.write("myai/a.md", "# Alpha\nhello world", "seed");
     await notes.write("other/b.md", "# Alpha\nhello world", "seed");
-    const result = tools.searchNotes(caller("full-key", fullWriter), { query: "hello" });
+    const result = await tools.searchNotes(caller("full-key", fullWriter), { query: "hello" });
     expect(result.hits.map((h) => h.path).sort()).toEqual(["myai/a.md", "other/b.md"]);
   });
 });

@@ -13,6 +13,7 @@ import { ApiKeyService } from "../keys/service.js";
 import { logAccess } from "../audit/log.js";
 import { buildServer } from "./server.js";
 import { DocumentManager } from "../collab/document-manager.js";
+import { createEmbeddingProvider } from "../embed/provider.js";
 
 let dir: string;
 let app: FastifyInstance;
@@ -380,5 +381,124 @@ describe("REST /api/v1/graph", () => {
       ]),
     );
     expect(res.json().edges).toEqual([{ source: "a.md", target: "b.md" }]);
+  });
+});
+
+describe("REST /api/v1/reindex-embeddings", () => {
+  it("rejects unauthenticated requests", async () => {
+    const res = await app.inject({ method: "POST", url: "/api/v1/reindex-embeddings" });
+    expect(res.statusCode).toBe(401);
+  });
+
+  // The default app built in beforeEach has no embedProvider/embedIndexer at all
+  // (mirrors production with NDBRAIN_EMBEDDING_PROVIDER unset) — this is the
+  // no-regression default the endpoint must guard against, not silently no-op.
+  it("returns 409 with a clear error when no embedding provider is wired at all", async () => {
+    const res = await app.inject(authed({ method: "POST", url: "/api/v1/reindex-embeddings" }));
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("embeddings_not_configured");
+  });
+
+  it("returns 409 when the provider is explicitly the 'none' provider", async () => {
+    const dir2 = await mkdtemp(join(tmpdir(), "ndbrain-http-"));
+    const db2 = openDatabase(":memory:");
+    const vault2 = new Vault(dir2);
+    const git2 = new VaultGit(dir2);
+    await git2.init();
+    const indexer2 = new Indexer(db2);
+    const auth2 = new AuthService(db2);
+    await auth2.createUser("julian", "secret123");
+    const notes2 = new NoteService(vault2, git2, indexer2);
+    const apiKeys2 = new ApiKeyService(db2);
+    const documents2 = new DocumentManager({ notes: notes2 });
+    const noneProvider = createEmbeddingProvider({ provider: "none" });
+    const fakeIndexer = { reindexAll: vi.fn().mockResolvedValue(undefined) };
+    const app2 = buildServer({
+      notes: notes2,
+      auth: auth2,
+      db: db2,
+      git: git2,
+      indexer: indexer2,
+      vault: vault2,
+      apiKeys: apiKeys2,
+      documents: documents2,
+      embedProvider: noneProvider,
+      embedIndexer: fakeIndexer,
+    });
+    const login = await app2.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { username: "julian", password: "secret123" },
+    });
+    const token2 = login.json().token;
+
+    const res = await app2.inject({
+      method: "POST",
+      url: "/api/v1/reindex-embeddings",
+      headers: { authorization: `Bearer ${token2}` },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(fakeIndexer.reindexAll).not.toHaveBeenCalled();
+
+    await app2.close();
+    await rm(dir2, { recursive: true, force: true });
+  });
+
+  it("triggers a background reindex over the vault's notes when a provider is configured", async () => {
+    const dir2 = await mkdtemp(join(tmpdir(), "ndbrain-http-"));
+    const db2 = openDatabase(":memory:");
+    const vault2 = new Vault(dir2);
+    const git2 = new VaultGit(dir2);
+    await git2.init();
+    const indexer2 = new Indexer(db2);
+    const auth2 = new AuthService(db2);
+    await auth2.createUser("julian", "secret123");
+    const notes2 = new NoteService(vault2, git2, indexer2);
+    const apiKeys2 = new ApiKeyService(db2);
+    const documents2 = new DocumentManager({ notes: notes2 });
+    // A real (non-"none") provider, but never actually called over the network here —
+    // reindexAll is delegated entirely to the fake indexer below.
+    const provider = createEmbeddingProvider({ provider: "ollama" });
+    const fakeIndexer = { reindexAll: vi.fn().mockResolvedValue(undefined) };
+    const app2 = buildServer({
+      notes: notes2,
+      auth: auth2,
+      db: db2,
+      git: git2,
+      indexer: indexer2,
+      vault: vault2,
+      apiKeys: apiKeys2,
+      documents: documents2,
+      embedProvider: provider,
+      embedIndexer: fakeIndexer,
+    });
+    const login = await app2.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { username: "julian", password: "secret123" },
+    });
+    const token2 = login.json().token;
+
+    await app2.inject({
+      method: "PUT",
+      url: "/api/v1/notes/a.md",
+      payload: { content: "# A\nhello" },
+      headers: { authorization: `Bearer ${token2}` },
+    });
+
+    const res = await app2.inject({
+      method: "POST",
+      url: "/api/v1/reindex-embeddings",
+      headers: { authorization: `Bearer ${token2}` },
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toMatchObject({ started: true, count: 1 });
+    expect(fakeIndexer.reindexAll).toHaveBeenCalledTimes(1);
+    expect(fakeIndexer.reindexAll).toHaveBeenCalledWith([{ path: "a.md", markdown: "# A\nhello" }]);
+
+    await app2.close();
+    await rm(dir2, { recursive: true, force: true });
   });
 });

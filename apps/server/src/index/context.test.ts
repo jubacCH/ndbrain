@@ -1,7 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../db/database.js";
+import type { EmbeddingProvider } from "../embed/provider.js";
+import { createEmbeddingProvider } from "../embed/provider.js";
+import { VectorStore } from "../embed/store.js";
 import { Indexer } from "./indexer.js";
 import { buildContext } from "./context.js";
+
+/** Fake embedding provider that always returns the same fixed vector, for deterministic fixtures. */
+class FakeEmbeddingProvider implements EmbeddingProvider {
+  readonly id = "fake";
+  constructor(
+    private readonly vector: number[],
+    readonly dim: number = vector.length,
+  ) {}
+
+  async embed(texts: string[]): Promise<number[][]> {
+    return texts.map(() => this.vector);
+  }
+}
 
 function seeded() {
   const db = openDatabase(":memory:");
@@ -147,5 +163,89 @@ describe("buildContext", () => {
     expect(result!.path).toBe("no-title.md");
     // Should still try to find related notes using fallback to first words
     expect(Array.isArray(result!.related)).toBe(true);
+  });
+
+  describe("with an embedding provider + store", () => {
+    it("surfaces a lexically-unrelated but vector-neighbor note (vector-related, not FTS-title)", async () => {
+      const db = openDatabase(":memory:");
+      const idx = new Indexer(db);
+      idx.indexNote("k8s-guide.md", "# Kubernetes Guide\nHow to run kubernetes clusters");
+      idx.indexNote(
+        "orchestration.md",
+        "# Orchestration\nContainer orchestration platform overview, unrelated title wording",
+      );
+
+      const read = mockRead(db);
+
+      // Precondition: pure FTS-title finds no relation (no shared title tokens).
+      const ftsOnly = await buildContext({ db, read }, "k8s-guide.md");
+      expect(ftsOnly!.related.some((h) => h.path === "orchestration.md")).toBe(false);
+
+      const store = new VectorStore(db, 3);
+      store.upsertNote("orchestration.md", [{ ix: 0, vector: [1, 0, 0] }]);
+      const provider = new FakeEmbeddingProvider([1, 0, 0]);
+
+      const result = await buildContext({ db, read, provider, store }, "k8s-guide.md");
+
+      expect(result).not.toBeNull();
+      expect(result!.related.some((h) => h.path === "orchestration.md")).toBe(true);
+    });
+
+    it("excludes the note itself and applies the namespace filter to vector-related", async () => {
+      const db = openDatabase(":memory:");
+      const idx = new Indexer(db);
+      idx.indexNote("myai/a.md", "# A\nlexical filler content");
+      idx.indexNote("other/b.md", "# B\nlexical filler content");
+
+      const read = mockRead(db);
+      const store = new VectorStore(db, 3);
+      store.upsertNote("myai/a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+      store.upsertNote("other/b.md", [{ ix: 0, vector: [1, 0, 0] }]);
+      const provider = new FakeEmbeddingProvider([1, 0, 0]);
+
+      const result = await buildContext(
+        { db, read, provider, store },
+        "myai/a.md",
+        { namespace: "myai/" },
+      );
+
+      expect(result).not.toBeNull();
+      expect(result!.related.every((h) => h.path !== "myai/a.md")).toBe(true);
+      expect(result!.related.some((h) => h.path === "other/b.md")).toBe(false);
+    });
+
+    it("falls back to FTS-title related when the embedding call fails", async () => {
+      const db = openDatabase(":memory:");
+      const idx = new Indexer(db);
+      idx.indexNote("deploy-guide.md", "# Deploy Guide\nHow to roll out the stack");
+      idx.indexNote("deploy-notes.md", "# Deploy Notes\nMisc deployment notes");
+
+      const read = mockRead(db);
+      const store = new VectorStore(db, 3);
+      const brokenProvider: EmbeddingProvider = {
+        id: "broken",
+        dim: 3,
+        embed: async () => {
+          throw new Error("simulated provider outage");
+        },
+      };
+
+      const result = await buildContext({ db, read, provider: brokenProvider, store }, "deploy-guide.md");
+
+      expect(result).not.toBeNull();
+      expect(result!.related.some((h) => h.path === "deploy-notes.md")).toBe(true);
+    });
+
+    it("with an explicit 'none' provider, keeps the FTS-title behavior unchanged", async () => {
+      const db = seeded();
+      const read = mockRead(db);
+      const provider = createEmbeddingProvider({ provider: "none" });
+      const store = new VectorStore(db, 3);
+
+      const withNone = await buildContext({ db, read, provider, store }, "myai/deploy.md");
+      const withoutDeps = await buildContext({ db, read }, "myai/deploy.md");
+
+      expect(withNone).toEqual(withoutDeps);
+    });
   });
 });

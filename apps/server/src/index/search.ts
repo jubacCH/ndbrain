@@ -139,8 +139,9 @@ function fuseByRrf(
     });
 }
 
-/** Best-effort title/snippet lookup for a vector-only hit (no FTS match for the current query). */
-function titleAndSnippetFor(db: Database, path: string): { title: string | null; snippet: string } {
+/** Best-effort title/snippet lookup for a vector-only hit (no FTS match for the current query).
+ *  Exported for reuse by `context.ts`'s vector-based `related` (same "no FTS row" situation). */
+export function titleAndSnippetFor(db: Database, path: string): { title: string | null; snippet: string } {
   const row = db
     .prepare(
       `SELECT n.title AS title, f.body AS body

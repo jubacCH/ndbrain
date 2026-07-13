@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { backlinksOf, searchNotes } from "../index/search.js";
+import { backlinksOf, hybridSearch } from "../index/search.js";
 import { buildGraph } from "../index/graph.js";
 import { createMcpHandler } from "../mcp/server.js";
+import { isNoneProvider } from "../embed/provider.js";
 import type { ServerDeps } from "./server.js";
 
 // find-my-way (Fastify's router) already URL-decodes wildcard route params before
@@ -99,7 +100,11 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     },
     async (req) => {
       const { q } = req.query as { q: string };
-      return { hits: searchNotes(deps.db, q) };
+      // Unscoped (no namespace filter): this REST endpoint is session-authed for a
+      // human admin, not agent-key scoped like /mcp. Hybrid FTS+vector when an
+      // embedding provider/store are configured, plain FTS otherwise (see hybridSearch's
+      // own no-regression fallback).
+      return { hits: await hybridSearch(deps.db, q, { provider: deps.embedProvider, store: deps.embedStore }) };
     },
   );
 
@@ -113,6 +118,32 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
 
   app.post("/api/v1/reindex", async () => {
     return { count: await deps.indexer.reindexAll(deps.vault) };
+  });
+
+  // Session-authed (same tier as /api/v1/reindex and the key/audit endpoints below):
+  // a full re-embed is an admin action, not something an agent-scoped MCP key should
+  // trigger. Guarded: with no embedding provider configured (the default), this must
+  // never silently no-op — it returns a clear 409 instead.
+  app.post("/api/v1/reindex-embeddings", async (_req, reply) => {
+    if (!deps.embedProvider || isNoneProvider(deps.embedProvider) || !deps.embedIndexer) {
+      return reply
+        .code(409)
+        .send({ error: { code: "embeddings_not_configured", message: "no embedding provider is configured" } });
+    }
+    const paths = await deps.vault.list();
+    const notes: Array<{ path: string; markdown: string }> = [];
+    for (const path of paths) {
+      const markdown = await deps.vault.read(path);
+      if (markdown !== null) notes.push({ path, markdown });
+    }
+    // Fire-and-forget, like the background startup reindex (main.ts): re-embedding a
+    // whole vault can take a while against a real provider, and this must never block
+    // the HTTP response or the event loop.
+    const indexer = deps.embedIndexer;
+    void indexer
+      .reindexAll(notes)
+      .catch((err) => console.error("[ndbrain] reindex-embeddings: background reindex failed:", err));
+    return reply.code(202).send({ started: true, count: notes.length });
   });
 
   // Key management, audit trail and graph are all session-authed (humans manage keys

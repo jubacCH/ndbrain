@@ -7,6 +7,8 @@ import type { NoteService } from "../notes/service.js";
 import type { Vault } from "../vault/files.js";
 import { VaultPathError } from "../vault/files.js";
 import type { ApiKeyService } from "../keys/service.js";
+import type { EmbeddingProvider } from "../embed/provider.js";
+import type { VectorStore } from "../embed/store.js";
 import { ScopeError } from "../keys/scope.js";
 import { logAccess } from "../audit/log.js";
 import {
@@ -23,6 +25,10 @@ export interface McpDeps {
   notes: NoteService;
   vault: Vault;
   apiKeys: ApiKeyService;
+  /** Optional embedding provider + vector store, threaded through to `NoteTools` so
+   *  `search_notes`/`build_context` go semantic when configured (see NoteTools). */
+  embedProvider?: EmbeddingProvider;
+  embedStore?: VectorStore;
 }
 
 /** JSON-Schema tool definitions exposed over MCP, one per `NoteTools` method (Plan 2 Task 7). */
@@ -164,7 +170,13 @@ async function dispatch(
  *  transport, see `createMcpHandler`) is built per HTTP request, so the Bearer key is
  *  re-validated on every call and no cross-request session state is needed. */
 function buildMcpServerForCaller(deps: McpDeps, caller: Caller): Server {
-  const tools = new NoteTools({ db: deps.db, notes: deps.notes, vault: deps.vault });
+  const tools = new NoteTools({
+    db: deps.db,
+    notes: deps.notes,
+    vault: deps.vault,
+    provider: deps.embedProvider,
+    store: deps.embedStore,
+  });
   const server = new Server({ name: "ndbrain", version: "0.1.0" }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFS }));

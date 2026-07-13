@@ -1,8 +1,10 @@
 import type { Database } from "../db/database.js";
 import type { NoteService } from "../notes/service.js";
 import type { Vault } from "../vault/files.js";
-import { searchNotes as searchNotesIndex, type SearchHit } from "../index/search.js";
+import { hybridSearch, type SearchHit } from "../index/search.js";
 import { buildContext as buildContextIndex, type ContextResult } from "../index/context.js";
+import type { EmbeddingProvider } from "../embed/provider.js";
+import type { VectorStore } from "../embed/store.js";
 import { assertWritable, isPathInScope, type Scope } from "../keys/scope.js";
 import { logAccess } from "../audit/log.js";
 
@@ -61,20 +63,39 @@ export class NoteTools {
   private db: Database;
   private notes: NoteService;
   private vault: Vault;
+  private provider?: EmbeddingProvider;
+  private store?: VectorStore;
 
-  constructor(deps: { db: Database; notes: NoteService; vault: Vault }) {
+  constructor(deps: {
+    db: Database;
+    notes: NoteService;
+    vault: Vault;
+    /** Embedding provider + vector store, both optional. When set (and the provider
+     *  isn't the `none` provider), `searchNotes` becomes hybrid FTS+vector (via
+     *  `hybridSearch`) and `buildContext`'s `related` becomes vector-based instead of
+     *  FTS-title (see `index/context.ts`). Omit either (or leave the provider as
+     *  `none`) for today's FTS-only behavior — the no-regression default. */
+    provider?: EmbeddingProvider;
+    store?: VectorStore;
+  }) {
     this.db = deps.db;
     this.notes = deps.notes;
     this.vault = deps.vault;
+    this.provider = deps.provider;
+    this.store = deps.store;
   }
 
-  /** Full-text search, always scoped to the caller's namespace regardless of input. */
-  searchNotes(caller: Caller, args: { query: string; limit?: number }): { hits: SearchHit[] } {
+  /** Search, always scoped to the caller's namespace regardless of input. Hybrid
+   *  FTS+vector when an embedding provider/store are configured, plain FTS otherwise
+   *  (see the constructor doc comment). */
+  async searchNotes(caller: Caller, args: { query: string; limit?: number }): Promise<{ hits: SearchHit[] }> {
     let hits: SearchHit[];
     try {
-      hits = searchNotesIndex(this.db, args.query, {
+      hits = await hybridSearch(this.db, args.query, {
         namespace: caller.scope.namespace,
         limit: args.limit,
+        provider: this.provider,
+        store: this.store,
       });
     } catch (err) {
       logAccess(this.db, caller.keyId, "search_notes", null, false);
@@ -140,7 +161,7 @@ export class NoteTools {
     let result: ContextResult | null;
     try {
       result = await buildContextIndex(
-        { db: this.db, read: (p) => this.notes.read(p) },
+        { db: this.db, read: (p) => this.notes.read(p), provider: this.provider, store: this.store },
         safePath,
         { namespace: caller.scope.namespace },
       );

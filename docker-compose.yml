@@ -7,5 +7,18 @@ services:
     environment:
       NDBRAIN_ADMIN_USER: julian
       NDBRAIN_ADMIN_PASSWORD: change-me
+      # Optional semantic search/related (Plan 5): unset/"none" (the default) keeps
+      # search and build_context FTS-only, exactly as without this section — no
+      # provider is constructed, no latency added. The vector store is a plain BLOB
+      # column with JS cosine similarity (no sqlite-vec extension, no Dockerfile
+      # change needed). Uncomment to turn embeddings on, e.g. against a local Ollama:
+      # NDBRAIN_EMBEDDING_PROVIDER: ollama
+      # NDBRAIN_EMBEDDING_BASE_URL: http://ollama:11434
+      # NDBRAIN_EMBEDDING_MODEL: nomic-embed-text
+      # Or OpenAI-compatible:
+      # NDBRAIN_EMBEDDING_PROVIDER: openai
+      # NDBRAIN_EMBEDDING_BASE_URL: https://api.openai.com/v1
+      # NDBRAIN_EMBEDDING_MODEL: text-embedding-3-small
+      # NDBRAIN_EMBEDDING_API_KEY: sk-...
     volumes:
       - ./data:/data

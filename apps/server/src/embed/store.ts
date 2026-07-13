@@ -81,6 +81,14 @@ export class VectorStore {
     this.db.prepare("DELETE FROM vec_chunks WHERE note_path = ?").run(path);
   }
 
+  /** Whether the store currently holds zero chunk vectors — used at startup to decide
+   *  whether a first-run background reindex is needed once an embedding provider is
+   *  turned on (see main.ts). */
+  isEmpty(): boolean {
+    const row = this.db.prepare("SELECT 1 FROM vec_chunks LIMIT 1").get();
+    return row === undefined;
+  }
+
   /**
    * Nearest neighbors by cosine similarity (higher = better), one result per note (its
    * best/closest chunk), best-first, top `k`. `namespacePrefix` uses the same
