@@ -58,6 +58,12 @@ describe("schema migrations", () => {
       (i) => i.name,
     );
     expect(indexes).toContain("idx_access_log_key_ts");
+
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+      .map((r: any) => r.name);
+    expect(tables).toContain("vec_chunks");
   });
 
   it("migrates a pre-migration-system DB file up to the latest version", async () => {
@@ -103,6 +109,12 @@ describe("schema migrations", () => {
         (i) => i.name,
       );
       expect(indexes).toContain("idx_access_log_key_ts");
+
+      const tables = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((r: any) => r.name);
+      expect(tables).toContain("vec_chunks");
       db.close();
     } finally {
       await rm(dir, { recursive: true, force: true });

@@ -1,0 +1,105 @@
+import { describe, expect, it } from "vitest";
+import { openDatabase } from "../db/database.js";
+import { VectorStore } from "./store.js";
+
+const DIM = 3;
+
+function seeded() {
+  const db = openDatabase(":memory:");
+  return new VectorStore(db, DIM);
+}
+
+describe("VectorStore", () => {
+  it("returns the nearest note first", () => {
+    const store = seeded();
+    store.upsertNote("a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+    store.upsertNote("b.md", [{ ix: 0, vector: [0, 1, 0] }]);
+
+    const hits = store.search([0.9, 0.1, 0], 5);
+
+    expect(hits.map((h) => h.path)).toEqual(["a.md", "b.md"]);
+  });
+
+  it("orders best-first by descending similarity score", () => {
+    const store = seeded();
+    store.upsertNote("a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+    store.upsertNote("b.md", [{ ix: 0, vector: [0, 1, 0] }]);
+
+    const hits = store.search([0.9, 0.1, 0], 5);
+
+    expect(hits[0].score).toBeGreaterThan(hits[1].score);
+  });
+
+  it("filters results by namespace prefix, excluding out-of-scope notes", () => {
+    const store = seeded();
+    store.upsertNote("myai/a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+    store.upsertNote("other/a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+
+    const hits = store.search([1, 0, 0], 5, "myai/");
+
+    expect(hits.map((h) => h.path)).toEqual(["myai/a.md"]);
+  });
+
+  it("matches the namespace case-sensitively (scope enforcement)", () => {
+    const store = seeded();
+    store.upsertNote("myai/a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+
+    const hits = store.search([1, 0, 0], 5, "MYAI/");
+
+    expect(hits).toEqual([]);
+  });
+
+  it("treats an empty namespace prefix as unscoped (matches everything)", () => {
+    const store = seeded();
+    store.upsertNote("a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+    store.upsertNote("b.md", [{ ix: 0, vector: [0, 1, 0] }]);
+
+    const hits = store.search([1, 0, 0], 5, "");
+
+    expect(hits.map((h) => h.path).sort()).toEqual(["a.md", "b.md"]);
+  });
+
+  it("removes a note's vectors via deleteNote", () => {
+    const store = seeded();
+    store.upsertNote("a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+    store.upsertNote("b.md", [{ ix: 0, vector: [0, 1, 0] }]);
+
+    store.deleteNote("a.md");
+
+    const hits = store.search([1, 0, 0], 5);
+    expect(hits.map((h) => h.path)).toEqual(["b.md"]);
+  });
+
+  it("throws on vector dimension mismatch", () => {
+    const store = seeded();
+    expect(() => store.upsertNote("a.md", [{ ix: 0, vector: [1, 0] }])).toThrow();
+  });
+
+  it("returns one result per note using its closest chunk", () => {
+    const store = seeded();
+    // Chunk 0 is far from the query, chunk 1 is very close: the note should
+    // appear exactly once, scored by its best (closest) chunk.
+    store.upsertNote("a.md", [
+      { ix: 0, vector: [0, 1, 0] },
+      { ix: 1, vector: [1, 0, 0] },
+    ]);
+    store.upsertNote("b.md", [{ ix: 0, vector: [0, 0, 1] }]);
+
+    const hits = store.search([1, 0, 0], 5);
+
+    expect(hits.filter((h) => h.path === "a.md")).toHaveLength(1);
+    expect(hits[0].path).toBe("a.md");
+  });
+
+  it("replaces previous vectors for a note on re-upsert", () => {
+    const store = seeded();
+    store.upsertNote("a.md", [{ ix: 0, vector: [0, 1, 0] }]);
+    store.upsertNote("a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+
+    const hits = store.search([1, 0, 0], 5);
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0].path).toBe("a.md");
+    expect(hits[0].score).toBeCloseTo(1, 5);
+  });
+});

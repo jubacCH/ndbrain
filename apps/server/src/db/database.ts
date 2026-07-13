@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS access_log (
   allowed INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_access_log_key_ts ON access_log(key_id, ts);
+CREATE TABLE IF NOT EXISTS vec_chunks (
+  note_path TEXT NOT NULL,
+  chunk_ix INTEGER NOT NULL,
+  embedding BLOB NOT NULL,
+  PRIMARY KEY (note_path, chunk_ix)
+);
 `;
 
 export type { Database };
@@ -87,6 +93,21 @@ const MIGRATIONS: MigrationStep[] = [
     version: 3,
     apply: (db) => {
       db.exec("CREATE INDEX IF NOT EXISTS idx_access_log_key_ts ON access_log(key_id, ts)");
+    },
+  },
+  {
+    // Embedding search (Plan 5): namespace-scoped vector chunks, see embed/store.ts.
+    // BLOB-backed rather than sqlite-vec's vec0, since vec0 needs a fixed vector width
+    // at CREATE TABLE time and this migrator has no access to the runtime-configured
+    // embedding dimension (only known once a provider is configured).
+    version: 4,
+    apply: (db) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS vec_chunks (
+        note_path TEXT NOT NULL,
+        chunk_ix INTEGER NOT NULL,
+        embedding BLOB NOT NULL,
+        PRIMARY KEY (note_path, chunk_ix)
+      )`);
     },
   },
 ];
