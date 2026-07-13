@@ -9,6 +9,8 @@ import { VaultGit } from "../vault/git.js";
 import { NoteService } from "../notes/service.js";
 import { NoteExistsError, NoteNotFoundError } from "../notes/errors.js";
 import { ScopeError, type Scope } from "../keys/scope.js";
+import { VectorStore } from "../embed/store.js";
+import type { EmbeddingProvider } from "../embed/provider.js";
 import { NoteTools, type Caller } from "./tools.js";
 
 let dir: string;
@@ -153,6 +155,36 @@ describe("NoteTools.searchNotes", () => {
     const result = await tools.searchNotes(caller("full-key", fullWriter), { query: "hello" });
     expect(result.hits.map((h) => h.path).sort()).toEqual(["myai/a.md", "other/b.md"]);
   });
+
+  // M5: pin scope-on-vector through the REAL end-to-end MCP path (NoteTools ->
+  // hybridSearch -> VectorStore.search), not just at the VectorStore-unit-test level
+  // (see embed/store.test.ts's own namespace-filter tests) or search.ts-level.
+  describe("with a real VectorStore + fake embedding provider (scope-on-vector, end-to-end)", () => {
+    it("never lets a scoped agent see an other/ note, even though it is a perfect vector neighbor", async () => {
+      await notes.write("myai/a.md", "# Alpha\nSome wording that shares nothing with the query", "seed");
+      await notes.write("other/secret.md", "# Secret\nCompletely different wording, also no overlap", "seed");
+
+      const store = new VectorStore(db);
+      // Both notes get the IDENTICAL vector: a perfect vector-neighbor match. If scope
+      // did not hold through the vector branch, other/secret.md would rank #1 (tied)
+      // and leak into a myai/-scoped agent's results.
+      store.upsertNote("myai/a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+      store.upsertNote("other/secret.md", [{ ix: 0, vector: [1, 0, 0] }]);
+      const provider: EmbeddingProvider = {
+        id: "fake",
+        dim: 3,
+        embed: async (texts) => texts.map(() => [1, 0, 0]),
+      };
+      const scopedTools = new NoteTools({ db, notes, vault, provider, store });
+
+      const result = await scopedTools.searchNotes(caller("myai-key", myaiReader), {
+        query: "zzz nonsense query with no lexical overlap",
+      });
+
+      expect(result.hits.some((h) => h.path === "other/secret.md")).toBe(false);
+      expect(result.hits.some((h) => h.path === "myai/a.md")).toBe(true);
+    });
+  });
 });
 
 describe("NoteTools.buildContext", () => {
@@ -177,6 +209,35 @@ describe("NoteTools.buildContext", () => {
     expect(result.found).toBe(true);
     expect(result.backlinks).toContain("myai/b.md");
     expect(result.backlinks).not.toContain("other/a.md");
+  });
+
+  // M5: same end-to-end scope pin as searchNotes above, for build_context's
+  // vector-based related (index/context.ts's vectorRelated).
+  describe("with a real VectorStore + fake embedding provider (scope-on-vector, end-to-end)", () => {
+    it("never surfaces an out-of-namespace note as vector-related", async () => {
+      await notes.write("myai/a.md", "# Alpha\nSome content", "seed");
+      await notes.write("other/secret.md", "# Secret\nOther content", "seed");
+
+      const store = new VectorStore(db);
+      store.upsertNote("myai/a.md", [{ ix: 0, vector: [1, 0, 0] }]);
+      store.upsertNote("other/secret.md", [{ ix: 0, vector: [1, 0, 0] }]);
+      // Throws if called at all: build_context's related must come from already-stored
+      // vectors (Plan 5 I2), never a fresh embed call, so this also pins that fix
+      // through the real NoteTools path.
+      const provider: EmbeddingProvider = {
+        id: "fake",
+        dim: 3,
+        embed: async () => {
+          throw new Error("must not be called: related should use stored vectors");
+        },
+      };
+      const scopedTools = new NoteTools({ db, notes, vault, provider, store });
+
+      const result = await scopedTools.buildContext(caller("myai-key", myaiReader), { path: "myai/a.md" });
+
+      expect(result.found).toBe(true);
+      expect(result.related?.some((h) => h.path === "other/secret.md")).toBe(false);
+    });
   });
 });
 
