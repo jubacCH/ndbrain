@@ -26,11 +26,11 @@
 }
 
 .statusDot.connected {
-  background: #2f9e44;
+  background: var(--color-success);
 }
 
 .statusDot.connecting {
-  background: #f59f00;
+  background: var(--color-warning);
 }
 
 .statusDot.offline {
