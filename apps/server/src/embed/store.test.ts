@@ -102,4 +102,27 @@ describe("VectorStore", () => {
     expect(hits[0].path).toBe("a.md");
     expect(hits[0].score).toBeCloseTo(1, 5);
   });
+
+  it("skips stale-dimension vectors (e.g., after provider/model switch) without crashing", () => {
+    const db = openDatabase(":memory:");
+    const store = new VectorStore(db, DIM);
+
+    // Upsert a note with correct 3D vectors.
+    store.upsertNote("correct.md", [{ ix: 0, vector: [1, 0, 0] }]);
+
+    // Directly insert a row with a mismatched 2D vector (simulating a stale embedding).
+    const staleVec = new Float32Array([0.5, 0.5]);
+    const blob = Buffer.from(staleVec.buffer);
+    db.prepare("INSERT INTO vec_chunks (note_path, chunk_ix, embedding) VALUES (?, ?, ?)").run(
+      "stale.md",
+      0,
+      blob,
+    );
+
+    // Search should only return the correctly-dimensioned note, skip the stale one.
+    const hits = store.search([1, 0, 0], 5);
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0].path).toBe("correct.md");
+  });
 });

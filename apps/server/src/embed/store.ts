@@ -47,6 +47,8 @@ function cosineSimilarity(a: number[], b: Float32Array): number {
  * this choice (the extension itself loads fine in node:22-slim).
  */
 export class VectorStore {
+  private warnedStaleDim = false;
+
   constructor(
     private readonly db: Database,
     private readonly dim: number,
@@ -101,7 +103,18 @@ export class VectorStore {
 
     const bestByPath = new Map<string, number>();
     for (const row of rows) {
-      const score = cosineSimilarity(queryVec, fromBlob(row.embedding));
+      const stored = fromBlob(row.embedding);
+      // Skip vectors with mismatched dimension (likely stale after a model/provider switch).
+      if (stored.length !== this.dim) {
+        if (!this.warnedStaleDim) {
+          console.warn(
+            `VectorStore: skipping vector for ${row.note_path} with stale dimension ${stored.length} (expected ${this.dim}); consider re-embedding`,
+          );
+          this.warnedStaleDim = true;
+        }
+        continue;
+      }
+      const score = cosineSimilarity(queryVec, stored);
       const prev = bestByPath.get(row.note_path);
       if (prev === undefined || score > prev) {
         bestByPath.set(row.note_path, score);
