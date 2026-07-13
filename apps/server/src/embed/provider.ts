@@ -6,6 +6,20 @@ export interface EmbeddingProvider {
   readonly id: string;
 }
 
+/** Thrown by the HTTP-backed providers (openai/ollama) on a non-ok response, carrying
+ *  the HTTP status so callers (see `embed/indexer.ts`'s retry-cap `isPermanentError`)
+ *  can tell a permanent client error (4xx: bad key, unknown model, ...) apart from a
+ *  transient one (5xx, network) without parsing the message string. */
+export class EmbeddingHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "EmbeddingHttpError";
+  }
+}
+
 const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const OPENAI_DEFAULT_MODEL = "text-embedding-3-small";
 const OPENAI_BATCH_SIZE = 96;
@@ -98,7 +112,10 @@ class OpenAIEmbeddingProvider implements EmbeddingProvider {
       body: JSON.stringify({ model: this.model, input: batch }),
     });
     if (!response.ok) {
-      throw new Error(`OpenAI embedding request failed: ${response.status} ${response.statusText}`);
+      throw new EmbeddingHttpError(
+        `OpenAI embedding request failed: ${response.status} ${response.statusText}`,
+        response.status,
+      );
     }
     const json = (await response.json()) as OpenAIEmbeddingResponse;
     // The API returns items in request order, but each item also carries its own
@@ -158,7 +175,10 @@ class OllamaEmbeddingProvider implements EmbeddingProvider {
       body: JSON.stringify({ model: this.model, prompt: text }),
     });
     if (!response.ok) {
-      throw new Error(`Ollama embedding request failed: ${response.status} ${response.statusText}`);
+      throw new EmbeddingHttpError(
+        `Ollama embedding request failed: ${response.status} ${response.statusText}`,
+        response.status,
+      );
     }
     const json = (await response.json()) as { embedding: number[] };
     return json.embedding;

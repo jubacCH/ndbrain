@@ -9,10 +9,29 @@ export interface EmbeddingIndexerOptions {
   retryMaxDelayMs?: number;
   /** Injectable scheduler, mainly so tests can use tiny real delays instead of the default `setTimeout`. */
   scheduler?: (fn: () => void, delayMs: number) => void;
+  /** Max total embed attempts (initial + retries) for a given path before it's dropped
+   *  as a dead letter instead of retrying forever. See `isPermanentError`. */
+  maxAttempts?: number;
 }
 
 const DEFAULT_RETRY_BASE_DELAY_MS = 500;
 const DEFAULT_RETRY_MAX_DELAY_MS = 30_000;
+const DEFAULT_MAX_ATTEMPTS = 5;
+
+/**
+ * Classifies an embed failure as permanent (never worth retrying), so a clearly-bad
+ * config (bad API key, unknown model, oversized input, ...) is dropped after a single
+ * attempt instead of burning `maxAttempts` retries - each one a real, possibly paid,
+ * provider call - on an error that will never succeed. Duck-typed on a numeric `status`
+ * field (any 4xx) rather than importing a specific provider error class, so it works
+ * for any `EmbeddingProvider` implementation that attaches one (see
+ * `EmbeddingHttpError` in provider.ts), not just the built-in openai/ollama providers.
+ */
+function isPermanentError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const status = (err as { status?: unknown }).status;
+  return typeof status === "number" && status >= 400 && status < 500;
+}
 
 /**
  * Embeds notes asynchronously, without ever blocking the caller (a note write).
@@ -46,6 +65,7 @@ export class EmbeddingIndexer {
   private readonly retryBaseDelayMs: number;
   private readonly retryMaxDelayMs: number;
   private readonly scheduler: (fn: () => void, delayMs: number) => void;
+  private readonly maxAttempts: number;
 
   private pumping = false;
   private processingCount = 0;
@@ -59,6 +79,7 @@ export class EmbeddingIndexer {
     this.retryBaseDelayMs = options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
     this.retryMaxDelayMs = options.retryMaxDelayMs ?? DEFAULT_RETRY_MAX_DELAY_MS;
     this.scheduler = options.scheduler ?? ((fn, delayMs) => setTimeout(fn, delayMs));
+    this.maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   }
 
   /** Non-blocking: schedules `path` for (re-)embedding. No-op when no embedding provider is configured. */
@@ -161,8 +182,28 @@ export class EmbeddingIndexer {
     );
   }
 
+  /**
+   * Handles an embed failure for `path`: either schedules a bounded, backed-off retry,
+   * or - if the error is classified permanent (see `isPermanentError`) or `maxAttempts`
+   * has been exhausted - drops the path as a dead letter (a single `console.error`, no
+   * further retries). Without this cap, a permanent misconfiguration (bad API key,
+   * unknown model, an oversized chunk the provider always rejects, ...) would retry
+   * forever, making a real (possibly paid) provider call every time.
+   */
   private scheduleRetry(path: string, markdown: string, version: number, err: unknown): void {
     const attempt = (this.retryAttempts.get(path) ?? 0) + 1;
+    const permanent = isPermanentError(err);
+
+    if (permanent || attempt >= this.maxAttempts) {
+      this.retryAttempts.delete(path);
+      console.error(
+        `[ndbrain] embed indexer: giving up on "${path}" after ${attempt} attempt(s)` +
+          `${permanent ? " (permanent error, no retry)" : " (max attempts reached)"}:`,
+        err,
+      );
+      return;
+    }
+
     this.retryAttempts.set(path, attempt);
     const delayMs = Math.min(this.retryBaseDelayMs * attempt, this.retryMaxDelayMs);
     console.warn(

@@ -287,6 +287,72 @@ describe("EmbeddingIndexer", () => {
     expect(provider.calls.map((call) => call[0])).toEqual([v1, v2]);
   });
 
+  it("caps retries at maxAttempts, then drops the path with a final error log instead of retrying forever", async () => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { store } = seeded();
+    let callCount = 0;
+    const provider = new FakeEmbeddingProvider(async () => {
+      callCount++;
+      throw new Error("permanent-ish outage that never recovers");
+    });
+    const indexer = new EmbeddingIndexer(provider, store, {
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 2,
+      maxAttempts: 3,
+    });
+
+    indexer.enqueue("a.md", "content that will never succeed");
+    await indexer.flush();
+
+    expect(callCount).toBe(3);
+    expect(errSpy).toHaveBeenCalledOnce();
+    errSpy.mockRestore();
+  });
+
+  it("does not block enqueue of other paths while one path is stuck retrying", async () => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { db, store } = seeded();
+    const provider = new FakeEmbeddingProvider(async (texts) => {
+      if (texts[0] === "bad content") throw new Error("always fails");
+      return texts.map(vectorFor);
+    });
+    const indexer = new EmbeddingIndexer(provider, store, {
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 2,
+      maxAttempts: 2,
+    });
+
+    indexer.enqueue("bad.md", "bad content");
+    indexer.enqueue("good.md", "good content");
+    await indexer.flush();
+
+    expect(countChunks(db, "good.md")).toBe(1);
+    expect(countChunks(db, "bad.md")).toBe(0);
+    errSpy.mockRestore();
+  });
+
+  it("drops immediately (no retry) on a classified permanent 4xx error", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { store } = seeded();
+    let callCount = 0;
+    const provider = new FakeEmbeddingProvider(async () => {
+      callCount++;
+      const err = new Error("bad api key") as Error & { status: number };
+      err.status = 401;
+      throw err;
+    });
+    const indexer = new EmbeddingIndexer(provider, store, { retryBaseDelayMs: 1, retryMaxDelayMs: 2 });
+
+    indexer.enqueue("a.md", "content with a permanently bad key");
+    await indexer.flush();
+
+    expect(callCount).toBe(1);
+    expect(errSpy).toHaveBeenCalledOnce();
+    errSpy.mockRestore();
+  });
+
   it("size() reflects outstanding work and settles to 0 once flushed", async () => {
     const { store } = seeded();
     const provider = new FakeEmbeddingProvider();
