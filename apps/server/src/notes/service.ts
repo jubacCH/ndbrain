@@ -29,6 +29,22 @@ export interface DocManagerHook {
   isLive(path: string): boolean;
 }
 
+/**
+ * The hook `NoteService` uses to fire-and-forget embedding work after a content
+ * mutation. Deliberately a minimal, locally-defined shape (not the concrete
+ * `EmbeddingIndexer` type) so this module stays decoupled from the embedding
+ * stack and trivially fakeable in tests. Both methods are contractually
+ * non-blocking and non-throwing (see `EmbeddingIndexer`); `NoteService` still
+ * guards every call site defensively (see `#notifyEmbedder`) so a misbehaving
+ * implementation can never break a write.
+ */
+export interface EmbedderHook {
+  /** Schedules `path` for (re-)embedding with `markdown` as its latest content. */
+  enqueue(path: string, markdown: string): void;
+  /** Deletes a note's embeddings and drops any not-yet-started job for it. */
+  removeNote(path: string): void;
+}
+
 /** The single write path for all vault mutations: filesystem -> git commit -> index.
  *
  * Note: each mutation is a three-step sequence (filesystem write -> git commit ->
@@ -66,12 +82,27 @@ export class NoteService {
     // Shared serialization queue; a private one keeps existing callers backward-compatible.
     private mutex: Mutex = new Mutex(),
     private docManager?: DocManagerHook,
+    private embedder?: EmbedderHook,
   ) {}
 
   /** Late-binds the live-doc hook after construction — see the class doc comment
    *  for why this is needed alongside the constructor param. */
   setDocManager(docManager: DocManagerHook): void {
     this.docManager = docManager;
+  }
+
+  /** Fire-and-forget `enqueue`/`removeNote` call, guarded so a misbehaving embedder
+   *  (a synchronous throw, against its own contract) can never break a write/move/
+   *  remove that already succeeded on disk, in git and in the search index. Never
+   *  awaited by callers — embedding must add zero latency to the mutex-critical
+   *  write path. */
+  #notifyEmbedder(fn: (embedder: EmbedderHook) => void): void {
+    if (!this.embedder) return;
+    try {
+      fn(this.embedder);
+    } catch (err) {
+      console.warn("[ndbrain] note service: embedder hook threw, ignoring:", err);
+    }
   }
 
   read(path: string): Promise<string | null> {
@@ -87,6 +118,7 @@ export class NoteService {
     await this.vault.write(path, content);
     await this.git.commitChange(`note: update ${path}`, actor, [path]);
     this.indexer.indexNote(path, content);
+    this.#notifyEmbedder((embedder) => embedder.enqueue(path, content));
   }
 
   /** Unlocked routing body shared by `write`/`editNote`/`appendNote`: sends `content`
@@ -142,6 +174,8 @@ export class NoteService {
       await this.vault.move(from, to);
       await this.git.commitChange(`note: move ${from} -> ${to}`, actor, [from, to]);
       this.indexer.renameNote(from, to, raw);
+      this.#notifyEmbedder((embedder) => embedder.removeNote(from));
+      this.#notifyEmbedder((embedder) => embedder.enqueue(to, raw));
     });
   }
 
@@ -197,6 +231,7 @@ export class NoteService {
       if (removed) {
         await this.git.commitChange(`note: delete ${path}`, actor, [path]);
         this.indexer.removeNote(path);
+        this.#notifyEmbedder((embedder) => embedder.removeNote(path));
       }
       return removed;
     });

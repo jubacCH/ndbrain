@@ -324,4 +324,83 @@ describe("NoteService", () => {
       expect(await wired.read("myai/to-remove.md")).toBeNull();
     });
   });
+
+  describe("embedder hook", () => {
+    function fakeEmbedder() {
+      return { enqueue: vi.fn(), removeNote: vi.fn() };
+    }
+
+    it("write enqueues the written content exactly once", async () => {
+      const embedder = fakeEmbedder();
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db), undefined, undefined, undefined, embedder);
+      await wired.write("emb/a.md", "# A", "julian");
+      expect(embedder.enqueue).toHaveBeenCalledTimes(1);
+      expect(embedder.enqueue).toHaveBeenCalledWith("emb/a.md", "# A");
+    });
+
+    it("editNote enqueues the final (post-edit) content", async () => {
+      const embedder = fakeEmbedder();
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db), undefined, undefined, undefined, embedder);
+      await wired.write("emb/e.md", "hello world", "julian");
+      embedder.enqueue.mockClear();
+      await wired.editNote("emb/e.md", "world", "brain", "julian");
+      expect(embedder.enqueue).toHaveBeenCalledTimes(1);
+      expect(embedder.enqueue).toHaveBeenCalledWith("emb/e.md", "hello brain");
+    });
+
+    it("appendNote enqueues the final (post-append) content", async () => {
+      const embedder = fakeEmbedder();
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db), undefined, undefined, undefined, embedder);
+      await wired.write("emb/ap.md", "line one", "julian");
+      embedder.enqueue.mockClear();
+      await wired.appendNote("emb/ap.md", "line two", "julian");
+      expect(embedder.enqueue).toHaveBeenCalledTimes(1);
+      expect(embedder.enqueue).toHaveBeenCalledWith("emb/ap.md", "line one\nline two");
+    });
+
+    it("move removes embeddings for the old path and enqueues the moved content under the new path", async () => {
+      const embedder = fakeEmbedder();
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db), undefined, undefined, undefined, embedder);
+      await wired.write("emb/from.md", "# Moved", "julian");
+      embedder.enqueue.mockClear();
+      await wired.move("emb/from.md", "emb/to.md", "julian");
+      expect(embedder.removeNote).toHaveBeenCalledWith("emb/from.md");
+      expect(embedder.enqueue).toHaveBeenCalledWith("emb/to.md", "# Moved");
+    });
+
+    it("remove removes embeddings for the deleted path", async () => {
+      const embedder = fakeEmbedder();
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db), undefined, undefined, undefined, embedder);
+      await wired.write("emb/r.md", "# R", "julian");
+      await wired.remove("emb/r.md", "julian");
+      expect(embedder.removeNote).toHaveBeenCalledWith("emb/r.md");
+    });
+
+    it("without an embedder, no hook is called and behavior is unchanged (default backward compatibility)", async () => {
+      await svc.write("noemb/a.md", "# A", "julian");
+      await svc.editNote("noemb/a.md", "A", "B", "julian");
+      await svc.appendNote("noemb/a.md", "more", "julian");
+      await svc.move("noemb/a.md", "noemb/b.md", "julian");
+      expect(await svc.remove("noemb/b.md", "julian")).toBe(true);
+      // No embedder wired: nothing above should throw, and content ends up as expected.
+    });
+
+    it("a throwing embedder does not break the write, and the write still lands on disk/git/index", async () => {
+      const embedder = { enqueue: vi.fn(() => { throw new Error("boom"); }), removeNote: vi.fn() };
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db), undefined, undefined, undefined, embedder);
+      await expect(wired.write("emb/throw.md", "# Throw", "julian")).resolves.toBeUndefined();
+      expect(await wired.read("emb/throw.md")).toBe("# Throw");
+      expect(db.prepare("SELECT title FROM notes WHERE path='emb/throw.md'").get()).toEqual({
+        title: "Throw",
+      });
+    });
+
+    it("a throwing removeNote on delete does not break the removal", async () => {
+      const embedder = { enqueue: vi.fn(), removeNote: vi.fn(() => { throw new Error("boom"); }) };
+      const wired = new NoteService(new Vault(dir), git, new Indexer(db), undefined, undefined, undefined, embedder);
+      await wired.write("emb/throw2.md", "# T2", "julian");
+      await expect(wired.remove("emb/throw2.md", "julian")).resolves.toBe(true);
+      expect(await wired.read("emb/throw2.md")).toBeNull();
+    });
+  });
 });
