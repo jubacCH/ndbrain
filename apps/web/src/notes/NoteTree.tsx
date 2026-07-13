@@ -3,7 +3,7 @@
  *  note via `useAppState()` — clicking a note is the only way this component
  *  talks to the rest of the app, so it stays decoupled from the editor (Task 6). */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { apiClient, type NoteSummary } from "../api/client";
 import { useAppState } from "../shell/AppState";
 import { buildTree, type TreeNode } from "./buildTree";
@@ -26,6 +26,9 @@ export function NoteTree({ client = apiClient }: NoteTreeProps = {}) {
   const [error, setError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [isCreating, setIsCreating] = useState(false);
+  const [newNotePath, setNewNotePath] = useState("");
+  const newNoteInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -42,6 +45,10 @@ export function NoteTree({ client = apiClient }: NoteTreeProps = {}) {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (isCreating) newNoteInputRef.current?.focus();
+  }, [isCreating]);
+
   const tree = useMemo(() => buildTree(notes ?? []), [notes]);
 
   function toggleFolder(path: string) {
@@ -53,12 +60,23 @@ export function NoteTree({ client = apiClient }: NoteTreeProps = {}) {
     });
   }
 
-  async function handleNewNote() {
-    const input = window.prompt("Path for the new note (must end with .md)");
-    if (!input) return;
-    const path = input.trim();
+  function openNewNoteInput() {
+    setCreateError(null);
+    setNewNotePath("");
+    setIsCreating(true);
+  }
+
+  function closeNewNoteInput() {
+    setIsCreating(false);
+    setNewNotePath("");
+    setCreateError(null);
+  }
+
+  async function submitNewNote() {
+    const path = newNotePath.trim();
+    if (!path) return;
     if (!path.toLowerCase().endsWith(".md")) {
-      window.alert("The note path must end with .md");
+      setCreateError("Path must end with .md");
       return;
     }
 
@@ -69,8 +87,19 @@ export function NoteTree({ client = apiClient }: NoteTreeProps = {}) {
       await client.putNote(path, `# ${title}\n`);
       await refresh();
       setSelectedPath(path);
+      closeNewNoteInput();
     } catch {
       setCreateError("Failed to create the note.");
+    }
+  }
+
+  function handleNewNoteKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void submitNewNote();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeNewNoteInput();
     }
   }
 
@@ -78,10 +107,33 @@ export function NoteTree({ client = apiClient }: NoteTreeProps = {}) {
     <nav className={styles.tree} aria-label="Notes">
       <div className={styles.header}>
         <span className={styles.heading}>Notes</span>
-        <button type="button" className={styles.newNote} onClick={() => void handleNewNote()}>
-          + New note
-        </button>
+        {!isCreating && (
+          <button type="button" className={styles.newNote} onClick={openNewNoteInput}>
+            + New note
+          </button>
+        )}
       </div>
+
+      {isCreating && (
+        <div className={styles.newNoteRow}>
+          <input
+            ref={newNoteInputRef}
+            type="text"
+            className={styles.newNoteInput}
+            aria-label="Path for the new note"
+            placeholder="folder/note.md"
+            value={newNotePath}
+            onChange={(event) => setNewNotePath(event.target.value)}
+            onKeyDown={handleNewNoteKeyDown}
+          />
+          <button type="button" className={styles.newNoteConfirm} onClick={() => void submitNewNote()}>
+            Create
+          </button>
+          <button type="button" className={styles.newNoteCancel} onClick={closeNewNoteInput}>
+            Cancel
+          </button>
+        </div>
+      )}
 
       {notes === null && !error && <p className={styles.status}>Loading notes…</p>}
       {error && (
