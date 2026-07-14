@@ -1,0 +1,102 @@
+.view {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pickFolder {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.listPane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-right: 1px solid var(--color-border);
+  padding-right: 0.75rem;
+  overflow: auto;
+}
+
+.search {
+  width: 100%;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.noteButton {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 0.35rem;
+  padding: 0.4rem 0.5rem;
+  cursor: pointer;
+  color: inherit;
+}
+
+.noteButton:hover {
+  background: var(--color-surface);
+}
+
+.noteButton.active {
+  background: var(--color-accent);
+  color: var(--color-accent-fg, #fff);
+}
+
+.editorPane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.path {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  font-size: 0.85rem;
+  color: var(--color-fg-muted);
+}
+
+.error {
+  color: var(--color-danger);
+}
+
+.warning {
+  color: var(--color-warning);
+}
+
+.placeholder {
+  color: var(--color-fg-muted);
+}

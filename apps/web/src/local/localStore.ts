@@ -14,6 +14,7 @@
  * no-op write) and never touches `@tauri-apps/*`, so importing this module
  * has zero effect on the existing web app.
  */
+import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { mkdir, readDir, readTextFile, remove, writeTextFile } from "@tauri-apps/plugin-fs";
 import { load as loadTauriStore, type Store } from "@tauri-apps/plugin-store";
@@ -108,6 +109,29 @@ export class LocalNotesStore {
     await store.save();
   }
 
+  /** Extends the Tauri fs plugin's runtime scope to cover `path`, recursively,
+   *  via the app's own `allow_local_notes_folder` Rust command (see
+   *  `apps/desktop/src-tauri/src/lib.rs`). This module's fs permissions
+   *  (`fs:allow-read-text-file` etc., see
+   *  `apps/desktop/src-tauri/capabilities/default.json`) are deliberately
+   *  declared WITHOUT any compile-time scope of their own — actual filesystem
+   *  access is governed entirely by the plugin's runtime `Scope`, and this
+   *  method is what grants it. It's the only mechanism Tauri v2's
+   *  static-by-default capability system offers for a directory chosen at
+   *  runtime rather than known at build time (see the Task 5 report for the
+   *  full trace against the `tauri`/`tauri-plugin-fs` source).
+   *
+   *  The runtime scope is in-memory only and does NOT survive an app
+   *  restart — unlike the persisted `folderPath` (see `getFolder`/`setFolder`
+   *  above). Callers (see `LocalNotesView`) must call this both right after
+   *  `pickFolder()` resolves AND when restoring a previously persisted
+   *  folder on a fresh app launch. Idempotent; safe to call repeatedly.
+   *  No-op in the browser. */
+  async grantFolderAccess(path: string): Promise<void> {
+    if (!isTauri()) return;
+    await invoke("allow_local_notes_folder", { path });
+  }
+
   /** Recursively lists every `.md` file under the local-notes folder, as
    *  root-relative POSIX paths, with a best-effort title parsed from each
    *  file's first heading. Empty array if no folder is configured (or in
@@ -132,8 +156,16 @@ export class LocalNotesStore {
       if (entry.isDirectory) {
         await this.walk(root, rel, results);
       } else if (entry.isFile && entry.name.toLowerCase().endsWith(".md")) {
-        const content = await readTextFile(joinPath(root, rel));
-        results.push({ path: rel, title: extractTitle(content) });
+        // A single unreadable file (permissions, a broken symlink, a file that
+        // vanished between `readDir` and `readTextFile`) must not take down the
+        // whole listing — skip it (title-less, still shown as `null`-titled) and
+        // keep walking the rest of the folder. Task 5 review minor (T4).
+        try {
+          const content = await readTextFile(joinPath(root, rel));
+          results.push({ path: rel, title: extractTitle(content) });
+        } catch {
+          results.push({ path: rel, title: null });
+        }
       }
     }
   }

@@ -1,0 +1,27 @@
+.host {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-bg);
+}
+
+.host :global(.cm-editor) {
+  height: 100%;
+  font-size: 0.9rem;
+}
+
+.host :global(.cm-scroller) {
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+}
+
+.host :global(.cm-focused) {
+  outline: none;
+}

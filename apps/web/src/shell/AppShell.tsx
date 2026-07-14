@@ -33,6 +33,11 @@ export interface AppShellProps {
   onSearchClick?: () => void;
   /** Fired by the Settings nav item. Task 9 wires this to show the settings view. */
   onSettingsClick?: () => void;
+  /** Fired by the "Local" nav item. Omitted entirely (rather than defaulting to
+   *  a no-op) hides the button altogether — `AppRoot` only passes this when
+   *  `isTauri()`, so the button (and the local-notes feature it opens) simply
+   *  does not exist in the browser build. Task 5 (local notes). */
+  onLocalClick?: () => void;
 }
 
 export function AppShell({
@@ -43,6 +48,7 @@ export function AppShell({
   onLogout,
   onSearchClick,
   onSettingsClick,
+  onLocalClick,
 }: AppShellProps) {
   const { resolvedTheme, toggleTheme } = useTheme();
 
@@ -63,6 +69,12 @@ export function AppShell({
         <div className={styles.tree}>{sidebar}</div>
 
         <div className={styles.sidebarFooter}>
+          {onLocalClick && (
+            <button type="button" className={styles.navButton} onClick={onLocalClick}>
+              Local
+            </button>
+          )}
+
           <button type="button" className={styles.navButton} onClick={() => onSettingsClick?.()}>
             Settings
           </button>

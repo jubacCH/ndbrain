@@ -79,6 +79,24 @@ describe("AppShell", () => {
     expect(onSettingsClick).toHaveBeenCalledTimes(1);
   });
 
+  it("omits the Local nav button when onLocalClick is not provided (browser default)", () => {
+    stubMatchMedia(false);
+    render(<AppShell sidebar={<div />} main={<div />} onLogout={() => {}} />);
+
+    expect(screen.queryByRole("button", { name: "Local" })).not.toBeInTheDocument();
+  });
+
+  it("shows and wires the Local nav button when onLocalClick is provided (Tauri only)", () => {
+    stubMatchMedia(false);
+    const onLocalClick = vi.fn();
+    render(
+      <AppShell sidebar={<div />} main={<div />} onLogout={() => {}} onLocalClick={onLocalClick} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Local" }));
+    expect(onLocalClick).toHaveBeenCalledTimes(1);
+  });
+
   it("the theme toggle flips document.documentElement's data-theme attribute", () => {
     stubMatchMedia(false);
     render(<AppShell sidebar={<div />} main={<div />} onLogout={() => {}} />);
