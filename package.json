@@ -7,7 +7,8 @@
   },
   "scripts": {
     "test": "pnpm -r test",
-    "build": "pnpm -r build"
+    "build": "pnpm -r build",
+    "desktop:build": "pnpm -F @ndbrain/web build && pnpm -F @ndbrain/desktop tauri build"
   },
   "devDependencies": {
     "typescript": "^6.0.3"
