@@ -11,8 +11,31 @@
  *  `render(id: string, text: string, svgContainingElement?: Element):
  *  Promise<{ svg: string, ... }>` - matching the brief's expected shape. */
 
-import { WidgetType } from "@codemirror/view";
+import { syntaxTree } from "@codemirror/language";
+import type { EditorState } from "@codemirror/state";
+import { EditorView, WidgetType } from "@codemirror/view";
+import type { SyntaxNode } from "@lezer/common";
 import type { MermaidEditHandler } from "./mermaidEditor";
+
+/** Resolves the `CodeText` range of the ```mermaid fence enclosing `pos` in
+ *  `state`'s current syntax tree - freshly re-derived every time this is
+ *  called, rather than a range captured once at decoration-build time (see
+ *  `MermaidWidget`'s doc comment for why that distinction is the whole
+ *  point of Finding 3's fix). `resolveInner` (not `resolve`) is used so a
+ *  `pos` that lands exactly on the fence's own start still resolves into
+ *  the fence itself rather than stopping one level too high (verified live
+ *  against `@lezer/common@1.5.2` - `resolveInner`, unlike `resolve`, walks
+ *  into the innermost node at a boundary position). Returns null when `pos`
+ *  isn't (or, e.g. after concurrent edits, no longer is) inside a mermaid
+ *  fence's `CodeText` - in which case a click is simply ignored. */
+export function resolveMermaidCodeTextRange(state: EditorState, pos: number): { from: number; to: number } | null {
+  let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1);
+  while (node && node.name !== "FencedCode") node = node.parent;
+  if (!node) return null;
+  const codeText = node.getChild("CodeText");
+  if (!codeText) return null;
+  return { from: codeText.from, to: codeText.to };
+}
 
 /** `mermaid.initialize` must only run once per page - calling it repeatedly
  *  is wasteful and, per mermaid's docs, not guaranteed idempotent for a
@@ -44,17 +67,22 @@ export async function renderMermaid(code: string, id: string): Promise<string> {
  *  "reveal the source on cursor" behavior (unlike the inline marks in
  *  decorations.ts). Editing the source happens in the split panel (Task 6):
  *  clicking the rendered diagram calls `onEdit` with the code and its exact
- *  `CodeText` range, which `decorations.ts` resolves from the live
- *  `mermaidEditorHandler` facet before constructing this widget. */
+ *  `CodeText` range, resolved fresh at click time (see `toDOM` below) via
+ *  `resolveMermaidCodeTextRange`.
+ *
+ *  Deliberately carries no document position (no `from`/`to`) - only `code`
+ *  (Finding 3's fix): CodeMirror decides whether to reuse this widget's
+ *  existing rendered DOM (skipping a re-run of mermaid) purely by `eq()`, and
+ *  every edit anywhere in the document ahead of this fence shifts its
+ *  position without changing its content, which used to make `eq()` false
+ *  (from/to no longer matched) and needlessly discard + re-render the
+ *  diagram on every unrelated keystroke above it. Positions are resolved
+ *  fresh from the live syntax tree only when actually needed (a click), so
+ *  there is nothing position-shaped left in the widget to go stale. */
 export class MermaidWidget extends WidgetType {
   constructor(
     readonly code: string,
     readonly id: string,
-    /** Start/end offsets of `code` in the document (the fence's `CodeText`
-     *  child, not the whole `FencedCode` block) - forwarded verbatim to
-     *  `onEdit` so the split panel's save can replace exactly that range. */
-    readonly from: number,
-    readonly to: number,
     readonly onEdit: MermaidEditHandler,
   ) {
     super();
@@ -62,20 +90,20 @@ export class MermaidWidget extends WidgetType {
 
   /** Two widgets are interchangeable - CodeMirror keeps the existing
    *  rendered DOM (and doesn't re-run mermaid) across a decoration rebuild -
-   *  only when both their content AND their document position match. `from`/
-   *  `to` matter here (not just `code`): reusing a widget whose captured
-   *  range no longer matches the current document would make a subsequent
-   *  click open the split panel against a stale range and corrupt unrelated
-   *  text on save. */
+   *  whenever their diagram source matches, regardless of where in the
+   *  document that source currently lives. */
   eq(other: MermaidWidget): boolean {
-    return other.code === this.code && other.from === this.from && other.to === this.to;
+    return other.code === this.code;
   }
 
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const container = document.createElement("div");
     container.className = "cm-lp-mermaid";
     container.addEventListener("click", () => {
-      this.onEdit({ code: this.code, from: this.from, to: this.to });
+      const pos = view.posAtDOM(container);
+      const range = resolveMermaidCodeTextRange(view.state, pos);
+      if (!range) return;
+      this.onEdit({ code: view.state.doc.sliceString(range.from, range.to), from: range.from, to: range.to });
     });
 
     renderMermaid(this.code, this.id).then(

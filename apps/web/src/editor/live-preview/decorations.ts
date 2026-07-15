@@ -271,7 +271,7 @@ function buildMermaidDecorations(state: EditorState, ranges: readonly { from: nu
           to: nodeRef.to,
           decoration: Decoration.replace({
             block: true,
-            widget: new MermaidWidget(code, `mermaid-${nodeRef.from}`, codeFrom, codeTo, handler),
+            widget: new MermaidWidget(code, `mermaid-${nodeRef.from}`, handler),
           }),
         });
       },

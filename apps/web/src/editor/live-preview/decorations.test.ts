@@ -423,20 +423,24 @@ describe("buildDecorations - mermaid fences", () => {
     expect(mermaidWidgets(doc)).toEqual([]);
   });
 
-  it("gives the widget the CodeText range (not the whole fence) as from/to", () => {
+  it("gives the widget only the CodeText content, no document position (Finding 3 fix)", () => {
+    // The widget used to carry the CodeText range's from/to so `eq()` could
+    // compare it - which made `eq()` false (and the diagram DOM discarded and
+    // re-rendered) on every edit that merely shifted the fence's position
+    // without changing its content. It's position-less now: only `code`.
     const doc = "```mermaid\ngraph TD\nA-->B\n```";
-    const codeTextFrom = doc.indexOf("graph TD");
-    const codeTextTo = codeTextFrom + "graph TD\nA-->B".length;
 
     const [{ widget }] = mermaidWidgets(doc);
 
-    expect(widget.from).toBe(codeTextFrom);
-    expect(widget.to).toBe(codeTextTo);
-    expect(doc.slice(widget.from, widget.to)).toBe(widget.code);
+    expect(widget.code).toBe("graph TD\nA-->B");
+    expect((widget as unknown as { from?: number }).from).toBeUndefined();
+    expect((widget as unknown as { to?: number }).to).toBeUndefined();
   });
 
   it("wires the widget's onEdit to the mermaidEditorHandler facet, so a click reaches the live handler", () => {
     const doc = "```mermaid\ngraph TD\nA-->B\n```";
+    const codeTextFrom = doc.indexOf("graph TD");
+    const codeTextTo = codeTextFrom + "graph TD\nA-->B".length;
     const handler = vi.fn();
     const state = EditorState.create({ doc, extensions: [markdownPlain, mermaidEditorHandler.of(handler)] });
     const decorations = buildDecorations(state, [{ from: 0, to: doc.length }]);
@@ -446,8 +450,8 @@ describe("buildDecorations - mermaid fences", () => {
       if (deco.spec.widget instanceof MermaidWidget) widget = deco.spec.widget;
     });
 
-    widget!.onEdit({ code: widget!.code, from: widget!.from, to: widget!.to });
+    widget!.onEdit({ code: widget!.code, from: codeTextFrom, to: codeTextTo });
 
-    expect(handler).toHaveBeenCalledWith({ code: "graph TD\nA-->B", from: widget!.from, to: widget!.to });
+    expect(handler).toHaveBeenCalledWith({ code: "graph TD\nA-->B", from: codeTextFrom, to: codeTextTo });
   });
 });
