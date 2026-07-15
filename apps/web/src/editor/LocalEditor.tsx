@@ -12,14 +12,20 @@
  *  `LocalNotesView` uses to drive `writeLocal`. */
 
 import { useEffect, useRef, useState } from "react";
-import { EditorState, type Extension } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { Prec, EditorState, type Extension } from "@codemirror/state";
+import { EditorView, keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { livePreviewExtensions, rawCompartment, setRawMode } from "./live-preview/extensions";
 import { MermaidEditPanel } from "./live-preview/MermaidEditPanel.tsx";
 import { applyMermaidEdit, mermaidEditorHandler, type MermaidEditRequest } from "./live-preview/mermaidEditor";
+// Explicit `.tsx` suffix: on a case-insensitive filesystem, a bare
+// `"./live-preview/Toolbar"` specifier can wrongly resolve to the sibling
+// `toolbar.ts` (formatting commands) instead of this component (Task 7
+// finding) - the extension pins it to the right file.
+import { EditorToolbar } from "./live-preview/Toolbar.tsx";
+import { formatKeymap } from "./live-preview/toolbar";
 import styles from "./LocalEditor.module.css";
 
 export interface LocalEditorProps {
@@ -53,6 +59,14 @@ export function LocalEditor({ path, content, onChange }: LocalEditorProps) {
   // without forcing a remount - the view itself is still (re)created by the
   // effect further down whenever `path` changes.
   const viewRef = useRef<EditorView | null>(null);
+  // Mirrors `viewRef` in React state, purely so `<EditorToolbar>` (which needs
+  // the view as a prop to dispatch formatting commands) re-renders once the
+  // real view exists - set at the end of the mount effect below and cleared
+  // in its cleanup. Kept separate from `viewRef` (rather than replacing it)
+  // so the mount effect's dependency array doesn't have to change: code that
+  // only needs synchronous access to the current view (the raw-mode effect,
+  // the mermaid-save handler) keeps reading `viewRef`.
+  const [view, setView] = useState<EditorView | null>(null);
   // Always call the latest onChange without that identity forcing the editor
   // (and the user's cursor/scroll position) to be torn down and rebuilt.
   const onChangeRef = useRef(onChange);
@@ -91,6 +105,12 @@ export function LocalEditor({ path, content, onChange }: LocalEditorProps) {
         doc: content,
         extensions: [
           basicSetup,
+          // `Mod-i` collides with `basicSetup`'s own `defaultKeymap` binding
+          // (`selectParentSyntax`, with `preventDefault: true`) - verified
+          // live against the installed `@codemirror/commands@6.10.4`.
+          // `Prec.high` makes these bindings win regardless of extension
+          // array order, without needing to fork or reorder `basicSetup`.
+          Prec.high(keymap.of(formatKeymap)),
           markdown({ extensions: [GFM] }),
           rawCompartment.of(livePreviewExtensions()),
           mermaidEditorHandler.of((request) => openMermaidEditorRef.current(request)),
@@ -102,9 +122,11 @@ export function LocalEditor({ path, content, onChange }: LocalEditorProps) {
     // Sync the freshly created view to whatever raw/formatted mode was last
     // set (see `rawRef`'s doc comment above) - a no-op the first time round.
     setRawMode(view, rawRef.current);
+    setView(view);
 
     return () => {
       viewRef.current = null;
+      setView(null);
       view.destroy();
     };
     // Intentionally re-creates only on `path` change: `content` is the seed
@@ -123,21 +145,10 @@ export function LocalEditor({ path, content, onChange }: LocalEditorProps) {
 
   return (
     <>
-      {/* Minimal test-bare hook for the raw/formatted compartment wired up
-       *  above - Plan 7 Task 7 replaces this with the full `EditorToolbar`
-       *  (which already exists standalone, see `live-preview/Toolbar.tsx`).
-       *  A sibling of the host div (not a wrapping element) so the host keeps
+      {/* A sibling of the host div (not a wrapping element) so the host keeps
        *  its existing `flex: 1` layout inside `LocalNotesView`'s flex-column
        *  `.editorPane` unchanged. */}
-      <button
-        type="button"
-        className={styles.rawToggle}
-        aria-pressed={raw}
-        data-testid="raw-toggle"
-        onClick={() => setRaw((current) => !current)}
-      >
-        {raw ? "Raw" : "Formatted"}
-      </button>
+      <EditorToolbar view={view} raw={raw} onToggleRaw={() => setRaw((current) => !current)} />
       <div ref={hostRef} className={styles.host} data-testid="local-editor-host" />
 
       {mermaidEdit && (

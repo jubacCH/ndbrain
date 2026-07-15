@@ -62,7 +62,7 @@ describe("<LocalEditor>", () => {
     expect(host.textContent).not.toContain("**");
     expect(host.textContent).toContain("bold");
 
-    fireEvent.click(screen.getByTestId("raw-toggle"));
+    fireEvent.click(screen.getByRole("button", { name: "Formatiert" }));
 
     // Raw: the exact markdown source is visible again; onChange never fires
     // from a mode toggle (it only touches decorations, not the doc).

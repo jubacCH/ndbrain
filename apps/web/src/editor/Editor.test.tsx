@@ -197,7 +197,7 @@ describe("<Editor>", () => {
     expect(host.textContent).not.toContain("**");
     expect(host.textContent).toContain("bold");
 
-    fireEvent.click(screen.getByTestId("raw-toggle"));
+    fireEvent.click(screen.getByRole("button", { name: "Formatiert" }));
 
     // Raw: the exact markdown source is visible again, doc content unchanged.
     await waitFor(() => expect(host.textContent).toContain("**bold**"));
