@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -39,6 +39,25 @@ describe("<LocalEditor>", () => {
     });
 
     expect(() => unmount()).not.toThrow();
+  });
+
+  it("renders live-preview formatted by default and shows raw markdown source once toggled (Plan 7 Task 4)", async () => {
+    const onChange = vi.fn();
+    render(<LocalEditor path="a.md" content="**bold**" onChange={onChange} />);
+
+    const host = await waitFor(() => screen.getByTestId("local-editor-host"));
+    await waitFor(() => expect(host.querySelector(".cm-editor")).toBeInTheDocument());
+
+    // Formatted (default): the `**` markers are hidden, only "bold" shows.
+    expect(host.textContent).not.toContain("**");
+    expect(host.textContent).toContain("bold");
+
+    fireEvent.click(screen.getByTestId("raw-toggle"));
+
+    // Raw: the exact markdown source is visible again; onChange never fires
+    // from a mode toggle (it only touches decorations, not the doc).
+    await waitFor(() => expect(host.textContent).toContain("**bold**"));
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 

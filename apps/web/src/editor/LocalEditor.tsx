@@ -11,11 +11,13 @@
  *  reports the full document text back to the caller on every change, which
  *  `LocalNotesView` uses to drive `writeLocal`. */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
+import { GFM } from "@lezer/markdown";
+import { livePreviewExtensions, rawCompartment, setRawMode } from "./live-preview/extensions";
 import styles from "./LocalEditor.module.css";
 
 export interface LocalEditorProps {
@@ -45,10 +47,26 @@ export function localEditorExtensions(onChange: (content: string) => void): Exte
 
 export function LocalEditor({ path, content, onChange }: LocalEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  // Holds the live `EditorView` so the raw/formatted toggle below can reach it
+  // without forcing a remount - the view itself is still (re)created by the
+  // effect further down whenever `path` changes.
+  const viewRef = useRef<EditorView | null>(null);
   // Always call the latest onChange without that identity forcing the editor
   // (and the user's cursor/scroll position) to be torn down and rebuilt.
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+
+  // Raw (plain markdown source, today's behavior) vs. formatted (live-preview
+  // decorations) display mode. Default is formatted (`false`) - see
+  // `live-preview/extensions.ts`. The actual toggle button is a later task
+  // (Plan 7 Task 7's `EditorToolbar`); this is the state + wiring it will
+  // call into.
+  const [raw, setRaw] = useState(false);
+  // Mirrors `raw` for the mount effect below (which intentionally does NOT
+  // depend on `raw` - only on `path` - so toggling it never recreates the
+  // view), so a freshly (re)mounted view (e.g. after a `path` change) still
+  // starts in whatever mode was last set.
+  const rawRef = useRef(raw);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -58,16 +76,55 @@ export function LocalEditor({ path, content, onChange }: LocalEditorProps) {
       parent: host,
       state: EditorState.create({
         doc: content,
-        extensions: [basicSetup, markdown(), localEditorExtensions((text) => onChangeRef.current(text))],
+        extensions: [
+          basicSetup,
+          markdown({ extensions: [GFM] }),
+          rawCompartment.of(livePreviewExtensions()),
+          localEditorExtensions((text) => onChangeRef.current(text)),
+        ],
       }),
     });
+    viewRef.current = view;
+    // Sync the freshly created view to whatever raw/formatted mode was last
+    // set (see `rawRef`'s doc comment above) - a no-op the first time round.
+    setRawMode(view, rawRef.current);
 
-    return () => view.destroy();
+    return () => {
+      viewRef.current = null;
+      view.destroy();
+    };
     // Intentionally re-creates only on `path` change: `content` is the seed
     // value for a freshly opened note, not a controlled prop to keep back in
     // sync with on every keystroke (see the prop doc comment above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
 
-  return <div ref={hostRef} className={styles.host} data-testid="local-editor-host" />;
+  // Applies a `raw` toggle to the already-mounted view in place (via the
+  // compartment), instead of remounting the whole editor - see
+  // `live-preview/extensions.ts`'s `setRawMode`.
+  useEffect(() => {
+    rawRef.current = raw;
+    if (viewRef.current) setRawMode(viewRef.current, raw);
+  }, [raw]);
+
+  return (
+    <>
+      {/* Minimal test-bare hook for the raw/formatted compartment wired up
+       *  above - Plan 7 Task 7 replaces this with the full `EditorToolbar`
+       *  (which already exists standalone, see `live-preview/Toolbar.tsx`).
+       *  A sibling of the host div (not a wrapping element) so the host keeps
+       *  its existing `flex: 1` layout inside `LocalNotesView`'s flex-column
+       *  `.editorPane` unchanged. */}
+      <button
+        type="button"
+        className={styles.rawToggle}
+        aria-pressed={raw}
+        data-testid="raw-toggle"
+        onClick={() => setRaw((current) => !current)}
+      >
+        {raw ? "Raw" : "Formatted"}
+      </button>
+      <div ref={hostRef} className={styles.host} data-testid="local-editor-host" />
+    </>
+  );
 }

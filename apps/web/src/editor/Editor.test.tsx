@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
@@ -157,5 +157,38 @@ describe("<Editor>", () => {
 
     await waitFor(() => expect(factory).toHaveBeenCalledWith({ path: "b.md", token: "tok" }));
     expect(first.handle.provider.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders live-preview formatted by default and shows raw markdown source once toggled (Plan 7 Task 4)", async () => {
+    const ydoc = new Y.Doc();
+    const ytext = ydoc.getText("content");
+    ytext.insert(0, "**bold**");
+    const handle: CollabProviderHandle = {
+      provider: {
+        document: ydoc,
+        awareness: null,
+        on: vi.fn(),
+        off: vi.fn(),
+      } as unknown as CollabProviderHandle["provider"],
+      ydoc,
+      ytext,
+      destroy: vi.fn(),
+    };
+    const providerFactory: ProviderFactory = () => handle;
+
+    render(<Editor path="myai/deploy.md" token="tok" providerFactory={providerFactory} />);
+
+    const host = await waitFor(() => screen.getByTestId("editor-host"));
+    await waitFor(() => expect(host.querySelector(".cm-editor")).toBeInTheDocument());
+
+    // Formatted (default): the `**` markers are hidden, only "bold" shows.
+    expect(host.textContent).not.toContain("**");
+    expect(host.textContent).toContain("bold");
+
+    fireEvent.click(screen.getByTestId("raw-toggle"));
+
+    // Raw: the exact markdown source is visible again, doc content unchanged.
+    await waitFor(() => expect(host.textContent).toContain("**bold**"));
+    expect(ytext.toString()).toBe("**bold**");
   });
 });
