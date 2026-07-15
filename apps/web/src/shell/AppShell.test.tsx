@@ -104,7 +104,7 @@ describe("AppShell", () => {
     const toggle = screen.getByRole("button", { name: /switch to dark theme/i });
     fireEvent.click(toggle);
 
-    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("graphite-dark");
     expect(screen.getByRole("button", { name: /switch to light theme/i })).toBeInTheDocument();
   });
 });

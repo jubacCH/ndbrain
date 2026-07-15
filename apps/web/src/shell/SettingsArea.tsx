@@ -9,9 +9,10 @@
 import { useState } from "react";
 import { AuditView } from "../settings/AuditView";
 import { KeysView } from "../settings/KeysView";
+import { ThemeView } from "../settings/ThemeView";
 import styles from "./SettingsArea.module.css";
 
-type SettingsTab = "keys" | "audit";
+type SettingsTab = "keys" | "audit" | "appearance";
 
 export interface SettingsAreaProps {
   /** Whether Settings is the thing currently shown in the main slot. False
@@ -46,6 +47,15 @@ export function SettingsArea({ open, onClose }: SettingsAreaProps) {
           >
             Audit Log
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "appearance"}
+            className={tab === "appearance" ? `${styles.tab} ${styles.active}` : styles.tab}
+            onClick={() => setTab("appearance")}
+          >
+            Appearance
+          </button>
         </div>
 
         <button type="button" className={styles.close} onClick={onClose}>
@@ -59,6 +69,9 @@ export function SettingsArea({ open, onClose }: SettingsAreaProps) {
         </div>
         <div className={tab === "audit" ? undefined : styles.hidden}>
           <AuditView />
+        </div>
+        <div className={tab === "appearance" ? undefined : styles.hidden}>
+          <ThemeView />
         </div>
       </div>
     </div>

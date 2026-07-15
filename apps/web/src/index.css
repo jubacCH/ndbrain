@@ -1,68 +1,156 @@
+/* =====================================================================
+   ndBrain — design tokens & themes
+   ---------------------------------------------------------------------
+   Components style themselves ONLY through the semantic tokens below
+   (var(--color-*), var(--font-*), var(--radius-*)). They never hardcode
+   a colour. That makes themes pluggable:
+
+   TO ADD A NEW COLOUR THEME
+   1. Copy one `[data-theme="…"]` block below, rename it, change the
+      colour values (keep every token name — components depend on them).
+   2. Set `color-scheme` to `dark` or `light` so native controls match.
+   3. Register it in `theme/themes.ts` (id + label + kind) — it then
+      appears in the theme picker automatically.
+
+   Semantic roles (what each token means, not what it looks like):
+     --color-bg          app ground (deepest)
+     --color-rail        the icon rail / chrome, usually a touch darker
+     --color-surface     panels, sidebars, the editor sheet
+     --color-surface-2   raised surfaces: popovers, command palette, chips
+     --color-border      hairline dividers
+     --color-border-strong  emphasised borders, window edge
+     --color-fg          primary text
+     --color-fg-muted    secondary text, labels
+     --color-fg-faint    tertiary text, metadata, disabled
+     --color-accent      the ONE interactive accent (focus, selection)
+     --color-accent-fg   text/icon on top of the accent
+     --color-human       collaboration presence — you
+     --color-agent       collaboration presence — an AI agent
+     --color-danger / --color-success / --color-warning  semantic status
+   ===================================================================== */
+
 :root {
-  color-scheme: light dark;
-  --color-bg: #ffffff;
-  --color-fg: #14181f;
-  --color-fg-muted: #5a6472;
-  --color-surface: #f6f7f9;
-  --color-border: #dde1e7;
-  --color-accent: #3457d5;
+  /* ---- type & shape (theme-independent) ---- */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* ---- default theme = Graphite Dark ---- */
+  color-scheme: dark;
+  --color-bg: #0a0a0b;
+  --color-rail: #060607;
+  --color-surface: #0d0e10;
+  --color-surface-2: #17181c;
+  --color-border: #1e2024;
+  --color-border-strong: #2a2c31;
+  --color-fg: #e7e8ea;
+  --color-fg-muted: #8b8e96;
+  --color-fg-faint: #5b5e66;
+  --color-accent: #5b6cff;
   --color-accent-fg: #ffffff;
-  --color-danger: #c0362c;
-  --color-success: #1f8a3b;
-  --color-warning: #b2790a;
+  --color-human: #4d9bff;
+  --color-agent: #e0a63e;
+  --color-danger: #f0655c;
+  --color-success: #3fb57f;
+  --color-warning: #e0a63e;
 }
 
-@media (prefers-color-scheme: dark) {
+/* OS-light users get Graphite Light unless they pick a theme explicitly. */
+@media (prefers-color-scheme: light) {
   :root {
-    --color-bg: #0e1116;
-    --color-fg: #e6e9ef;
-    --color-fg-muted: #9aa4b2;
-    --color-surface: #161b22;
-    --color-border: #2a313c;
-    --color-accent: #5b7cfa;
-    --color-accent-fg: #0e1116;
-    --color-danger: #ef6a61;
-    --color-success: #4ade80;
-    --color-warning: #f59f00;
+    color-scheme: light;
+    --color-bg: #ffffff;
+    --color-rail: #f0f1f3;
+    --color-surface: #f8f9fa;
+    --color-surface-2: #eef0f2;
+    --color-border: #e4e7ea;
+    --color-border-strong: #d3d7dd;
+    --color-fg: #14151a;
+    --color-fg-muted: #5c626c;
+    --color-fg-faint: #8a909a;
+    --color-accent: #4d5ae8;
+    --color-accent-fg: #ffffff;
+    --color-human: #2f6fd6;
+    --color-agent: #b5760a;
+    --color-danger: #c8382f;
+    --color-success: #1f8a54;
+    --color-warning: #b5760a;
   }
 }
 
-/* Explicit override set by `theme/useTheme.ts` via `data-theme` on <html> — wins
- * over `prefers-color-scheme` in both directions so the toggle always works
- * regardless of the OS setting. */
-:root[data-theme="light"] {
-  --color-bg: #ffffff;
-  --color-fg: #14181f;
-  --color-fg-muted: #5a6472;
-  --color-surface: #f6f7f9;
-  --color-border: #dde1e7;
-  --color-accent: #3457d5;
+/* Explicit picks (theme/useTheme.ts stamps data-theme on <html>) win over
+   the media query in both directions. */
+:root[data-theme="graphite-dark"] {
+  color-scheme: dark;
+  --color-bg: #0a0a0b;
+  --color-rail: #060607;
+  --color-surface: #0d0e10;
+  --color-surface-2: #17181c;
+  --color-border: #1e2024;
+  --color-border-strong: #2a2c31;
+  --color-fg: #e7e8ea;
+  --color-fg-muted: #8b8e96;
+  --color-fg-faint: #5b5e66;
+  --color-accent: #5b6cff;
   --color-accent-fg: #ffffff;
-  --color-danger: #c0362c;
-  --color-success: #1f8a3b;
-  --color-warning: #b2790a;
+  --color-human: #4d9bff;
+  --color-agent: #e0a63e;
+  --color-danger: #f0655c;
+  --color-success: #3fb57f;
+  --color-warning: #e0a63e;
 }
 
-:root[data-theme="dark"] {
-  --color-bg: #0e1116;
-  --color-fg: #e6e9ef;
-  --color-fg-muted: #9aa4b2;
-  --color-surface: #161b22;
-  --color-border: #2a313c;
-  --color-accent: #5b7cfa;
-  --color-accent-fg: #0e1116;
-  --color-danger: #ef6a61;
-  --color-success: #4ade80;
-  --color-warning: #f59f00;
+:root[data-theme="graphite-light"] {
+  color-scheme: light;
+  --color-bg: #ffffff;
+  --color-rail: #f0f1f3;
+  --color-surface: #f8f9fa;
+  --color-surface-2: #eef0f2;
+  --color-border: #e4e7ea;
+  --color-border-strong: #d3d7dd;
+  --color-fg: #14151a;
+  --color-fg-muted: #5c626c;
+  --color-fg-faint: #8a909a;
+  --color-accent: #4d5ae8;
+  --color-accent-fg: #ffffff;
+  --color-human: #2f6fd6;
+  --color-agent: #b5760a;
+  --color-danger: #c8382f;
+  --color-success: #1f8a54;
+  --color-warning: #b5760a;
+}
+
+/* Duplex — a two-colour print world (cool paper, prussian ink, spot cyan).
+   Ships as proof that a whole new palette is one block + one registry entry. */
+:root[data-theme="duplex"] {
+  color-scheme: light;
+  --color-bg: #f1f4f4;
+  --color-rail: #edf1f1;
+  --color-surface: #ffffff;
+  --color-surface-2: #edf1f1;
+  --color-border: #d6dedf;
+  --color-border-strong: #c4cfd0;
+  --color-fg: #10202a;
+  --color-fg-muted: #5a6b72;
+  --color-fg-faint: #8c9ba1;
+  --color-accent: #0a7d99;
+  --color-accent-fg: #ffffff;
+  --color-human: #10202a;
+  --color-agent: #0a7d99;
+  --color-danger: #bc4a2b;
+  --color-success: #2e7d4f;
+  --color-warning: #c98a00;
 }
 
 body {
   margin: 0;
   background: var(--color-bg);
   color: var(--color-fg);
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }

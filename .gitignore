@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.db
 .env
+
+# local runtime vault + sqlite (never commit)
+/data/
