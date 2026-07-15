@@ -5,6 +5,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { GFM, Strikethrough } from "@lezer/markdown";
 import { buildDecorations } from "./decorations";
 import { BLOCK_LINE_CLASS, MARK_CLASS, WIDGET_CLASS, headingLineClass } from "./marks";
+import { MermaidWidget } from "./mermaid";
 import { TaskCheckboxWidget } from "./tasklist";
 
 /** Markdown extension used by these tests. Plain `markdown()` only parses
@@ -370,5 +371,54 @@ describe("buildDecorations - task checkboxes", () => {
     const [widget] = checkboxWidgets("- [x] done");
 
     expect(widget.checked).toBe(true);
+  });
+});
+
+describe("buildDecorations - mermaid fences", () => {
+  function mermaidWidgets(doc: string): { from: number; to: number; widget: MermaidWidget }[] {
+    const state = plainStateFor(doc);
+    const decorations = buildDecorations(state, [{ from: 0, to: doc.length }]);
+    const found: { from: number; to: number; widget: MermaidWidget }[] = [];
+    decorations.between(0, doc.length, (from, to, deco) => {
+      if (deco.spec.widget instanceof MermaidWidget) found.push({ from, to, widget: deco.spec.widget });
+    });
+    return found;
+  }
+
+  it("replaces a ```mermaid fence with a block MermaidWidget over the whole fence, doc untouched", () => {
+    const doc = "```mermaid\ngraph TD\nA-->B\n```";
+    const state = plainStateFor(doc);
+    const decorations = buildDecorations(state, [{ from: 0, to: doc.length }]);
+
+    const [entry] = mermaidWidgets(doc);
+    expect(entry).toBeDefined();
+    expect(entry.from).toBe(0);
+    expect(entry.to).toBe(doc.length);
+    expect(entry.widget.code).toBe("graph TD\nA-->B");
+
+    let sawBlock = false;
+    decorations.between(0, doc.length, (_from, _to, deco) => {
+      if (deco.spec.widget instanceof MermaidWidget) sawBlock = deco.spec.block === true;
+    });
+    expect(sawBlock).toBe(true);
+    expect(state.doc.toString()).toBe(doc);
+  });
+
+  it("does not create a MermaidWidget for a ```js fence", () => {
+    const doc = "```js\nconst a = 1;\n```";
+
+    expect(mermaidWidgets(doc)).toEqual([]);
+  });
+
+  it("does not create a MermaidWidget for a fence with no info string", () => {
+    const doc = "```\nplain code\n```";
+
+    expect(mermaidWidgets(doc)).toEqual([]);
+  });
+
+  it("is case-sensitive: ```Mermaid (capitalized) is left as plain fenced code", () => {
+    const doc = "```Mermaid\ngraph TD\nA-->B\n```";
+
+    expect(mermaidWidgets(doc)).toEqual([]);
   });
 });

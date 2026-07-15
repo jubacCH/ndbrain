@@ -97,3 +97,31 @@
   margin-right: 0.4em;
   cursor: pointer;
 }
+
+/* `MermaidWidget` (mermaid.ts) sets these class names directly as literal,
+ * unhashed strings - like CodeMirror's own "cm-*" classes - rather than
+ * going through the `styles.xxx` CSS-modules indirection used elsewhere in
+ * this file, so `:global(...)` is required here to style them. This keeps
+ * the container's class name a stable selector Task 6's split-panel /
+ * click-handling code (and any external theming) can target directly. */
+:global(.cm-lp-mermaid) {
+  display: block;
+  margin: 0.5em 0;
+}
+
+:global(.cm-lp-mermaid) svg {
+  max-width: 100%;
+  height: auto;
+}
+
+:global(.cm-lp-mermaid-error) {
+  color: var(--color-danger);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+}

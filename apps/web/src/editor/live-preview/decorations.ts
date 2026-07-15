@@ -18,8 +18,17 @@ import {
 } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 import { BLOCK_LINE_CLASS, MARK_CLASS, WIDGET_CLASS, headingLevelOf, headingLineClass, styleForNode } from "./marks";
+import { MermaidWidget } from "./mermaid";
 import { taskCheckboxDecorations } from "./tasklist";
 import { wikilinkDecorations } from "./wikilink";
+
+/** Only a ```mermaid fence (lowercase, exact match) is rendered as a
+ *  diagram - Obsidian's own live-preview treats the info string the same
+ *  way (case-sensitive `mermaid`), and matching that convention means a
+ *  vault's existing notes behave identically here. Any other info string
+ *  (including `Mermaid`/`MERMAID`) falls through to the default fenced-code
+ *  rendering (untouched, still raw markdown text). */
+const MERMAID_INFO = "mermaid";
 
 /** Delimiter node names produced by `@lezer/markdown` for the inline marks
  *  handled here (verified live - see decorations.test.ts's doc comment). */
@@ -148,6 +157,29 @@ export function buildDecorations(state: EditorState, ranges: readonly { from: nu
           }
           case "HorizontalRule": {
             pieces.push({ from: nodeRef.from, to: nodeRef.to, decoration: hrWidget });
+            break;
+          }
+          case "FencedCode": {
+            // `CodeMark` ("```"), `CodeInfo` (the info string, e.g.
+            // "mermaid") and `CodeText` (the code between the fences) are
+            // FencedCode's children (verified live - see mermaid.ts's doc
+            // comment). Any info string other than an exact, lowercase
+            // "mermaid" is left as plain fenced code (no decoration here at
+            // all - default CodeMirror rendering applies).
+            const info = nodeRef.node.getChild("CodeInfo");
+            if (!info) break;
+            const infoText = state.doc.sliceString(info.from, info.to);
+            if (infoText !== MERMAID_INFO) break;
+            const codeText = nodeRef.node.getChild("CodeText");
+            const code = codeText ? state.doc.sliceString(codeText.from, codeText.to) : "";
+            pieces.push({
+              from: nodeRef.from,
+              to: nodeRef.to,
+              decoration: Decoration.replace({
+                block: true,
+                widget: new MermaidWidget(code, `mermaid-${nodeRef.from}`),
+              }),
+            });
             break;
           }
           case "Link": {
