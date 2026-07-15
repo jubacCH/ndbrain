@@ -72,6 +72,29 @@ describe("wikilinkDecorations", () => {
     expect(records).toEqual([]);
   });
 
+  it("does not match a [[ ]] pair that spans a line break", () => {
+    const doc = "[[foo\nbar]]";
+    const state = stateFor(doc);
+
+    const records = collect(state, 0, doc.length);
+
+    expect(records).toEqual([]);
+  });
+
+  it("still matches a real wikilink on the line after an unterminated [[ on a previous line", () => {
+    const doc = "[[dangling\n[[Note]]";
+    const state = stateFor(doc);
+
+    const records = collect(state, 0, doc.length);
+    const target = doc.indexOf("[[Note]]");
+
+    expect(records).toEqual([
+      { from: target, to: target + 2, class: undefined, target: undefined, isReplace: true },
+      { from: target + 2, to: target + 6, class: MARK_CLASS.wikilink, target: "Note", isReplace: false },
+      { from: target + 6, to: target + 8, class: undefined, target: undefined, isReplace: true },
+    ]);
+  });
+
   it("decorates a real wikilink following inline code in the same range", () => {
     const doc = "`c` [[Note]]";
     const state = stateFor(doc);

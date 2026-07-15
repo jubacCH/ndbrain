@@ -49,8 +49,10 @@ function isInsideAny(pos: number, ranges: readonly { from: number; to: number }[
 
 /** Matches `[[Target]]` or `[[Target|Alias]]`. Target/alias exclude `[`,
  *  `]` and `|` so adjacent wikilinks on the same line don't merge into one
- *  match. */
-const WIKILINK_RE = /\[\[([^[\]|]+?)(?:\|([^[\]]+?))?\]\]/g;
+ *  match, and exclude `\n` so a match never spans a line break - Obsidian's
+ *  own wikilink syntax doesn't either, so `[[foo\nbar]]` must stay two plain
+ *  lines of text, not a single (incorrectly cross-line) wikilink. */
+const WIKILINK_RE = /\[\[([^[\]|\n]+?)(?:\|([^[\]\n]+?))?\]\]/g;
 
 /** Finds wikilinks in `[from, to)` and returns the decoration pieces that
  *  hide their `[[`/`]]` delimiters (and, for an aliased link, the
