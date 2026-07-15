@@ -1,5 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// `LocalNotesView` calls `@tauri-apps/plugin-dialog`'s `confirm` directly for
+// the "move to server?" prompt (C1 finding: `window.confirm` never returns on
+// macOS's WKWebView-backed Tauri shell). Mock the plugin the same way
+// `localStore.test.ts`/`AppRoot.local.test.tsx` mock Tauri's `fs`/`store`
+// plugins, rather than spying on `window.confirm`.
+const { dialogConfirmMock } = vi.hoisted(() => ({ dialogConfirmMock: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: dialogConfirmMock }));
+
 import { LocalNotesView } from "./LocalNotesView";
 import type { LocalNoteSummary } from "./localStore";
 
@@ -35,8 +44,8 @@ function setTauriFlag(value: boolean | undefined) {
 
 function makeStore(overrides: Partial<Record<string, unknown>> = {}) {
   return {
-    getFolder: vi.fn(async () => "/root"),
-    pickFolder: vi.fn(async () => "/root"),
+    getFolder: vi.fn(async (): Promise<string | null> => "/root"),
+    pickFolder: vi.fn(async (): Promise<string | null> => "/root"),
     listLocal: vi.fn(async (): Promise<LocalNoteSummary[]> => []),
     readLocal: vi.fn(async () => ""),
     writeLocal: vi.fn(async () => undefined),
@@ -178,13 +187,14 @@ describe("<LocalNotesView>", () => {
       listLocal: vi.fn(async () => [{ path: "a.md", title: "Note A" }]),
     });
     const moveToServer = vi.fn(async (rel: string) => ({ path: rel, localDeleted: true }));
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    dialogConfirmMock.mockReset().mockResolvedValue(true);
 
     render(<LocalNotesView store={store} EditorComponent={FakeEditor} moveToServer={moveToServer} />);
 
     fireEvent.click(await screen.findByText("Note A"));
     fireEvent.click(await screen.findByRole("button", { name: /move to server/i }));
 
+    expect(dialogConfirmMock).toHaveBeenCalledWith(expect.stringMatching(/a\.md/));
     await waitFor(() => expect(moveToServer).toHaveBeenCalledWith("a.md"));
     await waitFor(() => expect(screen.queryByText("Note A")).not.toBeInTheDocument());
   });
@@ -194,13 +204,14 @@ describe("<LocalNotesView>", () => {
       listLocal: vi.fn(async () => [{ path: "a.md", title: "Note A" }]),
     });
     const moveToServer = vi.fn(async (rel: string) => ({ path: rel, localDeleted: true }));
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+    dialogConfirmMock.mockReset().mockResolvedValue(false);
 
     render(<LocalNotesView store={store} EditorComponent={FakeEditor} moveToServer={moveToServer} />);
 
     fireEvent.click(await screen.findByText("Note A"));
     fireEvent.click(await screen.findByRole("button", { name: /move to server/i }));
 
+    await waitFor(() => expect(dialogConfirmMock).toHaveBeenCalled());
     expect(moveToServer).not.toHaveBeenCalled();
     expect(screen.getByText("Note A")).toBeInTheDocument();
   });
@@ -212,7 +223,7 @@ describe("<LocalNotesView>", () => {
     const moveToServer = vi.fn(async () => {
       throw new Error("server unreachable");
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    dialogConfirmMock.mockReset().mockResolvedValue(true);
 
     render(<LocalNotesView store={store} EditorComponent={FakeEditor} moveToServer={moveToServer} />);
 
@@ -228,7 +239,7 @@ describe("<LocalNotesView>", () => {
       listLocal: vi.fn(async () => [{ path: "a.md", title: "Note A" }]),
     });
     const moveToServer = vi.fn(async (rel: string) => ({ path: rel, localDeleted: false }));
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    dialogConfirmMock.mockReset().mockResolvedValue(true);
 
     render(<LocalNotesView store={store} EditorComponent={FakeEditor} moveToServer={moveToServer} />);
 
@@ -236,5 +247,191 @@ describe("<LocalNotesView>", () => {
     fireEvent.click(await screen.findByRole("button", { name: /move to server/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/moved to the server/i);
+  });
+
+  it("does not treat a declined overwrite confirmation (MoveAbortedError) as an error", async () => {
+    const store = makeStore({
+      listLocal: vi.fn(async () => [{ path: "a.md", title: "Note A" }]),
+    });
+    const { MoveAbortedError } = await import("./moveToServer");
+    const moveToServer = vi.fn(async () => {
+      throw new MoveAbortedError();
+    });
+    dialogConfirmMock.mockReset().mockResolvedValue(true);
+
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} moveToServer={moveToServer} />);
+
+    fireEvent.click(await screen.findByText("Note A"));
+    fireEvent.click(await screen.findByRole("button", { name: /move to server/i }));
+
+    await waitFor(() => expect(moveToServer).toHaveBeenCalledWith("a.md"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("Note A")).toBeInTheDocument();
+  });
+});
+
+describe("<LocalNotesView> debounced, serialized writes (I2)", () => {
+  beforeEach(() => {
+    setTauriFlag(true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    setTauriFlag(undefined);
+  });
+
+  it("coalesces rapid successive edits into a single debounced write of only the final content", async () => {
+    const store = makeStore({
+      listLocal: vi.fn(async () => [{ path: "a.md", title: "Note A" }]),
+      readLocal: vi.fn(async () => "original"),
+    });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+    fireEvent.click(await screen.findByText("Note A"));
+    const textarea = await screen.findByDisplayValue("original");
+
+    vi.useFakeTimers();
+    fireEvent.change(textarea, { target: { value: "o" } });
+    fireEvent.change(textarea, { target: { value: "or" } });
+    fireEvent.change(textarea, { target: { value: "ori" } });
+    fireEvent.change(textarea, { target: { value: "original + final" } });
+
+    // Not written yet — still within the debounce window, and not on every
+    // keystroke (I2c: no write, no re-index, per character typed).
+    expect(store.writeLocal).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(store.writeLocal).toHaveBeenCalledTimes(1);
+    expect(store.writeLocal).toHaveBeenCalledWith("a.md", "original + final");
+  });
+
+  it("flushes a pending debounced write immediately when switching to a different note, instead of losing it", async () => {
+    const store = makeStore({
+      listLocal: vi.fn(async () => [
+        { path: "a.md", title: "Note A" },
+        { path: "b.md", title: "Note B" },
+      ]),
+      readLocal: vi.fn(async (rel: string) => (rel === "a.md" ? "original a" : "original b")),
+    });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+    await screen.findByText("Note B");
+    fireEvent.click(screen.getByText("Note A"));
+    const textareaA = await screen.findByDisplayValue("original a");
+
+    vi.useFakeTimers();
+    fireEvent.change(textareaA, { target: { value: "edited a" } });
+    expect(store.writeLocal).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Note B"));
+
+    // The switch flushed the still-pending debounced edit immediately —
+    // it did not wait out the rest of the debounce window (never advanced).
+    expect(store.writeLocal).toHaveBeenCalledWith("a.md", "edited a");
+  });
+
+  it("flushes a pending debounced write on unmount instead of dropping it", async () => {
+    const store = makeStore({
+      listLocal: vi.fn(async () => [{ path: "a.md", title: "Note A" }]),
+      readLocal: vi.fn(async () => "original"),
+    });
+    const { unmount } = render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+    fireEvent.click(await screen.findByText("Note A"));
+    const textarea = await screen.findByDisplayValue("original");
+
+    vi.useFakeTimers();
+    fireEvent.change(textarea, { target: { value: "edited before unmount" } });
+    expect(store.writeLocal).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(store.writeLocal).toHaveBeenCalledWith("a.md", "edited before unmount");
+  });
+});
+
+describe("<LocalNotesView> changing the local notes folder (I3)", () => {
+  beforeEach(() => {
+    setTauriFlag(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setTauriFlag(undefined);
+  });
+
+  it("does not show a 'Change folder' button before any folder is configured", async () => {
+    const store = makeStore({ getFolder: vi.fn(async () => null) });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+
+    await screen.findByRole("button", { name: /choose folder/i });
+    expect(screen.queryByRole("button", { name: /change folder/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a 'Change folder' button once configured; re-picking loads the new folder's notes", async () => {
+    const store = makeStore({
+      listLocal: vi.fn(async () => [{ path: "a.md", title: "Note A" }]),
+    });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+    await screen.findByText("Note A");
+
+    store.pickFolder = vi.fn(async () => "/new-root");
+    store.listLocal = vi.fn(async () => [{ path: "new.md", title: "New Note" }]);
+
+    fireEvent.click(screen.getByRole("button", { name: /change folder/i }));
+
+    expect(await screen.findByText("New Note")).toBeInTheDocument();
+    expect(screen.queryByText("Note A")).not.toBeInTheDocument();
+    expect(store.grantFolderAccess).toHaveBeenCalledWith("/new-root");
+  });
+
+  it("does nothing when the folder picker is cancelled from 'Change folder'", async () => {
+    const store = makeStore({
+      listLocal: vi.fn(async () => [{ path: "a.md", title: "Note A" }]),
+    });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+    await screen.findByText("Note A");
+    store.pickFolder = vi.fn(async () => null);
+
+    fireEvent.click(screen.getByRole("button", { name: /change folder/i }));
+
+    await waitFor(() => expect(store.pickFolder).toHaveBeenCalled());
+    expect(screen.getByText("Note A")).toBeInTheDocument();
+  });
+});
+
+describe("<LocalNotesView> surfacing load errors instead of dying silently (M3)", () => {
+  beforeEach(() => {
+    setTauriFlag(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setTauriFlag(undefined);
+  });
+
+  it("shows an error when grantFolderAccess fails while restoring a previously configured folder on mount", async () => {
+    const store = makeStore({
+      grantFolderAccess: vi.fn(async () => {
+        throw new Error("scope denied");
+      }),
+    });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/scope denied/i);
+  });
+
+  it("shows an error when grantFolderAccess fails right after picking a folder", async () => {
+    const store = makeStore({
+      getFolder: vi.fn(async () => null),
+      pickFolder: vi.fn(async () => "/root"),
+      grantFolderAccess: vi.fn(async () => {
+        throw new Error("scope denied");
+      }),
+    });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /choose folder/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/scope denied/i);
   });
 });
