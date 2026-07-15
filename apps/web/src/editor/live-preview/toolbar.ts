@@ -176,15 +176,39 @@ export function insertLink(view: EditorView): void {
  *  (right before the closing fence) so the user can start editing the
  *  diagram immediately. Rendering of the fence into an actual diagram is
  *  Task 5/6's job (the mermaid widget) - this only inserts the markdown
- *  source. */
+ *  source.
+ *
+ *  A fenced code block only parses if both its opening and closing ```
+ *  lines stand alone - so this pads the insert with newlines whenever the
+ *  insertion point isn't already at a line boundary: a leading blank line
+ *  is added when there's text before the insertion point on its line (a
+ *  cursor mid-line, or at the end of a non-empty line), and a trailing
+ *  newline is added when there's text after the insertion point on its
+ *  line (a cursor at the start of - or inside - a non-empty line). Without
+ *  this, inserting into "hello|world" would glue "hello" onto the opening
+ *  fence and "world" onto the closing fence - and inserting at the start of
+ *  a non-empty line would produce an invalid closing-fence line like
+ *  "```rest", leaving the fence unterminated and swallowing the rest of the
+ *  document as code. An empty document / empty line needs no padding at
+ *  all, matching the previous (unpadded) behavior. */
 export function insertMermaid(view: EditorView): void {
   const { state } = view;
   const body = "graph TD\n  A --> B\n";
-  const insert = "```mermaid\n" + body + "```";
+  const fence = "```mermaid\n" + body + "```";
 
   const tr = state.changeByRange((range) => {
     const { from, to } = range;
-    const cursor = from + "```mermaid\n".length + body.length;
+
+    const startLine = state.doc.lineAt(from);
+    const textBefore = state.doc.sliceString(startLine.from, from);
+    const endLine = state.doc.lineAt(to);
+    const textAfter = state.doc.sliceString(to, endLine.to);
+
+    const leadingPad = textBefore === "" ? "" : "\n\n";
+    const trailingPad = textAfter === "" ? "" : "\n";
+    const insert = leadingPad + fence + trailingPad;
+
+    const cursor = from + leadingPad.length + "```mermaid\n".length + body.length;
     return {
       changes: { from, to, insert },
       range: EditorSelection.cursor(cursor),

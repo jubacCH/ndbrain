@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { markdown } from "@codemirror/lang-markdown";
+import { GFM } from "@lezer/markdown";
+import { syntaxTree } from "@codemirror/language";
 import {
   formatKeymap,
   insertLink,
@@ -23,6 +26,27 @@ function viewFor(doc: string, from: number, to = from): EditorView {
       selection: { anchor: from, head: to },
     }),
   });
+}
+
+/** Finds the `CodeText` range of the (single, first) ```mermaid fence in
+ *  `doc` by actually parsing it with the same markdown grammar the live
+ *  editor uses - the same pattern `mermaidEditor.test.ts` uses to get real
+ *  parser-verified offsets rather than hand-picked numbers. Returns
+ *  `undefined` if no such fence parses out of the doc at all (i.e. the
+ *  fence is broken/unterminated). */
+function mermaidCodeTextRange(doc: string): { from: number; to: number } | undefined {
+  const state = EditorState.create({ doc, extensions: [markdown({ extensions: [GFM] })] });
+  let range: { from: number; to: number } | undefined;
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== "FencedCode") return;
+      const info = node.node.getChild("CodeInfo");
+      if (!info || state.doc.sliceString(info.from, info.to) !== "mermaid") return;
+      const codeText = node.node.getChild("CodeText");
+      if (codeText) range = { from: codeText.from, to: codeText.to };
+    },
+  });
+  return range;
 }
 
 describe("toggleBold", () => {
@@ -172,7 +196,7 @@ describe("insertLink", () => {
 });
 
 describe("insertMermaid", () => {
-  it("inserts a valid mermaid fence skeleton", () => {
+  it("inserts a valid mermaid fence skeleton into an empty doc, unpadded", () => {
     const view = viewFor("", 0);
 
     insertMermaid(view);
@@ -182,6 +206,65 @@ describe("insertMermaid", () => {
     expect(doc).toContain("graph TD");
     expect(doc).toContain("A --> B");
     expect(doc.endsWith("```")).toBe(true);
+    expect(mermaidCodeTextRange(doc)).toBeDefined();
+  });
+
+  it("pads with newlines when the cursor is mid-line, so 'hello' and 'world' stay outside the fence", () => {
+    const view = viewFor("helloworld", 5);
+
+    insertMermaid(view);
+
+    const doc = view.state.doc.toString();
+    const range = mermaidCodeTextRange(doc);
+    expect(range).toBeDefined(); // a valid, closed FencedCode actually parses out
+    expect(doc.startsWith("hello")).toBe(true);
+    expect(doc.endsWith("world")).toBe(true);
+    expect(doc).toContain("hello\n\n```mermaid\n");
+    expect(doc).toContain("```\nworld");
+  });
+
+  it("pads with a trailing newline when the cursor is at the start of a non-empty line, so the closing fence doesn't swallow the rest of the line", () => {
+    const view = viewFor("rest of the note", 0);
+
+    insertMermaid(view);
+
+    const doc = view.state.doc.toString();
+    const range = mermaidCodeTextRange(doc);
+    expect(range).toBeDefined();
+    expect(doc.startsWith("```mermaid\n")).toBe(true);
+    // the closing fence is on its OWN line - "rest of the note" starts a new
+    // line right after it, it isn't glued onto the closing "```"
+    expect(doc).toContain("```\nrest of the note");
+    expect(doc.endsWith("rest of the note")).toBe(true);
+  });
+
+  it("does not pad when inserting into an empty line surrounded by other content", () => {
+    // "before\n\n\n\nafter" has an empty line 2 (position 7) sitting between
+    // "before" and two more empty lines before "after" - inserting right on
+    // that empty line needs no extra padding, same as the plain empty-doc
+    // case.
+    const view = viewFor("before\n\n\n\nafter", 7);
+
+    insertMermaid(view);
+
+    const doc = view.state.doc.toString();
+    const range = mermaidCodeTextRange(doc);
+    expect(range).toBeDefined();
+    expect(doc.startsWith("before\n```mermaid\n")).toBe(true);
+    expect(doc.endsWith("```\n\n\nafter")).toBe(true);
+  });
+
+  it("replaces a non-empty selection and still pads based on what surrounds it", () => {
+    const view = viewFor("keepSELECTEDkeep", 4, 12);
+
+    insertMermaid(view);
+
+    const doc = view.state.doc.toString();
+    const range = mermaidCodeTextRange(doc);
+    expect(range).toBeDefined();
+    expect(doc.startsWith("keep")).toBe(true);
+    expect(doc.endsWith("keep")).toBe(true);
+    expect(doc).not.toContain("SELECTED");
   });
 });
 
