@@ -12,16 +12,29 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  padding: 1.25rem;
-  border-radius: 0.75rem;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
+  padding: 1.25rem 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.section:first-child {
+  border-top: none;
+  padding-top: 0;
 }
 
 .heading {
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Mono for machine data, rule 1: applied to specific table cells (namespace,
+ * timestamps, tool/key identifiers) from KeysView/AuditView — see their
+ * `className={styles.mono}` usage. */
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--color-fg-muted);
 }
 
 .status {
@@ -51,7 +64,7 @@
   font: inherit;
   color: var(--color-fg);
   padding: 0.45rem 0.6rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--color-bg);
 }
@@ -66,7 +79,7 @@
   font: inherit;
   font-weight: 600;
   padding: 0.55rem 0.9rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-md);
   border: none;
   background: var(--color-accent);
   color: var(--color-accent-fg);
@@ -89,7 +102,7 @@
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.9rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-accent);
   background: var(--color-bg);
 }
@@ -109,12 +122,12 @@
 .newKeyValue {
   flex: 1;
   min-width: 0;
-  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.85rem;
   padding: 0.45rem 0.6rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  background: var(--color-surface);
+  background: var(--color-surface-2);
   color: var(--color-fg);
 }
 
@@ -123,9 +136,9 @@
   font: inherit;
   font-size: 0.8rem;
   padding: 0.45rem 0.7rem;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  background: var(--color-bg);
+  background: none;
   color: var(--color-fg);
   cursor: pointer;
   white-space: nowrap;
@@ -133,7 +146,8 @@
 
 .copyButton:hover,
 .dismissButton:hover {
-  border-color: var(--color-accent);
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-2);
 }
 
 .table {
@@ -160,7 +174,7 @@
   font: inherit;
   font-size: 0.8rem;
   padding: 0.3rem 0.6rem;
-  border-radius: 0.4rem;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-danger);
   background: none;
   color: var(--color-danger);
@@ -176,9 +190,12 @@
   display: inline-flex;
   align-items: center;
   padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .badgeAllowed {
@@ -195,7 +212,7 @@
   font: inherit;
   font-size: 0.8rem;
   padding: 0.35rem 0.5rem;
-  border-radius: 0.4rem;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
   background: var(--color-bg);
   color: var(--color-fg);
@@ -267,8 +284,8 @@
 
 .themeMeta {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--color-fg-faint);
 }

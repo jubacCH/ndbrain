@@ -11,22 +11,26 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 0.6rem;
-  font-size: 0.75rem;
-  color: var(--color-fg-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--color-fg-faint);
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--color-border);
 }
 
 .statusDot {
   display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
+  width: 0.4rem;
+  height: 0.4rem;
   border-radius: 50%;
   background: var(--color-fg-muted);
 }
 
 .statusDot.connected {
   background: var(--color-success);
+  /* Calm presence, not a pulse — rule 5: a fixed, faint ring instead of any
+   * blinking/glow animation. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 18%, transparent);
 }
 
 .statusDot.connecting {
@@ -42,7 +46,8 @@
 }
 
 .statusLabel {
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--color-fg-muted);
 }
 
 .peers {
@@ -54,12 +59,12 @@
   font-weight: 500;
 }
 
+/* Collab presence, rule 5: a quiet, labelled line in the agent's own colour —
+ * no pill fill, no glow, no animation, just the same "claude · writing" idiom
+ * as the reference. */
 .agentBadge {
   margin-left: auto;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  color: var(--color-agent);
   font-weight: 500;
 }
 
@@ -68,7 +73,7 @@
   min-height: 0;
   overflow: auto;
   border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
+  border-radius: var(--radius-md);
   background: var(--color-bg);
 }
 
@@ -78,12 +83,7 @@
 }
 
 .host :global(.cm-scroller) {
-  font-family:
-    ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
+  font-family: var(--font-mono);
 }
 
 .host :global(.cm-focused) {

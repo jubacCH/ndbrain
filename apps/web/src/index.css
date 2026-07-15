@@ -144,6 +144,12 @@
   --color-warning: #c98a00;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   background: var(--color-bg);
@@ -153,4 +159,20 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Surgical accent, rule 1: one consistent focus ring for every interactive
+   element, instead of each browser's own mismatched default outline. Selected/
+   active states get the accent via their own component styles — this is only
+   for keyboard focus. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role="radio"]:focus-visible,
+[role="tab"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }

@@ -15,11 +15,12 @@
 }
 
 .heading {
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--color-fg-muted);
+  letter-spacing: 0.15em;
+  color: var(--color-fg-faint);
 }
 
 .newNote {
@@ -31,11 +32,11 @@
   border: none;
   cursor: pointer;
   padding: 0.125rem 0.25rem;
-  border-radius: 0.25rem;
+  border-radius: var(--radius-sm);
 }
 
 .newNote:hover {
-  background: var(--color-surface);
+  background: var(--color-surface-2);
 }
 
 .newNoteRow {
@@ -49,11 +50,12 @@
   flex: 1;
   min-width: 0;
   font: inherit;
+  font-family: var(--font-mono);
   font-size: 0.8125rem;
   color: var(--color-fg);
   background: var(--color-surface);
   border: 1px solid var(--color-border, var(--color-fg-muted));
-  border-radius: 0.25rem;
+  border-radius: var(--radius-sm);
   padding: 0.25rem 0.375rem;
 }
 
@@ -66,7 +68,7 @@
   border: none;
   cursor: pointer;
   padding: 0.125rem 0.375rem;
-  border-radius: 0.25rem;
+  border-radius: var(--radius-sm);
 }
 
 .newNoteConfirm {
@@ -79,7 +81,7 @@
 
 .newNoteConfirm:hover,
 .newNoteCancel:hover {
-  background: var(--color-surface);
+  background: var(--color-surface-2);
 }
 
 .status {
@@ -104,9 +106,10 @@
   font: inherit;
   background: none;
   border: none;
+  border-left: 2px solid transparent;
   cursor: pointer;
-  padding: 0.3rem 0.375rem;
-  border-radius: 0.375rem;
+  padding: 0.22rem 0.375rem;
+  border-radius: 0;
   color: var(--color-fg);
 }
 
@@ -117,18 +120,24 @@
 
 .folder:hover,
 .note:hover {
-  background: var(--color-surface);
+  background: var(--color-surface-2);
 }
 
 .disclosure {
   display: inline-block;
   width: 0.75rem;
   font-size: 0.7rem;
+  color: var(--color-fg-faint);
 }
 
+/* IDE density, rule 3: the selected row reads via a left accent rule + a
+ * raised surface, not a colour change on the label itself — keeps the ONE
+ * accent colour reserved for focus/selection (rule 4) rather than spreading
+ * it onto body text. */
 .selected {
-  background: var(--color-surface);
-  color: var(--color-accent);
+  background: var(--color-surface-2);
+  border-left-color: var(--color-accent);
+  color: var(--color-fg);
   font-weight: 600;
 }
 

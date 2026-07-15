@@ -117,15 +117,20 @@ export function SearchPalette({ open, onClose, client = apiClient, debounceMs = 
         aria-label="Search palette"
         onClick={(event) => event.stopPropagation()}
       >
-        <input
-          ref={inputRef}
-          className={styles.input}
-          type="text"
-          aria-label="Search notes"
-          placeholder="Search notes…"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
+        <div className={styles.queryRow}>
+          <input
+            ref={inputRef}
+            className={styles.input}
+            type="text"
+            aria-label="Search notes"
+            placeholder="Search notes…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <span className={styles.escHint} aria-hidden="true">
+            esc
+          </span>
+        </div>
 
         <div className={styles.results}>
           {trimmedQuery === "" && <p className={styles.status}>Type to search your notes.</p>}
@@ -142,7 +147,10 @@ export function SearchPalette({ open, onClose, client = apiClient, debounceMs = 
                   onClick={() => selectHit(hit)}
                   onMouseEnter={() => setActiveIndex(index)}
                 >
-                  <span className={styles.resultTitle}>{hit.title ?? hit.path}</span>
+                  <span className={styles.resultRow}>
+                    <span className={styles.resultTitle}>{hit.title ?? hit.path}</span>
+                    {hit.title && <span className={styles.resultPath}>{hit.path}</span>}
+                  </span>
                   <span className={styles.resultSnippet}>
                     {parseSnippet(hit.snippet).map((segment, i) =>
                       segment.bold ? <strong key={i}>{segment.text}</strong> : <span key={i}>{segment.text}</span>,

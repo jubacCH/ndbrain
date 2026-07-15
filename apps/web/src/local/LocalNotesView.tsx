@@ -292,7 +292,7 @@ export function LocalNotesView({
       {folder === null ? (
         <div className={styles.pickFolder}>
           <p>No local notes folder configured yet.</p>
-          <button type="button" onClick={() => void handlePickFolder()}>
+          <button type="button" className={styles.button} onClick={() => void handlePickFolder()}>
             Choose folder…
           </button>
         </div>
@@ -300,7 +300,7 @@ export function LocalNotesView({
         <div className={styles.layout}>
           <div className={styles.listPane}>
             <div className={styles.folderBar}>
-              <button type="button" onClick={() => void handleChangeFolder()}>
+              <button type="button" className={styles.button} onClick={() => void handleChangeFolder()}>
                 Change folder…
               </button>
             </div>
@@ -353,7 +353,12 @@ export function LocalNotesView({
               <>
                 <div className={styles.toolbar}>
                   <span className={styles.path}>{selectedDoc.path}</span>
-                  <button type="button" disabled={moving} onClick={() => void handleMoveToServer()}>
+                  <button
+                    type="button"
+                    className={styles.button}
+                    disabled={moving}
+                    onClick={() => void handleMoveToServer()}
+                  >
                     Move to server
                   </button>
                 </div>

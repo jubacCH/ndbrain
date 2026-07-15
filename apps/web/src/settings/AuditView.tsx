@@ -90,10 +90,10 @@ export function AuditView({ client = apiClient }: AuditViewProps) {
             <tbody>
               {entries.map((entry, index) => (
                 <tr key={`${entry.ts}-${index}`}>
-                  <td>{formatTimestamp(entry.ts)}</td>
-                  <td>{entry.keyName ?? "—"}</td>
-                  <td>{entry.tool}</td>
-                  <td>{entry.target ?? "—"}</td>
+                  <td className={styles.mono}>{formatTimestamp(entry.ts)}</td>
+                  <td className={styles.mono}>{entry.keyName ?? "—"}</td>
+                  <td className={styles.mono}>{entry.tool}</td>
+                  <td className={styles.mono}>{entry.target ?? "—"}</td>
                   <td>
                     <span
                       className={

@@ -196,11 +196,11 @@ export function KeysView({ client = apiClient, active = true }: KeysViewProps) {
               {keys.map((key) => (
                 <tr key={key.name}>
                   <td>{key.name}</td>
-                  <td>{key.namespace}</td>
+                  <td className={styles.mono}>{key.namespace}</td>
                   <td>{key.canWrite ? "Read/write" : "Read-only"}</td>
-                  <td>{formatTimestamp(key.createdAt)}</td>
-                  <td>{formatTimestamp(key.lastUsedAt)}</td>
-                  <td>{formatTimestamp(key.expiresAt, "Never")}</td>
+                  <td className={styles.mono}>{formatTimestamp(key.createdAt)}</td>
+                  <td className={styles.mono}>{formatTimestamp(key.lastUsedAt)}</td>
+                  <td className={styles.mono}>{formatTimestamp(key.expiresAt, "Never")}</td>
                   <td>
                     <button
                       type="button"
