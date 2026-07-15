@@ -540,20 +540,55 @@ describe("livePreviewPlugin - atomic hidden markers (Finding 1, mounted view)", 
     view.destroy();
   });
 
-  it("does NOT make a visible-widget replacement (the list-marker bullet) atomic", () => {
-    // Scope check: Finding 1 is about *hidden* `Decoration.replace({})`
-    // markers, not every replace decoration - `ListMarkerWidget`/`HrWidget`/
-    // `TaskCheckboxWidget` already show a concrete, single-character-wide
-    // widget the user interacts with directly, so they're deliberately left
-    // out of `markerRanges`. A single-char bullet marker can't be "split" by
-    // a delete in the first place - deleting it always removes the whole
-    // (one-character) marker.
-    const view = mountView("- item");
-    view.dispatch({ selection: { anchor: 1 } }); // right after the (single-char) bullet marker
+  it("makes a MULTI-char ordered-list marker (1.) atomic - Backspace can't split it", () => {
+    // Follow-up to the initial Finding-1 fix: visible-widget replacements are
+    // now atomic too, because the multi-char ones (`1.`, `---`, `[ ]`) are
+    // just as splittable as a hidden marker. Without this, Backspace after
+    // `1.` yielded the corrupted `1 item`.
+    const view = mountView("1. item");
+    view.dispatch({ selection: { anchor: 2 } }); // right after the "1." marker
 
     deleteCharBackward(view);
 
+    // The whole "1." atomic range is consumed, not split into "1 item".
     expect(view.state.doc.toString()).toBe(" item");
+    view.destroy();
+  });
+
+  it("makes the --- horizontal-rule marker atomic - deleteForward can't split it", () => {
+    const view = mountView("---");
+    view.dispatch({ selection: { anchor: 0 } });
+
+    deleteCharForward(view);
+
+    // Whole rule gone, not the split "--" that stops being an HR.
+    expect(view.state.doc.toString()).toBe("");
+    view.destroy();
+  });
+
+  it("makes the [ ] task-checkbox marker atomic - Backspace can't corrupt it", () => {
+    const view = mountView("- [ ] todo");
+    // Position right after the "]" of the checkbox marker "[ ]" (which spans
+    // the 3 chars after "- ").
+    view.dispatch({ selection: { anchor: 5 } });
+
+    deleteCharBackward(view);
+
+    // The whole "[ ]" atomic range is consumed (leaving "- " + " todo"),
+    // never the corrupted "[  todo".
+    expect(view.state.doc.toString()).toBe("-  todo");
+    view.destroy();
+  });
+
+  it("cursorCharLeft jumps clean over the whole [ ] task-checkbox marker", () => {
+    const view = mountView("- [ ] todo");
+    view.dispatch({ selection: { anchor: 5 } }); // just after "]"
+
+    cursorCharLeft(view);
+
+    // Without atomicRanges this would land at 4 (inside "[ ]"); with it, the
+    // cursor jumps clean to the marker's start at 2.
+    expect(view.state.selection.main.head).toBe(2);
     view.destroy();
   });
 

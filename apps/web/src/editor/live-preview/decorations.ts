@@ -123,28 +123,27 @@ function piecesToDecorationSet(pieces: DecoPiece[]): DecorationSet {
   return builder.finish();
 }
 
-/** True for a piece that hides a raw markdown marker outright (an empty
- *  `Decoration.replace({})`, as opposed to one that replaces a marker with a
- *  visible widget, like `ListMarkerWidget`/`HrWidget`/`TaskCheckboxWidget`, or
- *  one that only styles content, like a bold/italic `Decoration.mark`).
+/** True for any `Decoration.replace` piece that collapses a real doc range -
+ *  whether it hides the marker outright (an empty `Decoration.replace({})`)
+ *  or swaps it for a visible widget (`ListMarkerWidget`/`HrWidget`/
+ *  `TaskCheckboxWidget`).
  *  These are exactly the ranges Finding 1 needs to expose via
- *  `EditorView.atomicRanges`: the two `**` of a bold span, a heading's `#
- *  `, a link's `[`/`](url)`, a wikilink's `[[`/`]]`, etc. - real markdown
- *  characters that are still in `state.doc`, merely invisible, so cursor
- *  motion and delete must treat each one as a single atomic unit instead of
- *  letting the cursor land *inside* it and split it apart (e.g. a Backspace
- *  right after "bold" in `**bold**` deleting only one of the two closing
- *  `*` and leaving the unbalanced, corrupted `**bold*` behind). Matches the
- *  same `spec.widget === undefined && spec.class === undefined` test
- *  `decorations.test.ts` already uses to distinguish a hidden-marker replace
- *  from every other kind of piece. */
-function isHiddenMarkerPiece(piece: DecoPiece): boolean {
-  return piece.decoration.spec.widget === undefined && piece.decoration.spec.class === undefined;
+ *  `EditorView.atomicRanges`: real markdown characters still in `state.doc`
+ *  but visually collapsed, so cursor motion and delete must treat each one as
+ *  a single atomic unit instead of letting the cursor land *inside* it and
+ *  split it apart - e.g. Backspace after "bold" in `**bold**` deleting one of
+ *  the two closing `*` (→ corrupted `**bold*`), or after `]` in a `[ ] todo`
+ *  task marker (→ `[  todo`), or inside `1.`/`---`. A `Decoration.mark`
+ *  (styled content, has `spec.class`) must NOT be atomic - you edit inside
+ *  bold text - and a zero-length `Decoration.line` is not a range to skip;
+ *  both are excluded by `spec.class === undefined && from < to`. */
+function isAtomicReplacePiece(piece: DecoPiece): boolean {
+  return piece.decoration.spec.class === undefined && piece.from < piece.to;
 }
 
 /** Builds the atomic-ranges `RangeSet` for a set of already-computed
- *  decoration pieces: every hidden-marker piece (see `isHiddenMarkerPiece`),
- *  in the same sorted, non-overlapping order `piecesToDecorationSet` uses -
+ *  decoration pieces: every range-collapsing replace piece (see
+ *  `isAtomicReplacePiece`), in the same sorted, non-overlapping order used -
  *  reusing that order (rather than re-deriving it) is what keeps this cheap,
  *  since the pieces were already computed for the decoration set itself. The
  *  range set's values are never read (`EditorView.atomicRanges` only cares
@@ -155,7 +154,7 @@ function markerRangesFrom(pieces: DecoPiece[]): RangeSet<Decoration> {
   const sorted = [...pieces].sort((a, b) => a.from - b.from || a.to - b.to);
   const builder = new RangeSetBuilder<Decoration>();
   for (const piece of sorted) {
-    if (isHiddenMarkerPiece(piece) && piece.from < piece.to) builder.add(piece.from, piece.to, piece.decoration);
+    if (isAtomicReplacePiece(piece)) builder.add(piece.from, piece.to, piece.decoration);
   }
   return builder.finish();
 }
