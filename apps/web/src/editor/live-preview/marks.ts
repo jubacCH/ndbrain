@@ -8,7 +8,15 @@
  *  and `CodeMark` are their delimiter children. `Strikethrough` is a GFM
  *  extension of `@lezer/markdown`, not part of plain CommonMark - the
  *  `markdown()` extension used against a document must include
- *  `Strikethrough` (or the full `GFM` array) for that node to appear at all. */
+ *  `Strikethrough` (or the full `GFM` array) for that node to appear at all.
+ *
+ *  Block node names (plain CommonMark, no GFM needed - also verified live):
+ *  `ATXHeading1`..`ATXHeading6` wrap a leading `HeaderMark` (`#`..`######`);
+ *  `Blockquote` contains one `QuoteMark` (`>`) per quoted line (a multi-line
+ *  blockquote has one `QuoteMark` child per line, not just the first);
+ *  `HorizontalRule` covers the whole `---`/`***` line as a single node;
+ *  `BulletList`/`OrderedList` contain `ListItem`s, each starting with a
+ *  `ListMark` (`-`/`*`/`+` or `1.`). */
 
 import styles from "./live-preview.module.css";
 
@@ -18,6 +26,28 @@ export const MARK_CLASS = {
   strike: styles.strike,
   inlineCode: styles.inlineCode,
 } as const;
+
+/** Line-level style classes for block decorations (applied via
+ *  `Decoration.line`, not `Decoration.mark` - see decorations.ts). */
+export const BLOCK_LINE_CLASS = {
+  quote: styles.quote,
+} as const;
+
+/** CSS classes for widget-rendered block replacements (see decorations.ts'
+ *  `ListMarkerWidget` / `HrWidget`). */
+export const WIDGET_CLASS = {
+  listMarker: styles.listMarker,
+  hr: styles.hr,
+} as const;
+
+const HEADING_LINE_CLASSES: readonly string[] = [
+  styles.h1,
+  styles.h2,
+  styles.h3,
+  styles.h4,
+  styles.h5,
+  styles.h6,
+];
 
 /** Maps a syntax node name to the CSS class used to style its formatted
  *  inline content, or null if the node isn't a styled inline mark. */
@@ -34,4 +64,18 @@ export function styleForNode(nodeName: string): string | null {
     default:
       return null;
   }
+}
+
+/** Parses the heading level (1-6) out of an `ATXHeadingN` node name, or null
+ *  if the name isn't an ATX heading node. */
+export function headingLevelOf(nodeName: string): number | null {
+  const match = /^ATXHeading([1-6])$/.exec(nodeName);
+  return match ? Number(match[1]) : null;
+}
+
+/** The `Decoration.line` CSS class for a given heading level (1-6). */
+export function headingLineClass(level: number): string {
+  const className = HEADING_LINE_CLASSES[level - 1];
+  if (!className) throw new Error(`invalid heading level: ${level}`);
+  return className;
 }

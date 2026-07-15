@@ -5,10 +5,17 @@
  *  (see Plan 7 Task 4), so raw mode / the CRDT binding are unaffected. */
 
 import { syntaxTree } from "@codemirror/language";
-import { RangeSetBuilder, type EditorState } from "@codemirror/state";
-import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from "@codemirror/view";
+import { RangeSetBuilder, type EditorState, type Text } from "@codemirror/state";
+import {
+  Decoration,
+  EditorView,
+  ViewPlugin,
+  WidgetType,
+  type DecorationSet,
+  type ViewUpdate,
+} from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
-import { styleForNode } from "./marks";
+import { BLOCK_LINE_CLASS, WIDGET_CLASS, headingLevelOf, headingLineClass, styleForNode } from "./marks";
 
 /** Delimiter node names produced by `@lezer/markdown` for the inline marks
  *  handled here (verified live - see decorations.test.ts's doc comment). */
@@ -21,6 +28,54 @@ interface DecoPiece {
 }
 
 const hideMarker = Decoration.replace({});
+
+/** Renders a bullet-list marker (`-`/`*`/`+`) as a plain bullet dot, and an
+ *  ordered-list marker (e.g. `1.`) as its own text - both dezent-styled via
+ *  the same CSS class - in place of the raw marker characters. */
+class ListMarkerWidget extends WidgetType {
+  constructor(readonly display: string) {
+    super();
+  }
+
+  eq(other: ListMarkerWidget): boolean {
+    return other.display === this.display;
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = WIDGET_CLASS.listMarker;
+    span.textContent = this.display;
+    return span;
+  }
+}
+
+const BULLET_MARKER = "•";
+const BULLET_MARKER_CHARS = new Set(["-", "*", "+"]);
+
+/** Renders a horizontal rule (`---`/`***`/`___`) as an `<hr>` element,
+ *  replacing the raw marker text entirely. */
+class HrWidget extends WidgetType {
+  eq(): boolean {
+    return true;
+  }
+
+  toDOM(): HTMLElement {
+    const hr = document.createElement("hr");
+    hr.className = WIDGET_CLASS.hr;
+    return hr;
+  }
+}
+
+const hrWidget = Decoration.replace({ widget: new HrWidget() });
+
+/** Hides a `HeaderMark`/`QuoteMark` node together with the single space that
+ *  CommonMark requires after it (the grammar guarantees that space exists
+ *  whenever the node was parsed at all - verified live, see marks.ts). */
+function hideMarkerWithTrailingSpace(doc: Text, marker: SyntaxNode): { from: number; to: number } {
+  let to = marker.to;
+  if (doc.sliceString(to, to + 1) === " ") to += 1;
+  return { from: marker.from, to };
+}
 
 /** A styled inline node (`StrongEmphasis`/`Emphasis`/`Strikethrough`/
  *  `InlineCode`) always brackets its content with an opening and closing
@@ -50,15 +105,60 @@ export function buildDecorations(state: EditorState, ranges: readonly { from: nu
       to,
       enter: (nodeRef) => {
         const styleClass = styleForNode(nodeRef.name);
-        if (!styleClass) return;
+        if (styleClass) {
+          const delimiters = delimitersOf(nodeRef.node);
+          if (delimiters) {
+            const { open, close } = delimiters;
+            pieces.push({ from: open.from, to: open.to, decoration: hideMarker });
+            pieces.push({ from: open.to, to: close.from, decoration: Decoration.mark({ class: styleClass }) });
+            pieces.push({ from: close.from, to: close.to, decoration: hideMarker });
+          }
+          return;
+        }
 
-        const delimiters = delimitersOf(nodeRef.node);
-        if (!delimiters) return;
-
-        const { open, close } = delimiters;
-        pieces.push({ from: open.from, to: open.to, decoration: hideMarker });
-        pieces.push({ from: open.to, to: close.from, decoration: Decoration.mark({ class: styleClass }) });
-        pieces.push({ from: close.from, to: close.to, decoration: hideMarker });
+        switch (nodeRef.name) {
+          case "HeaderMark": {
+            // The marker's parent is the ATXHeadingN node it belongs to.
+            const level = headingLevelOf(nodeRef.node.parent?.name ?? "");
+            if (level === null) break;
+            const hidden = hideMarkerWithTrailingSpace(state.doc, nodeRef.node);
+            pieces.push({ from: hidden.from, to: hidden.to, decoration: hideMarker });
+            const line = state.doc.lineAt(nodeRef.from);
+            pieces.push({
+              from: line.from,
+              to: line.from,
+              decoration: Decoration.line({ class: headingLineClass(level) }),
+            });
+            break;
+          }
+          case "QuoteMark": {
+            const hidden = hideMarkerWithTrailingSpace(state.doc, nodeRef.node);
+            pieces.push({ from: hidden.from, to: hidden.to, decoration: hideMarker });
+            const line = state.doc.lineAt(nodeRef.from);
+            pieces.push({
+              from: line.from,
+              to: line.from,
+              decoration: Decoration.line({ class: BLOCK_LINE_CLASS.quote }),
+            });
+            break;
+          }
+          case "HorizontalRule": {
+            pieces.push({ from: nodeRef.from, to: nodeRef.to, decoration: hrWidget });
+            break;
+          }
+          case "ListMark": {
+            const text = state.doc.sliceString(nodeRef.from, nodeRef.to);
+            const display = BULLET_MARKER_CHARS.has(text) ? BULLET_MARKER : text;
+            pieces.push({
+              from: nodeRef.from,
+              to: nodeRef.to,
+              decoration: Decoration.replace({ widget: new ListMarkerWidget(display) }),
+            });
+            break;
+          }
+          default:
+            break;
+        }
       },
     });
   }
