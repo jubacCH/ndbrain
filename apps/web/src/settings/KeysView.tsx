@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { apiClient, type ApiKeyListEntry } from "../api/client";
+import { platformConfirm } from "../platform/tauri";
 import { formatTimestamp } from "./formatTimestamp";
 import styles from "./Settings.module.css";
 
@@ -88,7 +89,11 @@ export function KeysView({ client = apiClient, active = true }: KeysViewProps) {
   }
 
   async function handleRevoke(keyName: string) {
-    if (!confirm(`Revoke API key "${keyName}"? This cannot be undone.`)) return;
+    const confirmed = await platformConfirm(
+      `Revoke API key "${keyName}"? This cannot be undone.`,
+      "Revoke API key?",
+    );
+    if (!confirmed) return;
     setRevokeError(null);
     try {
       await client.revokeKey(keyName);

@@ -158,6 +158,30 @@ describe("KeysView", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/failed to revoke/i);
   });
 
+  it("uses the native tauri dialog (not window.confirm) to revoke inside the desktop shell", async () => {
+    // Regression: window.confirm is dead in macOS WKWebView, so the desktop
+    // shell must route the revoke confirmation through @tauri-apps/plugin-dialog.
+    const dialogConfirm = vi.fn().mockResolvedValue(true);
+    vi.doMock("@tauri-apps/plugin-dialog", () => ({ confirm: dialogConfirm }));
+    vi.stubGlobal("isTauri", true);
+    const windowConfirm = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("confirm", windowConfirm);
+    const revokeKey = vi.fn().mockResolvedValue(undefined);
+    const client = makeClient({
+      listKeys: vi.fn().mockResolvedValueOnce([KEY_A]).mockResolvedValueOnce([]),
+      revokeKey,
+    });
+    render(<KeysView client={client} />);
+
+    await waitFor(() => expect(screen.getByText("ci-bot")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /revoke/i }));
+
+    await waitFor(() => expect(revokeKey).toHaveBeenCalledWith("ci-bot"));
+    expect(dialogConfirm).toHaveBeenCalled();
+    expect(windowConfirm).not.toHaveBeenCalled();
+    vi.doUnmock("@tauri-apps/plugin-dialog");
+  });
+
   it("clears the shown key secret once the view stops being active, not only on unmount", async () => {
     const client = makeClient({ createKey: vi.fn().mockResolvedValue("ndb_temp") });
     const { rerender } = render(<KeysView client={client} active />);

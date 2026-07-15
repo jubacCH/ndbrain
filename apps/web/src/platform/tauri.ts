@@ -24,6 +24,25 @@ export function withTauri<T>(fn: () => T): T | undefined {
   return isTauri() ? fn() : undefined;
 }
 
+/**
+ * Shows a confirmation dialog and resolves to the user's choice, working in
+ * both the browser and the Tauri desktop shell.
+ *
+ * `window.confirm` is unusable inside Tauri on macOS: its WKWebView backend
+ * (via wry) implements no `runJavaScriptConfirmPanel` delegate, so WebKit
+ * answers `confirm()` with `false` immediately — a confirm-gated action would
+ * silently never run. Inside Tauri this delegates to the native
+ * `@tauri-apps/plugin-dialog` `confirm` (loaded lazily so the browser bundle
+ * never imports it); in a plain browser it falls back to `window.confirm`.
+ */
+export async function platformConfirm(message: string, title?: string): Promise<boolean> {
+  if (isTauri()) {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    return confirm(message, title ? { title, kind: "warning" } : undefined);
+  }
+  return typeof confirm === "function" ? confirm(message) : false;
+}
+
 /** Storage key for the user-configured ndBrain server URL (Tauri only, see
  * `api/base-url.ts`). */
 const SERVER_URL_STORAGE_KEY = "ndbrain.serverUrl";
