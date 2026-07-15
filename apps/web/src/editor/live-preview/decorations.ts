@@ -7,7 +7,14 @@
  *  binding are unaffected. */
 
 import { syntaxTree } from "@codemirror/language";
-import { RangeSet, RangeSetBuilder, type EditorState, type Extension, type Text } from "@codemirror/state";
+import {
+  RangeSet,
+  RangeSetBuilder,
+  StateField,
+  type EditorState,
+  type Extension,
+  type Text,
+} from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -16,7 +23,7 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
-import type { SyntaxNode } from "@lezer/common";
+import type { SyntaxNode, Tree } from "@lezer/common";
 import { BLOCK_LINE_CLASS, MARK_CLASS, WIDGET_CLASS, headingLevelOf, headingLineClass, styleForNode } from "./marks";
 import { MermaidWidget } from "./mermaid";
 import { mermaidEditorHandler } from "./mermaidEditor";
@@ -105,16 +112,67 @@ function delimitersOf(node: SyntaxNode): { open: SyntaxNode; close: SyntaxNode }
   return { open, close };
 }
 
-/** Pure decoration builder for everything EXCEPT ```mermaid fences: walks the
+/** Sorts `pieces` by position and folds them into a `DecorationSet` - the
+ *  shared last step of both `inlinePieces` and `buildMermaidDecorations`. */
+function piecesToDecorationSet(pieces: DecoPiece[]): DecorationSet {
+  const sorted = [...pieces].sort((a, b) => a.from - b.from || a.to - b.to);
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const piece of sorted) {
+    builder.add(piece.from, piece.to, piece.decoration);
+  }
+  return builder.finish();
+}
+
+/** True for a piece that hides a raw markdown marker outright (an empty
+ *  `Decoration.replace({})`, as opposed to one that replaces a marker with a
+ *  visible widget, like `ListMarkerWidget`/`HrWidget`/`TaskCheckboxWidget`, or
+ *  one that only styles content, like a bold/italic `Decoration.mark`).
+ *  These are exactly the ranges Finding 1 needs to expose via
+ *  `EditorView.atomicRanges`: the two `**` of a bold span, a heading's `#
+ *  `, a link's `[`/`](url)`, a wikilink's `[[`/`]]`, etc. - real markdown
+ *  characters that are still in `state.doc`, merely invisible, so cursor
+ *  motion and delete must treat each one as a single atomic unit instead of
+ *  letting the cursor land *inside* it and split it apart (e.g. a Backspace
+ *  right after "bold" in `**bold**` deleting only one of the two closing
+ *  `*` and leaving the unbalanced, corrupted `**bold*` behind). Matches the
+ *  same `spec.widget === undefined && spec.class === undefined` test
+ *  `decorations.test.ts` already uses to distinguish a hidden-marker replace
+ *  from every other kind of piece. */
+function isHiddenMarkerPiece(piece: DecoPiece): boolean {
+  return piece.decoration.spec.widget === undefined && piece.decoration.spec.class === undefined;
+}
+
+/** Builds the atomic-ranges `RangeSet` for a set of already-computed
+ *  decoration pieces: every hidden-marker piece (see `isHiddenMarkerPiece`),
+ *  in the same sorted, non-overlapping order `piecesToDecorationSet` uses -
+ *  reusing that order (rather than re-deriving it) is what keeps this cheap,
+ *  since the pieces were already computed for the decoration set itself. The
+ *  range set's values are never read (`EditorView.atomicRanges` only cares
+ *  about positions - verified live against `@codemirror/view@6.43.6`'s
+ *  `RangeSet<any>` return type), so the hidden-marker `Decoration` itself is
+ *  reused as a convenient value rather than introducing a second type. */
+function markerRangesFrom(pieces: DecoPiece[]): RangeSet<Decoration> {
+  const sorted = [...pieces].sort((a, b) => a.from - b.from || a.to - b.to);
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const piece of sorted) {
+    if (isHiddenMarkerPiece(piece) && piece.from < piece.to) builder.add(piece.from, piece.to, piece.decoration);
+  }
+  return builder.finish();
+}
+
+/** Pure piece computation for everything EXCEPT ```mermaid fences: walks the
  *  markdown syntax tree over the given ranges (typically the view's visible
- *  ranges) and produces a DecorationSet that hides inline markers and styles
- *  their content. Never touches `state.doc`.
+ *  ranges) and produces the decoration pieces that hide inline markers and
+ *  style their content, without folding them into a `DecorationSet` yet -
+ *  `buildInlineDecorations` does that, and `LivePreviewPluginValue` also
+ *  derives `markerRanges` (Finding 1) from the same pieces, so both need the
+ *  unsorted, unfoldeded list. Never touches `state.doc`.
  *
  *  Mermaid fences are deliberately NOT handled here even though they're a
  *  markdown-syntax-tree concern like everything else in this function - see
  *  `buildMermaidDecorations`'s doc comment for why that decoration needs a
  *  completely different (non-viewport, non-ViewPlugin) wiring. */
-function buildInlineDecorations(state: EditorState, ranges: readonly { from: number; to: number }[]): DecorationSet {
+function inlinePieces(state: EditorState, ranges: readonly { from: number; to: number }[]): DecoPiece[] {
   const pieces: DecoPiece[] = [];
   const tree = syntaxTree(state);
 
@@ -208,13 +266,13 @@ function buildInlineDecorations(state: EditorState, ranges: readonly { from: num
     pieces.push(...taskCheckboxDecorations(state, from, to));
   }
 
-  pieces.sort((a, b) => a.from - b.from || a.to - b.to);
+  return pieces;
+}
 
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const piece of pieces) {
-    builder.add(piece.from, piece.to, piece.decoration);
-  }
-  return builder.finish();
+/** Pure decoration builder for everything EXCEPT ```mermaid fences - folds
+ *  `inlinePieces`'s output into a `DecorationSet`. Never touches `state.doc`. */
+function buildInlineDecorations(state: EditorState, ranges: readonly { from: number; to: number }[]): DecorationSet {
+  return piecesToDecorationSet(inlinePieces(state, ranges));
 }
 
 /** Pure decoration builder for ```mermaid fences only: walks the markdown
@@ -229,13 +287,17 @@ function buildInlineDecorations(state: EditorState, ranges: readonly { from: num
  *  mounted in a real `EditorView` - a crash `decorations.test.ts`'s
  *  detached-state unit tests could never catch, since they never mount a
  *  view at all. Block decorations DO work when they come from a state-derived
- *  facet input (`EditorView.decorations.compute([...], get)`, used by
- *  `mermaidBlockDecorations` below) - `get` returns a plain value there, not
- *  a per-view function, so CodeMirror treats it as static. That source can't
- *  be limited to `view.visibleRanges` (a `Facet.compute` callback only ever
- *  receives `state`, never a `view`), so this one specific decoration walks
- *  the whole document instead of the viewport - an acceptable trade-off since
- *  mermaid fences are rare, heavy block elements, not per-character marks. */
+ *  facet input - `mermaidBlockDecorationsField` below feeds `EditorView.decorations`
+ *  a plain `DecorationSet` value via `Facet.from`, not a per-view function, so
+ *  CodeMirror treats it as static. A `StateField` (rather than the
+ *  `EditorView.decorations.compute([...], get)` shorthand this used before)
+ *  is needed so the same computed value can also be read back for
+ *  `EditorView.atomicRanges` (Finding 1) without walking the syntax tree
+ *  twice - see `mermaidBlockDecorations`'s doc comment. That source can't be
+ *  limited to `view.visibleRanges` (state-derived facet inputs only ever see
+ *  `state`, never a `view`), so this one specific decoration walks the whole
+ *  document instead of the viewport - an acceptable trade-off since mermaid
+ *  fences are rare, heavy block elements, not per-character marks. */
 function buildMermaidDecorations(state: EditorState, ranges: readonly { from: number; to: number }[]): DecorationSet {
   const pieces: DecoPiece[] = [];
   const tree = syntaxTree(state);
@@ -278,13 +340,7 @@ function buildMermaidDecorations(state: EditorState, ranges: readonly { from: nu
     });
   }
 
-  pieces.sort((a, b) => a.from - b.from || a.to - b.to);
-
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const piece of pieces) {
-    builder.add(piece.from, piece.to, piece.decoration);
-  }
-  return builder.finish();
+  return piecesToDecorationSet(pieces);
 }
 
 /** Combines both decoration sources into one set, over the same ranges -
@@ -298,34 +354,112 @@ export function buildDecorations(state: EditorState, ranges: readonly { from: nu
   return RangeSet.join([buildInlineDecorations(state, ranges), buildMermaidDecorations(state, ranges)]);
 }
 
+/** Live-preview `ViewPlugin` value: rebuilds both the inline decoration set
+ *  and the parallel "hidden marker" atomic-ranges set (`markerRanges`,
+ *  Finding 1) from the same computed pieces, whenever the doc changes, the
+ *  viewport changes, OR the syntax tree changed even though neither of
+ *  those did (Finding 4). That third case is real, not theoretical:
+ *  `@codemirror/language`'s background parser finishes a chunk of work by
+ *  dispatching `view.dispatch({ effects: Language.setState.of(...) })`
+ *  (verified live in the installed `@codemirror/language@6.12.4` source,
+ *  `parseWorker`'s `work()` method) - a transaction with neither
+ *  `docChanged` nor `viewportChanged` set. Without also checking the tree, a
+ *  large document's mermaid fences or inline marks beyond what was parsed
+ *  synchronously at mount time would never get decorated: the one update
+ *  that carries the newly-parsed tree wouldn't trigger a rebuild, and no
+ *  later doc/viewport change is guaranteed to come along and trigger one
+ *  incidentally. Compares `syntaxTree(state)` by reference (`!==`) the same
+ *  way `@codemirror/language`'s own `syntaxHighlighting` extension does
+ *  internally (verified live - `TreeHighlighter.update`, same package): the
+ *  tree is replaced wholesale on every reparse, so reference inequality is a
+ *  reliable, cheap "did anything change" check - no need to diff the tree's
+ *  contents. */
 class LivePreviewPluginValue {
   decorations: DecorationSet;
+  markerRanges: RangeSet<Decoration>;
+  private tree: Tree;
 
   constructor(view: EditorView) {
-    this.decorations = buildInlineDecorations(view.state, view.visibleRanges);
+    this.tree = syntaxTree(view.state);
+    const pieces = inlinePieces(view.state, view.visibleRanges);
+    this.decorations = piecesToDecorationSet(pieces);
+    this.markerRanges = markerRangesFrom(pieces);
   }
 
   update(update: ViewUpdate): void {
-    if (update.docChanged || update.viewportChanged) {
-      this.decorations = buildInlineDecorations(update.view.state, update.view.visibleRanges);
+    const tree = syntaxTree(update.state);
+    if (update.docChanged || update.viewportChanged || tree !== this.tree) {
+      this.tree = tree;
+      const pieces = inlinePieces(update.view.state, update.view.visibleRanges);
+      this.decorations = piecesToDecorationSet(pieces);
+      this.markerRanges = markerRangesFrom(pieces);
     }
   }
 }
 
 /** ViewPlugin exposing the non-block live-preview decorations, rebuilt from
- *  the visible ranges only (not the whole document) whenever the doc or
- *  viewport changes. Mermaid fences are handled by `mermaidBlockDecorations`
- *  instead - see `buildMermaidDecorations`'s doc comment for why. */
+ *  the visible ranges only (not the whole document) whenever the doc,
+ *  viewport or syntax tree changes (see `LivePreviewPluginValue`'s doc
+ *  comment for the syntax-tree case, Finding 4). Mermaid fences are handled
+ *  by `mermaidBlockDecorations` instead - see `buildMermaidDecorations`'s
+ *  doc comment for why.
+ *
+ *  `provide` additionally exposes the plugin's `markerRanges` through
+ *  `EditorView.atomicRanges` (Finding 1, verified live against
+ *  `@codemirror/view@6.43.6`'s `atomicRanges: Facet<(view: EditorView) =>
+ *  RangeSet<any>, ...>`): CodeMirror calls the given function on demand
+ *  (cursor motion, delete) to look up the live plugin instance via
+ *  `view.plugin(plugin)` and read its latest `markerRanges` - this is the
+ *  same `provide: plugin => EditorView.atomicRanges.of(view =>
+ *  view.plugin(plugin)?.someRangeSet ?? Decoration.none)` pattern
+ *  `@codemirror/language`'s own hidden-range-style plugins use. Falls back
+ *  to `Decoration.none` (an empty, but still valid, `RangeSet<Decoration>`)
+ *  for the one call CodeMirror might make before the plugin instance exists
+ *  yet. */
 export const livePreviewPlugin = ViewPlugin.fromClass(LivePreviewPluginValue, {
   decorations: (value) => value.decorations,
+  provide: (plugin) => EditorView.atomicRanges.of((view) => view.plugin(plugin)?.markerRanges ?? Decoration.none),
+});
+
+/** `StateField` holding the ```mermaid block-decoration `DecorationSet`.
+ *  Recomputes whenever the doc changes OR the syntax tree changed without a
+ *  doc change (Finding 4 - see `LivePreviewPluginValue`'s doc comment for
+ *  why that second case matters for a large document), not on every
+ *  transaction. A dedicated field (rather than the `EditorView.decorations.
+ *  compute(["doc"], get)` shorthand this used before) is what lets the same
+ *  computed value be read back for `EditorView.atomicRanges` below without
+ *  a second syntax-tree walk. */
+const mermaidBlockDecorationsField = StateField.define<DecorationSet>({
+  create(state) {
+    return buildMermaidDecorations(state, [{ from: 0, to: state.doc.length }]);
+  },
+  update(value, tr) {
+    if (!tr.docChanged && syntaxTree(tr.state) === syntaxTree(tr.startState)) return value;
+    return buildMermaidDecorations(tr.state, [{ from: 0, to: tr.state.doc.length }]);
+  },
 });
 
 /** Static (state-derived, not view-derived) extension providing the
  *  ```mermaid block decorations - the only way CodeMirror allows block
- *  decorations at all (see `buildMermaidDecorations`'s doc comment). Recomputes
- *  only on actual document changes (the `["doc"]` dependency), not on
- *  scroll/viewport changes, since it doesn't use the viewport in the first
- *  place. */
-export const mermaidBlockDecorations: Extension = EditorView.decorations.compute(["doc"], (state) =>
-  buildMermaidDecorations(state, [{ from: 0, to: state.doc.length }]),
-);
+ *  decorations at all (see `buildMermaidDecorations`'s doc comment).
+ *  `EditorView.decorations.from(mermaidBlockDecorationsField)` (verified
+ *  live against `@codemirror/state@6.7.1`'s `Facet.from<T extends
+ *  Input>(field: StateField<T>): Extension`) feeds the field's plain
+ *  `DecorationSet` value into the decorations facet - still a static value
+ *  from CodeMirror's point of view, since `from` only reads the field, it
+ *  doesn't turn it into a per-view function.
+ *
+ *  Also feeds that same `DecorationSet` into `EditorView.atomicRanges`
+ *  (Finding 1): a ```mermaid fence's block replacement is a
+ *  `Decoration.replace({ block: true, widget: ... })`, and - exactly like
+ *  the hidden inline markers `livePreviewPlugin` exposes - is not
+ *  automatically atomic for cursor motion/deletion just by being a replace
+ *  decoration (verified live: `EditorView.atomicRanges`'s own doc comment
+ *  states this explicitly, "also provide the range set ... to
+ *  atomicRanges"). Reusing the field's value here (rather than re-walking
+ *  the syntax tree a second time) means this costs nothing extra. */
+export const mermaidBlockDecorations: Extension = [
+  mermaidBlockDecorationsField,
+  EditorView.decorations.from(mermaidBlockDecorationsField),
+  EditorView.atomicRanges.of((view) => view.state.field(mermaidBlockDecorationsField)),
+];

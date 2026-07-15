@@ -1,13 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
-import { EditorState } from "@codemirror/state";
-import type { DecorationSet } from "@codemirror/view";
+import { cursorCharLeft, cursorCharRight, deleteCharBackward, deleteCharForward } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
+import { forceParsing } from "@codemirror/language";
+import { EditorState, type Extension } from "@codemirror/state";
+import { EditorView, type DecorationSet } from "@codemirror/view";
 import { GFM, Strikethrough } from "@lezer/markdown";
-import { buildDecorations } from "./decorations";
+import { buildDecorations, livePreviewPlugin, mermaidBlockDecorations } from "./decorations";
 import { BLOCK_LINE_CLASS, MARK_CLASS, WIDGET_CLASS, headingLineClass } from "./marks";
 import { MermaidWidget } from "./mermaid";
 import { mermaidEditorHandler } from "./mermaidEditor";
 import { TaskCheckboxWidget } from "./tasklist";
+
+/** Mounts a real `EditorView` (jsdom `parent` is enough, matching
+ *  `extensions.test.ts`'s own `mountView` convention) wired with the real
+ *  live-preview extensions - `livePreviewPlugin` + `mermaidBlockDecorations`
+ *  directly, rather than going through `extensions.ts`'s `rawCompartment`
+ *  wrapper, since that module is out of this fix's scope. Detached-state
+ *  tests (`EditorState.create` with no view) can't catch either Finding 1
+ *  (atomic ranges only affect a mounted view's cursor/delete commands) or
+ *  Finding 3/4 (both are about what a mounted view's DOM does across
+ *  updates) - see the Plan 7 whole-branch review's T6 finding, which is
+ *  exactly this class of bug. */
+function mountView(doc: string, extraExtensions: Extension[] = []): EditorView {
+  return new EditorView({
+    parent: document.createElement("div"),
+    state: EditorState.create({
+      doc,
+      extensions: [markdown({ extensions: [GFM] }), livePreviewPlugin, mermaidBlockDecorations, ...extraExtensions],
+    }),
+  });
+}
 
 /** Markdown extension used by these tests. Plain `markdown()` only parses
  *  CommonMark - `~~strike~~` is a GFM extension of `@lezer/markdown` and
@@ -427,7 +449,10 @@ describe("buildDecorations - mermaid fences", () => {
     // The widget used to carry the CodeText range's from/to so `eq()` could
     // compare it - which made `eq()` false (and the diagram DOM discarded and
     // re-rendered) on every edit that merely shifted the fence's position
-    // without changing its content. It's position-less now: only `code`.
+    // without changing its content. It's position-less now: only `code`
+    // (verified below in the "mermaidBlockDecorations - flicker prevention"
+    // mounted-view tests, which exercise the actual DOM-reuse behavior this
+    // enables).
     const doc = "```mermaid\ngraph TD\nA-->B\n```";
 
     const [{ widget }] = mermaidWidgets(doc);
@@ -453,5 +478,184 @@ describe("buildDecorations - mermaid fences", () => {
     widget!.onEdit({ code: widget!.code, from: codeTextFrom, to: codeTextTo });
 
     expect(handler).toHaveBeenCalledWith({ code: "graph TD\nA-->B", from: codeTextFrom, to: codeTextTo });
+  });
+});
+
+describe("livePreviewPlugin - atomic hidden markers (Finding 1, mounted view)", () => {
+  // These exercise the real `deleteCharBackward`/`cursorCharLeft` commands
+  // from `@codemirror/commands` against a mounted `EditorView` - a detached
+  // `EditorState` has no `EditorView.atomicRanges` facet consumer at all
+  // (only `view.moveByChar`/the delete commands' `skipAtomic` helper consult
+  // it), so this bug is invisible to state-only tests (the T6-style mount
+  // gap the Plan 7 whole-branch review flagged).
+
+  it("never lets Backspace split the hidden closing ** of **bold** in two", () => {
+    const view = mountView("**bold**");
+    view.dispatch({ selection: { anchor: 8 } }); // doc end, right after the hidden closing "**"
+
+    deleteCharBackward(view);
+
+    // Verified live (@codemirror/commands@6.10.4's `skipAtomic`): landing
+    // exactly on an atomic range's own end is not "inside" it, but the
+    // computed one-char-back delete target (7) *is* strictly inside the
+    // hidden closing marker's atomic range [6, 8) - so the whole atomic unit
+    // is consumed together. The one outcome that must never happen is the
+    // pre-fix bug: corrupting the doc to the unbalanced "**bold*".
+    expect(view.state.doc.toString()).not.toBe("**bold*");
+    expect(view.state.doc.toString()).toBe("**bold");
+    view.destroy();
+  });
+
+  it("cursorCharLeft jumps clean over the hidden closing ** in a single motion", () => {
+    const view = mountView("**bold**");
+    view.dispatch({ selection: { anchor: 8 } });
+
+    cursorCharLeft(view);
+
+    // Without atomicRanges this would land at 7 (inside the hidden marker).
+    expect(view.state.selection.main.head).toBe(6);
+    view.destroy();
+  });
+
+  it("never lets Backspace split the hidden closing ]] of a wikilink in two", () => {
+    const doc = "[[Note]]";
+    const view = mountView(doc);
+    view.dispatch({ selection: { anchor: doc.length } }); // doc end, right after the hidden "]]"
+
+    deleteCharBackward(view);
+
+    expect(view.state.doc.toString()).not.toBe("[[Note]");
+    expect(view.state.doc.toString()).toBe("[[Note");
+    view.destroy();
+  });
+
+  it("cursorCharLeft jumps clean over the hidden closing ]] of a wikilink", () => {
+    const doc = "[[Note]]";
+    const view = mountView(doc);
+    view.dispatch({ selection: { anchor: doc.length } });
+
+    cursorCharLeft(view);
+
+    expect(view.state.selection.main.head).toBe(doc.length - 2);
+    view.destroy();
+  });
+
+  it("does NOT make a visible-widget replacement (the list-marker bullet) atomic", () => {
+    // Scope check: Finding 1 is about *hidden* `Decoration.replace({})`
+    // markers, not every replace decoration - `ListMarkerWidget`/`HrWidget`/
+    // `TaskCheckboxWidget` already show a concrete, single-character-wide
+    // widget the user interacts with directly, so they're deliberately left
+    // out of `markerRanges`. A single-char bullet marker can't be "split" by
+    // a delete in the first place - deleting it always removes the whole
+    // (one-character) marker.
+    const view = mountView("- item");
+    view.dispatch({ selection: { anchor: 1 } }); // right after the (single-char) bullet marker
+
+    deleteCharBackward(view);
+
+    expect(view.state.doc.toString()).toBe(" item");
+    view.destroy();
+  });
+
+  it("also makes a ```mermaid block replacement atomic: cursor motion jumps clean over the whole fence", () => {
+    const doc = "before\n```mermaid\ngraph TD\nA-->B\n```\nafter";
+    const fenceStart = doc.indexOf("```mermaid");
+    const fenceEnd = doc.indexOf("```\nafter") + 3;
+    const view = mountView(doc);
+    view.dispatch({ selection: { anchor: fenceStart } });
+
+    cursorCharRight(view);
+
+    expect(view.state.selection.main.head).toBe(fenceEnd);
+    view.destroy();
+  });
+
+  it("also makes a ```mermaid block replacement atomic: delete removes the whole fence in one go", () => {
+    const doc = "before\n```mermaid\ngraph TD\nA-->B\n```\nafter";
+    const fenceStart = doc.indexOf("```mermaid");
+    const view = mountView(doc);
+    view.dispatch({ selection: { anchor: fenceStart } });
+
+    deleteCharForward(view);
+
+    expect(view.state.doc.toString()).toBe("before\n\nafter");
+    view.destroy();
+  });
+});
+
+describe("mermaidBlockDecorations - flicker prevention (Finding 3, mounted view)", () => {
+  const fenceDoc = "line above\n\n```mermaid\ngraph TD\nA-->B\n```\n";
+
+  it("keeps the same rendered DOM node across an edit above the fence (no discard/re-render)", () => {
+    const view = mountView(fenceDoc);
+    const before = view.dom.querySelector(".cm-lp-mermaid");
+    expect(before).not.toBeNull();
+
+    view.dispatch({ changes: { from: 0, to: 0, insert: "X" } });
+
+    const after = view.dom.querySelector(".cm-lp-mermaid");
+    expect(after).toBe(before);
+    view.destroy();
+  });
+
+  it("resolves the fence's CURRENT (shifted) CodeText range on click after an edit above it", () => {
+    const handlerCalls: { code: string; from: number; to: number }[] = [];
+    const view = mountView(fenceDoc, [mermaidEditorHandler.of((request) => handlerCalls.push(request))]);
+
+    view.dispatch({ changes: { from: 0, to: 0, insert: "XYZ" } });
+    const el = view.dom.querySelector(".cm-lp-mermaid")!;
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    const newDoc = view.state.doc.toString();
+    const codeTextFrom = newDoc.indexOf("graph TD");
+    const codeTextTo = codeTextFrom + "graph TD\nA-->B".length;
+    expect(handlerCalls).toEqual([{ code: "graph TD\nA-->B", from: codeTextFrom, to: codeTextTo }]);
+    view.destroy();
+  });
+});
+
+describe("livePreviewPlugin / mermaidBlockDecorations - async syntax-tree rebuild (Finding 4, mounted view)", () => {
+  // `@codemirror/language`'s `Language.state` field only parses the first
+  // ~3000 characters of a document synchronously at creation (verified live
+  // - `LanguageState.init`'s `Work.InitViewport` constant); anything beyond
+  // that is filled in by a background `requestIdleCallback` worker that
+  // eventually dispatches a transaction with neither `docChanged` nor
+  // `viewportChanged` set (`view.dispatch({ effects: Language.setState.of(...) })`
+  // in `parseWorker`'s `work()`). `forceParsing` (from `@codemirror/language`)
+  // synchronously drives that same background work and dispatches the
+  // resulting update, without changing the document - the same shape of
+  // transaction a real large document's async parse produces, letting this
+  // be provoked deterministically instead of racing a real idle callback.
+  const PAD = "x".repeat(4000);
+
+  it("decorates a ```mermaid fence beyond the initial sync-parsed range only once the tree updates", () => {
+    const doc = `${PAD}\n\n\`\`\`mermaid\ngraph TD\nA-->B\n\`\`\`\n`;
+    const view = mountView(doc);
+
+    // Not yet decorated: the fence sits beyond `Language.state`'s initial
+    // synchronous parse window, so its syntax subtree doesn't exist yet.
+    expect(view.dom.querySelector(".cm-lp-mermaid")).toBeNull();
+    expect(view.dom.textContent).toContain("graph TD");
+
+    const ok = forceParsing(view, doc.length, 2000);
+    expect(ok).toBe(true);
+
+    expect(view.dom.querySelector(".cm-lp-mermaid")).not.toBeNull();
+    expect(view.dom.textContent).not.toContain("```mermaid");
+    view.destroy();
+  });
+
+  it("hides a **bold** marker beyond the initial sync-parsed range only once the tree updates", () => {
+    const doc = `${PAD}\n\n**bold**\n`;
+    const view = mountView(doc);
+
+    expect(view.dom.textContent).toContain("**bold**");
+
+    const ok = forceParsing(view, doc.length, 2000);
+    expect(ok).toBe(true);
+
+    expect(view.dom.textContent).not.toContain("**bold**");
+    expect(view.dom.textContent).toContain("bold");
+    view.destroy();
   });
 });
