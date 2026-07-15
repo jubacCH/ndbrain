@@ -56,6 +56,14 @@ export function EditorToolbar({ view, raw, onToggleRaw }: EditorToolbarProps) {
           className={styles.button}
           title={button.title}
           disabled={!view}
+          // A button click first fires `mousedown`, which - unless
+          // prevented - moves focus off the editor and onto the button
+          // before the format command even runs. Preventing the default
+          // here keeps focus (and the just-computed selection) in the
+          // editor throughout the click, so the command applies where the
+          // user was actually looking and typing resumes right where it
+          // left off, with no extra click back into the editor needed.
+          onMouseDown={(event) => event.preventDefault()}
           onClick={() => {
             if (view) button.run(view);
           }}
@@ -69,6 +77,7 @@ export function EditorToolbar({ view, raw, onToggleRaw }: EditorToolbarProps) {
         className={`${styles.button} ${styles.rawToggle}`}
         title={raw ? "Zu formatierter Ansicht wechseln" : "Zu Rohtext wechseln"}
         aria-pressed={raw}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={onToggleRaw}
       >
         {raw ? "Roh" : "Formatiert"}

@@ -23,8 +23,17 @@ import { EditorView, type KeyBinding } from "@codemirror/view";
  *  (per the Task 7 brief), not by parsing the syntax tree, so it works the
  *  same in raw and live-preview mode alike. An empty (cursor-only) selection
  *  inserts an empty `markermarker` pair and places the cursor exactly between
- *  the two markers, ready to type the formatted text. */
-function toggleWrap(view: EditorView, marker: string): void {
+ *  the two markers, ready to type the formatted text.
+ *
+ *  `collidesWith`, when given, names a longer marker that shares `marker` as
+ *  its suffix/prefix (only real case: `*` italic vs. `**` bold). Without it,
+ *  toggling italic on a `**bold**` selection would misread the single `*`
+ *  closest to the selection as an italic marker and strip just that one
+ *  character from each side, turning bold into italic instead of stacking
+ *  `***bold+italic***`. When the longer marker is actually present,
+ *  "already wrapped" is forced to false so the wrap branch below runs
+ *  instead, adding italic on top of the existing bold markers. */
+function toggleWrap(view: EditorView, marker: string, collidesWith?: string): void {
   const { state } = view;
   const markerLen = marker.length;
 
@@ -40,7 +49,13 @@ function toggleWrap(view: EditorView, marker: string): void {
 
     const before = state.doc.sliceString(Math.max(0, from - markerLen), from);
     const after = state.doc.sliceString(to, Math.min(state.doc.length, to + markerLen));
-    const alreadyWrapped = before === marker && after === marker;
+
+    const collisionLen = collidesWith?.length ?? 0;
+    const wideBefore = state.doc.sliceString(Math.max(0, from - collisionLen), from);
+    const wideAfter = state.doc.sliceString(to, Math.min(state.doc.length, to + collisionLen));
+    const collides = collidesWith !== undefined && wideBefore === collidesWith && wideAfter === collidesWith;
+
+    const alreadyWrapped = before === marker && after === marker && !collides;
 
     if (alreadyWrapped) {
       const changes: ChangeSpec[] = [
@@ -71,7 +86,7 @@ export function toggleBold(view: EditorView): void {
 }
 
 export function toggleItalic(view: EditorView): void {
-  toggleWrap(view, "*");
+  toggleWrap(view, "*", "**");
 }
 
 export function toggleStrike(view: EditorView): void {
@@ -82,10 +97,18 @@ export function toggleInlineCode(view: EditorView): void {
   toggleWrap(view, "`");
 }
 
-/** Prefixes the line the (primary) selection is on with `level` `#`s + a
- *  space, first stripping any existing heading marker. Setting the SAME
- *  level again removes the marker entirely (toggle off); setting a different
- *  level replaces it. */
+/** Prefixes the line the (primary) selection's head is on with `level` `#`s
+ *  + a space, first stripping any existing heading marker. Setting the SAME
+ *  level again removes the marker entirely (toggle off); setting a
+ *  different level replaces it.
+ *
+ *  Only the head line is ever edited, but a selection's anchor can sit on
+ *  an earlier line that the edit doesn't shift at all - so the resulting
+ *  selection is derived via `ChangeSet.mapPos` (the same approach
+ *  `toggleBulletList` below uses) rather than adding the head line's delta
+ *  to both endpoints. Applying the head line's delta to the anchor too
+ *  would drag it onto the head line whenever it fell before `line.from`,
+ *  even though nothing on the anchor's own line moved. */
 export function setHeading(view: EditorView, level: 1 | 2 | 3 | 4 | 5 | 6): void {
   const { state } = view;
   const existingMarker = /^(#{1,6})[ \t]*/;
@@ -97,14 +120,11 @@ export function setHeading(view: EditorView, level: 1 | 2 | 3 | 4 | 5 | 6): void
     const existingLength = match ? match[0].length : 0;
 
     const insert = currentLevel === level ? "" : "#".repeat(level) + " ";
-    const delta = insert.length - existingLength;
+    const changes = state.changes({ from: line.from, to: line.from + existingLength, insert });
 
     return {
-      changes: { from: line.from, to: line.from + existingLength, insert },
-      range: EditorSelection.range(
-        Math.max(line.from, range.anchor + delta),
-        Math.max(line.from, range.head + delta),
-      ),
+      changes,
+      range: EditorSelection.range(changes.mapPos(range.anchor), changes.mapPos(range.head)),
     };
   });
 
@@ -124,7 +144,16 @@ export function toggleBulletList(view: EditorView): void {
 
   const tr = state.changeByRange((range) => {
     const startLine = state.doc.lineAt(range.from);
-    const endLine = state.doc.lineAt(range.to);
+    const rawEndLine = state.doc.lineAt(range.to);
+
+    // A non-empty selection that ends exactly at the start of a line - the
+    // usual result of dragging or shift-clicking to select "whole lines" -
+    // hasn't actually selected any of that trailing line; only its
+    // boundary is included. Exclude it so it doesn't get bulleted too.
+    const endLine =
+      rawEndLine.from === range.to && range.to > range.from && rawEndLine.number > startLine.number
+        ? state.doc.line(rawEndLine.number - 1)
+        : rawEndLine;
 
     const lines = [];
     for (let n = startLine.number; n <= endLine.number; n++) lines.push(state.doc.line(n));

@@ -94,6 +94,15 @@ describe("toggleItalic", () => {
     toggleItalic(view);
     expect(view.state.doc.toString()).toBe("i");
   });
+
+  it("stacks onto an already-bold selection instead of stripping a bold marker", () => {
+    const view = viewFor("**x**", 2, 3);
+
+    toggleItalic(view);
+
+    expect(view.state.doc.toString()).toBe("***x***");
+    expect(view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)).toBe("x");
+  });
 });
 
 describe("toggleStrike", () => {
@@ -148,6 +157,19 @@ describe("setHeading", () => {
 
     expect(view.state.doc.toString()).toBe("Title");
   });
+
+  it("doesn't drag the anchor onto the head's line when the selection spans two lines", () => {
+    // anchor(1) sits inside "abc" on line 1, head(5) sits inside "def" on
+    // line 2 - setHeading only ever edits the HEAD's line, so the anchor
+    // (on an untouched earlier line) must stay exactly where it was.
+    const view = viewFor("abc\ndef", 1, 5);
+
+    setHeading(view, 2);
+
+    expect(view.state.doc.toString()).toBe("abc\n## def");
+    expect(view.state.selection.main.anchor).toBe(1);
+    expect(view.state.selection.main.head).toBe(8); // 5 + "## ".length
+  });
 });
 
 describe("toggleBulletList", () => {
@@ -174,6 +196,26 @@ describe("toggleBulletList", () => {
     toggleBulletList(view);
 
     expect(view.state.doc.toString()).toBe("- a\n- b\n- c");
+  });
+
+  it("doesn't bullet a trailing line when the selection ends exactly at its start (whole-line selection)", () => {
+    const doc = "line1\nline2\nline3";
+    // Selects from the start of line1 up to (but not into) the start of
+    // line2 - the usual shape of a "select the whole first line" drag.
+    const view = viewFor(doc, 0, 6);
+
+    toggleBulletList(view);
+
+    expect(view.state.doc.toString()).toBe("- line1\nline2\nline3");
+  });
+
+  it("still bullets a fully-selected second line when the selection ends mid-line, not at its start", () => {
+    const doc = "line1\nline2\nline3";
+    const view = viewFor(doc, 0, 11); // ends inside line2, not at line3's start
+
+    toggleBulletList(view);
+
+    expect(view.state.doc.toString()).toBe("- line1\n- line2\nline3");
   });
 });
 

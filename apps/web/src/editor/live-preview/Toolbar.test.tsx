@@ -84,4 +84,59 @@ describe("<EditorToolbar>", () => {
     expect(screen.getByTitle("Italic (Mod-i)")).toBeDisabled();
     expect(screen.getByText("Formatiert")).not.toBeDisabled();
   });
+
+  // A plain click on a button first fires "mousedown", and IT is what a
+  // browser uses to move focus onto the button - by the time "click" fires,
+  // focus has already left the editor. So the fix has to prevent default on
+  // mousedown, not on click; these tests verify that's actually wired up by
+  // checking the real dispatchEvent-cancellation return value (per the DOM
+  // spec, `dispatchEvent` returns `false` once a cancelable event had
+  // `preventDefault()` called on it), not just re-reading the source.
+  it("prevents default on mousedown for every format button, so clicking one doesn't steal focus from the editor", () => {
+    const view = makeView("x", 0, 1);
+
+    render(<EditorToolbar view={view} raw={false} onToggleRaw={vi.fn()} />);
+
+    const notCancelled = fireEvent.mouseDown(screen.getByTitle("Bold (Mod-b)"));
+
+    expect(notCancelled).toBe(false);
+  });
+
+  it("prevents default on mousedown for the raw-toggle button too", () => {
+    render(<EditorToolbar view={null} raw={false} onToggleRaw={vi.fn()} />);
+
+    const notCancelled = fireEvent.mouseDown(screen.getByText("Formatiert"));
+
+    expect(notCancelled).toBe(false);
+  });
+
+  // Real-browser-only concern (documented, not asserted here): jsdom does
+  // not implement the "mousedown moves focus to the target" step of the
+  // UI Events focus algorithm the way real browsers do, so there is no
+  // `document.activeElement` shift to observe in this environment even
+  // without the fix - this suite can only verify the preventDefault wiring
+  // above, not the actual focus-retention outcome. That needs manual/E2E
+  // verification in a real browser.
+  it("(documents, doesn't assert) actual focus retention needs a real browser - jsdom doesn't move focus on mousedown", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const view = new EditorView({
+      state: EditorState.create({ doc: "x", selection: { anchor: 0, head: 1 } }),
+      parent: container,
+    });
+    view.focus();
+    const editorHadFocus = document.activeElement === view.contentDOM;
+
+    render(<EditorToolbar view={view} raw={false} onToggleRaw={vi.fn()} />);
+    fireEvent.mouseDown(screen.getByTitle("Bold (Mod-b)"));
+
+    // This assertion holds in jsdom regardless of the fix, because jsdom
+    // never shifts focus on mousedown in the first place - it's recorded
+    // here only so the limitation is explicit, not silently assumed.
+    expect(editorHadFocus).toBe(true);
+    expect(document.activeElement).toBe(view.contentDOM);
+
+    view.destroy();
+    container.remove();
+  });
 });
