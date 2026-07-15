@@ -18,6 +18,8 @@ import { basicSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { livePreviewExtensions, rawCompartment, setRawMode } from "./live-preview/extensions";
+import { MermaidEditPanel } from "./live-preview/MermaidEditPanel.tsx";
+import { applyMermaidEdit, mermaidEditorHandler, type MermaidEditRequest } from "./live-preview/mermaidEditor";
 import styles from "./LocalEditor.module.css";
 
 export interface LocalEditorProps {
@@ -62,6 +64,17 @@ export function LocalEditor({ path, content, onChange }: LocalEditorProps) {
   // (Plan 7 Task 7's `EditorToolbar`); this is the state + wiring it will
   // call into.
   const [raw, setRaw] = useState(false);
+  // The diagram currently open in the split edit panel (Plan 7 Task 6), or
+  // null when it's closed - drives whether `<MermaidEditPanel>` renders at
+  // all. Set by clicking a rendered diagram, via `mermaidEditorHandler`
+  // below.
+  const [mermaidEdit, setMermaidEdit] = useState<MermaidEditRequest | null>(null);
+  // The live "open the split editor" handler the `mermaidEditorHandler`
+  // facet extension (added to the view's extensions once, below) forwards
+  // to. Written directly during render (not in an effect) - same pattern as
+  // `onChangeRef` just below.
+  const openMermaidEditorRef = useRef<(request: MermaidEditRequest) => void>(() => {});
+  openMermaidEditorRef.current = (request) => setMermaidEdit(request);
   // Mirrors `raw` for the mount effect below (which intentionally does NOT
   // depend on `raw` - only on `path` - so toggling it never recreates the
   // view), so a freshly (re)mounted view (e.g. after a `path` change) still
@@ -80,6 +93,7 @@ export function LocalEditor({ path, content, onChange }: LocalEditorProps) {
           basicSetup,
           markdown({ extensions: [GFM] }),
           rawCompartment.of(livePreviewExtensions()),
+          mermaidEditorHandler.of((request) => openMermaidEditorRef.current(request)),
           localEditorExtensions((text) => onChangeRef.current(text)),
         ],
       }),
@@ -125,6 +139,17 @@ export function LocalEditor({ path, content, onChange }: LocalEditorProps) {
         {raw ? "Raw" : "Formatted"}
       </button>
       <div ref={hostRef} className={styles.host} data-testid="local-editor-host" />
+
+      {mermaidEdit && (
+        <MermaidEditPanel
+          code={mermaidEdit.code}
+          onSave={(newCode) => {
+            if (viewRef.current) applyMermaidEdit(viewRef.current, mermaidEdit, newCode);
+            setMermaidEdit(null);
+          }}
+          onClose={() => setMermaidEdit(null)}
+        />
+      )}
     </>
   );
 }

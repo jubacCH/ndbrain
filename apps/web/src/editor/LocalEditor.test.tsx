@@ -4,6 +4,16 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { LocalEditor, localEditorExtensions } from "./LocalEditor";
 
+// Real `mermaid` is a large dependency lazily loaded on first render (see
+// `live-preview/mermaid.ts`) - stubbed here so the split-panel integration
+// test below (clicking a rendered diagram) never touches it for real.
+vi.mock("mermaid", () => ({
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn().mockResolvedValue({ svg: "<svg>diagram</svg>" }),
+  },
+}));
+
 /** Render smoke + change-wiring test for the local (non-collab) editor: a
  *  real CodeMirror `EditorView` over a plain string, no `Y.Doc`, no
  *  `yCollab`, no provider of any kind — see `LocalEditor.tsx`'s doc comment
@@ -57,6 +67,55 @@ describe("<LocalEditor>", () => {
     // Raw: the exact markdown source is visible again; onChange never fires
     // from a mode toggle (it only touches decorations, not the doc).
     await waitFor(() => expect(host.textContent).toContain("**bold**"));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("clicking a rendered mermaid diagram opens the split panel, and saving writes the new code back into the fence (Plan 7 Task 6)", async () => {
+    const onChange = vi.fn();
+    render(
+      <LocalEditor
+        path="a.md"
+        content={"before\n\n```mermaid\ngraph TD\nA-->B\n```\n\nafter"}
+        onChange={onChange}
+      />,
+    );
+
+    const host = await waitFor(() => screen.getByTestId("local-editor-host"));
+    const diagram = await waitFor(() => {
+      const el = host.querySelector(".cm-lp-mermaid");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+
+    fireEvent.click(diagram);
+
+    await waitFor(() => screen.getByRole("dialog", { name: "Mermaid-Diagramm bearbeiten" }));
+    expect(screen.getByLabelText("Mermaid-Code")).toHaveValue("graph TD\nA-->B");
+
+    fireEvent.change(screen.getByLabelText("Mermaid-Code"), { target: { value: "graph LR\nX-->Y" } });
+    fireEvent.click(screen.getByText("Übernehmen"));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(onChange).toHaveBeenLastCalledWith("before\n\n```mermaid\ngraph LR\nX-->Y\n```\n\nafter");
+  });
+
+  it("clicking a rendered mermaid diagram then cancelling leaves the document unchanged (Plan 7 Task 6)", async () => {
+    const onChange = vi.fn();
+    render(<LocalEditor path="a.md" content={"```mermaid\ngraph TD\nA-->B\n```"} onChange={onChange} />);
+
+    const host = await waitFor(() => screen.getByTestId("local-editor-host"));
+    const diagram = await waitFor(() => {
+      const el = host.querySelector(".cm-lp-mermaid");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    fireEvent.click(diagram);
+
+    await waitFor(() => screen.getByRole("dialog", { name: "Mermaid-Diagramm bearbeiten" }));
+    fireEvent.change(screen.getByLabelText("Mermaid-Code"), { target: { value: "graph LR\nX-->Y" } });
+    fireEvent.click(screen.getByText("Abbrechen"));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(onChange).not.toHaveBeenCalled();
   });
 });

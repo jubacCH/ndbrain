@@ -17,14 +17,18 @@
 
 import { Compartment, type Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import { livePreviewPlugin } from "./decorations";
+import { livePreviewPlugin, mermaidBlockDecorations } from "./decorations";
 
-/** The complete live-preview bundle: currently just the decoration
- *  ViewPlugin. A single call both editors use, so any future addition here
- *  (e.g. a shared `EditorView.baseTheme`) reaches both without touching
+/** The complete live-preview bundle: the decoration ViewPlugin (inline marks,
+ *  headings, quotes, rules, links, wikilinks, task checkboxes - viewport-
+ *  scoped) plus the separate ```mermaid block-decoration extension (whole-
+ *  document, state-derived - see `decorations.ts`'s `buildMermaidDecorations`
+ *  doc comment for why block decorations can't live on the same ViewPlugin).
+ *  A single call both editors use, so any future addition here (e.g. a shared
+ *  `EditorView.baseTheme`) reaches both without touching
  *  `Editor.tsx`/`LocalEditor.tsx` again. */
 export function livePreviewExtensions(): Extension {
-  return [livePreviewPlugin];
+  return [livePreviewPlugin, mermaidBlockDecorations];
 }
 
 /** Reserves the swappable slot in an `EditorState`'s extensions for the

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import type { DecorationSet } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
@@ -6,6 +6,7 @@ import { GFM, Strikethrough } from "@lezer/markdown";
 import { buildDecorations } from "./decorations";
 import { BLOCK_LINE_CLASS, MARK_CLASS, WIDGET_CLASS, headingLineClass } from "./marks";
 import { MermaidWidget } from "./mermaid";
+import { mermaidEditorHandler } from "./mermaidEditor";
 import { TaskCheckboxWidget } from "./tasklist";
 
 /** Markdown extension used by these tests. Plain `markdown()` only parses
@@ -420,5 +421,33 @@ describe("buildDecorations - mermaid fences", () => {
     const doc = "```Mermaid\ngraph TD\nA-->B\n```";
 
     expect(mermaidWidgets(doc)).toEqual([]);
+  });
+
+  it("gives the widget the CodeText range (not the whole fence) as from/to", () => {
+    const doc = "```mermaid\ngraph TD\nA-->B\n```";
+    const codeTextFrom = doc.indexOf("graph TD");
+    const codeTextTo = codeTextFrom + "graph TD\nA-->B".length;
+
+    const [{ widget }] = mermaidWidgets(doc);
+
+    expect(widget.from).toBe(codeTextFrom);
+    expect(widget.to).toBe(codeTextTo);
+    expect(doc.slice(widget.from, widget.to)).toBe(widget.code);
+  });
+
+  it("wires the widget's onEdit to the mermaidEditorHandler facet, so a click reaches the live handler", () => {
+    const doc = "```mermaid\ngraph TD\nA-->B\n```";
+    const handler = vi.fn();
+    const state = EditorState.create({ doc, extensions: [markdownPlain, mermaidEditorHandler.of(handler)] });
+    const decorations = buildDecorations(state, [{ from: 0, to: doc.length }]);
+
+    let widget: MermaidWidget | undefined;
+    decorations.between(0, doc.length, (_from, _to, deco) => {
+      if (deco.spec.widget instanceof MermaidWidget) widget = deco.spec.widget;
+    });
+
+    widget!.onEdit({ code: widget!.code, from: widget!.from, to: widget!.to });
+
+    expect(handler).toHaveBeenCalledWith({ code: "graph TD\nA-->B", from: widget!.from, to: widget!.to });
   });
 });

@@ -12,6 +12,7 @@
  *  Promise<{ svg: string, ... }>` - matching the brief's expected shape. */
 
 import { WidgetType } from "@codemirror/view";
+import type { MermaidEditHandler } from "./mermaidEditor";
 
 /** `mermaid.initialize` must only run once per page - calling it repeatedly
  *  is wasteful and, per mermaid's docs, not guaranteed idempotent for a
@@ -41,26 +42,41 @@ export async function renderMermaid(code: string, id: string): Promise<string> {
 /** Block-replacement widget for a ```mermaid fenced-code block. Always
  *  replaces the whole fence with its rendered diagram - there is no
  *  "reveal the source on cursor" behavior (unlike the inline marks in
- *  decorations.ts); editing the source is a split-panel concern (Task 6). */
+ *  decorations.ts). Editing the source happens in the split panel (Task 6):
+ *  clicking the rendered diagram calls `onEdit` with the code and its exact
+ *  `CodeText` range, which `decorations.ts` resolves from the live
+ *  `mermaidEditorHandler` facet before constructing this widget. */
 export class MermaidWidget extends WidgetType {
   constructor(
     readonly code: string,
     readonly id: string,
+    /** Start/end offsets of `code` in the document (the fence's `CodeText`
+     *  child, not the whole `FencedCode` block) - forwarded verbatim to
+     *  `onEdit` so the split panel's save can replace exactly that range. */
+    readonly from: number,
+    readonly to: number,
+    readonly onEdit: MermaidEditHandler,
   ) {
     super();
   }
 
-  /** Only the diagram source matters for reuse: two widgets with the same
-   *  code are interchangeable, so CodeMirror keeps the existing rendered DOM
-   *  (and doesn't re-run mermaid) across a decoration rebuild instead of
-   *  re-rendering identical output. */
+  /** Two widgets are interchangeable - CodeMirror keeps the existing
+   *  rendered DOM (and doesn't re-run mermaid) across a decoration rebuild -
+   *  only when both their content AND their document position match. `from`/
+   *  `to` matter here (not just `code`): reusing a widget whose captured
+   *  range no longer matches the current document would make a subsequent
+   *  click open the split panel against a stale range and corrupt unrelated
+   *  text on save. */
   eq(other: MermaidWidget): boolean {
-    return other.code === this.code;
+    return other.code === this.code && other.from === this.from && other.to === this.to;
   }
 
   toDOM(): HTMLElement {
     const container = document.createElement("div");
     container.className = "cm-lp-mermaid";
+    container.addEventListener("click", () => {
+      this.onEdit({ code: this.code, from: this.from, to: this.to });
+    });
 
     renderMermaid(this.code, this.id).then(
       (svg) => {
@@ -79,8 +95,11 @@ export class MermaidWidget extends WidgetType {
   }
 
   ignoreEvent(): boolean {
-    // No interaction yet (source-editing lands in Task 6 as a split panel);
-    // default event handling is fine for now.
-    return false;
+    // The container owns click handling itself (opening the split panel) -
+    // ignore every DOM event so CodeMirror's own default handling (e.g.
+    // placing the cursor at the click's mapped document position) never
+    // fights with that, since this is an atomic block replacement with
+    // nothing underneath for a cursor to usefully land in anyway.
+    return true;
   }
 }

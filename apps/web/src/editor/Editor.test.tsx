@@ -5,6 +5,16 @@ import { Awareness } from "y-protocols/awareness";
 import { Editor, type ProviderFactory } from "./Editor";
 import type { CollabProviderHandle } from "../api/collab";
 
+// Real `mermaid` is a large dependency lazily loaded on first render (see
+// `live-preview/mermaid.ts`) - stubbed here so the split-panel integration
+// test below (clicking a rendered diagram) never touches it for real.
+vi.mock("mermaid", () => ({
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn().mockResolvedValue({ svg: "<svg>diagram</svg>" }),
+  },
+}));
+
 /** A render smoke for `<Editor>`: mounts a real CodeMirror `EditorView` bound
  *  to a real `Y.Doc`/`Y.Text`/`y-protocols` `Awareness` (so `yCollab` gets the
  *  actual shapes it expects), but the "provider" itself is a fake plain object
@@ -13,10 +23,12 @@ import type { CollabProviderHandle } from "../api/collab";
  *  server round trip is explicitly out of scope here (Task 10's E2E covers
  *  that) - this only proves the component mounts, wires awareness, and tears
  *  down cleanly given a connection of the right shape. */
-function makeFakeHandle(): { handle: CollabProviderHandle; awareness: Awareness; ydoc: Y.Doc } {
+function makeFakeHandle(
+  initialContent = "# hello\n",
+): { handle: CollabProviderHandle; awareness: Awareness; ydoc: Y.Doc; ytext: Y.Text } {
   const ydoc = new Y.Doc();
   const ytext = ydoc.getText("content");
-  ytext.insert(0, "# hello\n");
+  ytext.insert(0, initialContent);
   const awareness = new Awareness(ydoc);
 
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
@@ -49,7 +61,7 @@ function makeFakeHandle(): { handle: CollabProviderHandle; awareness: Awareness;
     },
   };
 
-  return { handle, awareness, ydoc };
+  return { handle, awareness, ydoc, ytext };
 }
 
 describe("<Editor>", () => {
@@ -190,5 +202,59 @@ describe("<Editor>", () => {
     // Raw: the exact markdown source is visible again, doc content unchanged.
     await waitFor(() => expect(host.textContent).toContain("**bold**"));
     expect(ytext.toString()).toBe("**bold**");
+  });
+
+  it("clicking a rendered mermaid diagram opens the split panel, and saving writes the new code back into the fence (Plan 7 Task 6)", async () => {
+    // Needs a real `Awareness` (via `makeFakeHandle`, not a bare-bones fake
+    // with `awareness: null`) so `yCollab` actually binds and the panel's
+    // `view.dispatch` syncs back into `ytext` - without it the `EditorView`
+    // is only ever seeded from `ytext` once and never synced further.
+    const { handle, ytext } = makeFakeHandle("before\n\n```mermaid\ngraph TD\nA-->B\n```\n\nafter");
+    const providerFactory: ProviderFactory = () => handle;
+
+    render(<Editor path="myai/deploy.md" token="tok" providerFactory={providerFactory} />);
+
+    const host = await waitFor(() => screen.getByTestId("editor-host"));
+    const diagram = await waitFor(() => {
+      const el = host.querySelector(".cm-lp-mermaid");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+
+    fireEvent.click(diagram);
+
+    const panel = await waitFor(() => screen.getByRole("dialog", { name: "Mermaid-Diagramm bearbeiten" }));
+    expect(screen.getByLabelText("Mermaid-Code")).toHaveValue("graph TD\nA-->B");
+
+    fireEvent.change(screen.getByLabelText("Mermaid-Code"), { target: { value: "graph LR\nX-->Y" } });
+    fireEvent.click(screen.getByText("Übernehmen"));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(panel).not.toBeInTheDocument();
+    // Only the fence's interior changed - the ``` markers and the rest of
+    // the document are byte-identical to before.
+    await waitFor(() => expect(ytext.toString()).toBe("before\n\n```mermaid\ngraph LR\nX-->Y\n```\n\nafter"));
+  });
+
+  it("clicking a rendered mermaid diagram then cancelling leaves the document unchanged (Plan 7 Task 6)", async () => {
+    const { handle, ytext } = makeFakeHandle("```mermaid\ngraph TD\nA-->B\n```");
+    const providerFactory: ProviderFactory = () => handle;
+
+    render(<Editor path="myai/deploy.md" token="tok" providerFactory={providerFactory} />);
+
+    const host = await waitFor(() => screen.getByTestId("editor-host"));
+    const diagram = await waitFor(() => {
+      const el = host.querySelector(".cm-lp-mermaid");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    fireEvent.click(diagram);
+
+    await waitFor(() => screen.getByRole("dialog", { name: "Mermaid-Diagramm bearbeiten" }));
+    fireEvent.change(screen.getByLabelText("Mermaid-Code"), { target: { value: "graph LR\nX-->Y" } });
+    fireEvent.click(screen.getByText("Abbrechen"));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(ytext.toString()).toBe("```mermaid\ngraph TD\nA-->B\n```");
   });
 });

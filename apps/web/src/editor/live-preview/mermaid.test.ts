@@ -65,23 +65,32 @@ describe("renderMermaid", () => {
 });
 
 describe("MermaidWidget", () => {
-  it("eq() is true for widgets with the same code", () => {
-    const a = new MermaidWidget("graph TD\nA-->B", "id-a");
-    const b = new MermaidWidget("graph TD\nA-->B", "id-b");
+  const noop = () => {};
+
+  it("eq() is true for widgets with the same code and range", () => {
+    const a = new MermaidWidget("graph TD\nA-->B", "id-a", 3, 17, noop);
+    const b = new MermaidWidget("graph TD\nA-->B", "id-b", 3, 17, noop);
 
     expect(a.eq(b)).toBe(true);
   });
 
   it("eq() is false for widgets with different code", () => {
-    const a = new MermaidWidget("graph TD\nA-->B", "id-a");
-    const b = new MermaidWidget("graph TD\nB-->C", "id-b");
+    const a = new MermaidWidget("graph TD\nA-->B", "id-a", 3, 17, noop);
+    const b = new MermaidWidget("graph TD\nB-->C", "id-b", 3, 17, noop);
+
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("eq() is false for widgets with the same code but a different range (stale position guard)", () => {
+    const a = new MermaidWidget("graph TD\nA-->B", "id-a", 3, 17, noop);
+    const b = new MermaidWidget("graph TD\nA-->B", "id-b", 5, 19, noop);
 
     expect(a.eq(b)).toBe(false);
   });
 
   it("toDOM() returns a cm-lp-mermaid container and asynchronously fills it with the rendered SVG", async () => {
     renderMock.mockResolvedValue({ svg: "<svg>ok</svg>" });
-    const widget = new MermaidWidget("graph TD\nA-->B", "id-dom-ok");
+    const widget = new MermaidWidget("graph TD\nA-->B", "id-dom-ok", 0, 14, noop);
 
     const container = widget.toDOM();
     expect(container.className).toBe("cm-lp-mermaid");
@@ -91,11 +100,28 @@ describe("MermaidWidget", () => {
 
   it("toDOM() renders a cm-lp-mermaid-error line instead of crashing when rendering fails", async () => {
     renderMock.mockRejectedValue(new Error("Parse error on line 1"));
-    const widget = new MermaidWidget("not a diagram", "id-dom-err");
+    const widget = new MermaidWidget("not a diagram", "id-dom-err", 0, 14, noop);
 
     const container = widget.toDOM();
 
     await vi.waitFor(() => expect(container.querySelector(".cm-lp-mermaid-error")).not.toBeNull());
     expect(container.querySelector(".cm-lp-mermaid-error")?.textContent).toContain("Parse error on line 1");
+  });
+
+  it("clicking the container calls onEdit with the code and its from/to range", () => {
+    renderMock.mockResolvedValue({ svg: "<svg/>" });
+    const onEdit = vi.fn();
+    const widget = new MermaidWidget("graph TD\nA-->B", "id-click", 10, 24, onEdit);
+
+    const container = widget.toDOM();
+    container.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(onEdit).toHaveBeenCalledWith({ code: "graph TD\nA-->B", from: 10, to: 24 });
+  });
+
+  it("ignoreEvent() returns true so CodeMirror's default click handling never fights the widget's own", () => {
+    const widget = new MermaidWidget("graph TD\nA-->B", "id-ignore", 0, 14, noop);
+
+    expect(widget.ignoreEvent()).toBe(true);
   });
 });

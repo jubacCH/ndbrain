@@ -7,7 +7,7 @@
  *  binding are unaffected. */
 
 import { syntaxTree } from "@codemirror/language";
-import { RangeSetBuilder, type EditorState, type Text } from "@codemirror/state";
+import { RangeSet, RangeSetBuilder, type EditorState, type Extension, type Text } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -19,6 +19,7 @@ import {
 import type { SyntaxNode } from "@lezer/common";
 import { BLOCK_LINE_CLASS, MARK_CLASS, WIDGET_CLASS, headingLevelOf, headingLineClass, styleForNode } from "./marks";
 import { MermaidWidget } from "./mermaid";
+import { mermaidEditorHandler } from "./mermaidEditor";
 import { taskCheckboxDecorations } from "./tasklist";
 import { wikilinkDecorations } from "./wikilink";
 
@@ -104,11 +105,16 @@ function delimitersOf(node: SyntaxNode): { open: SyntaxNode; close: SyntaxNode }
   return { open, close };
 }
 
-/** Pure decoration builder: walks the markdown syntax tree over the given
- *  ranges (typically the view's visible ranges) and produces a DecorationSet
- *  that hides inline markers and styles their content. Never touches
- *  `state.doc`. */
-export function buildDecorations(state: EditorState, ranges: readonly { from: number; to: number }[]): DecorationSet {
+/** Pure decoration builder for everything EXCEPT ```mermaid fences: walks the
+ *  markdown syntax tree over the given ranges (typically the view's visible
+ *  ranges) and produces a DecorationSet that hides inline markers and styles
+ *  their content. Never touches `state.doc`.
+ *
+ *  Mermaid fences are deliberately NOT handled here even though they're a
+ *  markdown-syntax-tree concern like everything else in this function - see
+ *  `buildMermaidDecorations`'s doc comment for why that decoration needs a
+ *  completely different (non-viewport, non-ViewPlugin) wiring. */
+function buildInlineDecorations(state: EditorState, ranges: readonly { from: number; to: number }[]): DecorationSet {
   const pieces: DecoPiece[] = [];
   const tree = syntaxTree(state);
 
@@ -157,29 +163,6 @@ export function buildDecorations(state: EditorState, ranges: readonly { from: nu
           }
           case "HorizontalRule": {
             pieces.push({ from: nodeRef.from, to: nodeRef.to, decoration: hrWidget });
-            break;
-          }
-          case "FencedCode": {
-            // `CodeMark` ("```"), `CodeInfo` (the info string, e.g.
-            // "mermaid") and `CodeText` (the code between the fences) are
-            // FencedCode's children (verified live - see mermaid.ts's doc
-            // comment). Any info string other than an exact, lowercase
-            // "mermaid" is left as plain fenced code (no decoration here at
-            // all - default CodeMirror rendering applies).
-            const info = nodeRef.node.getChild("CodeInfo");
-            if (!info) break;
-            const infoText = state.doc.sliceString(info.from, info.to);
-            if (infoText !== MERMAID_INFO) break;
-            const codeText = nodeRef.node.getChild("CodeText");
-            const code = codeText ? state.doc.sliceString(codeText.from, codeText.to) : "";
-            pieces.push({
-              from: nodeRef.from,
-              to: nodeRef.to,
-              decoration: Decoration.replace({
-                block: true,
-                widget: new MermaidWidget(code, `mermaid-${nodeRef.from}`),
-              }),
-            });
             break;
           }
           case "Link": {
@@ -234,23 +217,115 @@ export function buildDecorations(state: EditorState, ranges: readonly { from: nu
   return builder.finish();
 }
 
+/** Pure decoration builder for ```mermaid fences only: walks the markdown
+ *  syntax tree over the given ranges and replaces each one with a block
+ *  `MermaidWidget`. Split out from `buildInlineDecorations` for a CodeMirror
+ *  API reason (verified live against `@codemirror/view@6.43.6`): a
+ *  `ViewPlugin`'s decorations are always "dynamic" from CodeMirror's point of
+ *  view (recomputed as a function of the view, not derived statically from
+ *  state), and `Decoration.replace({ block: true, ... })` from a dynamic
+ *  source throws `RangeError: Block decorations may not be specified via
+ *  plugins` the moment a document actually containing a ```mermaid fence is
+ *  mounted in a real `EditorView` - a crash `decorations.test.ts`'s
+ *  detached-state unit tests could never catch, since they never mount a
+ *  view at all. Block decorations DO work when they come from a state-derived
+ *  facet input (`EditorView.decorations.compute([...], get)`, used by
+ *  `mermaidBlockDecorations` below) - `get` returns a plain value there, not
+ *  a per-view function, so CodeMirror treats it as static. That source can't
+ *  be limited to `view.visibleRanges` (a `Facet.compute` callback only ever
+ *  receives `state`, never a `view`), so this one specific decoration walks
+ *  the whole document instead of the viewport - an acceptable trade-off since
+ *  mermaid fences are rare, heavy block elements, not per-character marks. */
+function buildMermaidDecorations(state: EditorState, ranges: readonly { from: number; to: number }[]): DecorationSet {
+  const pieces: DecoPiece[] = [];
+  const tree = syntaxTree(state);
+  const handler = state.facet(mermaidEditorHandler);
+
+  for (const { from, to } of ranges) {
+    tree.iterate({
+      from,
+      to,
+      enter: (nodeRef) => {
+        if (nodeRef.name !== "FencedCode") return;
+        // `CodeMark` ("```"), `CodeInfo` (the info string, e.g. "mermaid")
+        // and `CodeText` (the code between the fences) are FencedCode's
+        // children (verified live - see mermaid.ts's doc comment). Any info
+        // string other than an exact, lowercase "mermaid" is left as plain
+        // fenced code (no decoration here at all - default CodeMirror
+        // rendering applies).
+        const info = nodeRef.node.getChild("CodeInfo");
+        if (!info) return;
+        const infoText = state.doc.sliceString(info.from, info.to);
+        if (infoText !== MERMAID_INFO) return;
+        const codeText = nodeRef.node.getChild("CodeText");
+        // Fall back to a zero-width range at the fence's end when there's no
+        // CodeText child at all (an empty ```mermaid``` fence still being
+        // typed) - the widget then has an empty diagram source and a save
+        // simply inserts at that point instead of replacing
+        // nothing-in-particular.
+        const codeFrom = codeText?.from ?? nodeRef.to;
+        const codeTo = codeText?.to ?? nodeRef.to;
+        const code = codeText ? state.doc.sliceString(codeFrom, codeTo) : "";
+        pieces.push({
+          from: nodeRef.from,
+          to: nodeRef.to,
+          decoration: Decoration.replace({
+            block: true,
+            widget: new MermaidWidget(code, `mermaid-${nodeRef.from}`, codeFrom, codeTo, handler),
+          }),
+        });
+      },
+    });
+  }
+
+  pieces.sort((a, b) => a.from - b.from || a.to - b.to);
+
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const piece of pieces) {
+    builder.add(piece.from, piece.to, piece.decoration);
+  }
+  return builder.finish();
+}
+
+/** Combines both decoration sources into one set, over the same ranges -
+ *  the full contract this module's own tests exercise. Only a testing/
+ *  introspection convenience: the live wiring below (`livePreviewPlugin` +
+ *  `mermaidBlockDecorations`) does NOT call this - it keeps the two sources
+ *  on their separate extensions, precisely because they need different
+ *  CodeMirror wiring (see `buildMermaidDecorations`'s doc comment). Never
+ *  touches `state.doc`. */
+export function buildDecorations(state: EditorState, ranges: readonly { from: number; to: number }[]): DecorationSet {
+  return RangeSet.join([buildInlineDecorations(state, ranges), buildMermaidDecorations(state, ranges)]);
+}
+
 class LivePreviewPluginValue {
   decorations: DecorationSet;
 
   constructor(view: EditorView) {
-    this.decorations = buildDecorations(view.state, view.visibleRanges);
+    this.decorations = buildInlineDecorations(view.state, view.visibleRanges);
   }
 
   update(update: ViewUpdate): void {
     if (update.docChanged || update.viewportChanged) {
-      this.decorations = buildDecorations(update.view.state, update.view.visibleRanges);
+      this.decorations = buildInlineDecorations(update.view.state, update.view.visibleRanges);
     }
   }
 }
 
-/** ViewPlugin exposing the live-preview DecorationSet, rebuilt from the
- *  visible ranges only (not the whole document) whenever the doc or
- *  viewport changes. */
+/** ViewPlugin exposing the non-block live-preview decorations, rebuilt from
+ *  the visible ranges only (not the whole document) whenever the doc or
+ *  viewport changes. Mermaid fences are handled by `mermaidBlockDecorations`
+ *  instead - see `buildMermaidDecorations`'s doc comment for why. */
 export const livePreviewPlugin = ViewPlugin.fromClass(LivePreviewPluginValue, {
   decorations: (value) => value.decorations,
 });
+
+/** Static (state-derived, not view-derived) extension providing the
+ *  ```mermaid block decorations - the only way CodeMirror allows block
+ *  decorations at all (see `buildMermaidDecorations`'s doc comment). Recomputes
+ *  only on actual document changes (the `["doc"]` dependency), not on
+ *  scroll/viewport changes, since it doesn't use the viewport in the first
+ *  place. */
+export const mermaidBlockDecorations: Extension = EditorView.decorations.compute(["doc"], (state) =>
+  buildMermaidDecorations(state, [{ from: 0, to: state.doc.length }]),
+);
