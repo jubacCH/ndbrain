@@ -1,8 +1,10 @@
 /** Live-preview decoration layer: a purely additive CodeMirror 6 ViewPlugin
- *  that renders inline markdown formatting (bold/italic/strike/inline code)
- *  by hiding the marker characters and styling the surrounding content -
- *  the document text itself is never touched. Applied on top of `yCollab`
- *  (see Plan 7 Task 4), so raw mode / the CRDT binding are unaffected. */
+ *  that renders inline markdown formatting (bold/italic/strike/inline code),
+ *  block constructs (headings/quotes/lists/rules), links, wikilinks and GFM
+ *  task-list checkboxes by hiding marker characters and styling or replacing
+ *  the surrounding content - the document text itself is never touched.
+ *  Applied on top of `yCollab` (see Plan 7 Task 4), so raw mode / the CRDT
+ *  binding are unaffected. */
 
 import { syntaxTree } from "@codemirror/language";
 import { RangeSetBuilder, type EditorState, type Text } from "@codemirror/state";
@@ -15,7 +17,9 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
-import { BLOCK_LINE_CLASS, WIDGET_CLASS, headingLevelOf, headingLineClass, styleForNode } from "./marks";
+import { BLOCK_LINE_CLASS, MARK_CLASS, WIDGET_CLASS, headingLevelOf, headingLineClass, styleForNode } from "./marks";
+import { taskCheckboxDecorations } from "./tasklist";
+import { wikilinkDecorations } from "./wikilink";
 
 /** Delimiter node names produced by `@lezer/markdown` for the inline marks
  *  handled here (verified live - see decorations.test.ts's doc comment). */
@@ -146,6 +150,29 @@ export function buildDecorations(state: EditorState, ranges: readonly { from: nu
             pieces.push({ from: nodeRef.from, to: nodeRef.to, decoration: hrWidget });
             break;
           }
+          case "Link": {
+            // `[text](url)` and the shortcut-reference form `[text]` (no
+            // destination, e.g. the inner brackets of a `[[wikilink]]`)
+            // both parse as `Link` (verified live - see marks.ts), but only
+            // the former has a `URL` child. Skip the shortcut form entirely
+            // so it doesn't collide with wikilink.ts's own decorations over
+            // the same range.
+            const url = nodeRef.node.getChild("URL");
+            if (!url) break;
+            // `[`, `]`, `(`, `)` in document order (verified live - see
+            // marks.ts).
+            const [openBracket, closeBracket, , closeParen] = nodeRef.node.getChildren("LinkMark");
+            if (!openBracket || !closeBracket || !closeParen) break;
+            const href = state.doc.sliceString(url.from, url.to);
+            pieces.push({ from: openBracket.from, to: openBracket.to, decoration: hideMarker });
+            pieces.push({
+              from: openBracket.to,
+              to: closeBracket.from,
+              decoration: Decoration.mark({ class: MARK_CLASS.link, attributes: { "data-href": href } }),
+            });
+            pieces.push({ from: closeBracket.from, to: closeParen.to, decoration: hideMarker });
+            break;
+          }
           case "ListMark": {
             const text = state.doc.sliceString(nodeRef.from, nodeRef.to);
             const display = BULLET_MARKER_CHARS.has(text) ? BULLET_MARKER : text;
@@ -161,6 +188,9 @@ export function buildDecorations(state: EditorState, ranges: readonly { from: nu
         }
       },
     });
+
+    pieces.push(...wikilinkDecorations(state, from, to));
+    pieces.push(...taskCheckboxDecorations(state, from, to));
   }
 
   pieces.sort((a, b) => a.from - b.from || a.to - b.to);

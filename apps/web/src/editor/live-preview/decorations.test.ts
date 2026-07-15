@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { EditorState } from "@codemirror/state";
 import type { DecorationSet } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
-import { Strikethrough } from "@lezer/markdown";
+import { GFM, Strikethrough } from "@lezer/markdown";
 import { buildDecorations } from "./decorations";
 import { BLOCK_LINE_CLASS, MARK_CLASS, WIDGET_CLASS, headingLineClass } from "./marks";
+import { TaskCheckboxWidget } from "./tasklist";
 
 /** Markdown extension used by these tests. Plain `markdown()` only parses
  *  CommonMark - `~~strike~~` is a GFM extension of `@lezer/markdown` and
@@ -15,6 +16,11 @@ const markdownWithGfm = markdown({ extensions: [Strikethrough] });
 /** Block constructs (headings, lists, quotes, rules) are plain CommonMark -
  *  no GFM extension needed to parse them. */
 const markdownPlain = markdown();
+
+/** GFM task lists (`- [ ]`/`- [x]`) only produce a `Task`/`TaskMarker` node
+ *  when the full `GFM` extension array is enabled (verified live - see
+ *  marks.ts's doc comment). */
+const markdownWithTasks = markdown({ extensions: [GFM] });
 
 interface DecoRecord {
   from: number;
@@ -35,6 +41,10 @@ function stateFor(doc: string): EditorState {
 
 function plainStateFor(doc: string): EditorState {
   return EditorState.create({ doc, extensions: [markdownPlain] });
+}
+
+function taskStateFor(doc: string): EditorState {
+  return EditorState.create({ doc, extensions: [markdownWithTasks] });
 }
 
 /** Flattens a DecorationSet into plain records sorted by position.
@@ -256,5 +266,109 @@ describe("buildDecorations - block constructs", () => {
       },
     ]);
     expect(state.doc.toString()).toBe("---");
+  });
+});
+
+describe("buildDecorations - links", () => {
+  it("hides the [ ] ( url ) marks and marks the visible text as a link", () => {
+    const doc = "[t](http://x)";
+    const state = plainStateFor(doc);
+
+    const records = collect(buildDecorations(state, [{ from: 0, to: doc.length }]), doc.length);
+
+    expect(records).toEqual([
+      { from: 0, to: 1, class: undefined, isReplace: true, isLine: false },
+      { from: 1, to: 2, class: MARK_CLASS.link, isReplace: false, isLine: false },
+      { from: 2, to: 13, class: undefined, isReplace: true, isLine: false },
+    ]);
+    expect(doc.slice(1, 2)).toBe("t");
+    expect(state.doc.toString()).toBe("[t](http://x)");
+  });
+
+  it("carries the URL as a data-href attribute on the link mark", () => {
+    const doc = "[t](http://x)";
+    const state = plainStateFor(doc);
+    const decorations = buildDecorations(state, [{ from: 0, to: doc.length }]);
+
+    let href: string | undefined;
+    decorations.between(0, doc.length, (_from, _to, deco) => {
+      if (deco.spec.class === MARK_CLASS.link) href = deco.spec.attributes?.["data-href"];
+    });
+
+    expect(href).toBe("http://x");
+  });
+});
+
+describe("buildDecorations - wikilinks", () => {
+  it("hides [[ ]] and marks the target text as a wikilink", () => {
+    const doc = "before [[Note]] after";
+    const state = plainStateFor(doc);
+
+    const records = collect(buildDecorations(state, [{ from: 0, to: doc.length }]), doc.length);
+
+    expect(records).toEqual([
+      { from: 7, to: 9, class: undefined, isReplace: true, isLine: false },
+      { from: 9, to: 13, class: MARK_CLASS.wikilink, isReplace: false, isLine: false },
+      { from: 13, to: 15, class: undefined, isReplace: true, isLine: false },
+    ]);
+    expect(doc.slice(9, 13)).toBe("Note");
+    expect(state.doc.toString()).toBe(doc);
+  });
+
+  it("does not let the wikilink's inner shortcut-reference Link node add extra decorations", () => {
+    // `[[Note]]` parses as a shortcut-reference `Link` node covering
+    // "[Note]" (verified live - it has no `URL` child, unlike a real
+    // `[text](url)` link) - buildDecorations must skip that node so it
+    // doesn't collide with the wikilink's own hide/mark pieces.
+    const doc = "[[Note]]";
+    const state = plainStateFor(doc);
+
+    const records = collect(buildDecorations(state, [{ from: 0, to: doc.length }]), doc.length);
+
+    expect(records).toEqual([
+      { from: 0, to: 2, class: undefined, isReplace: true, isLine: false },
+      { from: 2, to: 6, class: MARK_CLASS.wikilink, isReplace: false, isLine: false },
+      { from: 6, to: 8, class: undefined, isReplace: true, isLine: false },
+    ]);
+  });
+
+  it("carries the target as a data-target attribute on the wikilink mark", () => {
+    const doc = "[[Note]]";
+    const state = plainStateFor(doc);
+    const decorations = buildDecorations(state, [{ from: 0, to: doc.length }]);
+
+    let target: string | undefined;
+    decorations.between(0, doc.length, (_from, _to, deco) => {
+      if (deco.spec.class === MARK_CLASS.wikilink) target = deco.spec.attributes?.["data-target"];
+    });
+
+    expect(target).toBe("Note");
+  });
+});
+
+describe("buildDecorations - task checkboxes", () => {
+  function checkboxWidgets(doc: string): TaskCheckboxWidget[] {
+    const state = taskStateFor(doc);
+    const decorations = buildDecorations(state, [{ from: 0, to: doc.length }]);
+    const widgets: TaskCheckboxWidget[] = [];
+    decorations.between(0, doc.length, (_from, _to, deco) => {
+      if (deco.spec.widget instanceof TaskCheckboxWidget) widgets.push(deco.spec.widget);
+    });
+    return widgets;
+  }
+
+  it("replaces the TaskMarker of an unchecked item with an unchecked checkbox widget", () => {
+    const [widget] = checkboxWidgets("- [ ] todo");
+
+    expect(widget).toBeDefined();
+    expect(widget.checked).toBe(false);
+    expect(widget.from).toBe(2);
+    expect(widget.to).toBe(5);
+  });
+
+  it("replaces the TaskMarker of a checked item with a checked checkbox widget", () => {
+    const [widget] = checkboxWidgets("- [x] done");
+
+    expect(widget.checked).toBe(true);
   });
 });

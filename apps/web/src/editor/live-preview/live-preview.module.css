@@ -81,3 +81,19 @@
   color: var(--color-fg-muted);
   font-variant-numeric: tabular-nums;
 }
+
+.link {
+  color: var(--color-accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.wikilink {
+  color: var(--color-accent);
+  cursor: pointer;
+}
+
+.taskCheckbox {
+  margin-right: 0.4em;
+  cursor: pointer;
+}

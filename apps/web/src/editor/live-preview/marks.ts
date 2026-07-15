@@ -16,7 +16,20 @@
  *  blockquote has one `QuoteMark` child per line, not just the first);
  *  `HorizontalRule` covers the whole `---`/`***` line as a single node;
  *  `BulletList`/`OrderedList` contain `ListItem`s, each starting with a
- *  `ListMark` (`-`/`*`/`+` or `1.`). */
+ *  `ListMark` (`-`/`*`/`+` or `1.`).
+ *
+ *  Links + GFM task lists (verified live against `@lezer/markdown@1.7.1` with
+ *  the `GFM` extension array from `@codemirror/lang-markdown`'s peer
+ *  `@lezer/markdown`):
+ *  `Link` wraps `[text](url)` with `LinkMark` (`[`, `]`, `(`, `)`) children
+ *  and a `URL` child - this also fires as a "shortcut reference" for bare
+ *  `[text]` (no `(url)`, e.g. the inner brackets of a `[[wikilink]]`), in
+ *  which case it has no `URL` child and must be left alone.
+ *  `Task` (only present when the markdown extension set includes `GFM` or
+ *  `Task`) wraps a list item's `- [ ] text`/`- [x] text` body; its
+ *  `TaskMarker` child is the literal `[ ]`/`[x]`. Wikilinks (`[[Target]]`)
+ *  have no dedicated node at all - `@lezer/markdown` has no concept of them -
+ *  so they are found by regex instead (see wikilink.ts). */
 
 import styles from "./live-preview.module.css";
 
@@ -25,6 +38,8 @@ export const MARK_CLASS = {
   italic: styles.italic,
   strike: styles.strike,
   inlineCode: styles.inlineCode,
+  link: styles.link,
+  wikilink: styles.wikilink,
 } as const;
 
 /** Line-level style classes for block decorations (applied via
@@ -38,6 +53,7 @@ export const BLOCK_LINE_CLASS = {
 export const WIDGET_CLASS = {
   listMarker: styles.listMarker,
   hr: styles.hr,
+  taskCheckbox: styles.taskCheckbox,
 } as const;
 
 const HEADING_LINE_CLASSES: readonly string[] = [
