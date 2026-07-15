@@ -67,6 +67,43 @@ server is reachable, then persists the URL and proceeds to the normal login
 flow. This screen only ever appears inside the Tauri shell (`isTauri()`); the
 browser build is unaffected and keeps using its same-origin server as today.
 
+### Connecting the desktop client (CORS & cookies)
+
+The desktop app's webview runs on its own origin — `tauri://localhost` on
+macOS, `http://tauri.localhost` on Windows — never the same origin as your
+ndBrain server. That makes every request from the desktop app, including the
+first-run reachability ping described above, a genuine cross-origin request:
+by default the server sends no `Access-Control-*` headers at all, so the
+webview can't complete it and no authenticated request works either.
+
+To serve the desktop client, configure the server with:
+
+```bash
+NDBRAIN_ALLOWED_ORIGINS=tauri://localhost,http://tauri.localhost
+NDBRAIN_COOKIE_SAMESITE=none
+NDBRAIN_COOKIE_SECURE=true
+```
+
+- `NDBRAIN_ALLOWED_ORIGINS` is a comma-separated allowlist of origins the
+  server will echo back in `Access-Control-Allow-Origin`. List every desktop
+  origin you need (both `tauri://localhost` and `http://tauri.localhost` if
+  you support both macOS and Windows builds); anything not in the list gets
+  no CORS headers, same as if this were unset. Leave it unset for a
+  server that only ever serves the browser client — CORS then stays fully
+  off, with no behavior change from before this was added.
+- `NDBRAIN_COOKIE_SAMESITE=none` is required for the session cookie
+  (`ndbrain_session`, set by `POST /api/v1/auth/login`) to be sent back on
+  cross-origin requests at all — browsers otherwise scope it to same-site
+  requests only (the default, `lax`, is what a same-origin browser
+  deployment wants and keeps working unchanged).
+- `NDBRAIN_COOKIE_SECURE=true` is required alongside `SameSite=None`:
+  browsers refuse to set a `SameSite=None` cookie unless it's also `Secure`.
+  **This means the server must be reachable over https for the desktop
+  client to be usable end-to-end** — plain http (fine for same-origin
+  browser/homelab use) will not work here. Put a reverse proxy with a valid
+  TLS certificate in front of the server, or terminate TLS on the server
+  itself, before pointing a desktop build at it.
+
 ### Local notes (desktop only)
 
 The desktop app has an additional "Local" area, only visible/active when

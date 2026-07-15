@@ -95,6 +95,9 @@ const app = buildServer({
   embedProvider,
   embedStore,
   embedIndexer,
+  allowedOrigins: config.allowedOrigins,
+  cookieSameSite: config.cookieSameSite,
+  cookieSecure: config.cookieSecure,
 });
 await app.listen({ port: config.port, host: "0.0.0.0" });
 console.log(`ndbrain listening on :${config.port}`);

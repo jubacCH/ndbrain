@@ -29,7 +29,16 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     const { username, password } = req.body as { username: string; password: string };
     const token = await deps.auth.login(username, password);
     if (!token) return reply.code(401).send({ error: { code: "bad_credentials", message: "invalid login" } });
-    reply.setCookie("ndbrain_session", token, { httpOnly: true, sameSite: "lax", path: "/" });
+    // I1: cross-origin clients (the Tauri desktop webview) need `SameSite=None; Secure`
+    // to receive this cookie at all - browsers drop `SameSite=None` cookies outright
+    // unless `Secure` is also set. Both default to today's values (lax, not secure) so
+    // a deployment that never sets the env vars gets byte-identical cookie attributes.
+    reply.setCookie("ndbrain_session", token, {
+      httpOnly: true,
+      sameSite: deps.cookieSameSite ?? "lax",
+      secure: deps.cookieSecure ?? false,
+      path: "/",
+    });
     return { token };
   });
 

@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
+import cors from "@fastify/cors";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Database } from "../db/database.js";
@@ -59,6 +60,17 @@ export interface ServerDeps {
    *  exercise the no-dist-yet guard; production leaves it unset and gets the
    *  real `apps/web/dist`. */
   webDistDir?: string;
+  /** Origins allowed to make cross-origin requests (see I1 / `config.ts`'s
+   *  `NDBRAIN_ALLOWED_ORIGINS`). Empty/omitted (the default, and every existing
+   *  test) means `@fastify/cors` is never even registered - zero behavior change,
+   *  no `Access-Control-*` header on any response, exactly today's server. */
+  allowedOrigins?: string[];
+  /** `SameSite` attribute for the session cookie set by `POST /api/v1/auth/login`
+   *  (see routes.ts). Defaults to "lax" - today's behavior. */
+  cookieSameSite?: "lax" | "none";
+  /** `Secure` attribute for the session cookie. Defaults to false - today's
+   *  behavior (required for plain-http homelab dev). */
+  cookieSecure?: boolean;
 }
 
 /** Builds the same-origin URL for a raw upgrade `req`, tolerating a malformed `Host`
@@ -105,7 +117,40 @@ export function buildServer(deps: ServerDeps): NdbrainServer {
   const app = Fastify({ logger: false, ajv: { customOptions: { coerceTypes: false } } });
   app.register(cookie);
 
+  // I1: cross-origin access for the Tauri desktop webview (origin `tauri://localhost`
+  // on macOS, `http://tauri.localhost` on Windows) - the browser/same-origin case must
+  // stay byte-identical, so this only registers @fastify/cors at all when an operator
+  // has actually configured an allowlist. With an empty list (the default), no
+  // `Access-Control-*` header is ever added to any response - CORS is fully off, not
+  // just "permissive to nothing".
+  const allowedOrigins = deps.allowedOrigins ?? [];
+  const corsEnabled = allowedOrigins.length > 0;
+  if (corsEnabled) {
+    app.register(cors, {
+      // Echo back ONLY origins present in the allowlist - never `*` (see below,
+      // `credentials: true` combined with a wildcard origin is an unsafe CORS
+      // config browsers themselves refuse to honor for credentialed requests).
+      origin: (origin, cb) => {
+        if (origin && allowedOrigins.includes(origin)) return cb(null, true);
+        return cb(null, false);
+      },
+      // Safe here specifically because it's paired with the allowlist-only origin
+      // check above, never with `origin: "*"` or `origin: true`.
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization"],
+    });
+  }
+
   app.addHook("onRequest", async (req, reply) => {
+    // A CORS preflight never carries the session cookie or an Authorization header
+    // (browsers deliberately send OPTIONS preflights without credentials), so gating
+    // it on session auth would always 401 it before @fastify/cors's own wildcard
+    // OPTIONS route ever gets to answer it. Only takes effect when CORS is actually
+    // enabled: with the default empty allowlist this branch never runs, so the
+    // pre-I1 behavior (an OPTIONS request to /api/* 401s like any other unauthenticated
+    // request) is unchanged.
+    if (corsEnabled && req.method === "OPTIONS") return;
     // Parse pathname once: req.url includes the query string, so split on '?' first.
     // Decode it too (once - do NOT loop-decode): find-my-way (the router) matches routes
     // against the DECODED path, so a raw comparison here would disagree with the router
