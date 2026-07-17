@@ -9,6 +9,14 @@ export interface ServerUrlViewProps {
    *  login flow, which will now target the configured server (see
    *  `api/base-url.ts#getApiBaseUrl`). */
   onConnected?: () => void;
+  /** Called when the user opts out of connecting to a server entirely and
+   *  wants to use local notes only. Omitted (rather than defaulting to a
+   *  no-op) hides the button altogether, same convention as
+   *  `AppShellProps.onLocalClick` - a caller that doesn't offer local-only
+   *  mode (there is none today, but tests exercise this) sees the form
+   *  unchanged. The parent owns persisting the choice (`local/localOnlyMode`)
+   *  and transitioning away from this view. */
+  onUseLocalOnly?: () => void;
   /** Injectable for tests; defaults to the global `fetch`. */
   fetchImpl?: typeof fetch;
 }
@@ -51,7 +59,7 @@ function normalizeServerUrl(raw: string): string {
  *  is already configured. Both checks are re-evaluated on every render (not
  *  just at mount) so the form disappears the instant `setServerUrl` persists
  *  a value, with no separate "connected" flag needed from the parent. */
-export function ServerUrlView({ onConnected, fetchImpl = fetch }: ServerUrlViewProps) {
+export function ServerUrlView({ onConnected, onUseLocalOnly, fetchImpl = fetch }: ServerUrlViewProps) {
   const inputId = useId();
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +125,12 @@ export function ServerUrlView({ onConnected, fetchImpl = fetch }: ServerUrlViewP
         <button type="submit" className={styles.submit} disabled={connecting}>
           {connecting ? "Connecting…" : "Connect"}
         </button>
+
+        {onUseLocalOnly && (
+          <button type="button" className={styles.localOnly} onClick={() => onUseLocalOnly()}>
+            Use local notes only (no server)
+          </button>
+        )}
       </form>
     </div>
   );

@@ -2,8 +2,10 @@ import { useState } from "react";
 import { AuthProvider, useAuth } from "./auth/useAuth";
 import { LoginView } from "./auth/LoginView";
 import { AppRoot } from "./shell/AppRoot";
+import { LocalOnlyShell } from "./shell/LocalOnlyShell";
 import { ServerUrlView } from "./settings/ServerUrlView";
 import { getServerUrl } from "./api/base-url";
+import { isLocalOnly, setLocalOnly } from "./local/localOnlyMode";
 import { isTauri } from "./platform/tauri";
 
 function Gate() {
@@ -44,20 +46,51 @@ function AuthedShell() {
  *  change, byte-identical to the pre-Task-5 `App.tsx` (see `App.test.tsx`,
  *  unmodified and still green).
  *
- *  In the Tauri desktop shell before a server url has been configured
- *  (`getServerUrl() === null`), it renders `<ServerUrlView>` INSTEAD of
- *  `<AuthedShell>` - critically, `<AuthProvider>` is not mounted at all yet,
- *  so its session-probe effect never fires against an empty base url. Once
- *  `ServerUrlView` calls `onConnected` (a server url has been validated and
- *  persisted via `setServerUrl`), a local counter bump forces this component
- *  to re-render; `getServerUrl()` is now non-null, so it swaps in
- *  `<AuthedShell>`, which starts the normal login flow against the now
- *  configured server. */
+ *  In the Tauri desktop shell, two gates run before `<AuthedShell>`, both of
+ *  which - critically - keep `<AuthProvider>` unmounted so its session-probe
+ *  effect can never fire against an empty/wrong base url:
+ *
+ *  1. Local-only mode (`isLocalOnly()`, see `local/localOnlyMode.ts`) renders
+ *     `<LocalOnlyShell>` instead of anything server-related at all. This is
+ *     checked FIRST so a user who already opted into local-only skips the
+ *     server url screen entirely on every subsequent launch.
+ *  2. Otherwise, before a server url has been configured (`getServerUrl() ===
+ *     null`), it renders `<ServerUrlView>`, which now also offers a "local
+ *     notes only" escape hatch (`onUseLocalOnly`) alongside the normal
+ *     `onConnected` path.
+ *
+ *  Both `ServerUrlView`'s `onConnected` and `onUseLocalOnly`, and
+ *  `LocalOnlyShell`'s `onConnectServer`, funnel through the same local counter
+ *  bump to force this component to re-render after persisting their choice
+ *  (`setServerUrl`/`setLocalOnly`), so the gate above picks the next branch
+ *  immediately without a full remount. */
 function App() {
   const [, forceRerender] = useState(0);
+  const rerender = () => forceRerender((n) => n + 1);
 
-  if (isTauri() && getServerUrl() === null) {
-    return <ServerUrlView onConnected={() => forceRerender((n) => n + 1)} />;
+  if (isTauri()) {
+    if (isLocalOnly()) {
+      return (
+        <LocalOnlyShell
+          onConnectServer={() => {
+            setLocalOnly(false);
+            rerender();
+          }}
+        />
+      );
+    }
+
+    if (getServerUrl() === null) {
+      return (
+        <ServerUrlView
+          onConnected={rerender}
+          onUseLocalOnly={() => {
+            setLocalOnly(true);
+            rerender();
+          }}
+        />
+      );
+    }
   }
 
   return <AuthedShell />;

@@ -1,0 +1,91 @@
+.shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  color: var(--color-fg);
+}
+
+.header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.logo {
+  font-size: 1.1rem;
+  color: var(--color-fg-muted);
+}
+
+.brandName {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.badge {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-fg-faint);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.15rem 0.4rem;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.themeToggle {
+  font-size: 1rem;
+  line-height: 1;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+  color: var(--color-fg);
+}
+
+.themeToggle:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-2);
+}
+
+.connect {
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--color-fg-muted);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+}
+
+.connect:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-fg);
+  background: var(--color-surface-2);
+}
+
+.main {
+  flex: 1;
+  min-height: 0;
+  padding: 1.5rem;
+}

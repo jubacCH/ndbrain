@@ -131,4 +131,27 @@ describe("ServerUrlView", () => {
 
     await waitFor(() => expect(container).toBeEmptyDOMElement());
   });
+
+  it("does not render a local-only button when onUseLocalOnly is not passed", () => {
+    setTauriFlag(true);
+    render(<ServerUrlView />);
+    expect(screen.queryByRole("button", { name: /local notes only/i })).not.toBeInTheDocument();
+  });
+
+  it("renders a secondary local-only button when onUseLocalOnly is passed, and calls it on click", () => {
+    setTauriFlag(true);
+    const onUseLocalOnly = vi.fn();
+    render(<ServerUrlView onUseLocalOnly={onUseLocalOnly} />);
+
+    const localOnlyButton = screen.getByRole("button", { name: /local notes only/i });
+    expect(localOnlyButton).toBeInTheDocument();
+    // Must never fire the reachability ping - this is an explicit bypass of it.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    fireEvent.click(localOnlyButton);
+
+    expect(onUseLocalOnly).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
