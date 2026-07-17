@@ -1,11 +1,9 @@
-import { useState } from "react";
 import { AuthProvider, useAuth } from "./auth/useAuth";
 import { LoginView } from "./auth/LoginView";
 import { AppRoot } from "./shell/AppRoot";
-import { LocalOnlyShell } from "./shell/LocalOnlyShell";
-import { ServerUrlView } from "./settings/ServerUrlView";
-import { getServerUrl } from "./api/base-url";
-import { isLocalOnly, setLocalOnly } from "./local/localOnlyMode";
+import { AddSourceView } from "./sources/AddSourceView";
+import { SourcesProvider } from "./sources/SourcesProvider";
+import { useSources } from "./sources/useSources";
 import { isTauri } from "./platform/tauri";
 
 function Gate() {
@@ -26,11 +24,11 @@ function Gate() {
   return <AppRoot />;
 }
 
-/** The normal authed/unauthed app, unchanged from before Task 5 - mounts
- *  `AuthProvider`, whose first effect is a session probe (`GET /notes`)
- *  against `getApiBaseUrl()`. This must never mount before a Tauri client has
- *  a server url configured (see `App`'s doc comment below), or that probe
- *  fires against an empty base url. */
+/** The normal authed/unauthed app, unchanged from before Plan 8's source
+ *  registry - mounts `AuthProvider`, whose first effect is a session probe
+ *  (`GET /notes`) against `getApiBaseUrl()`. Wiring this up to a specific
+ *  source's own client/base-url (rather than the single global
+ *  `getApiBaseUrl()`) is a later task - see `SourcesProvider`'s doc comment. */
 function AuthedShell() {
   return (
     <AuthProvider>
@@ -39,61 +37,40 @@ function AuthedShell() {
   );
 }
 
-/** Top-level app gate.
- *
- *  In the browser (`!isTauri()`), this renders `<AuthedShell>` unconditionally,
- *  exactly as before Task 5 introduced the desktop client - zero behavior
- *  change, byte-identical to the pre-Task-5 `App.tsx` (see `App.test.tsx`,
- *  unmodified and still green).
- *
- *  In the Tauri desktop shell, two gates run before `<AuthedShell>`, both of
- *  which - critically - keep `<AuthProvider>` unmounted so its session-probe
- *  effect can never fire against an empty/wrong base url:
- *
- *  1. Local-only mode (`isLocalOnly()`, see `local/localOnlyMode.ts`) renders
- *     `<LocalOnlyShell>` instead of anything server-related at all. This is
- *     checked FIRST so a user who already opted into local-only skips the
- *     server url screen entirely on every subsequent launch.
- *  2. Otherwise, before a server url has been configured (`getServerUrl() ===
- *     null`), it renders `<ServerUrlView>`, which now also offers a "local
- *     notes only" escape hatch (`onUseLocalOnly`) alongside the normal
- *     `onConnected` path.
- *
- *  Both `ServerUrlView`'s `onConnected` and `onUseLocalOnly`, and
- *  `LocalOnlyShell`'s `onConnectServer`, funnel through the same local counter
- *  bump to force this component to re-render after persisting their choice
- *  (`setServerUrl`/`setLocalOnly`), so the gate above picks the next branch
- *  immediately without a full remount. */
-function App() {
-  const [, forceRerender] = useState(0);
-  const rerender = () => forceRerender((n) => n + 1);
+/** Tauri-only gate in front of `AuthedShell`: before any source has been
+ *  configured (`sources.length === 0`), renders `<AddSourceView>` instead,
+ *  which replaces both the old server-url-only first run screen and the
+ *  separate device-local-notes-only mode with a single "add a source"
+ *  screen offering either a server or a local folder as a first-class
+ *  source. Once at least one source exists, falls through to the
+ *  normal shell - no explicit re-render wiring needed, since `sources` is
+ *  reactive context state that already changes (and re-renders this
+ *  component) the moment `addServer`/`addFolder` succeeds. */
+function TauriGate() {
+  const { sources } = useSources();
 
-  if (isTauri()) {
-    if (isLocalOnly()) {
-      return (
-        <LocalOnlyShell
-          onConnectServer={() => {
-            setLocalOnly(false);
-            rerender();
-          }}
-        />
-      );
-    }
-
-    if (getServerUrl() === null) {
-      return (
-        <ServerUrlView
-          onConnected={rerender}
-          onUseLocalOnly={() => {
-            setLocalOnly(true);
-            rerender();
-          }}
-        />
-      );
-    }
+  if (sources.length === 0) {
+    return <AddSourceView onDone={() => {}} />;
   }
 
   return <AuthedShell />;
+}
+
+/** Top-level app gate.
+ *
+ *  In the browser (`!isTauri()`), this renders `<AuthedShell>` unconditionally
+ *  - zero behavior change from before Plan 8's source registry: the browser
+ *  always has exactly one implicit origin source (see `SourcesProvider`'s doc
+ *  comment), so `TauriGate` is never even mounted there, and `<AddSourceView>`
+ *  is therefore never rendered in the browser (see `App.test.tsx`, unmodified
+ *  and still green).
+ *
+ *  `<SourcesProvider>` wraps the whole tree unconditionally - it is a no-op
+ *  in the browser (no `localStorage` reads/writes, no extra UI beyond its own
+ *  internal session probe of the implicit origin source), so mounting it
+ *  there is safe. */
+function App() {
+  return <SourcesProvider>{isTauri() ? <TauriGate /> : <AuthedShell />}</SourcesProvider>;
 }
 
 export default App;

@@ -8,9 +8,9 @@
  *  server" action, gated behind a confirmation dialog. Everything else
  *  (listing, opening, editing, searching) never leaves the device.
  *
- *  Self-gated like `ServerUrlView`: renders nothing outside of Tauri, so
- *  mounting it unconditionally is safe — `AppRoot` additionally only mounts
- *  it behind `isTauri()` for defense in depth (see its doc comment). */
+ *  Self-gated: renders nothing outside of Tauri, so mounting it
+ *  unconditionally is safe — `AppRoot` additionally only mounts it behind
+ *  `isTauri()` for defense in depth (see its doc comment). */
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
@@ -54,8 +54,8 @@ function noteDisplayName(path: string): string {
 export type LocalNotesStoreLike = DefaultLocalNotesStoreLike;
 
 /** The folder/notes-count snapshot this view reports via `onStatusChange` —
- *  `LocalOnlyShell` renders a statusbar from it instead of re-deriving the
- *  same folder/count itself. */
+ *  a shell chrome around this view can render a statusbar from it instead of
+ *  re-deriving the same folder/count itself. */
 export interface LocalNotesStatus {
   folder: string | null;
   count: number;
@@ -72,9 +72,9 @@ export interface LocalNotesViewProps {
   /** Injectable for tests; defaults to the real, CodeMirror-backed `LocalEditor`. */
   EditorComponent?: (props: LocalEditorProps) => ReturnType<typeof LocalEditor>;
   /** Fired whenever the configured folder or its note count changes. Optional
-   *  and unused by `AppRoot`'s standalone "Local" tab — `LocalOnlyShell` is
-   *  the only caller that passes it, to drive its statusbar without this
-   *  component needing to know a statusbar exists. */
+   *  and unused by `AppRoot`'s standalone "Local" tab — a caller with a
+   *  statusbar can pass it to drive that display without this component
+   *  needing to know a statusbar exists. */
   onStatusChange?: (status: LocalNotesStatus) => void;
 }
 

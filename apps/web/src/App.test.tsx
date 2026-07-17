@@ -1,16 +1,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The local-only mode tests below render `LocalOnlyShell` -> `LocalNotesView`,
-// which is backed by the real Tauri v2 `fs`/`dialog`/`store` plugins - mock
-// them the same way `AppRoot.local.test.tsx` does, so the mount effect
-// (`getFolder()`) resolves instead of throwing against a missing IPC bridge.
-const { loadMock, invokeMock } = vi.hoisted(() => ({
+// Some Tauri-gated tests below render `AddSourceView`'s folder path (via
+// `SourcesProvider`), which is backed by the real Tauri v2
+// `fs`/`dialog`/`store` plugins - mock them the same way
+// `SourcesProvider.test.tsx` does, so folder sources can grant fs access
+// (`allow_local_notes_folder`) without a real IPC bridge.
+const { loadMock, invokeMock, openMock } = vi.hoisted(() => ({
   loadMock: vi.fn(),
   invokeMock: vi.fn(),
+  openMock: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), confirm: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openMock, confirm: vi.fn() }));
 vi.mock("@tauri-apps/plugin-fs", () => ({
   mkdir: vi.fn(),
   readDir: vi.fn(),
@@ -25,8 +27,6 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import App from "./App";
-import { getServerUrl } from "./api/base-url";
-import { isLocalOnly, setLocalOnly } from "./local/localOnlyMode";
 
 function setTauriFlag(value: boolean | undefined) {
   if (value === undefined) {
@@ -75,7 +75,7 @@ describe("App", () => {
   });
 });
 
-describe("App in Tauri without a configured server url", () => {
+describe("App in Tauri with no configured sources", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -88,96 +88,80 @@ describe("App in Tauri without a configured server url", () => {
     vi.unstubAllGlobals();
     setTauriFlag(undefined);
     localStorage.clear();
+    vi.clearAllMocks();
   });
 
-  it("shows the server url form instead of mounting AuthProvider, so the session probe never fires against an empty base url", async () => {
+  it("shows AddSourceView instead of mounting AuthProvider, so the session probe never fires against an empty base url", async () => {
     render(<App />);
 
-    expect(await screen.findByLabelText(/server url/i)).toBeInTheDocument();
+    expect(await screen.findByText(/add a source/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /sign in/i })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("switches to the normal login flow once a server url is connected", async () => {
+  it("adding a server switches to the normal login flow once addServer succeeds", async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url.startsWith("https://brain.example.com")) {
-        return Promise.resolve(new Response(null, { status: 401 }));
+      if (url.includes("/auth/login")) {
+        return Promise.resolve(jsonResponse(200, { token: "tok" }));
       }
-      return Promise.resolve(
-        new Response(JSON.stringify({ error: { code: "unauthorized", message: "login required" } }), {
-          status: 401,
-          headers: { "content-type": "application/json" },
-        }),
-      );
+      return Promise.resolve(jsonResponse(401, { error: { code: "unauthorized", message: "login required" } }));
     });
     render(<App />);
+    await screen.findByText(/add a source/i);
 
-    fireEvent.change(await screen.findByLabelText(/server url/i), {
-      target: { value: "https://brain.example.com" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /connect/i }));
+    fireEvent.change(screen.getByLabelText(/label/i), { target: { value: "My Server" } });
+    fireEvent.change(screen.getByLabelText(/url/i), { target: { value: "https://brain.example.com" } });
+    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: "alice" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: /add server/i }));
 
     expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
-    expect(getServerUrl()).toBe("https://brain.example.com");
   });
 
-  it("offers a local-only option that switches to LocalOnlyShell without ever calling fetch, and persists across a remount", async () => {
-    loadMock.mockResolvedValue({ get: vi.fn(async () => undefined), set: vi.fn(), save: vi.fn() });
-    const { unmount } = render(<App />);
-
-    fireEvent.click(await screen.findByRole("button", { name: /local notes only/i }));
-
-    expect(await screen.findByText(/local only/i)).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /choose folder/i })).toBeInTheDocument();
-    expect(screen.queryByLabelText(/server url/i)).not.toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(isLocalOnly()).toBe(true);
-
-    unmount();
+  it("shows an inline error and stays on AddSourceView when the login fails, leaving the registry untouched", async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(jsonResponse(401, { error: { code: "bad_credentials", message: "invalid credentials" } })),
+    );
     render(<App />);
-    expect(await screen.findByRole("button", { name: /choose folder/i })).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-});
+    await screen.findByText(/add a source/i);
 
-describe("App in Tauri with local-only mode already enabled", () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+    fireEvent.change(screen.getByLabelText(/label/i), { target: { value: "My Server" } });
+    fireEvent.change(screen.getByLabelText(/url/i), { target: { value: "https://brain.example.com" } });
+    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: "alice" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "wrong" } });
+    fireEvent.click(screen.getByRole("button", { name: /add server/i }));
 
-  beforeEach(() => {
-    fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    setTauriFlag(true);
-    setLocalOnly(true);
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText(/add a source/i)).toBeInTheDocument();
+    expect(localStorage.getItem("ndbrain.sources")).toBeNull();
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    setTauriFlag(undefined);
-    localStorage.clear();
-  });
-
-  it("renders LocalOnlyShell directly, skipping the server url screen, without mounting AuthProvider", async () => {
-    loadMock.mockResolvedValue({ get: vi.fn(async () => undefined), set: vi.fn(), save: vi.fn() });
+  it("adding a folder switches to the normal login flow once addFolder succeeds", async () => {
+    openMock.mockResolvedValue("/Users/x/notes");
+    invokeMock.mockResolvedValue(undefined);
+    fetchMock.mockResolvedValue(jsonResponse(401, { error: { code: "unauthorized", message: "login required" } }));
     render(<App />);
+    await screen.findByText(/add a source/i);
 
-    expect(await screen.findByRole("button", { name: /choose folder/i })).toBeInTheDocument();
-    expect(screen.queryByLabelText(/server url/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /sign in/i })).not.toBeInTheDocument();
-    // No session-probe fetch (AuthProvider never mounted) and no reachability
-    // ping (ServerUrlView never mounted either).
-    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("tab", { name: /folder/i }));
+    fireEvent.click(screen.getByRole("button", { name: /choose folder/i }));
+    await screen.findByLabelText(/label/i);
+    fireEvent.click(screen.getByRole("button", { name: /add folder/i }));
+
+    expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
   });
 
-  it('"Connect to a server…" clears the flag and returns to the normal server url screen', async () => {
-    loadMock.mockResolvedValue({ get: vi.fn(async () => undefined), set: vi.fn(), save: vi.fn() });
+  it("does nothing when the folder dialog is cancelled", async () => {
+    openMock.mockResolvedValue(null);
     render(<App />);
-    await screen.findByRole("button", { name: /choose folder/i });
+    await screen.findByText(/add a source/i);
 
-    fireEvent.click(screen.getByRole("button", { name: /connect to a server/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /folder/i }));
+    fireEvent.click(screen.getByRole("button", { name: /choose folder/i }));
 
-    expect(await screen.findByLabelText(/server url/i)).toBeInTheDocument();
-    expect(isLocalOnly()).toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(openMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByLabelText(/label/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/add a source/i)).toBeInTheDocument();
   });
 });

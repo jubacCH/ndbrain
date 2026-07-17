@@ -1,11 +1,10 @@
-/** Shared sun/moon glyph for the theme-toggle button, rendered by both
- *  `AppShell`'s sidebar footer and `LocalOnlyShell`'s header actions so the
- *  two shells' toggle looks identical instead of one carrying emoji
- *  (🌙/☀️) and the other hand-drawn SVG paths.
+/** Shared sun/moon glyph for the theme-toggle button, so every shell's toggle
+ *  looks identical instead of each one carrying its own emoji (🌙/☀️) or
+ *  hand-drawn SVG paths.
  *
  *  Purely presentational — the toggle's `aria-label` (what
- *  `AppShell.test.tsx`/`LocalOnlyShell.test.tsx` actually assert against)
- *  stays owned by each button, not this icon. */
+ *  `AppShell.test.tsx` actually asserts against) stays owned by each button,
+ *  not this icon. */
 
 import type { ThemeKind } from "../theme/themes";
 

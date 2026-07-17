@@ -76,8 +76,13 @@ function assertPath(path: string): void {
 /** Validates and normalizes a server URL: must be a parseable `http:`/
  *  `https:` URL; the trailing slash is stripped so `"https://x.dev/"` and
  *  `"https://x.dev"` end up identical. Throws on anything else (unparseable
- *  strings, other protocols like `ftp:`). */
-function normalizeUrl(rawUrl: string): string {
+ *  strings, other protocols like `ftp:`).
+ *
+ *  Exported so `SourcesProvider` can apply the exact same validation before
+ *  attempting a login — it must be able to construct the `ApiClient` and
+ *  validate the URL *before* deciding whether to persist anything via
+ *  `addServerSource`, which applies this same normalization internally. */
+export function normalizeServerUrl(rawUrl: string): string {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -102,7 +107,7 @@ export function listSources(): SourceDef[] {
  *  `http:`/`https:` URL. */
 export function addServerSource(label: string, url: string): SourceDef {
   assertLabel(label);
-  const normalizedUrl = normalizeUrl(url);
+  const normalizedUrl = normalizeServerUrl(url);
 
   const state = readState();
   const source: SourceDef = { id: `s${state.nextId}`, kind: "server", label, url: normalizedUrl };

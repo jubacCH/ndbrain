@@ -1,7 +1,8 @@
-/** Shared ndBrain ring mark: two overlapping ring outlines, used by both
- *  `AppShell`'s sidebar brand row and `LocalOnlyShell`'s header brand row so
- *  the two shells render the exact same logo instead of each carrying its
- *  own copy of the SVG (one of them used to fall back to a plain "◆" glyph).
+/** Shared ndBrain ring mark: two overlapping ring outlines, used across the
+ *  app's various brand rows (`AppShell`'s sidebar, `AddSourceView`'s header,
+ *  ...) so every screen renders the exact same logo instead of each carrying
+ *  its own copy of the SVG (one of them used to fall back to a plain "◆"
+ *  glyph).
  *
  *  Ring stroke colors are deliberately left to the caller via
  *  `ring1ClassName`/`ring2ClassName` (each shell's own CSS module) rather

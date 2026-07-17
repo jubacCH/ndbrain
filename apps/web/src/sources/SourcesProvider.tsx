@@ -27,30 +27,18 @@ import { createContext, useCallback, useEffect, useMemo, useRef, useState, type 
 import { createApiClient, UnauthorizedError, type ApiClient } from "../api/client";
 import { LocalNotesStore } from "../local/localStore";
 import { isTauri } from "../platform/tauri";
-import { addFolderSource, addServerSource, listSources, removeSource, renameSource } from "./registry";
+import {
+  addFolderSource,
+  addServerSource,
+  listSources,
+  normalizeServerUrl,
+  removeSource,
+  renameSource,
+} from "./registry";
 import type { SourceDef, SourceRuntime, SourceState } from "./types";
 
 /** The single implicit source used in the browser - see the module doc. */
 const ORIGIN_SOURCE: SourceDef = { id: "origin", kind: "server", label: "Server", url: "" };
-
-/** Validates and normalizes a server URL the same way `registry.ts`'s
- *  (private) `normalizeUrl` does. Duplicated rather than imported: this
- *  provider must be able to construct the `ApiClient` and attempt a login
- *  *before* deciding whether to persist anything via `addServerSource`, so
- *  it needs its own copy of the same validation `addServerSource` applies
- *  internally. Throws on an unparseable URL or a non-http(s) protocol. */
-function normalizeUrl(rawUrl: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error(`Invalid server URL: "${rawUrl}"`);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`Server URL must use http or https: "${rawUrl}"`);
-  }
-  return parsed.toString().replace(/\/$/, "");
-}
 
 function buildRuntime(def: SourceDef): SourceRuntime {
   if (def.kind === "folder") {
@@ -148,7 +136,7 @@ export function SourcesProvider({ children }: { children: ReactNode }) {
   const addServer = useCallback(
     async (label: string, url: string, username: string, password: string): Promise<void> => {
       if (!isTauri()) return;
-      const normalizedUrl = normalizeUrl(url);
+      const normalizedUrl = normalizeServerUrl(url);
       const client = createApiClient(normalizedUrl);
       // Only on a successful login do we persist anything - a bad password
       // must leave the registry (and the runtime list) untouched.

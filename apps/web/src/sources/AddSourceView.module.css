@@ -9,7 +9,7 @@
 
 .card {
   width: 100%;
-  max-width: 22rem;
+  max-width: 24rem;
   display: flex;
   flex-direction: column;
   gap: 1.1rem;
@@ -18,17 +18,84 @@
   background: none;
 }
 
-.brand {
+.brandRow {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.logo {
+  flex-shrink: 0;
+}
+
+.logoRing1 {
+  stroke: var(--color-fg);
+}
+
+.logoRing2 {
+  stroke: var(--color-fg-faint);
+}
+
+.brandName {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-size: 0.95rem;
+  color: var(--color-fg);
+}
+
+.title {
   margin: 0;
   font-size: 1.4rem;
   font-weight: 650;
   letter-spacing: -0.02em;
+  color: var(--color-fg);
 }
 
 .subtitle {
   margin: -0.7rem 0 0;
   font-size: 0.85rem;
   color: var(--color-fg-muted);
+}
+
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab,
+.tabActive {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 0.5rem 0.15rem 0.6rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  cursor: pointer;
+}
+
+.tab {
+  color: var(--color-fg-faint);
+}
+
+.tab:hover {
+  color: var(--color-fg-muted);
+}
+
+.tabActive {
+  color: var(--color-fg);
+  border-bottom-color: var(--color-accent);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
 }
 
 .field {
@@ -63,6 +130,16 @@
   background: color-mix(in srgb, var(--color-accent) 6%, transparent);
 }
 
+.folderPath {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--color-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .error {
   margin: 0;
   font-size: 0.85rem;
@@ -89,19 +166,18 @@
   cursor: default;
 }
 
-.localOnly {
+.chooseFolder {
   font: inherit;
-  font-size: 0.8rem;
-  padding: 0.5rem;
+  font-size: 0.85rem;
+  padding: 0.6rem;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: none;
-  color: var(--color-fg-muted);
+  color: var(--color-fg);
   cursor: pointer;
 }
 
-.localOnly:hover {
+.chooseFolder:hover {
   border-color: var(--color-border-strong);
-  color: var(--color-fg);
   background: var(--color-surface-2);
 }
