@@ -6,6 +6,9 @@
  *  still keeping folder sources fully offline - see the plan's isolation
  *  guarantee: a folder source must never trigger a network call. */
 
+import type { ApiClient } from "../api/client";
+import type { LocalNotesStore } from "../local/localStore";
+
 export type SourceKind = "server" | "folder";
 
 export interface SourceDef {
@@ -21,3 +24,28 @@ export interface SourceDef {
    *  folder this source reads/writes. */
   path?: string;
 }
+
+/** Runtime connection state of a single source, independent of every other
+ *  source (see `SourcesProvider`'s auth-isolation guarantee).
+ *
+ *  - `"connecting"`: the initial session probe (or a `retry()`) is in flight.
+ *  - `"connected"`: the last probe/login succeeded.
+ *  - `"needs-login"`: the server replied 401 (no/expired session) - only
+ *    reachable for `kind: "server"` sources.
+ *  - `"unreachable"`: the probe failed for any other reason (network error,
+ *    DNS failure, TLS error, ...).
+ *
+ *  Folder sources never leave `"connected"` - they have no network path to
+ *  fail on (see the plan's isolation guarantee). */
+export type SourceState = "connecting" | "connected" | "needs-login" | "unreachable";
+
+/** A `SourceDef` paired with its live runtime state and the object that
+ *  actually talks to it: an `ApiClient` bound to this source's server URL,
+ *  or a `LocalNotesStore` bound to this source's folder path. Built and
+ *  owned by `SourcesProvider` - one instance per source, never shared across
+ *  sources, so each source's auth/network state and connection object are
+ *  fully independent of every other source's. */
+export type SourceRuntime = { def: SourceDef; state: SourceState } & (
+  | { kind: "server"; client: ApiClient }
+  | { kind: "folder"; store: LocalNotesStore }
+);
