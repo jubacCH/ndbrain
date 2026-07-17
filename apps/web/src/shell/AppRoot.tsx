@@ -1,18 +1,24 @@
 /** Assembles the authed app experience out of the standalone pieces Tasks 5-9
- *  built: `NoteTree` in the sidebar, the collaborative `Editor` (or `Settings`)
+ *  and Plan 8 built: a `SourceSection` per registered source in the sidebar
+ *  (Task 6's unified sidebar — one section per source, never two separate
+ *  UIs for "local" vs "server"), the collaborative `Editor` (or `Settings`)
  *  in the main slot, a tabbed Backlinks/Graph/History `RightPanel`, and the
  *  global Cmd/Ctrl-K search palette. This is the final wiring point Task 10
  *  exists for — everything here is glue over the stable `AppShell`/`AppState`
- *  contracts, not a new one. */
+ *  contracts, not a new one.
+ *
+ *  The standalone "Local" nav button/panel (Task 5's `<LocalNotesView>`) is
+ *  gone: a folder source's notes now show inline as their own sidebar
+ *  section, side by side with every server section, so there is no separate
+ *  place left for it to open. */
 
 import { useEffect, useState } from "react";
 import { useAuth } from "../auth/useAuth";
 import { Editor } from "../editor/Editor";
-import { LocalNotesView } from "../local/LocalNotesView";
-import { NoteTree } from "../notes/NoteTree";
-import { isTauri } from "../platform/tauri";
+import { SourceSection } from "../notes/SourceSection";
 import { SearchPalette } from "../search/SearchPalette";
 import { useSearchPalette } from "../search/useSearchPalette";
+import { useSources } from "../sources/useSources";
 import { AppShell } from "./AppShell";
 import { AppStateProvider, useAppState } from "./AppState";
 import { RightPanel } from "./RightPanel";
@@ -26,40 +32,21 @@ interface MainContentProps {
    *  rather than unmounting on close, once it's been opened at all. */
   settingsEverOpened: boolean;
   onCloseSettings: () => void;
-  /** Tauri-only local-notes area (Task 5) — same open/everOpened/mount-once
-   *  pattern as Settings above. Both `localOpen`/`localEverOpened` stay false
-   *  forever in the browser (nothing can flip them: `AppShell`'s "Local" nav
-   *  button, the only trigger, is never rendered there — see `AuthedApp`
-   *  below), so `<LocalNotesView>` is never mounted in the browser build. */
-  localOpen: boolean;
-  localEverOpened: boolean;
 }
 
-function MainContent({
-  settingsOpen,
-  settingsEverOpened,
-  onCloseSettings,
-  localOpen,
-  localEverOpened,
-}: MainContentProps) {
-  const { selectedPath } = useAppState();
+function MainContent({ settingsOpen, settingsEverOpened, onCloseSettings }: MainContentProps) {
+  const { selection } = useAppState();
   const { token } = useAuth();
 
   return (
     <div className={styles.mainStack}>
-      {!settingsOpen && !localOpen && (
+      {!settingsOpen && (
         <div className={styles.mainSlot}>
-          {selectedPath ? (
-            <Editor path={selectedPath} token={token} key={selectedPath} />
+          {selection ? (
+            <Editor path={selection.path} token={token} key={`${selection.sourceId}:${selection.path}`} />
           ) : (
             <p className={styles.placeholder}>Select a note to start editing.</p>
           )}
-        </div>
-      )}
-
-      {localEverOpened && (
-        <div className={localOpen ? styles.mainSlot : styles.hidden}>
-          <LocalNotesView />
         </div>
       )}
 
@@ -72,61 +59,62 @@ function MainContent({
   );
 }
 
+/** The sidebar: one `SourceSection` per registered source, in registry order
+ *  (`useSources()` already returns them that way — see `SourcesProvider`).
+ *  `showHeader` is false only when there is exactly one source, i.e. the
+ *  plain browser build's single implicit "origin" source — that is the hard
+ *  no-regression requirement: a lone source must never grow a redundant
+ *  "SERVER" header nobody asked for. */
+function Sidebar() {
+  const { sources } = useSources();
+  const { selection, setSelection } = useAppState();
+  const showHeader = sources.length > 1;
+
+  return (
+    <div className={styles.sidebar}>
+      {sources.map((runtime) => (
+        <SourceSection
+          key={runtime.def.id}
+          runtime={runtime}
+          selection={selection}
+          onSelect={setSelection}
+          showHeader={showHeader}
+        />
+      ))}
+    </div>
+  );
+}
+
 function AuthedApp() {
   const { username, logout } = useAuth();
   const { open, openPalette, closePalette } = useSearchPalette();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsEverOpened, setSettingsEverOpened] = useState(false);
-  const [localOpen, setLocalOpen] = useState(false);
-  const [localEverOpened, setLocalEverOpened] = useState(false);
 
   useEffect(() => {
     if (settingsOpen) setSettingsEverOpened(true);
   }, [settingsOpen]);
 
-  useEffect(() => {
-    if (localOpen) setLocalEverOpened(true);
-  }, [localOpen]);
-
   function toggleSettings() {
-    setSettingsOpen((wasOpen) => {
-      const next = !wasOpen;
-      if (next) setLocalOpen(false);
-      return next;
-    });
-  }
-
-  function toggleLocal() {
-    setLocalOpen((wasOpen) => {
-      const next = !wasOpen;
-      if (next) setSettingsOpen(false);
-      return next;
-    });
+    setSettingsOpen((wasOpen) => !wasOpen);
   }
 
   return (
     <>
       <AppShell
-        sidebar={<NoteTree />}
+        sidebar={<Sidebar />}
         main={
           <MainContent
             settingsOpen={settingsOpen}
             settingsEverOpened={settingsEverOpened}
             onCloseSettings={() => setSettingsOpen(false)}
-            localOpen={localOpen}
-            localEverOpened={localEverOpened}
           />
         }
-        rightPanel={settingsOpen || localOpen ? undefined : <RightPanel />}
+        rightPanel={settingsOpen ? undefined : <RightPanel />}
         username={username}
         onLogout={() => void logout()}
         onSearchClick={openPalette}
         onSettingsClick={toggleSettings}
-        // Only handed to `AppShell` at all when running in Tauri — see
-        // `AppShellProps.onLocalClick`'s doc comment: omitting the prop (vs.
-        // passing a no-op) is what hides the "Local" nav button entirely in
-        // the browser build.
-        onLocalClick={isTauri() ? toggleLocal : undefined}
       />
 
       <SearchPalette open={open} onClose={closePalette} />
@@ -136,7 +124,7 @@ function AuthedApp() {
 
 /** Public entry point Task 10's `App.tsx` renders once `useAuth()` reports an
  *  authenticated session. Owns `AppStateProvider` itself so everything under it
- *  (sidebar, editor, right panel, search palette) shares one `selectedPath`
+ *  (sidebar, editor, right panel, search palette) shares one `selection`
  *  without `App.tsx` needing to know that wiring exists. */
 export function AppRoot() {
   return (

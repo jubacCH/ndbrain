@@ -1,6 +1,12 @@
 /** Read-only git history view for the currently selected note. Fetches
  *  `GET /history/*` and lists commits (message, author, relative date).
  *
+ *  History (like backlinks) only exists for `server` sources — the vault's
+ *  git history has no equivalent for a plain `folder` source, so this never
+ *  calls a client for one (there isn't one) and shows a quiet notice instead.
+ *  Uses the *selected source's own* client (via `useSources()`), never a
+ *  global singleton — see `BacklinksPanel`'s identical rationale.
+ *
  *  Restore is intentionally NOT implemented yet: the current REST surface
  *  (`ApiClient`) has no way to fetch a note's content as of a specific past
  *  commit — `history()` only returns commit metadata (hash/message/author/date),
@@ -14,31 +20,24 @@
  *  that does the read+write server-side in one step). */
 
 import { useEffect, useState } from "react";
-import { apiClient, type HistoryEntry } from "../api/client";
+import type { HistoryEntry } from "../api/client";
 import { useAppState } from "../shell/AppState";
+import { useSources } from "../sources/useSources";
 import { formatDate } from "./formatDate";
 import styles from "./HistoryView.module.css";
-
-/** Structural subset of `ApiClient` this component needs — lets tests inject a
- *  fake without constructing a real client (same pattern as `NoteTreeClient`). */
-export interface HistoryClient {
-  history(path: string): Promise<HistoryEntry[]>;
-}
-
-export interface HistoryViewProps {
-  client?: HistoryClient;
-}
 
 const RESTORE_UNAVAILABLE_REASON =
   "Restore is not yet supported — needs a server endpoint to fetch note content by commit hash.";
 
-export function HistoryView({ client = apiClient }: HistoryViewProps = {}) {
-  const { selectedPath } = useAppState();
+export function HistoryView() {
+  const { selection } = useAppState();
+  const { sources } = useSources();
+  const runtime = selection ? sources.find((s) => s.def.id === selection.sourceId) : undefined;
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (selectedPath === null) {
+    if (!selection || !runtime || runtime.kind !== "server") {
       setEntries(null);
       setError(null);
       return;
@@ -48,8 +47,8 @@ export function HistoryView({ client = apiClient }: HistoryViewProps = {}) {
     setEntries(null);
     setError(null);
 
-    client
-      .history(selectedPath)
+    runtime.client
+      .history(selection.path)
       .then((result) => {
         if (cancelled) return;
         setEntries(result);
@@ -63,15 +62,19 @@ export function HistoryView({ client = apiClient }: HistoryViewProps = {}) {
     return () => {
       cancelled = true;
     };
-  }, [client, selectedPath]);
+  }, [selection, runtime]);
+
+  const isFolderSelection = selection !== null && runtime?.kind === "folder";
 
   return (
     <section className={styles.view} aria-label="History">
       <h2 className={styles.heading}>History</h2>
 
-      {selectedPath === null && <p className={styles.status}>No note selected.</p>}
+      {selection === null && <p className={styles.status}>No note selected.</p>}
 
-      {selectedPath !== null && entries === null && !error && (
+      {isFolderSelection && <p className={styles.status}>Not available for local notes.</p>}
+
+      {selection !== null && !isFolderSelection && entries === null && !error && (
         <p className={styles.status}>Loading history…</p>
       )}
 
@@ -81,7 +84,7 @@ export function HistoryView({ client = apiClient }: HistoryViewProps = {}) {
         </p>
       )}
 
-      {selectedPath !== null && entries !== null && !error && entries.length === 0 && (
+      {selection !== null && !isFolderSelection && entries !== null && !error && entries.length === 0 && (
         <p className={styles.status}>No history yet.</p>
       )}
 

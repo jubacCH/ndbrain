@@ -12,8 +12,8 @@ const HIT_B: SearchHit = { path: "notes/b.md", title: null, snippet: "plain snip
 const TEST_DEBOUNCE_MS = 15;
 
 function SelectedPathProbe() {
-  const { selectedPath } = useAppState();
-  return <div data-testid="selected-path">{selectedPath ?? "none"}</div>;
+  const { selection } = useAppState();
+  return <div data-testid="selected-path">{selection?.path ?? "none"}</div>;
 }
 
 function renderPalette(

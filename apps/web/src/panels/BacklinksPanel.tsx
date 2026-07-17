@@ -1,30 +1,28 @@
 /** Sidebar/inspector panel that lists notes linking to the currently selected
- *  note ("backlinks"). Fetches `GET /backlinks/*` for `useAppState().selectedPath`
+ *  note ("backlinks"). Fetches `GET /backlinks/*` for `useAppState().selection`
  *  and refetches whenever the selection changes; clicking a backlink navigates
- *  there via `setSelectedPath` — the same decoupled pattern as `NoteTree`. */
+ *  there via `setSelection` — the same decoupled pattern as `NoteTree`/`SourceSection`.
+ *
+ *  Backlinks only exist for `server` sources (the vault's git-backed link
+ *  index) — a `folder` source has no such index, so this never calls its
+ *  client (there isn't one) and shows a quiet notice instead. The client used
+ *  is the *selected source's own* (via `useSources()`), not a global
+ *  singleton, so backlinks are always looked up against the right server. */
 
 import { useEffect, useState } from "react";
-import { apiClient } from "../api/client";
 import { useAppState } from "../shell/AppState";
+import { useSources } from "../sources/useSources";
 import styles from "./BacklinksPanel.module.css";
 
-/** Structural subset of `ApiClient` this component needs — lets tests inject a
- *  fake without constructing a real client (same pattern as `NoteTreeClient`). */
-export interface BacklinksClient {
-  backlinks(path: string): Promise<string[]>;
-}
-
-export interface BacklinksPanelProps {
-  client?: BacklinksClient;
-}
-
-export function BacklinksPanel({ client = apiClient }: BacklinksPanelProps = {}) {
-  const { selectedPath, setSelectedPath } = useAppState();
+export function BacklinksPanel() {
+  const { selection, setSelection } = useAppState();
+  const { sources } = useSources();
+  const runtime = selection ? sources.find((s) => s.def.id === selection.sourceId) : undefined;
   const [backlinks, setBacklinks] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (selectedPath === null) {
+    if (!selection || !runtime || runtime.kind !== "server") {
       setBacklinks(null);
       setError(null);
       return;
@@ -34,8 +32,8 @@ export function BacklinksPanel({ client = apiClient }: BacklinksPanelProps = {})
     setBacklinks(null);
     setError(null);
 
-    client
-      .backlinks(selectedPath)
+    runtime.client
+      .backlinks(selection.path)
       .then((result) => {
         if (cancelled) return;
         setBacklinks(result);
@@ -49,15 +47,19 @@ export function BacklinksPanel({ client = apiClient }: BacklinksPanelProps = {})
     return () => {
       cancelled = true;
     };
-  }, [client, selectedPath]);
+  }, [selection, runtime]);
+
+  const isFolderSelection = selection !== null && runtime?.kind === "folder";
 
   return (
     <section className={styles.panel} aria-label="Backlinks">
       <h2 className={styles.heading}>Backlinks</h2>
 
-      {selectedPath === null && <p className={styles.status}>No note selected.</p>}
+      {selection === null && <p className={styles.status}>No note selected.</p>}
 
-      {selectedPath !== null && backlinks === null && !error && (
+      {isFolderSelection && <p className={styles.status}>Not available for local notes.</p>}
+
+      {selection !== null && !isFolderSelection && backlinks === null && !error && (
         <p className={styles.status}>Loading backlinks…</p>
       )}
 
@@ -67,7 +69,7 @@ export function BacklinksPanel({ client = apiClient }: BacklinksPanelProps = {})
         </p>
       )}
 
-      {selectedPath !== null && backlinks !== null && !error && backlinks.length === 0 && (
+      {selection !== null && !isFolderSelection && backlinks !== null && !error && backlinks.length === 0 && (
         <p className={styles.status}>No backlinks.</p>
       )}
 
@@ -75,7 +77,11 @@ export function BacklinksPanel({ client = apiClient }: BacklinksPanelProps = {})
         <ul className={styles.list}>
           {backlinks.map((path) => (
             <li key={path}>
-              <button type="button" className={styles.item} onClick={() => setSelectedPath(path)}>
+              <button
+                type="button"
+                className={styles.item}
+                onClick={() => setSelection({ sourceId: selection!.sourceId, path })}
+              >
                 {path}
               </button>
             </li>

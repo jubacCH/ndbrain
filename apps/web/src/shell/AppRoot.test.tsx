@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../auth/useAuth";
+import { SourcesProvider } from "../sources/SourcesProvider";
 import { AppRoot } from "./AppRoot";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -42,9 +43,11 @@ describe("AppRoot", () => {
   it("opens the search palette from the shell button, via Cmd-K, and closes it on Escape", async () => {
     vi.stubGlobal("fetch", routedFetch());
     render(
-      <AuthProvider>
-        <AppRoot />
-      </AuthProvider>,
+      <SourcesProvider>
+        <AuthProvider>
+          <AppRoot />
+        </AuthProvider>
+      </SourcesProvider>,
     );
     await screen.findByText("ndBrain");
 
@@ -61,9 +64,11 @@ describe("AppRoot", () => {
   it("shows a tabbed Backlinks/Graph/History right panel and switches between them", async () => {
     vi.stubGlobal("fetch", routedFetch());
     render(
-      <AuthProvider>
-        <AppRoot />
-      </AuthProvider>,
+      <SourcesProvider>
+        <AuthProvider>
+          <AppRoot />
+        </AuthProvider>
+      </SourcesProvider>,
     );
     await screen.findByText("ndBrain");
 
@@ -80,9 +85,11 @@ describe("AppRoot", () => {
   it("toggles a Settings area (Keys/Audit tabs) from the shell nav, and clears a shown key secret on close", async () => {
     vi.stubGlobal("fetch", routedFetch());
     render(
-      <AuthProvider>
-        <AppRoot />
-      </AuthProvider>,
+      <SourcesProvider>
+        <AuthProvider>
+          <AppRoot />
+        </AuthProvider>
+      </SourcesProvider>,
     );
     await screen.findByText("ndBrain");
 
@@ -109,9 +116,11 @@ describe("AppRoot", () => {
   it("shows the placeholder in the main slot until a note is selected", async () => {
     vi.stubGlobal("fetch", routedFetch());
     render(
-      <AuthProvider>
-        <AppRoot />
-      </AuthProvider>,
+      <SourcesProvider>
+        <AuthProvider>
+          <AppRoot />
+        </AuthProvider>
+      </SourcesProvider>,
     );
     await screen.findByText("ndBrain");
     expect(screen.getByText("Select a note to start editing.")).toBeInTheDocument();

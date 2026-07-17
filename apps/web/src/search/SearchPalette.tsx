@@ -26,8 +26,14 @@ export interface SearchPaletteProps {
 
 const DEFAULT_DEBOUNCE_MS = 200;
 
+/** Fallback source id used when jumping to a search hit with no prior
+ *  selection to inherit a source from — see `GraphView`'s identical constant
+ *  for the full rationale (this component has the same not-yet-source-aware
+ *  gap, since `/search` is still a single global endpoint). */
+const FALLBACK_SOURCE_ID = "origin";
+
 export function SearchPalette({ open, onClose, client = apiClient, debounceMs = DEFAULT_DEBOUNCE_MS }: SearchPaletteProps) {
-  const { setSelectedPath } = useAppState();
+  const { selection, setSelection } = useAppState();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searched, setSearched] = useState(false);
@@ -102,7 +108,7 @@ export function SearchPalette({ open, onClose, client = apiClient, debounceMs = 
   if (!open) return null;
 
   function selectHit(hit: SearchHit) {
-    setSelectedPath(hit.path);
+    setSelection({ sourceId: selection?.sourceId ?? FALLBACK_SOURCE_ID, path: hit.path });
     onClose();
   }
 

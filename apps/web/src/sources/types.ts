@@ -49,3 +49,11 @@ export type SourceRuntime = { def: SourceDef; state: SourceState } & (
   | { kind: "server"; client: ApiClient }
   | { kind: "folder"; store: LocalNotesStore }
 );
+
+/** A note selection scoped to the source it lives in - the sidebar, editor,
+ *  and right panels all key off this pair (never a bare path) now that more
+ *  than one source can be registered (see `AppState`'s `selection`). */
+export interface NoteSelection {
+  sourceId: string;
+  path: string;
+}

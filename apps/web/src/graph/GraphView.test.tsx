@@ -40,10 +40,10 @@ function fakeClient(overrides: Partial<GraphClient> = {}): GraphClient {
 
 function renderView(client: GraphClient, initialPath: string | null = null) {
   function Init() {
-    const { setSelectedPath } = useAppState();
+    const { setSelection } = useAppState();
     useEffect(() => {
-      if (initialPath !== null) setSelectedPath(initialPath);
-    }, [setSelectedPath]);
+      if (initialPath !== null) setSelection({ sourceId: "origin", path: initialPath });
+    }, [setSelection]);
     return null;
   }
   return render(
@@ -146,8 +146,8 @@ describe("GraphView", () => {
     let observedPath: string | null = null;
 
     function Observer() {
-      const { selectedPath } = useAppState();
-      observedPath = selectedPath;
+      const { selection } = useAppState();
+      observedPath = selection?.path ?? null;
       return null;
     }
 
@@ -190,10 +190,10 @@ describe("GraphView", () => {
     const client = fakeClient({ graph: graphFn });
 
     function Harness() {
-      const { setSelectedPath } = useAppState();
+      const { setSelection } = useAppState();
       return (
         <>
-          <button type="button" onClick={() => setSelectedPath("c.md")}>
+          <button type="button" onClick={() => setSelection({ sourceId: "origin", path: "c.md" })}>
             select-c
           </button>
           <GraphView client={client} />

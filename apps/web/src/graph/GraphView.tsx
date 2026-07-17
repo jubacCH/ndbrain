@@ -1,12 +1,17 @@
 /** Obsidian-style graph view: fetches `GET /api/v1/graph` and renders it with
  *  `react-force-graph-2d`. Two scopes:
  *   - "global": the whole vault graph.
- *   - "local": just `useAppState().selectedPath` and its neighbors
+ *   - "local": just `useAppState().selection`'s path and its neighbors
  *     (`localNeighborhood`, depth 1).
- *  Clicking a node navigates to it via `setSelectedPath`; the currently
+ *  Clicking a node navigates to it via `setSelection`; the currently
  *  selected note is highlighted. The graph re-fetches whenever the selected
  *  note changes (cheap enough for a vault-sized graph, and simplest way to
- *  pick up new links after a save) plus a manual refresh button. */
+ *  pick up new links after a save) plus a manual refresh button.
+ *
+ *  Not yet source-aware (see `FALLBACK_SOURCE_ID` below): it fetches the
+ *  single global `client.graph()` regardless of which source is selected,
+ *  same open gap as `BacklinksPanel`/`HistoryView` had before this task —
+ *  left for a later task alongside making search/graph multi-source. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
@@ -49,8 +54,16 @@ const DARK_COLORS: ThemeColors = {
   link: "#2a313c",
 };
 
+/** Fallback source id used when navigating a graph node with no prior
+ *  selection to inherit a source from. Matches the browser's implicit single
+ *  source (`SourcesProvider`'s `ORIGIN_SOURCE`) — correct there by
+ *  construction, and a deliberate stop-gap in Tauri with multiple sources
+ *  until the graph itself becomes source-aware (see the Task 6 report). */
+const FALLBACK_SOURCE_ID = "origin";
+
 export function GraphView({ client = apiClient }: GraphViewProps = {}) {
-  const { selectedPath, setSelectedPath } = useAppState();
+  const { selection, setSelection } = useAppState();
+  const selectedPath = selection?.path ?? null;
   const { resolvedTheme } = useTheme();
   const [graph, setGraph] = useState<Graph | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -135,7 +148,12 @@ export function GraphView({ client = apiClient }: GraphViewProps = {}) {
             }
             linkColor={() => colors.link}
             backgroundColor={colors.background}
-            onNodeClick={(node) => setSelectedPath(String((node as { id: string }).id))}
+            onNodeClick={(node) =>
+              setSelection({
+                sourceId: selection?.sourceId ?? FALLBACK_SOURCE_ID,
+                path: String((node as { id: string }).id),
+              })
+            }
           />
         </div>
       )}

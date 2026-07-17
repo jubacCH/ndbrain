@@ -8,28 +8,28 @@ describe("AppState", () => {
       wrapper: ({ children }) => <AppStateProvider>{children}</AppStateProvider>,
     });
 
-    expect(result.current.selectedPath).toBeNull();
+    expect(result.current.selection).toBeNull();
   });
 
-  it("setSelectedPath updates the shared selection", () => {
+  it("setSelection updates the shared selection with a source-scoped path", () => {
     const { result } = renderHook(() => useAppState(), {
       wrapper: ({ children }) => <AppStateProvider>{children}</AppStateProvider>,
     });
 
-    act(() => result.current.setSelectedPath("notes/a.md"));
+    act(() => result.current.setSelection({ sourceId: "origin", path: "notes/a.md" }));
 
-    expect(result.current.selectedPath).toBe("notes/a.md");
+    expect(result.current.selection).toEqual({ sourceId: "origin", path: "notes/a.md" });
   });
 
-  it("setSelectedPath(null) clears the selection", () => {
+  it("setSelection(null) clears the selection", () => {
     const { result } = renderHook(() => useAppState(), {
       wrapper: ({ children }) => <AppStateProvider>{children}</AppStateProvider>,
     });
 
-    act(() => result.current.setSelectedPath("notes/a.md"));
-    act(() => result.current.setSelectedPath(null));
+    act(() => result.current.setSelection({ sourceId: "origin", path: "notes/a.md" }));
+    act(() => result.current.setSelection(null));
 
-    expect(result.current.selectedPath).toBeNull();
+    expect(result.current.selection).toBeNull();
   });
 
   it("throws when used outside an AppStateProvider", () => {

@@ -4,7 +4,7 @@
  *
  *  - `sidebar` — Task 5 passes `<NoteTree />`; nothing else about the shell needs
  *    to change if the sidebar's contents change later.
- *  - `main` — the editor (Task 6) renders here, keyed by `useAppState().selectedPath`.
+ *  - `main` — the editor (Task 6) renders here, keyed by `useAppState().selection`.
  *  - `rightPanel` — omitted/undefined hides the panel entirely; Task 8 (backlinks)
  *    and Task 9 (graph) pass content here, e.g. via their own internal tab state.
  *  - `onSearchClick` / `onSettingsClick` — wired up for real by Task 7 (search
@@ -36,9 +36,12 @@ export interface AppShellProps {
   /** Fired by the Settings nav item. Task 9 wires this to show the settings view. */
   onSettingsClick?: () => void;
   /** Fired by the "Local" nav item. Omitted entirely (rather than defaulting to
-   *  a no-op) hides the button altogether — `AppRoot` only passes this when
-   *  `isTauri()`, so the button (and the local-notes feature it opens) simply
-   *  does not exist in the browser build. Task 5 (local notes). */
+   *  a no-op) hides the button altogether. Introduced by Task 5 (local notes)
+   *  for a standalone local-notes view; `AppRoot` no longer passes this at all
+   *  since Task 6's unified sidebar — a folder source's notes now show inline
+   *  as their own `SourceSection`, so there is no separate view left to open.
+   *  Kept on `AppShell` (rather than removed) since it is this generic shell's
+   *  own contract, exercised directly by `AppShell.test.tsx`. */
   onLocalClick?: () => void;
 }
 
