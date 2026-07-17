@@ -17,6 +17,8 @@
 
 import type { ReactNode } from "react";
 import { useTheme } from "../theme/useTheme";
+import { BrandMark } from "./BrandMark";
+import { ThemeToggleIcon } from "./ThemeToggleIcon";
 import styles from "./AppShell.module.css";
 
 export interface AppShellProps {
@@ -56,9 +58,7 @@ export function AppShell({
     <div className={rightPanel ? `${styles.shell} ${styles.withRightPanel}` : styles.shell}>
       <aside className={styles.sidebar} aria-label="Notes navigation">
         <div className={styles.brand}>
-          <span className={styles.logo} aria-hidden="true">
-            ◆
-          </span>
+          <BrandMark className={styles.logo} ring1ClassName={styles.logoRing1} ring2ClassName={styles.logoRing2} />
           <span className={styles.brandName}>ndBrain</span>
         </div>
 
@@ -85,7 +85,7 @@ export function AppShell({
             onClick={toggleTheme}
             aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
           >
-            {resolvedTheme === "dark" ? "🌙" : "☀️"}
+            <ThemeToggleIcon resolvedTheme={resolvedTheme} />
           </button>
 
           <div className={styles.userRow}>

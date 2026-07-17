@@ -28,8 +28,15 @@
 }
 
 .logo {
-  font-size: 1.1rem;
-  color: var(--color-fg-muted);
+  flex-shrink: 0;
+}
+
+.logoRing1 {
+  stroke: var(--color-fg);
+}
+
+.logoRing2 {
+  stroke: var(--color-fg-faint);
 }
 
 .brandName {
@@ -123,19 +130,21 @@
 
 .themeToggle {
   align-self: flex-start;
-  font-size: 1rem;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: 0.3rem 0.5rem;
+  padding: 0.3rem;
   cursor: pointer;
-  color: var(--color-fg);
+  color: var(--color-fg-muted);
 }
 
 .themeToggle:hover {
   border-color: var(--color-border-strong);
   background: var(--color-surface-2);
+  color: var(--color-fg);
 }
 
 .main {

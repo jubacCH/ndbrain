@@ -14,6 +14,8 @@
 import { useState } from "react";
 import { useTheme } from "../theme/useTheme";
 import { LocalNotesView, type LocalNotesStatus } from "../local/LocalNotesView";
+import { BrandMark } from "./BrandMark";
+import { ThemeToggleIcon } from "./ThemeToggleIcon";
 import styles from "./LocalOnlyShell.module.css";
 
 export interface LocalOnlyShellProps {
@@ -37,10 +39,7 @@ export function LocalOnlyShell({ onConnectServer }: LocalOnlyShellProps) {
     <div className={styles.shell}>
       <header className={styles.header}>
         <div className={styles.brand}>
-          <svg className={styles.logo} width="22" height="17" viewBox="0 0 26 20" fill="none" aria-hidden="true">
-            <circle className={styles.logoRing1} cx="9.5" cy="10" r="6.5" strokeWidth="3" />
-            <circle className={styles.logoRing2} cx="16.5" cy="10" r="6.5" strokeWidth="3" />
-          </svg>
+          <BrandMark className={styles.logo} ring1ClassName={styles.logoRing1} ring2ClassName={styles.logoRing2} />
           <span className={styles.brandName}>ndBrain</span>
           <span className={styles.badge}>Local only</span>
         </div>
@@ -52,28 +51,7 @@ export function LocalOnlyShell({ onConnectServer }: LocalOnlyShellProps) {
             onClick={toggleTheme}
             aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
           >
-            {resolvedTheme === "dark" ? (
-              // Sun — shown in dark mode as the affordance to switch to light.
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
-                <circle cx="7.5" cy="7.5" r="3" stroke="currentColor" strokeWidth="1.2" />
-                <path
-                  d="M7.5 1v1.6M7.5 12.4V14M14 7.5h-1.6M2.6 7.5H1M12.34 2.66l-1.13 1.13M3.79 11.21l-1.13 1.13M12.34 12.34l-1.13-1.13M3.79 3.79 2.66 2.66"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            ) : (
-              // Crescent moon — shown in light mode as the affordance to switch to dark.
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
-                <path
-                  d="M11.5 8.7A4.6 4.6 0 1 1 6.3 3.5a3.7 3.7 0 0 0 5.2 5.2Z"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            )}
+            <ThemeToggleIcon resolvedTheme={resolvedTheme} />
           </button>
 
           <button type="button" className={styles.connect} onClick={onConnectServer}>
