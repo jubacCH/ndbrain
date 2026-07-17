@@ -138,6 +138,19 @@ export class ApiClient implements AuthClient {
   private collabToken: string | null = null;
   private onUnauthorized: (() => void) | null = null;
 
+  /** `baseUrl` is either a fixed origin (a specific source's server URL) or a
+   *  resolver called fresh on every request (the app-wide singleton below uses
+   *  `getApiBaseUrl` so it always reflects the current Tauri/browser state).
+   *  Defaults to `getApiBaseUrl` itself so existing call sites that construct
+   *  `new ApiClient()` with no argument keep resolving the base URL exactly as
+   *  before this class took an injectable one — relative same-origin in the
+   *  browser, the configured server origin in Tauri. */
+  constructor(private readonly baseUrl: string | (() => string) = getApiBaseUrl) {}
+
+  private resolveBaseUrl(): string {
+    return typeof this.baseUrl === "function" ? this.baseUrl() : this.baseUrl;
+  }
+
   /** Registers a callback fired whenever a non-login request comes back 401 (session
    *  expired or never existed) — `useAuth` uses this to flip back to "logged out". */
   setUnauthorizedHandler(handler: (() => void) | null): void {
@@ -234,7 +247,7 @@ export class ApiClient implements AuthClient {
 
   private async request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     const { method = "GET", body, parseJson = true, skipUnauthorizedHandler = false } = opts;
-    const res = await fetch(`${getApiBaseUrl()}${API_BASE}${path}`, {
+    const res = await fetch(`${this.resolveBaseUrl()}${API_BASE}${path}`, {
       method,
       credentials: "include",
       headers: body !== undefined ? { "content-type": "application/json" } : undefined,
@@ -257,6 +270,19 @@ export class ApiClient implements AuthClient {
   }
 }
 
+/** Convenience factory for a client bound to one source's fixed server URL
+ *  (e.g. a registry entry's `url`), as opposed to the resolver form below. */
+export function createApiClient(baseUrl: string): ApiClient {
+  return new ApiClient(baseUrl);
+}
+
 /** Shared singleton — the app uses one client for its whole lifetime; tests construct
- *  their own `new ApiClient()` (or a fake `AuthClient`) instead of touching this. */
-export const apiClient = new ApiClient();
+ *  their own `new ApiClient()` (or a fake `AuthClient`) instead of touching this.
+ *
+ *  Passed as a resolver (not a plain string) so it re-reads `getApiBaseUrl()` on
+ *  every request rather than freezing whatever it returned at import time — this
+ *  keeps every existing consumer's behavior identical to before this class took
+ *  an injectable base URL (browser: always `""`; Tauri: the configured server
+ *  URL, which can change after the client is constructed). Removed in Task 10
+ *  once callers migrate to per-source clients. */
+export const apiClient = new ApiClient(getApiBaseUrl);

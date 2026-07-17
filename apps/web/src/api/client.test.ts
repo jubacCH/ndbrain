@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiClient, ApiError, UnauthorizedError } from "./client";
+import { ApiClient, ApiError, UnauthorizedError, createApiClient } from "./client";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -132,5 +132,89 @@ describe("ApiClient", () => {
 
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(url).toBe("/api/v1/search?q=hello%20world");
+  });
+});
+
+describe("ApiClient - injectable base URL (per-source clients)", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("createApiClient(url): prefixes requests with the fixed source origin", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { notes: [] }));
+    const client = createApiClient("https://a.example");
+
+    await client.listNotes();
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe("https://a.example/api/v1/notes");
+  });
+
+  it("createApiClient(\"\"): keeps today's relative browser form", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { notes: [] }));
+    const client = createApiClient("");
+
+    await client.listNotes();
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe("/api/v1/notes");
+  });
+
+  it("two clients with different base URLs keep separate collab tokens after login", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: "token-a" }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: "token-b" }));
+    const clientA = createApiClient("https://a.example");
+    const clientB = createApiClient("https://b.example");
+
+    await clientA.login("julian", "hunter2");
+    await clientB.login("julian", "hunter2");
+
+    expect(clientA.getCollabToken()).toBe("token-a");
+    expect(clientB.getCollabToken()).toBe("token-b");
+
+    const [urlA] = fetchMock.mock.calls[0] as [string];
+    const [urlB] = fetchMock.mock.calls[1] as [string];
+    expect(urlA).toBe("https://a.example/api/v1/auth/login");
+    expect(urlB).toBe("https://b.example/api/v1/auth/login");
+  });
+
+  it("a 401 on client A fires only A's unauthorized handler, not B's", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(401, { error: { code: "unauthorized", message: "login required" } }),
+    );
+    const clientA = createApiClient("https://a.example");
+    const clientB = createApiClient("https://b.example");
+    const onUnauthorizedA = vi.fn();
+    const onUnauthorizedB = vi.fn();
+    clientA.setUnauthorizedHandler(onUnauthorizedA);
+    clientB.setUnauthorizedHandler(onUnauthorizedB);
+
+    await expect(clientA.listNotes()).rejects.toThrow(UnauthorizedError);
+
+    expect(onUnauthorizedA).toHaveBeenCalledTimes(1);
+    expect(onUnauthorizedB).not.toHaveBeenCalled();
+  });
+
+  it("resolver form: re-invokes the function on every request instead of freezing the first value", async () => {
+    let current = "https://b.example";
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { notes: [] }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { notes: [] }));
+    const client = new ApiClient(() => current);
+
+    await client.listNotes();
+    current = "https://b-changed.example";
+    await client.listNotes();
+
+    const [firstUrl] = fetchMock.mock.calls[0] as [string];
+    const [secondUrl] = fetchMock.mock.calls[1] as [string];
+    expect(firstUrl).toBe("https://b.example/api/v1/notes");
+    expect(secondUrl).toBe("https://b-changed.example/api/v1/notes");
   });
 });
