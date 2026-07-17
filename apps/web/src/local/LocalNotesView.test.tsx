@@ -435,3 +435,137 @@ describe("<LocalNotesView> surfacing load errors instead of dying silently (M3)"
     expect(await screen.findByRole("alert")).toHaveTextContent(/scope denied/i);
   });
 });
+
+describe("<LocalNotesView> creating a new local note", () => {
+  beforeEach(() => {
+    setTauriFlag(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setTauriFlag(undefined);
+  });
+
+  it("does not show '+ New note' before a folder is configured", async () => {
+    const store = makeStore({ getFolder: vi.fn(async () => null) });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+
+    await screen.findByRole("button", { name: /choose folder/i });
+    expect(screen.queryByRole("button", { name: /new note/i })).not.toBeInTheDocument();
+  });
+
+  it("shows '+ New note' once a folder is configured; clicking it opens an inline input", async () => {
+    const store = makeStore({ listLocal: vi.fn(async () => []) });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /new note/i }));
+
+    expect(await screen.findByRole("textbox", { name: /new local note/i })).toBeInTheDocument();
+  });
+
+  it("typing a bare name and pressing Enter creates '<name>.md' and opens it in the editor", async () => {
+    const store = makeStore({ listLocal: vi.fn(async () => []) });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /new note/i }));
+    const input = await screen.findByRole("textbox", { name: /new local note/i });
+    fireEvent.change(input, { target: { value: "ideas" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(store.writeLocal).toHaveBeenCalledWith("ideas.md", "# ideas\n"));
+    expect(await screen.findByText("ideas")).toBeInTheDocument();
+    // RTL's default text normalizer trims trailing whitespace before matching,
+    // so the trailing "\n" from the real `writeLocal` content (asserted above)
+    // is intentionally omitted from this matcher.
+    expect(await screen.findByDisplayValue("# ideas")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /new local note/i })).not.toBeInTheDocument();
+  });
+
+  it("does not double the .md extension when the user already typed it", async () => {
+    const store = makeStore({ listLocal: vi.fn(async () => []) });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /new note/i }));
+    const input = await screen.findByRole("textbox", { name: /new local note/i });
+    fireEvent.change(input, { target: { value: "ideas.md" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(store.writeLocal).toHaveBeenCalledWith("ideas.md", "# ideas\n"));
+  });
+
+  it("supports creating a note inside a subfolder", async () => {
+    const store = makeStore({ listLocal: vi.fn(async () => []) });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /new note/i }));
+    const input = await screen.findByRole("textbox", { name: /new local note/i });
+    fireEvent.change(input, { target: { value: "projekte/idee" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(store.writeLocal).toHaveBeenCalledWith("projekte/idee.md", "# idee\n"));
+  });
+
+  it("shows an error and does not write when the name collides with an existing note", async () => {
+    const store = makeStore({ listLocal: vi.fn(async () => [{ path: "ideas.md", title: "Ideas" }]) });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+    await screen.findByText("Ideas");
+
+    fireEvent.click(await screen.findByRole("button", { name: /new note/i }));
+    const input = await screen.findByRole("textbox", { name: /new local note/i });
+    fireEvent.change(input, { target: { value: "ideas" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/already exists/i);
+    expect(store.writeLocal).not.toHaveBeenCalled();
+    expect(await screen.findByRole("textbox", { name: /new local note/i })).toBeInTheDocument();
+  });
+
+  it("shows an error and does not write for an unsafe path, without crashing", async () => {
+    const store = makeStore({ listLocal: vi.fn(async () => []) });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /new note/i }));
+    const input = await screen.findByRole("textbox", { name: /new local note/i });
+    fireEvent.change(input, { target: { value: "../escape" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(store.writeLocal).not.toHaveBeenCalled();
+  });
+
+  it("Escape closes the input without creating anything", async () => {
+    const store = makeStore({ listLocal: vi.fn(async () => []) });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /new note/i }));
+    const input = await screen.findByRole("textbox", { name: /new local note/i });
+    fireEvent.change(input, { target: { value: "ideas" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(screen.queryByRole("textbox", { name: /new local note/i })).not.toBeInTheDocument();
+    expect(store.writeLocal).not.toHaveBeenCalled();
+  });
+
+  it("flushes a pending debounced edit of the currently open note before creating and switching to the new one", async () => {
+    const store = makeStore({
+      listLocal: vi.fn(async () => [{ path: "a.md", title: "Note A" }]),
+      readLocal: vi.fn(async () => "original"),
+    });
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} />);
+    fireEvent.click(await screen.findByText("Note A"));
+    const textarea = await screen.findByDisplayValue("original");
+
+    vi.useFakeTimers();
+    fireEvent.change(textarea, { target: { value: "edited a" } });
+    expect(store.writeLocal).not.toHaveBeenCalled();
+    vi.useRealTimers();
+
+    fireEvent.click(screen.getByRole("button", { name: /new note/i }));
+    const input = screen.getByRole("textbox", { name: /new local note/i });
+    fireEvent.change(input, { target: { value: "ideas" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(store.writeLocal).toHaveBeenCalledWith("ideas.md", "# ideas\n"));
+    await waitFor(() => expect(store.writeLocal).toHaveBeenCalledWith("a.md", "edited a"));
+  });
+});

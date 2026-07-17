@@ -12,12 +12,14 @@
  *  mounting it unconditionally is safe — `AppRoot` additionally only mounts
  *  it behind `isTauri()` for defense in depth (see its doc comment). */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "../platform/tauri";
 import {
+  assertSafeRelPath,
   extractTitle,
   localNotesStore,
+  LocalPathError,
   type LocalNoteSummary,
   type LocalNotesStore,
 } from "./localStore";
@@ -76,6 +78,10 @@ export function LocalNotesView({
   const [moveError, setMoveError] = useState<string | null>(null);
   const [moveWarning, setMoveWarning] = useState<string | null>(null);
   const [moving, setMoving] = useState(false);
+  const [isCreatingNote, setIsCreatingNote] = useState(false);
+  const [newNoteName, setNewNoteName] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const newNoteInputRef = useRef<HTMLInputElement>(null);
 
   const enabled = isTauri();
 
@@ -139,6 +145,11 @@ export function LocalNotesView({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, store]);
+
+  // Same focus-on-open convention as `NoteTree`'s inline "+ New note" input.
+  useEffect(() => {
+    if (isCreatingNote) newNoteInputRef.current?.focus();
+  }, [isCreatingNote]);
 
   // Flushes every note's debounced-but-not-yet-persisted edit on unmount, so
   // navigating away right after typing never silently drops the last change.
@@ -272,6 +283,82 @@ export function LocalNotesView({
     }
   }
 
+  function openNewNoteInput() {
+    setCreateError(null);
+    setNewNoteName("");
+    setIsCreatingNote(true);
+  }
+
+  function closeNewNoteInput() {
+    setIsCreatingNote(false);
+    setNewNoteName("");
+    setCreateError(null);
+  }
+
+  /** Enforces the `.md` extension `listLocal` filters on (see its doc
+   *  comment) without doubling it if the user already typed one — matches
+   *  `NoteTree`'s `submitNewNote` convention. */
+  function toMdPath(raw: string): string {
+    return raw.toLowerCase().endsWith(".md") ? raw : `${raw}.md`;
+  }
+
+  /** Validates and creates a new local note from the inline input's current
+   *  value: enforces `.md`, rejects unsafe paths (`assertSafeRelPath`) and
+   *  collisions with an already-listed note, then persists it and opens it
+   *  for editing. Never uses `window.prompt`/`alert` (see the module's C1
+   *  finding above) — errors surface via the same `role="alert"` pattern as
+   *  `listError`/`moveError`, and the input stays open so the user can
+   *  correct the name instead of losing what they typed. */
+  async function submitNewNote() {
+    const trimmed = newNoteName.trim();
+    if (!trimmed) return;
+
+    let safeRel: string;
+    try {
+      safeRel = assertSafeRelPath(toMdPath(trimmed));
+    } catch (err) {
+      setCreateError(err instanceof LocalPathError ? err.message : "Invalid note name.");
+      return;
+    }
+
+    if (docs.some((doc) => doc.path === safeRel)) {
+      setCreateError(`"${safeRel}" already exists.`);
+      return;
+    }
+
+    const fileName = safeRel.split("/").pop() ?? safeRel;
+    const title = fileName.slice(0, -".md".length);
+    const initialContent = `# ${title}\n`;
+
+    try {
+      await store.writeLocal(safeRel, initialContent);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "Failed to create the note.");
+      return;
+    }
+
+    if (selectedPath) flushPending(selectedPath);
+    setDocs((prev) =>
+      [...prev, { path: safeRel, title: extractTitle(initialContent), content: initialContent }].sort((a, b) =>
+        a.path.localeCompare(b.path),
+      ),
+    );
+    setSelectedPath(safeRel);
+    setMoveError(null);
+    setMoveWarning(null);
+    closeNewNoteInput();
+  }
+
+  function handleNewNoteKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void submitNewNote();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeNewNoteInput();
+    }
+  }
+
   const index = useMemo(
     () => buildLocalIndex(docs.map((doc) => ({ path: doc.path, title: doc.title, content: doc.content }))),
     [docs],
@@ -304,6 +391,39 @@ export function LocalNotesView({
                 Change folder…
               </button>
             </div>
+
+            {folder && !isCreatingNote && (
+              <button type="button" className={styles.newNote} onClick={openNewNoteInput}>
+                + New note
+              </button>
+            )}
+
+            {isCreatingNote && (
+              <div className={styles.newNoteRow}>
+                <input
+                  ref={newNoteInputRef}
+                  type="text"
+                  className={styles.newNoteInput}
+                  aria-label="Name for the new local note"
+                  placeholder="note or folder/note"
+                  value={newNoteName}
+                  onChange={(e) => setNewNoteName(e.target.value)}
+                  onKeyDown={handleNewNoteKeyDown}
+                />
+                <button type="button" className={styles.newNoteConfirm} onClick={() => void submitNewNote()}>
+                  Create
+                </button>
+                <button type="button" className={styles.newNoteCancel} onClick={closeNewNoteInput}>
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {createError && (
+              <p role="alert" className={styles.error}>
+                {createError}
+              </p>
+            )}
 
             <input
               className={styles.search}
