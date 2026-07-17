@@ -15,14 +15,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "../platform/tauri";
-import {
-  assertSafeRelPath,
-  extractTitle,
-  localNotesStore,
-  LocalPathError,
-  type LocalNoteSummary,
-  type LocalNotesStore,
-} from "./localStore";
+import { assertSafeRelPath, extractTitle, LocalPathError, type LocalNoteSummary } from "./localStore";
+import { defaultLocalNotesStore, type DefaultLocalNotesStoreLike } from "./defaultLocalNotesStore";
 import { buildLocalIndex, searchLocal } from "./localSearch";
 import { moveToServer as defaultMoveToServer, MoveAbortedError, type MoveToServerResult } from "./moveToServer";
 import { createWriteQueue } from "./writeQueue";
@@ -50,18 +44,14 @@ function noteDisplayName(path: string): string {
   return fileName.toLowerCase().endsWith(".md") ? fileName.slice(0, -".md".length) : fileName;
 }
 
-/** Structural subset of `LocalNotesStore` this view needs — lets tests inject
- *  a plain fake object (same convention as `NoteTreeClient`/`AuthClient`). */
-export type LocalNotesStoreLike = Pick<
-  LocalNotesStore,
-  | "getFolder"
-  | "pickFolder"
-  | "listLocal"
-  | "readLocal"
-  | "writeLocal"
-  | "deleteLocal"
-  | "grantFolderAccess"
->;
+/** Structural subset this view needs — lets tests inject a plain fake object
+ *  (same convention as `NoteTreeClient`/`AuthClient`). Mirrors
+ *  `DefaultLocalNotesStoreLike` (see `./defaultLocalNotesStore.ts`) rather
+ *  than the real, per-folder `LocalNotesStore` class: this view still owns
+ *  picking/persisting a single folder itself, a transitional arrangement
+ *  until Plan 8 Task 6/7 switches it to an injected, already-scoped store
+ *  from the source registry. */
+export type LocalNotesStoreLike = DefaultLocalNotesStoreLike;
 
 /** The folder/notes-count snapshot this view reports via `onStatusChange` —
  *  `LocalOnlyShell` renders a statusbar from it instead of re-deriving the
@@ -72,7 +62,9 @@ export interface LocalNotesStatus {
 }
 
 export interface LocalNotesViewProps {
-  /** Injectable for tests; defaults to the shared `localNotesStore` singleton. */
+  /** Injectable for tests; defaults to the shared `defaultLocalNotesStore`
+   *  singleton (single-folder transitional default — see
+   *  `./defaultLocalNotesStore.ts`). */
   store?: LocalNotesStoreLike;
   /** Injectable for tests; defaults to the real `moveToServer` (which itself
    *  defaults to the shared store/client singletons). */
@@ -87,7 +79,7 @@ export interface LocalNotesViewProps {
 }
 
 export function LocalNotesView({
-  store = localNotesStore,
+  store = defaultLocalNotesStore,
   moveToServer = defaultMoveToServer,
   EditorComponent = LocalEditor,
   onStatusChange,

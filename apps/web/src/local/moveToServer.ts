@@ -40,7 +40,7 @@
  */
 import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import { apiClient, ApiError } from "../api/client";
-import { localNotesStore, type LocalNotesStore } from "./localStore";
+import { defaultLocalNotesStore, type DefaultLocalNotesStoreLike } from "./defaultLocalNotesStore";
 
 export interface MoveToServerResult {
   /** The vault-relative path the note now lives at on the server (currently
@@ -72,8 +72,10 @@ interface ReadClient {
 }
 
 export interface MoveToServerDeps {
-  /** Injectable for tests; defaults to the shared `localNotesStore` singleton. */
-  store?: Pick<LocalNotesStore, "readLocal" | "deleteLocal">;
+  /** Injectable for tests; defaults to the shared `defaultLocalNotesStore`
+   *  singleton (single-folder transitional default — see
+   *  `./defaultLocalNotesStore.ts`). */
+  store?: Pick<DefaultLocalNotesStoreLike, "readLocal" | "deleteLocal">;
   /** Injectable for tests; defaults to the shared `apiClient` singleton. */
   client?: ReadClient & { putNote(path: string, content: string): Promise<void> };
   /** Injectable for tests; defaults to `@tauri-apps/plugin-dialog`'s `confirm`.
@@ -97,7 +99,7 @@ async function targetExistsOnServer(client: ReadClient, rel: string): Promise<bo
 
 export async function moveToServer(rel: string, deps: MoveToServerDeps = {}): Promise<MoveToServerResult> {
   const {
-    store = localNotesStore,
+    store = defaultLocalNotesStore,
     client = apiClient,
     confirmOverwrite = (message: string) =>
       confirmDialog(message, { title: "Overwrite server note?", kind: "warning" }),

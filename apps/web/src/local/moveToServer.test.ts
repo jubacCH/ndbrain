@@ -100,11 +100,11 @@ describe("moveToServer", () => {
     expect(result).toEqual({ path: "note.md", localDeleted: false });
   });
 
-  it("uses the shared localNotesStore/apiClient singletons by default", async () => {
-    const { localNotesStore } = await import("./localStore");
+  it("uses the shared defaultLocalNotesStore/apiClient singletons by default", async () => {
+    const { defaultLocalNotesStore } = await import("./defaultLocalNotesStore");
     const { apiClient } = await import("../api/client");
-    const readSpy = vi.spyOn(localNotesStore, "readLocal").mockResolvedValue("content");
-    const deleteSpy = vi.spyOn(localNotesStore, "deleteLocal").mockResolvedValue(true);
+    const readSpy = vi.spyOn(defaultLocalNotesStore, "readLocal").mockResolvedValue("content");
+    const deleteSpy = vi.spyOn(defaultLocalNotesStore, "deleteLocal").mockResolvedValue(true);
     const getNoteSpy = vi.spyOn(apiClient, "getNote").mockRejectedValue(new ApiError(404, "not_found", "note.md"));
     const putSpy = vi.spyOn(apiClient, "putNote").mockResolvedValue(undefined);
 

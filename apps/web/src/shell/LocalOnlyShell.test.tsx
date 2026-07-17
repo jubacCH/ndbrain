@@ -98,9 +98,9 @@ describe("LocalOnlyShell", () => {
   // "markdown · local") is covered at the `LocalNotesView` level instead
   // (`onStatusChange` tests in `local/LocalNotesView.test.tsx`, which inject
   // a fake store): `LocalOnlyShell` always renders the real, default
-  // `LocalNotesView` backed by the shared `localNotesStore` singleton, whose
-  // `LocalNotesStore.getTauriStore()` caches its resolved store promise for
-  // the module's lifetime — once any earlier test in this file resolves it
-  // to a "no folder" store, later tests in the same file can't make it
-  // resolve to a different one.
+  // `LocalNotesView` backed by the shared `defaultLocalNotesStore` singleton
+  // (see `local/defaultLocalNotesStore.ts`), whose own Tauri store caches its
+  // resolved store promise for the module's lifetime — once any earlier test
+  // in this file resolves it to a "no folder" store, later tests in the same
+  // file can't make it resolve to a different one.
 });

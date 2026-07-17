@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // hoists `vi.mock(...)` calls above the rest of the file, including normal
 // variable declarations — referencing a non-hoisted const from inside a
 // mock factory would throw a temporal-dead-zone error.
-const { dialogOpenMock, fsMocks, loadMock, invokeMock } = vi.hoisted(() => ({
+const { dialogOpenMock, fsMocks, invokeMock } = vi.hoisted(() => ({
   dialogOpenMock: vi.fn(),
   fsMocks: {
     mkdir: vi.fn(),
@@ -13,13 +13,11 @@ const { dialogOpenMock, fsMocks, loadMock, invokeMock } = vi.hoisted(() => ({
     remove: vi.fn(),
     writeTextFile: vi.fn(),
   },
-  loadMock: vi.fn(),
   invokeMock: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: dialogOpenMock }));
 vi.mock("@tauri-apps/plugin-fs", () => fsMocks);
-vi.mock("@tauri-apps/plugin-store", () => ({ load: loadMock }));
 // `platform/tauri.ts#isTauri` is re-exported straight from this module, so the
 // mock keeps it wired to the same `globalThis.isTauri` flag `setTauriFlag`
 // below toggles, rather than a real IPC-backed `isTauri()`.
@@ -28,24 +26,13 @@ vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => Boolean((globalThis as { isTauri?: boolean }).isTauri),
 }));
 
-import { LocalNotesStore, LocalPathError, assertSafeRelPath, extractTitle } from "./localStore";
-
-interface FakeStore {
-  get: ReturnType<typeof vi.fn>;
-  set: ReturnType<typeof vi.fn>;
-  save: ReturnType<typeof vi.fn>;
-}
-
-function makeFakeStore(initial: Record<string, unknown> = {}): FakeStore {
-  const data: Record<string, unknown> = { ...initial };
-  return {
-    get: vi.fn(async (key: string) => data[key]),
-    set: vi.fn(async (key: string, value: unknown) => {
-      data[key] = value;
-    }),
-    save: vi.fn(async () => undefined),
-  };
-}
+import {
+  assertSafeRelPath,
+  extractTitle,
+  LocalNotesStore,
+  LocalPathError,
+  pickFolderDialog,
+} from "./localStore";
 
 function setTauriFlag(value: boolean | undefined) {
   if (value === undefined) {
@@ -96,24 +83,51 @@ describe("extractTitle", () => {
   });
 });
 
+describe("pickFolderDialog", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    setTauriFlag(undefined);
+  });
+
+  it("returns null and does not open a dialog in the browser", async () => {
+    setTauriFlag(undefined);
+    await expect(pickFolderDialog()).resolves.toBeNull();
+    expect(dialogOpenMock).not.toHaveBeenCalled();
+  });
+
+  it("opens a directory dialog and returns the chosen path", async () => {
+    setTauriFlag(true);
+    dialogOpenMock.mockResolvedValueOnce("/Users/j/notes");
+
+    await expect(pickFolderDialog()).resolves.toBe("/Users/j/notes");
+    expect(dialogOpenMock).toHaveBeenCalledWith({ directory: true, multiple: false });
+  });
+
+  it("returns null when the user cancels", async () => {
+    setTauriFlag(true);
+    dialogOpenMock.mockResolvedValueOnce(null);
+
+    await expect(pickFolderDialog()).resolves.toBeNull();
+  });
+});
+
 describe("LocalNotesStore in the browser (!isTauri)", () => {
   beforeEach(() => {
     setTauriFlag(undefined);
     vi.clearAllMocks();
   });
 
-  it("no-ops to null/empty/false without calling any tauri API", async () => {
-    const store = new LocalNotesStore();
+  it("no-ops to empty/false without calling any tauri API", async () => {
+    const store = new LocalNotesStore("/root");
 
-    await expect(store.pickFolder()).resolves.toBeNull();
-    await expect(store.getFolder()).resolves.toBeNull();
     await expect(store.listLocal()).resolves.toEqual([]);
     await expect(store.readLocal("a.md")).resolves.toBe("");
     await expect(store.writeLocal("a.md", "x")).resolves.toBeUndefined();
     await expect(store.deleteLocal("a.md")).resolves.toBe(false);
 
-    expect(dialogOpenMock).not.toHaveBeenCalled();
-    expect(loadMock).not.toHaveBeenCalled();
     expect(fsMocks.readDir).not.toHaveBeenCalled();
     expect(fsMocks.readTextFile).not.toHaveBeenCalled();
     expect(fsMocks.writeTextFile).not.toHaveBeenCalled();
@@ -122,64 +136,29 @@ describe("LocalNotesStore in the browser (!isTauri)", () => {
   });
 
   it("grantFolderAccess no-ops without invoking the Tauri command", async () => {
-    const store = new LocalNotesStore();
-    await expect(store.grantFolderAccess("/root")).resolves.toBeUndefined();
+    const store = new LocalNotesStore("/root");
+    await expect(store.grantFolderAccess()).resolves.toBeUndefined();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("does not crash and does not validate rel on the no-op path", async () => {
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/root");
     await expect(store.readLocal("../../etc/passwd")).resolves.toBe("");
     await expect(store.writeLocal("/abs/path.md", "x")).resolves.toBeUndefined();
   });
 });
 
 describe("LocalNotesStore in Tauri", () => {
-  let fakeStore: FakeStore;
-
   beforeEach(() => {
     setTauriFlag(true);
     vi.clearAllMocks();
-    fakeStore = makeFakeStore();
-    loadMock.mockImplementation(async () => fakeStore);
   });
 
   afterEach(() => {
     setTauriFlag(undefined);
   });
 
-  it("pickFolder opens a directory dialog and persists the choice", async () => {
-    dialogOpenMock.mockResolvedValueOnce("/Users/j/notes");
-    const store = new LocalNotesStore();
-
-    const path = await store.pickFolder();
-
-    expect(path).toBe("/Users/j/notes");
-    expect(dialogOpenMock).toHaveBeenCalledWith({ directory: true, multiple: false });
-    expect(fakeStore.set).toHaveBeenCalledWith("folderPath", "/Users/j/notes");
-    expect(fakeStore.save).toHaveBeenCalled();
-    expect(await store.getFolder()).toBe("/Users/j/notes");
-  });
-
-  it("pickFolder returns null and does not persist when the user cancels", async () => {
-    dialogOpenMock.mockResolvedValueOnce(null);
-    const store = new LocalNotesStore();
-
-    expect(await store.pickFolder()).toBeNull();
-    expect(fakeStore.set).not.toHaveBeenCalled();
-  });
-
-  it("getFolder reads the persisted path back from the tauri store", async () => {
-    fakeStore = makeFakeStore({ folderPath: "/persisted/path" });
-    loadMock.mockImplementation(async () => fakeStore);
-    const store = new LocalNotesStore();
-
-    expect(await store.getFolder()).toBe("/persisted/path");
-  });
-
   it("listLocal recursively lists .md files with parsed titles, skipping dotfiles/dirs", async () => {
-    fakeStore = makeFakeStore({ folderPath: "/root" });
-    loadMock.mockImplementation(async () => fakeStore);
     fsMocks.readDir.mockImplementation(async (dir: string) => {
       if (dir === "/root") {
         return [
@@ -200,7 +179,7 @@ describe("LocalNotesStore in Tauri", () => {
       throw new Error(`unexpected readTextFile(${path})`);
     });
 
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/root");
     const notes = await store.listLocal();
 
     expect(notes).toEqual([
@@ -212,8 +191,6 @@ describe("LocalNotesStore in Tauri", () => {
   });
 
   it("listLocal skips a file that fails to read (title: null) instead of aborting the whole listing", async () => {
-    fakeStore = makeFakeStore({ folderPath: "/root" });
-    loadMock.mockImplementation(async () => fakeStore);
     fsMocks.readDir.mockImplementation(async (dir: string) => {
       if (dir === "/root") {
         return [
@@ -231,7 +208,7 @@ describe("LocalNotesStore in Tauri", () => {
       throw new Error(`unexpected readTextFile(${path})`);
     });
 
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/root");
     const notes = await store.listLocal();
 
     expect(notes).toEqual([
@@ -241,40 +218,23 @@ describe("LocalNotesStore in Tauri", () => {
     ]);
   });
 
-  it("listLocal returns [] when no folder is configured", async () => {
-    const store = new LocalNotesStore();
-    expect(await store.listLocal()).toEqual([]);
-    expect(fsMocks.readDir).not.toHaveBeenCalled();
-  });
-
-  it("readLocal reads the file at root + rel", async () => {
-    fakeStore = makeFakeStore({ folderPath: "/root" });
-    loadMock.mockImplementation(async () => fakeStore);
+  it("readLocal reads the file at this store's folder + rel", async () => {
     fsMocks.readTextFile.mockResolvedValueOnce("hello");
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/root");
 
     expect(await store.readLocal("sub/note.md")).toBe("hello");
     expect(fsMocks.readTextFile).toHaveBeenCalledWith("/root/sub/note.md");
   });
 
   it("readLocal rejects an unsafe rel path without touching the filesystem", async () => {
-    fakeStore = makeFakeStore({ folderPath: "/root" });
-    loadMock.mockImplementation(async () => fakeStore);
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/root");
 
     await expect(store.readLocal("../secret.md")).rejects.toThrow(LocalPathError);
     expect(fsMocks.readTextFile).not.toHaveBeenCalled();
   });
 
-  it("readLocal throws when no folder is configured", async () => {
-    const store = new LocalNotesStore();
-    await expect(store.readLocal("a.md")).rejects.toThrow(LocalPathError);
-  });
-
   it("writeLocal mkdir -p's the parent directory before writing", async () => {
-    fakeStore = makeFakeStore({ folderPath: "/root" });
-    loadMock.mockImplementation(async () => fakeStore);
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/root");
 
     await store.writeLocal("sub/dir/note.md", "content");
 
@@ -283,9 +243,7 @@ describe("LocalNotesStore in Tauri", () => {
   });
 
   it("writeLocal at the root skips mkdir (no parent directory)", async () => {
-    fakeStore = makeFakeStore({ folderPath: "/root" });
-    loadMock.mockImplementation(async () => fakeStore);
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/root");
 
     await store.writeLocal("note.md", "content");
 
@@ -294,9 +252,7 @@ describe("LocalNotesStore in Tauri", () => {
   });
 
   it("writeLocal rejects an unsafe rel path without touching the filesystem", async () => {
-    fakeStore = makeFakeStore({ folderPath: "/root" });
-    loadMock.mockImplementation(async () => fakeStore);
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/root");
 
     await expect(store.writeLocal("/abs.md", "x")).rejects.toThrow(LocalPathError);
     expect(fsMocks.mkdir).not.toHaveBeenCalled();
@@ -304,36 +260,55 @@ describe("LocalNotesStore in Tauri", () => {
   });
 
   it("deleteLocal removes the file and returns true", async () => {
-    fakeStore = makeFakeStore({ folderPath: "/root" });
-    loadMock.mockImplementation(async () => fakeStore);
     fsMocks.remove.mockResolvedValueOnce(undefined);
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/root");
 
     expect(await store.deleteLocal("note.md")).toBe(true);
     expect(fsMocks.remove).toHaveBeenCalledWith("/root/note.md");
   });
 
   it("deleteLocal returns false when the underlying remove fails", async () => {
-    fakeStore = makeFakeStore({ folderPath: "/root" });
-    loadMock.mockImplementation(async () => fakeStore);
     fsMocks.remove.mockRejectedValueOnce(new Error("not found"));
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/root");
 
     expect(await store.deleteLocal("gone.md")).toBe(false);
   });
 
-  it("deleteLocal returns false when no folder is configured", async () => {
-    const store = new LocalNotesStore();
-    expect(await store.deleteLocal("note.md")).toBe(false);
-    expect(fsMocks.remove).not.toHaveBeenCalled();
-  });
-
-  it("grantFolderAccess invokes the allow_local_notes_folder Rust command with the path", async () => {
+  it("grantFolderAccess invokes the allow_local_notes_folder Rust command with this store's folder", async () => {
     invokeMock.mockResolvedValueOnce(undefined);
-    const store = new LocalNotesStore();
+    const store = new LocalNotesStore("/Users/j/notes");
 
-    await store.grantFolderAccess("/Users/j/notes");
+    await store.grantFolderAccess();
 
     expect(invokeMock).toHaveBeenCalledWith("allow_local_notes_folder", { path: "/Users/j/notes" });
+  });
+
+  it("keeps two stores with different folders fully independent", async () => {
+    fsMocks.readDir.mockImplementation(async (dir: string) => {
+      if (dir === "/root-a") return [{ name: "a.md", isFile: true, isDirectory: false, isSymlink: false }];
+      if (dir === "/root-b") return [{ name: "b.md", isFile: true, isDirectory: false, isSymlink: false }];
+      throw new Error(`unexpected readDir(${dir})`);
+    });
+    fsMocks.readTextFile.mockImplementation(async (path: string) => {
+      if (path === "/root-a/a.md") return "# A";
+      if (path === "/root-b/b.md") return "# B";
+      throw new Error(`unexpected readTextFile(${path})`);
+    });
+
+    const storeA = new LocalNotesStore("/root-a");
+    const storeB = new LocalNotesStore("/root-b");
+
+    expect(await storeA.listLocal()).toEqual([{ path: "a.md", title: "A" }]);
+    expect(await storeB.listLocal()).toEqual([{ path: "b.md", title: "B" }]);
+
+    await storeA.writeLocal("note.md", "content a");
+    await storeB.writeLocal("note.md", "content b");
+    expect(fsMocks.writeTextFile).toHaveBeenCalledWith("/root-a/note.md", "content a");
+    expect(fsMocks.writeTextFile).toHaveBeenCalledWith("/root-b/note.md", "content b");
+
+    await storeA.grantFolderAccess();
+    await storeB.grantFolderAccess();
+    expect(invokeMock).toHaveBeenCalledWith("allow_local_notes_folder", { path: "/root-a" });
+    expect(invokeMock).toHaveBeenCalledWith("allow_local_notes_folder", { path: "/root-b" });
   });
 });
