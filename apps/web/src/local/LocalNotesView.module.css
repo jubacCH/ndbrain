@@ -3,83 +3,200 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
 }
 
-.pickFolder {
+/* ---- empty state (no folder configured yet) ---- */
+
+.emptyState {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 0.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 2rem;
+  text-align: center;
 }
+
+.emptyLogo {
+  margin-bottom: 0.4rem;
+}
+
+.emptyLogoRing {
+  stroke: var(--color-fg-faint);
+}
+
+.emptyTitle {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--color-fg);
+}
+
+.emptyText {
+  margin: 0;
+  max-width: 46ch;
+  color: var(--color-fg-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.primaryButton {
+  margin-top: 0.4rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-accent-fg);
+  background: var(--color-accent);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+}
+
+.primaryButton:hover {
+  filter: brightness(1.08);
+}
+
+.emptyHint {
+  margin: 0.2rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-fg-faint);
+}
+
+/* ---- two-pane layout ---- */
 
 .layout {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: 0.75rem;
+  display: flex;
 }
 
 .listPane {
+  width: 248px;
+  flex-shrink: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  font-size: 0.875rem;
   border-right: 1px solid var(--color-border);
-  padding-right: 0.75rem;
-  overflow: auto;
+  overflow-y: auto;
 }
 
-.folderBar {
+.listHeader {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px 6px;
 }
 
-.button {
-  font: inherit;
-  font-size: 0.8rem;
-  color: var(--color-fg);
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: 0.35rem 0.7rem;
-  cursor: pointer;
-}
-
-.button:hover:not(:disabled) {
-  border-color: var(--color-border-strong);
-  background: var(--color-surface-2);
-}
-
-.button:disabled {
-  color: var(--color-fg-faint);
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.newNote {
-  align-self: flex-start;
-  font: inherit;
-  font-size: 0.8rem;
+.listLabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
   font-weight: 600;
-  color: var(--color-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--color-fg-faint);
+}
+
+.listCount {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-fg-faint);
+}
+
+.folderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 10px 8px;
+}
+
+.folderPath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-fg-faint);
+}
+
+.changeFolder {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--color-fg-muted);
   background: none;
   border: none;
   cursor: pointer;
-  padding: 0.2rem 0.3rem;
+  padding: 0.1rem 0.2rem;
   border-radius: var(--radius-sm);
 }
 
-.newNote:hover {
+.changeFolder:hover {
+  color: var(--color-fg);
   background: var(--color-surface-2);
+}
+
+.searchRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0 10px 8px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 8px;
+  color: var(--color-fg-faint);
+  pointer-events: none;
+}
+
+.search {
+  width: 100%;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--color-fg);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 0.4rem 0.5rem 0.4rem 1.7rem;
+  height: 28px;
+}
+
+.search:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.newNote {
+  width: calc(100% - 20px);
+  margin: 0 10px 8px;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--color-fg-muted);
+  background: none;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.newNote:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-fg);
 }
 
 .newNoteRow {
   display: flex;
   align-items: center;
   gap: 0.25rem;
+  margin: 0 10px 8px;
 }
 
 .newNoteInput {
@@ -87,7 +204,7 @@
   min-width: 0;
   font: inherit;
   font-family: var(--font-mono);
-  font-size: 0.8125rem;
+  font-size: 0.8rem;
   color: var(--color-fg);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -95,57 +212,66 @@
   padding: 0.25rem 0.375rem;
 }
 
-.newNoteConfirm,
-.newNoteCancel {
+.newNoteConfirm {
+  flex-shrink: 0;
   font: inherit;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
+  color: var(--color-accent-fg);
+  background: var(--color-accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+}
+
+.newNoteConfirm:hover {
+  filter: brightness(1.08);
+}
+
+.newNoteCancel {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-fg-muted);
   background: none;
   border: none;
-  cursor: pointer;
-  padding: 0.125rem 0.375rem;
   border-radius: var(--radius-sm);
+  padding: 0.25rem 0.375rem;
+  cursor: pointer;
 }
 
-.newNoteConfirm {
-  color: var(--color-accent);
-}
-
-.newNoteCancel {
-  color: var(--color-fg-muted);
-}
-
-.newNoteConfirm:hover,
 .newNoteCancel:hover {
   background: var(--color-surface-2);
-}
-
-.search {
-  width: 100%;
-  font: inherit;
-  color: var(--color-fg);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: 0.4rem 0.55rem;
 }
 
 .list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 4px 0 8px;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+}
+
+.listEmpty {
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-fg-faint);
 }
 
 .noteButton {
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
   text-align: left;
   background: none;
   border: none;
   border-left: 2px solid transparent;
-  padding: 0.32rem 0.5rem;
+  padding: 5px 10px;
   cursor: pointer;
   color: inherit;
 }
@@ -157,38 +283,109 @@
 .noteButton.active {
   background: var(--color-surface-2);
   border-left-color: var(--color-accent);
+}
+
+.noteTitle {
+  font-size: 13px;
+  font-weight: 500;
   color: var(--color-fg);
-  font-weight: 600;
 }
 
-.editorPane {
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.path {
+.notePath {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 10.5px;
   color: var(--color-fg-faint);
 }
 
+/* ---- editor pane ---- */
+
+.editorPane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.docHeader {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 20px 24px 14px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.docHeaderMain {
+  min-width: 0;
+}
+
+.docTitle {
+  margin: 0;
+  font-size: 25px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--color-fg);
+}
+
+.docMeta {
+  margin: 0.3rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-fg-faint);
+}
+
+.moveButton {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--color-fg-muted);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+}
+
+.moveButton:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  color: var(--color-fg);
+  background: var(--color-surface-2);
+}
+
+.moveButton:disabled {
+  color: var(--color-fg-faint);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.editorBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 24px 20px;
+}
+
 .error {
+  margin: 0;
+  padding: 0.4rem 10px 0;
   color: var(--color-danger);
 }
 
 .warning {
+  margin: 0;
+  padding: 0.4rem 10px 0;
   color: var(--color-warning);
 }
 
 .placeholder {
+  padding: 20px 24px;
   color: var(--color-fg-muted);
 }

@@ -84,4 +84,23 @@ describe("LocalOnlyShell", () => {
 
     expect(screen.getByRole("button", { name: /switch to (dark|light) theme/i })).toBeInTheDocument();
   });
+
+  it("shows 'no folder' in the statusbar when no local folder is configured", async () => {
+    setTauriFlag(true);
+    loadMock.mockResolvedValue({ get: vi.fn(async () => undefined), set: vi.fn(), save: vi.fn() });
+    render(<LocalOnlyShell onConnectServer={vi.fn()} />);
+
+    await screen.findByRole("button", { name: /choose folder/i });
+    expect(screen.getByText("no folder")).toBeInTheDocument();
+  });
+
+  // The "folder configured" branch of the statusbar (path + note count +
+  // "markdown · local") is covered at the `LocalNotesView` level instead
+  // (`onStatusChange` tests in `local/LocalNotesView.test.tsx`, which inject
+  // a fake store): `LocalOnlyShell` always renders the real, default
+  // `LocalNotesView` backed by the shared `localNotesStore` singleton, whose
+  // `LocalNotesStore.getTauriStore()` caches its resolved store promise for
+  // the module's lifetime — once any earlier test in this file resolves it
+  // to a "no folder" store, later tests in the same file can't make it
+  // resolve to a different one.
 });

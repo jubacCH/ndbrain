@@ -42,6 +42,14 @@ interface LocalDoc {
   content: string;
 }
 
+/** Falls back to the filename (without its `.md` extension) as a note's
+ *  display name when it has no markdown heading to extract a title from —
+ *  used by both the list rows and the editor pane's doc header. */
+function noteDisplayName(path: string): string {
+  const fileName = path.split("/").pop() ?? path;
+  return fileName.toLowerCase().endsWith(".md") ? fileName.slice(0, -".md".length) : fileName;
+}
+
 /** Structural subset of `LocalNotesStore` this view needs — lets tests inject
  *  a plain fake object (same convention as `NoteTreeClient`/`AuthClient`). */
 export type LocalNotesStoreLike = Pick<
@@ -55,6 +63,14 @@ export type LocalNotesStoreLike = Pick<
   | "grantFolderAccess"
 >;
 
+/** The folder/notes-count snapshot this view reports via `onStatusChange` —
+ *  `LocalOnlyShell` renders a statusbar from it instead of re-deriving the
+ *  same folder/count itself. */
+export interface LocalNotesStatus {
+  folder: string | null;
+  count: number;
+}
+
 export interface LocalNotesViewProps {
   /** Injectable for tests; defaults to the shared `localNotesStore` singleton. */
   store?: LocalNotesStoreLike;
@@ -63,12 +79,18 @@ export interface LocalNotesViewProps {
   moveToServer?: (rel: string) => Promise<MoveToServerResult>;
   /** Injectable for tests; defaults to the real, CodeMirror-backed `LocalEditor`. */
   EditorComponent?: (props: LocalEditorProps) => ReturnType<typeof LocalEditor>;
+  /** Fired whenever the configured folder or its note count changes. Optional
+   *  and unused by `AppRoot`'s standalone "Local" tab — `LocalOnlyShell` is
+   *  the only caller that passes it, to drive its statusbar without this
+   *  component needing to know a statusbar exists. */
+  onStatusChange?: (status: LocalNotesStatus) => void;
 }
 
 export function LocalNotesView({
   store = localNotesStore,
   moveToServer = defaultMoveToServer,
   EditorComponent = LocalEditor,
+  onStatusChange,
 }: LocalNotesViewProps) {
   const [folder, setFolder] = useState<string | null | undefined>(undefined);
   const [docs, setDocs] = useState<LocalDoc[]>([]);
@@ -82,6 +104,11 @@ export function LocalNotesView({
   const [newNoteName, setNewNoteName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const newNoteInputRef = useRef<HTMLInputElement>(null);
+  // Paths with a debounced edit not yet committed (see `handleChange`/
+  // `commitChange` below) — drives the doc header's "Saved"/"Unsaved
+  // changes" status line, purely cosmetic bookkeeping alongside the actual
+  // debounce/write-queue logic those functions already perform.
+  const [dirtyPaths, setDirtyPaths] = useState<Set<string>>(() => new Set());
 
   const enabled = isTauri();
 
@@ -151,6 +178,14 @@ export function LocalNotesView({
     if (isCreatingNote) newNoteInputRef.current?.focus();
   }, [isCreatingNote]);
 
+  // Reports the folder/count snapshot up to whoever asked (see
+  // `LocalNotesViewProps.onStatusChange`'s doc comment) whenever either
+  // changes — before `folder` first resolves it is `undefined`, reported as
+  // `null` (no folder configured yet) rather than left out entirely.
+  useEffect(() => {
+    onStatusChange?.({ folder: folder ?? null, count: docs.length });
+  }, [folder, docs.length, onStatusChange]);
+
   // Flushes every note's debounced-but-not-yet-persisted edit on unmount, so
   // navigating away right after typing never silently drops the last change.
   useEffect(() => {
@@ -213,6 +248,12 @@ export function LocalNotesView({
     );
     setListError(null);
     writeQueue.enqueue(path, content);
+    setDirtyPaths((prev) => {
+      if (!prev.has(path)) return prev;
+      const next = new Set(prev);
+      next.delete(path);
+      return next;
+    });
   }
 
   /** Immediately commits and enqueues a still-pending debounced edit for
@@ -244,6 +285,7 @@ export function LocalNotesView({
       commitChange(path, content);
     }, WRITE_DEBOUNCE_MS);
     pendingRef.current.set(path, { timer, content });
+    setDirtyPaths((prev) => (prev.has(path) ? prev : new Set(prev).add(path)));
   }
 
   async function handleMoveToServer() {
@@ -377,19 +419,57 @@ export function LocalNotesView({
   return (
     <div className={styles.view}>
       {folder === null ? (
-        <div className={styles.pickFolder}>
-          <p>No local notes folder configured yet.</p>
-          <button type="button" className={styles.button} onClick={() => void handlePickFolder()}>
+        <div className={styles.emptyState}>
+          <svg className={styles.emptyLogo} width="40" height="31" viewBox="0 0 26 20" fill="none" aria-hidden="true">
+            <circle className={styles.emptyLogoRing} cx="9.5" cy="10" r="6.5" strokeWidth="1.6" />
+            <circle className={styles.emptyLogoRing} cx="16.5" cy="10" r="6.5" strokeWidth="1.6" />
+          </svg>
+          <h2 className={styles.emptyTitle}>Open a folder of Markdown notes</h2>
+          <p className={styles.emptyText}>
+            These notes stay on this device only — they are never sent to the server or seen by an agent.
+          </p>
+          <button type="button" className={styles.primaryButton} onClick={() => void handlePickFolder()}>
             Choose folder…
           </button>
+          <p className={styles.emptyHint}>Any folder inside your home directory</p>
         </div>
       ) : (
         <div className={styles.layout}>
           <div className={styles.listPane}>
-            <div className={styles.folderBar}>
-              <button type="button" className={styles.button} onClick={() => void handleChangeFolder()}>
+            <div className={styles.listHeader}>
+              <span className={styles.listLabel}>Notes</span>
+              <span className={styles.listCount}>{docs.length}</span>
+            </div>
+
+            <div className={styles.folderRow}>
+              <span className={styles.folderPath} title={folder ?? undefined}>
+                {folder}
+              </span>
+              <button type="button" className={styles.changeFolder} onClick={() => void handleChangeFolder()}>
                 Change folder…
               </button>
+            </div>
+
+            <div className={styles.searchRow}>
+              <svg
+                className={styles.searchIcon}
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle cx="5.2" cy="5.2" r="4" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M8.2 8.2 11 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+              <input
+                className={styles.search}
+                role="searchbox"
+                aria-label="Search local notes"
+                placeholder="Search local notes…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
             </div>
 
             {folder && !isCreatingNote && (
@@ -425,15 +505,6 @@ export function LocalNotesView({
               </p>
             )}
 
-            <input
-              className={styles.search}
-              role="searchbox"
-              aria-label="Search local notes"
-              placeholder="Search local notes…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-
             {listError && (
               <p role="alert" className={styles.error}>
                 {listError}
@@ -441,19 +512,24 @@ export function LocalNotesView({
             )}
 
             <ul className={styles.list}>
-              {visible.map((doc) => (
-                <li key={doc.path}>
-                  <button
-                    type="button"
-                    className={
-                      doc.path === selectedPath ? `${styles.noteButton} ${styles.active}` : styles.noteButton
-                    }
-                    onClick={() => handleSelect(doc.path)}
-                  >
-                    {doc.title ?? doc.path}
-                  </button>
-                </li>
-              ))}
+              {visible.length === 0 ? (
+                <li className={styles.listEmpty}>{query.trim() ? "No matches" : "No notes yet"}</li>
+              ) : (
+                visible.map((doc) => (
+                  <li key={doc.path}>
+                    <button
+                      type="button"
+                      className={
+                        doc.path === selectedPath ? `${styles.noteButton} ${styles.active}` : styles.noteButton
+                      }
+                      onClick={() => handleSelect(doc.path)}
+                    >
+                      <span className={styles.noteTitle}>{doc.title ?? noteDisplayName(doc.path)}</span>
+                      <span className={styles.notePath}>{doc.path}</span>
+                    </button>
+                  </li>
+                ))
+              )}
             </ul>
           </div>
 
@@ -471,11 +547,16 @@ export function LocalNotesView({
 
             {selectedDoc ? (
               <>
-                <div className={styles.toolbar}>
-                  <span className={styles.path}>{selectedDoc.path}</span>
+                <div className={styles.docHeader}>
+                  <div className={styles.docHeaderMain}>
+                    <h1 className={styles.docTitle}>{selectedDoc.title ?? noteDisplayName(selectedDoc.path)}</h1>
+                    <p className={styles.docMeta}>
+                      {selectedDoc.path} · {dirtyPaths.has(selectedDoc.path) ? "Unsaved changes" : "Saved"}
+                    </p>
+                  </div>
                   <button
                     type="button"
-                    className={styles.button}
+                    className={styles.moveButton}
                     disabled={moving}
                     onClick={() => void handleMoveToServer()}
                   >
@@ -483,11 +564,13 @@ export function LocalNotesView({
                   </button>
                 </div>
 
-                <EditorComponent
-                  path={selectedDoc.path}
-                  content={selectedDoc.content}
-                  onChange={(content) => void handleChange(selectedDoc.path, content)}
-                />
+                <div className={styles.editorBody}>
+                  <EditorComponent
+                    path={selectedDoc.path}
+                    content={selectedDoc.content}
+                    onChange={(content) => void handleChange(selectedDoc.path, content)}
+                  />
+                </div>
               </>
             ) : (
               <p className={styles.placeholder}>Select a local note to start editing.</p>

@@ -97,6 +97,26 @@ describe("<LocalNotesView>", () => {
     expect(store.grantFolderAccess).toHaveBeenCalledWith("/root");
   });
 
+  it("reports the folder and note count via onStatusChange as they become known", async () => {
+    const store = makeStore({
+      listLocal: vi.fn(async () => [{ path: "a.md", title: "Note A" }]),
+    });
+    const onStatusChange = vi.fn();
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} onStatusChange={onStatusChange} />);
+
+    await screen.findByText("Note A");
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith({ folder: "/root", count: 1 }));
+  });
+
+  it("reports a null folder via onStatusChange when no folder is configured", async () => {
+    const store = makeStore({ getFolder: vi.fn(async () => null) });
+    const onStatusChange = vi.fn();
+    render(<LocalNotesView store={store} EditorComponent={FakeEditor} onStatusChange={onStatusChange} />);
+
+    await screen.findByRole("button", { name: /choose folder/i });
+    expect(onStatusChange).toHaveBeenCalledWith({ folder: null, count: 0 });
+  });
+
   it("lists notes automatically when a folder is already configured", async () => {
     const store = makeStore({
       listLocal: vi.fn(async () => [
@@ -151,7 +171,11 @@ describe("<LocalNotesView>", () => {
     const textarea = await screen.findByDisplayValue("# Old Title");
     fireEvent.change(textarea, { target: { value: "# New Title" } });
 
-    await waitFor(() => expect(screen.getByText("New Title")).toBeInTheDocument());
+    // Once selected, the note's title now renders twice (the list row and
+    // the editor pane's doc header show the same title) — `getAllByText`
+    // instead of `getByText`, since a single-selected-note assertion is no
+    // longer unique on the page.
+    await waitFor(() => expect(screen.getAllByText("New Title").length).toBeGreaterThan(0));
   });
 
   it("searches local notes by title/content via the on-device index", async () => {
@@ -213,7 +237,9 @@ describe("<LocalNotesView>", () => {
 
     await waitFor(() => expect(dialogConfirmMock).toHaveBeenCalled());
     expect(moveToServer).not.toHaveBeenCalled();
-    expect(screen.getByText("Note A")).toBeInTheDocument();
+    // The note stays selected, so its title now renders twice (list row +
+    // doc header) — see the identical comment on the title-refresh test above.
+    expect(screen.getAllByText("Note A").length).toBeGreaterThan(0);
   });
 
   it("shows an error and keeps the note listed when moveToServer's PUT fails", async () => {
@@ -231,7 +257,9 @@ describe("<LocalNotesView>", () => {
     fireEvent.click(await screen.findByRole("button", { name: /move to server/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/server unreachable/i);
-    expect(screen.getByText("Note A")).toBeInTheDocument();
+    // The note stays selected, so its title now renders twice (list row +
+    // doc header) — see the identical comment on the title-refresh test above.
+    expect(screen.getAllByText("Note A").length).toBeGreaterThan(0);
   });
 
   it("warns (without treating it as failure) when the move succeeds but the local copy could not be confirmed removed", async () => {
@@ -266,7 +294,9 @@ describe("<LocalNotesView>", () => {
 
     await waitFor(() => expect(moveToServer).toHaveBeenCalledWith("a.md"));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("Note A")).toBeInTheDocument();
+    // The note stays selected, so its title now renders twice (list row +
+    // doc header) — see the identical comment on the title-refresh test above.
+    expect(screen.getAllByText("Note A").length).toBeGreaterThan(0);
   });
 });
 
@@ -473,7 +503,10 @@ describe("<LocalNotesView> creating a new local note", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(store.writeLocal).toHaveBeenCalledWith("ideas.md", "# ideas\n"));
-    expect(await screen.findByText("ideas")).toBeInTheDocument();
+    // The new note is auto-selected, so its title now renders twice (list row
+    // + doc header) — see the identical comment on the title-refresh test
+    // further above; `findAllByText` replaces the single-match `findByText`.
+    expect((await screen.findAllByText("ideas")).length).toBeGreaterThan(0);
     // RTL's default text normalizer trims trailing whitespace before matching,
     // so the trailing "\n" from the real `writeLocal` content (asserted above)
     // is intentionally omitted from this matcher.
