@@ -56,8 +56,12 @@ export function getApiBaseUrl(): string {
 }
 
 /** Derives the `/collab` WebSocket URL from an explicit HTTP(S) origin:
- *  `https:` -> `wss:`, anything else -> `ws:`, same host. */
-function deriveWsUrlFromOrigin(origin: string): string {
+ *  `https:` -> `wss:`, anything else -> `ws:`, same host. Exported for
+ *  `shell/EditorPane.tsx`, which needs the ws URL of a *specific* server
+ *  source (derived from that source's `SourceDef.url`) rather than the
+ *  page's own location - one server source's provider must never leak
+ *  another source's origin. */
+export function deriveWsUrlFromOrigin(origin: string): string {
   const url = new URL(origin);
   const scheme = url.protocol === "https:" ? "wss" : "ws";
   return `${scheme}://${url.host}/collab`;

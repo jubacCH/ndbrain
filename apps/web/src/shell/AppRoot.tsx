@@ -14,13 +14,13 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "../auth/useAuth";
-import { Editor } from "../editor/Editor";
 import { SourceSection } from "../notes/SourceSection";
 import { SearchPalette } from "../search/SearchPalette";
 import { useSearchPalette } from "../search/useSearchPalette";
 import { useSources } from "../sources/useSources";
 import { AppShell } from "./AppShell";
 import { AppStateProvider, useAppState } from "./AppState";
+import { EditorPane } from "./EditorPane";
 import { RightPanel } from "./RightPanel";
 import { SettingsArea } from "./SettingsArea";
 import styles from "./AppRoot.module.css";
@@ -35,18 +35,11 @@ interface MainContentProps {
 }
 
 function MainContent({ settingsOpen, settingsEverOpened, onCloseSettings }: MainContentProps) {
-  const { selection } = useAppState();
-  const { token } = useAuth();
-
   return (
     <div className={styles.mainStack}>
       {!settingsOpen && (
         <div className={styles.mainSlot}>
-          {selection ? (
-            <Editor path={selection.path} token={token} key={`${selection.sourceId}:${selection.path}`} />
-          ) : (
-            <p className={styles.placeholder}>Select a note to start editing.</p>
-          )}
+          <EditorPane />
         </div>
       )}
 
