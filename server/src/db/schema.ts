@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -97,6 +97,40 @@ const MIGRATIONS: Array<(db: Database) => void> = [
         body,
         tokenize = 'unicode61 remove_diacritics 2'
       );
+    `);
+  },
+
+  // v1 -> v2: users and sessions
+  //
+  // Note that this is the one part of the database that is NOT a rebuildable
+  // cache. Losing it means losing every account, so the deploy documentation
+  // treats this file as worth backing up even though the index beside it is not.
+  (db) => {
+    db.exec(`
+      CREATE TABLE users (
+        -- Doubles as the vault directory name, so it is restricted to the same
+        -- character set that paths.ts enforces.
+        id            TEXT PRIMARY KEY,
+        display_name  TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        role          TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+        created_at    INTEGER NOT NULL,
+        disabled_at   INTEGER
+      ) STRICT;
+
+      CREATE TABLE sessions (
+        -- SHA-256 of the cookie value. Storing the raw token would mean a
+        -- database leak hands over live sessions, not just password hashes.
+        token_hash  TEXT PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        created_at  INTEGER NOT NULL,
+        expires_at  INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX sessions_user    ON sessions (user_id);
+      CREATE INDEX sessions_expires ON sessions (expires_at);
     `);
   },
 ];
