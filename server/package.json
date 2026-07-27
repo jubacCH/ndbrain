@@ -11,9 +11,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke": "tsc -p tsconfig.json && node dist/scripts/smoke.js"
+    "smoke": "tsc -p tsconfig.json && node --disable-warning=ExperimentalWarning dist/scripts/smoke.js"
   },
   "dependencies": {
+    "chokidar": "^5.0.0",
     "yaml": "^2.8.1"
   },
   "devDependencies": {

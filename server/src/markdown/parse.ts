@@ -35,7 +35,13 @@ export interface ExternalLink {
 export interface Task {
   done: boolean;
   text: string;
-  /** 1-based line number within the full source. */
+  /**
+   * 1-based line number within the **file**, frontmatter included.
+   *
+   * File-relative rather than body-relative on purpose: the number exists so the
+   * UI can jump to the task, and a jump that is off by the length of the
+   * frontmatter is worse than no jump at all.
+   */
   line: number;
 }
 
@@ -245,6 +251,9 @@ export function parseNote(source: string): ParsedNote {
 
   const tasks: Task[] = [];
   const maskedLines = masked.split('\n');
+  // Lines the frontmatter block occupies, so task lines refer to the file.
+  const frontmatterLines = bodyOffset === 0 ? 0 : countLines(source.slice(0, bodyOffset));
+
   for (let i = 0; i < maskedLines.length; i += 1) {
     const line = maskedLines[i];
     if (line === undefined) continue;
@@ -253,13 +262,21 @@ export function parseNote(source: string): ParsedNote {
     tasks.push({
       done: (m[1] ?? ' ').toLowerCase() === 'x',
       text: (m[2] ?? '').trim(),
-      line: i + 1,
+      line: frontmatterLines + i + 1,
     });
   }
 
   const tags = dedupe([...tagsFromFrontmatter(frontmatter), ...inlineTags]);
 
   return { frontmatter, frontmatterError, body, bodyOffset, tags, wikilinks, links, tasks };
+}
+
+function countLines(text: string): number {
+  let count = 0;
+  for (const char of text) {
+    if (char === '\n') count += 1;
+  }
+  return count;
 }
 
 function dedupe(values: string[]): string[] {
