@@ -11,8 +11,18 @@
  * instead of writing its own SQL.
  */
 
-import type { Database } from '../db/database.js';
+import type { Database, SqlValue } from '../db/database.js';
 import { caseKey } from '../vault/paths.js';
+
+export interface SearchOptions {
+  /** Only notes carrying this tag. */
+  tag?: string;
+  /** Only notes below this folder. */
+  dir?: string;
+  /** Only notes modified at or after this timestamp. */
+  sinceMs?: number;
+  limit?: number;
+}
 
 export interface NoteRow {
   path: string;
@@ -100,10 +110,56 @@ export class Queries {
       .map(toNoteRow);
   }
 
-  /** Full-text search over title and body, scoped to one owner. */
-  search(owner: string, query: string, limit = 30): SearchHit[] {
+  /**
+   * Full-text search over title and body, scoped to one owner.
+   *
+   * Filters combine, and each one is optional. A query with only filters and no
+   * words is legitimate — "everything tagged #homelab from the last week" is a
+   * question people ask — so an empty search term falls back to listing by
+   * recency rather than returning nothing.
+   */
+  search(owner: string, query: string, options: SearchOptions = {}): SearchHit[] {
+    const limit = Math.trunc(options.limit ?? 30);
+    const conditions: string[] = ['n.owner = ?'];
+    const params: SqlValue[] = [owner];
+
+    if (options.tag !== undefined && options.tag !== '') {
+      conditions.push(
+        'EXISTS (SELECT 1 FROM tags t WHERE t.owner = n.owner AND t.path = n.path AND t.key = ?)',
+      );
+      params.push(caseKey(options.tag));
+    }
+
+    if (options.dir !== undefined && options.dir !== '') {
+      // Prefix match on the folder. `substr` rather than LIKE because LIKE folds
+      // case in SQLite for ASCII, and folder names are case-sensitive here.
+      const prefix = options.dir.endsWith('/') ? options.dir : `${options.dir}/`;
+      conditions.push('substr(n.path, 1, ?) = ?');
+      params.push(prefix.length, prefix);
+    }
+
+    if (options.sinceMs !== undefined) {
+      conditions.push('n.mtime_ms >= ?');
+      params.push(Math.trunc(options.sinceMs));
+    }
+
     const match = toMatchQuery(query);
-    if (match === null) return [];
+
+    if (match === null) {
+      // No search words: this is a filter query, so order by recency and give
+      // back an empty snippet rather than pretending to have matched something.
+      return this.#db
+        .all(
+          `SELECT n.path, n.title, n.size, n.mtime_ms
+             FROM notes n
+            WHERE ${conditions.join(' AND ')}
+            ORDER BY n.mtime_ms DESC
+            LIMIT ?`,
+          ...params,
+          limit,
+        )
+        .map((row) => ({ ...toNoteRow(row), snippet: '', rank: 0 }));
+    }
 
     return this.#db
       .all(
@@ -114,17 +170,54 @@ export class Queries {
            JOIN notes n ON n.owner = notes_fts.owner AND n.path = notes_fts.path
           WHERE notes_fts MATCH ?
             AND notes_fts.owner = ?
+            AND ${conditions.join(' AND ')}
           ORDER BY rank
           LIMIT ?`,
         match,
         owner,
-        Math.trunc(limit),
+        ...params,
+        limit,
       )
       .map((row) => ({
         ...toNoteRow(row),
         snippet: String(row['snippet'] ?? ''),
         rank: Number(row['rank'] ?? 0),
       }));
+  }
+
+  /**
+   * Title matching for the quick switcher.
+   *
+   * Deliberately not full-text search. Somebody typing `prox` to jump to a note
+   * wants the note called Proxmox, not the forty notes that mention it — and
+   * they want it before they finish typing. This looks only at titles and paths.
+   *
+   * Ranking is done in JavaScript because it is a subsequence score, which SQL
+   * cannot express; the candidate set is bounded first so the work stays small.
+   */
+  quickFind(owner: string, query: string, limit = 12): NoteRow[] {
+    const needle = query.trim().toLowerCase();
+
+    if (needle === '') {
+      return this.recentNotes(owner, limit);
+    }
+
+    const candidates = this.#db
+      .all(
+        `SELECT path, title, size, mtime_ms FROM notes
+          WHERE owner = ? ORDER BY mtime_ms DESC LIMIT 5000`,
+        owner,
+      )
+      .map(toNoteRow);
+
+    const scored: Array<{ note: NoteRow; score: number }> = [];
+    for (const note of candidates) {
+      const score = matchScore(note, needle);
+      if (score > 0) scored.push({ note, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score || b.note.mtimeMs - a.note.mtimeMs);
+    return scored.slice(0, limit).map((entry) => entry.note);
   }
 
   /** Notes that link to `path`. */
@@ -244,6 +337,37 @@ export class Queries {
       )
       .map(toNoteRow);
   }
+}
+
+/**
+ * Scores a note against what the person has typed so far. Zero means no match.
+ *
+ * The ordering encodes how people actually use a quick switcher: an exact title
+ * beats a title that starts with the input, which beats a title that contains
+ * it, which beats a match anywhere in the path. Below that, a subsequence match
+ * still counts — typing `pxcl` should find `Proxmox Cluster` — but scores lowest,
+ * because it is the loosest kind of match and would otherwise drown the rest.
+ */
+function matchScore(note: NoteRow, needle: string): number {
+  const title = note.title.toLowerCase();
+  const path = note.path.toLowerCase();
+
+  if (title === needle) return 1000;
+  if (title.startsWith(needle)) return 800 - title.length;
+  if (title.includes(needle)) return 600 - title.length;
+  if (path.includes(needle)) return 400 - path.length;
+
+  return isSubsequence(needle, title) ? 200 - title.length : 0;
+}
+
+/** True if every character of `needle` appears in `haystack`, in order. */
+function isSubsequence(needle: string, haystack: string): boolean {
+  let index = 0;
+  for (const char of haystack) {
+    if (char === needle[index]) index += 1;
+    if (index === needle.length) return true;
+  }
+  return needle.length === 0;
 }
 
 function toNoteRow(row: Record<string, unknown>): NoteRow {

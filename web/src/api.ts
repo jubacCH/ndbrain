@@ -135,8 +135,19 @@ export const api = {
       body: JSON.stringify({ from, to }),
     }),
 
-  search: (q: string) =>
-    request<{ hits: SearchHit[] }>(`/api/v1/search?q=${encodeURIComponent(q)}`),
+  search: (q: string, filters: { tag?: string; dir?: string; days?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (q !== '') params.set('q', q);
+    if (filters.tag !== undefined) params.set('tag', filters.tag);
+    if (filters.dir !== undefined) params.set('dir', filters.dir);
+    if (filters.days !== undefined) params.set('days', String(filters.days));
+    return request<{ hits: SearchHit[] }>(`/api/v1/search?${params.toString()}`);
+  },
+
+  quickFind: (q: string) =>
+    request<{ notes: NoteRow[] }>(`/api/v1/quickfind?q=${encodeURIComponent(q)}`),
+
+  tags: () => request<{ tags: Array<{ tag: string; count: number }> }>('/api/v1/tags'),
 
   links: (path: string) =>
     request<{ backlinks: LinkRow[]; outgoing: LinkRow[] }>(`/api/v1/backlinks/${encodePath(path)}`),

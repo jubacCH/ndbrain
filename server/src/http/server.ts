@@ -218,11 +218,37 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // ---- librarian ----------------------------------------------------------
   fastify.get('/api/v1/search', async (request) => {
     const owner = requireUser(request).id;
-    const query = (request.query ?? {}) as { q?: unknown; limit?: unknown };
-    const q = typeof query.q === 'string' ? query.q : '';
-    const limit = clamp(Number(query.limit) || 30, 1, 200);
+    const query = (request.query ?? {}) as Record<string, unknown>;
 
-    return { hits: app.queries.search(owner, q, limit) };
+    const q = typeof query['q'] === 'string' ? query['q'] : '';
+    const options: Parameters<typeof app.queries.search>[2] = {
+      limit: clamp(Number(query['limit']) || 40, 1, 200),
+    };
+
+    if (typeof query['tag'] === 'string' && query['tag'] !== '') options.tag = query['tag'];
+    if (typeof query['dir'] === 'string' && query['dir'] !== '') options.dir = query['dir'];
+
+    // `days=7` rather than a timestamp: the client asks a question in the terms
+    // a person uses, and the server owns what "now" means.
+    const days = Number(query['days']);
+    if (Number.isFinite(days) && days > 0) {
+      options.sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
+    }
+
+    return { hits: app.queries.search(owner, q, options) };
+  });
+
+  fastify.get('/api/v1/quickfind', async (request) => {
+    const owner = requireUser(request).id;
+    const query = (request.query ?? {}) as { q?: unknown };
+    const q = typeof query.q === 'string' ? query.q : '';
+
+    return { notes: app.queries.quickFind(owner, q, 12) };
+  });
+
+  fastify.get('/api/v1/tags', async (request) => {
+    const owner = requireUser(request).id;
+    return { tags: app.queries.tagCounts(owner) };
   });
 
   fastify.get('/api/v1/backlinks/*', async (request) => {
