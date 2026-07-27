@@ -19,6 +19,12 @@ const USAGE = `ndbrain-user — manage ndBrain accounts
   enable <name>               re-enable an account
   list                        list accounts
 
+  key create <user> <name> [--write] [--scope <folder>]
+                              create an agent key for MCP (prints the key once)
+  key list <user>             list a user's agent keys
+  key revoke <key-id>         revoke a key immediately
+  key log <user>              recent agent tool calls
+
 The password is read from stdin when it is not a terminal, otherwise generated:
 
   echo -n 'my password' | ndbrain-user passwd julian
@@ -92,6 +98,89 @@ async function main(): Promise<void> {
         runtime.users.setDisabled(name, command === 'disable');
         process.stdout.write(`${name} ${command}d\n`);
         break;
+      }
+
+      case 'key': {
+        // `key <action> <args…>` — the shared positional holds the sub-command.
+        const action = name;
+        const rest2 = rest;
+
+        if (action === 'create') {
+          const [owner, keyName] = rest2;
+          if (owner === undefined || keyName === undefined) {
+            throw new Error('usage: key create <user> <name> [--write] [--scope <folder>]');
+          }
+          const scopeIndex = rest2.indexOf('--scope');
+          const options: { scope?: string; canWrite?: boolean } = {
+            canWrite: rest2.includes('--write'),
+          };
+          if (scopeIndex !== -1) {
+            const scope = rest2[scopeIndex + 1];
+            if (scope === undefined) throw new Error('--scope needs a folder');
+            options.scope = scope;
+          }
+
+          const { key, secret } = runtime.keys.create(owner, keyName, options);
+          const lines = [
+            `created ${key.id} for ${key.owner}`,
+            `scope: ${key.scope === '' ? 'entire vault' : key.scope}`,
+            `access: ${key.canWrite ? 'read and write' : 'read only'}`,
+            '',
+            secret,
+            '',
+            'This is the only time the key is shown. Store it now.',
+          ];
+          process.stdout.write(`${lines.join('\n')}\n`);
+          break;
+        }
+
+        if (action === 'list') {
+          const [owner] = rest2;
+          if (owner === undefined) throw new Error('usage: key list <user>');
+          const keys = runtime.keys.list(owner);
+          if (keys.length === 0) {
+            process.stdout.write('no keys\n');
+            break;
+          }
+          for (const key of keys) {
+            const flags = [
+              key.canWrite ? 'write' : 'read',
+              key.scope === '' ? 'whole vault' : key.scope,
+              key.revoked ? 'REVOKED' : null,
+              key.lastUsedAt === null ? 'never used' : `last used ${new Date(key.lastUsedAt).toISOString()}`,
+            ]
+              .filter(Boolean)
+              .join(', ');
+            process.stdout.write(`${key.id}  ${key.name.padEnd(20)} ${flags}\n`);
+          }
+          break;
+        }
+
+        if (action === 'revoke') {
+          const [keyId] = rest2;
+          if (keyId === undefined) throw new Error('usage: key revoke <key-id>');
+          runtime.keys.revoke(keyId);
+          process.stdout.write(`${keyId} revoked\n`);
+          break;
+        }
+
+        if (action === 'log') {
+          const [owner] = rest2;
+          if (owner === undefined) throw new Error('usage: key log <user>');
+          const entries = runtime.keys.recentAccess(owner, 50);
+          if (entries.length === 0) {
+            process.stdout.write('no agent activity\n');
+            break;
+          }
+          for (const entry of entries) {
+            const when = new Date(entry.at).toISOString();
+            const verdict = entry.allowed ? 'ok     ' : 'REFUSED';
+            process.stdout.write(`${when}  ${verdict}  ${entry.tool.padEnd(14)} ${entry.path ?? ''}\n`);
+          }
+          break;
+        }
+
+        throw new Error('usage: key create|list|revoke|log ...');
       }
 
       case 'list': {
