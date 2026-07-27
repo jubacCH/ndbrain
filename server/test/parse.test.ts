@@ -146,6 +146,13 @@ describe('tasks', () => {
     ]);
   });
 
+  it('numbers lines from the start of the file, not the body', () => {
+    // Frontmatter occupies lines 1–3, so the task is on line 5 of the file.
+    // Body-relative numbering here would make every "jump to task" land short.
+    const note = parseNote('---\ntags: [a]\n---\n\n- [ ] Erste Aufgabe\n');
+    expect(note.tasks[0]).toMatchObject({ text: 'Erste Aufgabe', line: 5 });
+  });
+
   it('accepts an uppercase X and indented tasks', () => {
     const note = parseNote('  - [X] Erledigt\n');
     expect(note.tasks[0]).toMatchObject({ done: true, text: 'Erledigt' });

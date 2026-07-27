@@ -12,6 +12,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { Database } from '../src/db/database.js';
+import { migrate } from '../src/db/schema.js';
+import { Indexer } from '../src/index/indexer.js';
+import { Queries } from '../src/index/queries.js';
 import { parseNote } from '../src/markdown/parse.js';
 import { NoteService } from '../src/notes/service.js';
 import { Vault } from '../src/vault/fs.js';
@@ -134,11 +138,62 @@ async function main(): Promise<void> {
       console.log('Traversal über die Mandantengrenze: abgewiesen');
     }
 
+    // ---- Phase 1: Index ---------------------------------------------------
+    const db = new Database(':memory:');
+    migrate(db);
+    const indexer = new Indexer(db, notes);
+    const q = new Queries(db);
+
+    await indexer.rebuild('julian');
+    await indexer.rebuild('ramona');
+
+    const snapshot = JSON.stringify(
+      db.all('SELECT path, hash FROM notes WHERE owner = ? ORDER BY path', 'julian'),
+    );
+
+    console.log('\nIndex');
+    console.log(`  Notizen          ${q.countNotes('julian')}`);
+    console.log(`  Tags             ${q.tagCounts('julian').map((t) => `${t.tag}(${t.count})`).join(' ')}`);
+    console.log(`  Offene Aufgaben  ${q.openTasks('julian').length}`);
+    console.log(`  Verwaist         ${q.orphans('julian').length}`);
+    console.log(`  Ungetaggt        ${q.untagged('julian').length}`);
+    console.log(`  Links ins Leere  ${q.deadLinks('julian').map((l) => l.targetRaw).join(', ') || '—'}`);
+
+    const hits = q.search('julian', 'qdevice');
+    console.log(`\nSuche "qdevice"  → ${hits.map((h) => h.path).join(', ') || 'nichts'}`);
+    console.log(
+      `Backlinks auf Proxmox Cluster.md → ` +
+        `${q.backlinks('julian', 'Homelab/Proxmox Cluster.md').map((l) => l.source).join(', ') || '—'}`,
+    );
+
+    if (q.search('ramona', 'qdevice').length > 0) {
+      console.error('LECK: Ramonas Suche findet Julians Notiz');
+      failures += 1;
+    }
+
+    // The central promise: the index holds nothing the files do not.
+    const rebuilt = new Database(':memory:');
+    migrate(rebuilt);
+    await new Indexer(rebuilt, notes).rebuild('julian');
+    const after = JSON.stringify(
+      rebuilt.all('SELECT path, hash FROM notes WHERE owner = ? ORDER BY path', 'julian'),
+    );
+    rebuilt.close();
+
+    if (after !== snapshot) {
+      console.error('\nIndex nach Neuaufbau NICHT identisch');
+      failures += 1;
+    } else {
+      console.log('\nIndex gelöscht und neu gebaut: identisch — die DB ist ein Cache.');
+    }
+
+    db.close();
+
     if (failures > 0) {
       console.error(`\n${failures} Problem(e).`);
       process.exitCode = 1;
     } else {
-      console.log('\nAlle Notizen byte-identisch zurückgelesen, keine Lecks.');
+      console.log('Alle Notizen byte-identisch zurückgelesen, keine Lecks.');
     }
   } finally {
     await fs.rm(dataDir, { recursive: true, force: true });
