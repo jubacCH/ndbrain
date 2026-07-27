@@ -41,6 +41,13 @@ COPY --from=server /build/server/node_modules ./node_modules
 COPY --from=server /build/server/package.json ./package.json
 COPY --from=web /build/web/dist ./web
 
+# Accounts and agent keys are managed by running a command in this container.
+# Without this the invocation is `node dist/src/cli.js`, which is a path that
+# has to be looked up every time and quietly changes whenever the build layout
+# does. The wrapper is the documented name.
+RUN printf '#!/bin/sh\nexec node /app/dist/src/cli.js "$@"\n' > /usr/local/bin/ndbrain-user \
+ && chmod +x /usr/local/bin/ndbrain-user
+
 # The vault holds the user's notes; it must outlive the container.
 RUN mkdir -p /data/vaults /data/index && chown -R node:node /data /app
 VOLUME ["/data"]
