@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError, api, type Note, type NoteRow, type Overview, type SearchHit, type Tidy, type User } from './api';
+import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { Login } from './Login';
 import { Palette } from './Palette';
@@ -57,6 +58,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [filters, setFilters] = useState<Filters>({});
   const [tags, setTags] = useState<Array<{ tag: string; count: number }>>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(true);
+  // Bumped after every successful save so the context panel re-reads the links.
+  const [linksVersion, setLinksVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [mobileTree, setMobileTree] = useState(false);
 
@@ -97,6 +101,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     try {
       await api.putNote(outstanding.path, outstanding.content);
       setSaveState(pending.current === null ? 'saved' : 'dirty');
+      // Links may have appeared or broken with this edit, so the panel and the
+      // tree markers are re-read rather than left showing the previous state.
+      setLinksVersion((version) => version + 1);
       void refreshTree();
     } catch (caught) {
       setSaveState('failed');
@@ -149,18 +156,41 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     [flush, refreshTree],
   );
 
+  const createNoteAt = useCallback(
+    async (rawName: string): Promise<void> => {
+      const name = rawName.trim();
+      if (name === '') return;
+
+      const path = name.endsWith('.md') ? name : `${name}.md`;
+      const title = path.split('/').pop()?.replace(/\.md$/i, '') ?? '';
+
+      try {
+        await api.putNote(path, `# ${title}\n\n`);
+        await refreshTree();
+        await openNote(path);
+      } catch (caught) {
+        setError(caught instanceof ApiError ? caught.message : 'Anlegen fehlgeschlagen.');
+      }
+    },
+    [openNote, refreshTree],
+  );
+
   const createNote = async (): Promise<void> => {
     const name = window.prompt('Name der neuen Notiz (Ordner mit / möglich)');
-    if (name === null || name.trim() === '') return;
+    if (name === null) return;
+    await createNoteAt(name);
+  };
 
-    const path = name.trim().endsWith('.md') ? name.trim() : `${name.trim()}.md`;
-    try {
-      await api.putNote(path, `# ${path.split('/').pop()?.replace(/\.md$/, '') ?? ''}\n\n`);
-      await refreshTree();
-      await openNote(path);
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Anlegen fehlgeschlagen.');
-    }
+  /**
+   * Creates the note a dead link points at, next to the note that links to it.
+   *
+   * Putting it in the same folder is the guess that is right most of the time and
+   * cheap to undo — the alternative is another dialogue at the moment somebody
+   * just wanted the gap filled.
+   */
+  const createFromDeadLink = async (target: string): Promise<void> => {
+    const folder = note?.path.split('/').slice(0, -1).join('/') ?? '';
+    await createNoteAt(folder === '' ? target : `${folder}/${target}`);
   };
 
   const runSearch = useCallback(
@@ -365,6 +395,17 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             />
           )}
         </main>
+
+        {view === 'note' && (
+          <ContextPanel
+            notePath={note?.path ?? null}
+            open={contextOpen}
+            onToggle={() => setContextOpen((isOpen) => !isOpen)}
+            onOpen={(path) => void openNote(path)}
+            onCreate={(target) => void createFromDeadLink(target)}
+            reloadKey={linksVersion}
+          />
+        )}
       </div>
 
       <Palette
