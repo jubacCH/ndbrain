@@ -1,0 +1,8 @@
+# Normalise line endings in the repository so a checkout on Windows and one on
+# macOS produce identical blobs. Without this, every file touched on a different
+# machine shows up as fully rewritten.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
