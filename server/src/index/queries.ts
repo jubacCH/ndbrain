@@ -54,6 +54,19 @@ export interface TaskRow {
   text: string;
 }
 
+export interface ActivityRow {
+  path: string;
+  title: string;
+  /** Account name, or an agent's key name once agents write. */
+  actor: string;
+  action: 'create' | 'update' | 'delete' | 'rename';
+  at: number;
+  /** How many edits were collapsed into this entry. */
+  edits: number;
+  /** True when the note no longer exists — deliberately still listed. */
+  deleted: boolean;
+}
+
 /**
  * Turns free text into an FTS5 MATCH expression.
  *
@@ -324,6 +337,52 @@ export class Queries {
         owner,
       )
       .map((row) => ({ tag: String(row['tag']), count: Number(row['n']) }));
+  }
+
+  /**
+   * What happened lately, newest first, one entry per note.
+   *
+   * Collapsed per note on purpose: twenty autosaves of one paragraph are one
+   * thing that happened, not twenty. Deleted notes are kept in the result — "the
+   * note you are looking for was deleted this morning" is precisely the answer
+   * somebody needs.
+   */
+  activity(owner: string, sinceMs: number, limit = 50): ActivityRow[] {
+    return this.#db
+      .all(
+        `SELECT e.path,
+                MAX(e.at)                                        AS at,
+                COUNT(*)                                         AS edits,
+                -- The actor and action of the most recent edit for this note.
+                (SELECT actor  FROM edits x
+                  WHERE x.owner = e.owner AND x.path = e.path
+                  ORDER BY x.at DESC LIMIT 1)                    AS actor,
+                (SELECT action FROM edits x
+                  WHERE x.owner = e.owner AND x.path = e.path
+                  ORDER BY x.at DESC LIMIT 1)                    AS action,
+                n.title                                          AS title
+           FROM edits e
+           LEFT JOIN notes n ON n.owner = e.owner AND n.path = e.path
+          WHERE e.owner = ? AND e.at >= ?
+          GROUP BY e.path
+          ORDER BY at DESC
+          LIMIT ?`,
+        owner,
+        Math.trunc(sinceMs),
+        Math.trunc(limit),
+      )
+      .map((row) => ({
+        path: String(row['path']),
+        // A deleted note has no row in `notes` any more, so fall back to its name.
+        title: row['title'] === null || row['title'] === undefined
+          ? String(row['path']).split('/').pop()?.replace(/\.md$/i, '') ?? String(row['path'])
+          : String(row['title']),
+        actor: String(row['actor']),
+        action: String(row['action']) as ActivityRow['action'],
+        at: Number(row['at']),
+        edits: Number(row['edits']),
+        deleted: row['title'] === null || row['title'] === undefined,
+      }));
   }
 
   notesWithTag(owner: string, tag: string): NoteRow[] {

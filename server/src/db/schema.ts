@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -133,6 +133,32 @@ const MIGRATIONS: Array<(db: Database) => void> = [
       CREATE INDEX sessions_expires ON sessions (expires_at);
     `);
   },
+
+  // v2 -> v3: the edit log
+  //
+  // Who changed a note is not written in the note, so unlike everything else in
+  // the index this cannot be reconstructed from the vault. It is therefore its
+  // own table rather than a column on `notes`: adding it there would quietly
+  // break the promise that deleting the database costs nothing but a reindex —
+  // the notes would come back and the history would not, without anybody
+  // noticing.
+  //
+  // Losing this table loses the activity view, never a note.
+  (db) => {
+    db.exec(`
+      CREATE TABLE edits (
+        owner  TEXT NOT NULL,
+        path   TEXT NOT NULL,
+        -- The account, or later an agent's key name. Free text, because an agent
+        -- is not a user row and never will be.
+        actor  TEXT NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('create', 'update', 'delete', 'rename')),
+        at     INTEGER NOT NULL
+      ) STRICT;
+
+      CREATE INDEX edits_owner_at ON edits (owner, at DESC);
+    `);
+  },
 ];
 
 /** Applies pending migrations. Safe to call on every start. */
@@ -156,7 +182,12 @@ export function migrate(db: Database): void {
   }
 }
 
-/** Empties the index without touching the schema — used by a full rebuild. */
+/**
+ * Empties the index without touching the schema — used by a full rebuild.
+ *
+ * Deliberately leaves `users`, `sessions` and `edits` alone: a rebuild reads the
+ * vault, and none of those three are derivable from it.
+ */
 export function clearIndex(db: Database, owner?: string): void {
   db.transaction(() => {
     if (owner === undefined) {
