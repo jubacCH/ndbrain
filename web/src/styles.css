@@ -1163,3 +1163,95 @@ tbody tr[data-selected='true'] td {
 tbody tr[data-selected='true']:hover td {
   background: var(--surface-3);
 }
+
+/* ---- installed on a phone ----------------------------------------------- */
+
+/*
+ * In standalone mode there is no browser chrome, so the app sits under the notch
+ * and over the home indicator unless it says otherwise.
+ */
+.top {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+  padding-left: max(0.7rem, env(safe-area-inset-left));
+  padding-right: max(0.7rem, env(safe-area-inset-right));
+}
+
+.pane {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (max-width: 720px) {
+  /* Touch targets: 15px text with tight padding is fine with a mouse and
+     miserable with a thumb. */
+  .segs button,
+  .btn,
+  .node,
+  .item,
+  .fbtn {
+    min-height: 2.2rem;
+  }
+
+  .node {
+    padding-top: 0.45rem;
+    padding-bottom: 0.45rem;
+  }
+
+  /* The name and the search field cannot both have the width; on a phone the
+     search field is the one that earns it. */
+  .logo,
+  .who {
+    display: none;
+  }
+
+  .omni {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .omni kbd {
+    display: none; /* there is no Cmd key on a phone */
+  }
+
+  .pane.padded {
+    padding: 1rem 0.9rem 2.5rem;
+  }
+
+  .h-big {
+    font-size: 1.25rem;
+  }
+
+  .bulkbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+
+  .bulkhint {
+    display: none;
+  }
+
+  /* The editor gets the full width; 78ch is a desktop measure. */
+  .cm-editor .cm-scroller {
+    padding: 0.9rem 0.9rem 4rem;
+  }
+
+  .scrim {
+    padding-top: max(6vh, env(safe-area-inset-top));
+  }
+}
+
+@media (max-width: 420px) {
+  .segs button {
+    padding: 0.25rem 0.45rem;
+    font-size: 0.8rem;
+  }
+}
+
+/* Somebody who asked for less motion should not get animated menus. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
