@@ -16,7 +16,9 @@ import staticPlugin from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 
 import type { App } from '../app.js';
+import type { ApiKeyService } from '../auth/keys.js';
 import { SessionService, UserService, type User } from '../auth/users.js';
+import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
 import { toProblem } from './errors.js';
 import { LoginThrottle } from './throttle.js';
@@ -34,6 +36,7 @@ export interface ServerDeps {
   app: App;
   users: UserService;
   sessions: SessionService;
+  keys: ApiKeyService;
   config: Config;
   throttle?: LoginThrottle;
 }
@@ -42,7 +45,7 @@ export interface ServerDeps {
 const PUBLIC_ROUTES = new Set(['/api/v1/auth/login', '/api/v1/health']);
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const { app, users, sessions, config } = deps;
+  const { app, users, sessions, keys, config } = deps;
   const throttle = deps.throttle ?? new LoginThrottle();
 
   const fastify = Fastify({
@@ -80,7 +83,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   fastify.addHook('onRequest', async (request, reply) => {
     const pathname = decodeOnce(new URL(request.url, 'http://localhost').pathname);
 
-    if (!pathname.startsWith('/api/')) return; // static assets, handled elsewhere
+    if (!pathname.startsWith('/api/')) return; // static assets and /mcp
     if (PUBLIC_ROUTES.has(pathname)) return;
 
     const token = request.cookies[SESSION_COOKIE];
@@ -133,6 +136,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ---- health -------------------------------------------------------------
   fastify.get('/api/v1/health', async () => ({ status: 'ok' }));
+
+  // ---- MCP ----------------------------------------------------------------
+  //
+  // Sits outside /api/ and outside the session gate on purpose: it authenticates
+  // with its own bearer key, not with a browser cookie. Keeping it off the
+  // cookie path also means a malicious page cannot reach it with the user's
+  // ambient credentials.
+  registerMcpEndpoint(fastify, { app, keys });
 
   // ---- authentication -----------------------------------------------------
   fastify.post('/api/v1/auth/login', async (request, reply) => {

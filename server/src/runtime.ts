@@ -10,6 +10,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { App } from './app.js';
+import { ApiKeyService } from './auth/keys.js';
 import { SessionService, UserService } from './auth/users.js';
 import { indexFile, type Config } from './config.js';
 import { Database } from './db/database.js';
@@ -28,6 +29,7 @@ export interface Runtime {
   app: App;
   users: UserService;
   sessions: SessionService;
+  keys: ApiKeyService;
   close(): void;
 }
 
@@ -44,6 +46,7 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   const app = new App(db, notes, indexer);
   const users = new UserService(db, vault);
   const sessions = new SessionService(db);
+  const keys = new ApiKeyService(db);
 
   sessions.purgeExpired();
 
@@ -56,6 +59,7 @@ export async function createRuntime(config: Config): Promise<Runtime> {
     app,
     users,
     sessions,
+    keys,
     close: () => db.close(),
   };
 }

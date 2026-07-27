@@ -42,6 +42,7 @@ beforeEach(async () => {
     app: runtime.app,
     users: runtime.users,
     sessions: runtime.sessions,
+    keys: runtime.keys,
     config,
     throttle: new LoginThrottle({ limit: 1000 }),
   });
@@ -143,6 +144,7 @@ describe('login', () => {
       app: runtime.app,
       users: runtime.users,
       sessions: runtime.sessions,
+      keys: runtime.keys,
       config: { ...runtime.config, cookieSecure: false },
       throttle: new LoginThrottle({ limit: 3, windowMs: 60_000 }),
     });

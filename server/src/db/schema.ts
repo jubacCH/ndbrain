@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -157,6 +157,43 @@ const MIGRATIONS: Array<(db: Database) => void> = [
       ) STRICT;
 
       CREATE INDEX edits_owner_at ON edits (owner, at DESC);
+    `);
+  },
+
+  // v3 -> v4: agent keys and their access log
+  (db) => {
+    db.exec(`
+      CREATE TABLE api_keys (
+        id          TEXT PRIMARY KEY,
+        -- SHA-256 of the key. The key is 256 bits of randomness, so a fast hash
+        -- is right here: there is nothing to brute-force, and a slow KDF would
+        -- put argon2-scale work on every single MCP call.
+        key_hash    TEXT NOT NULL UNIQUE,
+        -- The account this key acts as. A key can never see more than its owner.
+        owner       TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        -- Path prefix the key is confined to. Empty string = the whole vault.
+        scope       TEXT NOT NULL,
+        can_write   INTEGER NOT NULL,
+        created_at  INTEGER NOT NULL,
+        last_used_at INTEGER,
+        -- Soft revoke: the row stays so the access log keeps a readable name.
+        revoked_at  INTEGER,
+        FOREIGN KEY (owner) REFERENCES users (id) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX api_keys_owner ON api_keys (owner);
+
+      CREATE TABLE access_log (
+        key_id  TEXT NOT NULL,
+        owner   TEXT NOT NULL,
+        tool    TEXT NOT NULL,
+        path    TEXT,
+        allowed INTEGER NOT NULL,
+        at      INTEGER NOT NULL
+      ) STRICT;
+
+      CREATE INDEX access_log_owner_at ON access_log (owner, at DESC);
     `);
   },
 ];
