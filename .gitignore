@@ -16,3 +16,6 @@ vaults/
 
 .DS_Store
 Thumbs.db
+
+# Per-instance deployment tweaks; never the same on two machines.
+docker-compose.override.yml
