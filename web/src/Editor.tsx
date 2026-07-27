@@ -17,6 +17,8 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { GFM } from '@lezer/markdown';
 import { useEffect, useRef } from 'react';
 
+import { wikilinkCompletion } from './wikilink';
+
 export interface EditorProps {
   /** Identifies the open note; changing it replaces the document. */
   path: string;
@@ -46,6 +48,7 @@ export function Editor({ path, initialContent, onChange }: EditorProps): React.J
         // GFM is needed for task lists and strikethrough, both of which appear
         // in ordinary notes.
         markdown({ extensions: [GFM] }),
+        wikilinkCompletion(),
         EditorView.lineWrapping,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString());
