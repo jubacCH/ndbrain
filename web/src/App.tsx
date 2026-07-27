@@ -58,6 +58,8 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [filters, setFilters] = useState<Filters>({});
   const [tags, setTags] = useState<Array<{ tag: string; count: number }>>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [contextOpen, setContextOpen] = useState(true);
   // Bumped after every successful save so the context panel re-reads the links.
   const [linksVersion, setLinksVersion] = useState(0);
@@ -250,6 +252,55 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       .catch(() => undefined);
   }, [notes]);
 
+  /**
+   * Runs a bulk action over the current selection and reports honestly.
+   *
+   * Partial success is the normal outcome, not an exception: the server does
+   * what it can and names what it could not, and hiding that behind a generic
+   * "some items failed" would leave somebody to find out which ones by hand.
+   */
+  const runBulk = async (action: 'move' | 'tag' | 'delete'): Promise<void> => {
+    const paths = [...selection];
+    if (paths.length === 0) return;
+
+    let extra: { tag?: string; dir?: string } = {};
+
+    if (action === 'move') {
+      const dir = window.prompt(`${paths.length} Notizen verschieben nach (leer = Vault-Wurzel)`, 'Archiv');
+      if (dir === null) return;
+      extra = { dir };
+    } else if (action === 'tag') {
+      const tag = window.prompt(`${paths.length} Notizen taggen mit`);
+      if (tag === null || tag.trim() === '') return;
+      extra = { tag };
+    } else if (!window.confirm(`${paths.length} Notizen wirklich löschen? Das lässt sich nicht rückgängig machen.`)) {
+      return;
+    }
+
+    setBulkBusy(true);
+    try {
+      const result = await api.bulk(action, paths, extra);
+      setSelection(new Set());
+      await refreshTree();
+      await refreshOverview();
+
+      if (result.failed.length === 0) {
+        setError(null);
+      } else {
+        const names = result.failed.slice(0, 3).map((entry) => entry.path).join(', ');
+        const more = result.failed.length > 3 ? ` und ${result.failed.length - 3} weitere` : '';
+        setError(
+          `${result.ok.length} erledigt, ${result.failed.length} nicht: ${names}${more} — ` +
+            `${result.failed[0]?.reason ?? ''}`,
+        );
+      }
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'Sammelaktion fehlgeschlagen.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   const showView = async (next: View): Promise<void> => {
     if (pending.current !== null) await flush();
     if (next === 'overview') await refreshOverview();
@@ -380,7 +431,28 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             <OverviewView data={overview} onOpen={(path) => void openNote(path)} />
           )}
           {view === 'tidy' && tidy !== null && (
-            <TidyView data={tidy} onOpen={(path) => void openNote(path)} />
+            <TidyView
+              data={tidy}
+              selected={selection}
+              busy={bulkBusy}
+              tags={tags}
+              dirs={topLevelDirs(notes)}
+              onToggle={(path) =>
+                setSelection((current) => {
+                  const next = new Set(current);
+                  if (next.has(path)) next.delete(path);
+                  else next.add(path);
+                  return next;
+                })
+              }
+              onToggleAll={(paths) =>
+                // All-or-nothing rather than a tri-state: the second click after
+                // "select all" should clear, which is what people expect.
+                setSelection((current) => (current.size === paths.length ? new Set() : new Set(paths)))
+              }
+              onOpen={(path) => void openNote(path)}
+              onBulk={(action) => void runBulk(action)}
+            />
           )}
           {view === 'search' && (
             <SearchView

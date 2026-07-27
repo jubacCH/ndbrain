@@ -72,6 +72,12 @@ export interface User {
   role: 'admin' | 'user';
 }
 
+export interface BulkResult {
+  /** Final paths of the notes that succeeded — a move changes the path. */
+  ok: string[];
+  failed: Array<{ path: string; reason: string }>;
+}
+
 /** Carries the server's error code so callers can react to `case_collision` and friends. */
 export class ApiError extends Error {
   readonly status: number;
@@ -159,6 +165,12 @@ export const api = {
     request<{ notes: NoteRow[] }>(`/api/v1/quickfind?q=${encodeURIComponent(q)}`),
 
   tags: () => request<{ tags: Array<{ tag: string; count: number }> }>('/api/v1/tags'),
+
+  bulk: (action: 'move' | 'tag' | 'untag' | 'delete', paths: string[], extra: { tag?: string; dir?: string } = {}) =>
+    request<BulkResult>('/api/v1/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ action, paths, ...extra }),
+    }),
 
   links: (path: string) =>
     request<{ backlinks: LinkRow[]; outgoing: LinkRow[] }>(`/api/v1/backlinks/${encodePath(path)}`),

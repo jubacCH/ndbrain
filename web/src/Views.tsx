@@ -154,14 +154,39 @@ function Finding({
   );
 }
 
+/**
+ * The tidy-up view — the thing no other notes tool does.
+ *
+ * Findings are listed as rows in a table because the point is comparison: which
+ * of these matters, which can go. Selection and bulk actions live here rather
+ * than in the tree, since tidying is a deliberate session, not something that
+ * happens while writing.
+ */
 export function TidyView({
   data,
+  selected,
+  onToggle,
+  onToggleAll,
   onOpen,
+  onBulk,
+  busy,
+  tags,
+  dirs,
 }: {
   data: Tidy;
+  selected: Set<string>;
+  onToggle: (path: string) => void;
+  onToggleAll: (paths: string[]) => void;
   onOpen: (path: string) => void;
+  onBulk: (action: 'move' | 'tag' | 'delete') => void;
+  busy: boolean;
+  tags: Array<{ tag: string; count: number }>;
+  dirs: string[];
 }): React.JSX.Element {
   type Row = { path: string; title: string; finding: string; kind: 'crit' | 'warn'; when: string };
+
+  void tags;
+  void dirs;
 
   const rows: Row[] = [
     ...data.orphans.map((n: NoteRow) => ({
@@ -204,32 +229,79 @@ export function TidyView({
       </p>
 
       {rows.length > 0 && (
-        <div className="tablewrap">
-          <div className="tablescroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Notiz</th>
-                  <th>Pfad</th>
-                  <th>Befund</th>
-                  <th className="n">Zuletzt</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row, index) => (
-                  <tr key={`${row.finding}:${row.path}:${index}`} onClick={() => onOpen(row.path)}>
-                    <td className="nm">{row.title}</td>
-                    <td className="pth">{row.path.split('/').slice(0, -1).join('/') || '/'}</td>
-                    <td>
-                      <span className={`pill p-${row.kind}`}>{row.finding}</span>
-                    </td>
-                    <td className="n">{row.when}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <>
+          {/*
+            The action bar sits above the table and stays visible, so the number
+            of selected notes is in view while choosing what to do to them.
+          */}
+          <div className="bulkbar" data-active={selected.size > 0}>
+            <span className="bulkcount">
+              {selected.size === 0 ? 'Nichts ausgewählt' : `${selected.size} ausgewählt`}
+            </span>
+            <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('move')}>
+              Verschieben…
+            </button>
+            <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('tag')}>
+              Taggen…
+            </button>
+            <button
+              type="button"
+              className="btn btn-solid"
+              disabled={selected.size === 0 || busy}
+              onClick={() => onBulk('delete')}
+            >
+              Löschen…
+            </button>
+            <span className="bulkhint">Verweise ziehen beim Verschieben mit</span>
           </div>
-        </div>
+
+          <div className="tablewrap">
+            <div className="tablescroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th className="pick">
+                      <input
+                        type="checkbox"
+                        aria-label="Alle auswählen"
+                        checked={selected.size > 0 && selected.size === new Set(rows.map((r) => r.path)).size}
+                        onChange={() => onToggleAll([...new Set(rows.map((r) => r.path))])}
+                      />
+                    </th>
+                    <th>Notiz</th>
+                    <th>Pfad</th>
+                    <th>Befund</th>
+                    <th className="n">Zuletzt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, index) => (
+                    <tr
+                      key={`${row.finding}:${row.path}:${index}`}
+                      data-selected={selected.has(row.path)}
+                      onClick={() => onOpen(row.path)}
+                    >
+                      <td className="pick" onClick={(event) => event.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(row.path)}
+                          onChange={() => onToggle(row.path)}
+                          aria-label={`${row.title} auswählen`}
+                        />
+                      </td>
+                      <td className="nm">{row.title}</td>
+                      <td className="pth">{row.path.split('/').slice(0, -1).join('/') || '/'}</td>
+                      <td>
+                        <span className={`pill p-${row.kind}`}>{row.finding}</span>
+                      </td>
+                      <td className="n">{row.when}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

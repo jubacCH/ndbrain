@@ -281,6 +281,55 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     };
   });
 
+  // ---- bulk tidy-up -------------------------------------------------------
+  //
+  // The differentiator. Each returns per-note results rather than failing
+  // wholesale — see App.#overSelection for why that is not a transaction.
+  fastify.post('/api/v1/bulk', async (request, reply) => {
+    const owner = requireUser(request).id;
+    const body = (request.body ?? {}) as Record<string, unknown>;
+
+    const paths = Array.isArray(body['paths'])
+      ? body['paths'].filter((value): value is string => typeof value === 'string')
+      : [];
+    const action = typeof body['action'] === 'string' ? body['action'] : '';
+
+    if (paths.length === 0) {
+      return reply.code(400).send({ code: 'no_selection', message: 'nothing selected' });
+    }
+    // A cap, so one request cannot occupy the process for minutes. Announced
+    // rather than silently truncating the selection.
+    if (paths.length > 500) {
+      return reply
+        .code(400)
+        .send({ code: 'selection_too_large', message: 'at most 500 notes at a time' });
+    }
+
+    // Trimmed before the emptiness check: a tag of spaces would otherwise pass
+    // here, be ignored downstream, and report success for a no-op.
+    const tag = typeof body['tag'] === 'string' ? body['tag'].trim().replace(/^#/, '').trim() : '';
+    const dir = typeof body['dir'] === 'string' ? body['dir'] : '';
+
+    switch (action) {
+      case 'move':
+        return app.bulkMove(owner, paths, dir, owner);
+      case 'tag':
+        if (tag === '') {
+          return reply.code(400).send({ code: 'no_tag', message: 'no tag given' });
+        }
+        return app.bulkTag(owner, paths, tag, owner);
+      case 'untag':
+        if (tag === '') {
+          return reply.code(400).send({ code: 'no_tag', message: 'no tag given' });
+        }
+        return app.bulkUntag(owner, paths, tag, owner);
+      case 'delete':
+        return app.bulkDelete(owner, paths, owner);
+      default:
+        return reply.code(400).send({ code: 'unknown_action', message: 'unknown bulk action' });
+    }
+  });
+
   fastify.get('/api/v1/tidy', async (request) => {
     const owner = requireUser(request).id;
     return {

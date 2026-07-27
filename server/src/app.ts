@@ -10,6 +10,7 @@
 
 import type { Indexer } from './index/indexer.js';
 import { Queries, type NoteRow } from './index/queries.js';
+import { addTag, removeTag } from './markdown/edit.js';
 import { parseNote } from './markdown/parse.js';
 import type { Note, NoteService } from './notes/service.js';
 import type { Database } from './db/database.js';
@@ -23,6 +24,12 @@ export interface RenameResult {
 }
 
 export type EditAction = 'create' | 'update' | 'delete' | 'rename';
+
+export interface BulkResult {
+  /** Final paths of the notes that succeeded — a move changes the path. */
+  ok: string[];
+  failed: Array<{ path: string; reason: string }>;
+}
 
 export class App {
   readonly notes: NoteService;
@@ -186,6 +193,90 @@ export class App {
 
     await this.notes.updateNote(owner, notePath, content);
     return true;
+  }
+
+  /**
+   * Runs an operation over a selection, reporting each note separately.
+   *
+   * Not a transaction, and deliberately so. Twenty notes where three fail must
+   * leave seventeen done and say which three did not — rolling back seventeen
+   * successful moves because of one name collision would be worse for the person
+   * doing the tidying, who would have to start over with no idea which item was
+   * the problem.
+   *
+   * Notes are processed in a stable order so that a rerun behaves the same way.
+   */
+  async #overSelection(
+    paths: string[],
+    run: (notePath: string) => Promise<string | undefined>,
+  ): Promise<BulkResult> {
+    const result: BulkResult = { ok: [], failed: [] };
+
+    for (const notePath of [...paths].sort()) {
+      try {
+        const finalPath = await run(notePath);
+        result.ok.push(finalPath ?? notePath);
+      } catch (error) {
+        result.failed.push({
+          path: notePath,
+          reason: error instanceof Error ? error.message : 'unbekannter Fehler',
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /** Moves a selection into a folder, rewriting the links that follow them. */
+  async bulkMove(
+    owner: string,
+    paths: string[],
+    targetDir: string,
+    actor?: string,
+  ): Promise<BulkResult> {
+    const folder = targetDir.replace(/^\/+|\/+$/g, '');
+
+    return this.#overSelection(paths, async (notePath) => {
+      const name = notePath.slice(notePath.lastIndexOf('/') + 1);
+      const target = folder === '' ? name : `${folder}/${name}`;
+      if (target === notePath) return notePath;
+
+      const { note } = await this.renameNote(owner, notePath, target, actor);
+      return note.path;
+    });
+  }
+
+  /** Adds a tag to a selection. Notes that already carry it are left untouched. */
+  async bulkTag(owner: string, paths: string[], tag: string, actor?: string): Promise<BulkResult> {
+    return this.#overSelection(paths, async (notePath) => {
+      const note = await this.notes.getNote(owner, notePath);
+      const updated = addTag(note.content, tag);
+
+      // Unchanged means the tag was already there. Writing anyway would bump the
+      // modification date and make an untouched note look edited.
+      if (updated !== note.content) {
+        await this.updateNote(owner, notePath, updated, actor);
+      }
+      return notePath;
+    });
+  }
+
+  async bulkUntag(owner: string, paths: string[], tag: string, actor?: string): Promise<BulkResult> {
+    return this.#overSelection(paths, async (notePath) => {
+      const note = await this.notes.getNote(owner, notePath);
+      const updated = removeTag(note.content, tag);
+      if (updated !== note.content) {
+        await this.updateNote(owner, notePath, updated, actor);
+      }
+      return notePath;
+    });
+  }
+
+  async bulkDelete(owner: string, paths: string[], actor?: string): Promise<BulkResult> {
+    return this.#overSelection(paths, async (notePath) => {
+      await this.deleteNote(owner, notePath, actor);
+      return notePath;
+    });
   }
 
   /** Notes for the tree view: every note plus every directory. */
