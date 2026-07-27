@@ -88,6 +88,36 @@ export class NoteService {
     });
   }
 
+  /**
+   * Writes a note, creating it if it is not there yet.
+   *
+   * The create-or-update decision belongs here, not in the caller. Deciding it
+   * with an existence check means asking `stat`, and `stat` folds letter case on
+   * Windows and macOS but not on Linux — so the same request would create a note
+   * on one platform and overwrite a differently-cased one on another. Reading the
+   * real directory entry answers "create, update or refuse" in one step,
+   * identically everywhere.
+   */
+  async putNote(owner: string, notePath: string, content: string): Promise<{ note: Note; created: boolean }> {
+    const canonical = this.#assertNotePath(notePath);
+
+    return this.#locks.run(lockKey(owner, canonical), async () => {
+      const siblings = await this.#vault.siblingCaseKeys(owner, canonical);
+      const name = canonical.slice(canonical.lastIndexOf('/') + 1);
+      const existing = siblings.get(caseKey(name));
+
+      if (existing !== undefined && existing !== name) {
+        throw new CaseCollisionError(
+          `"${existing}" already exists and differs only in letter case; ` +
+            'that pair cannot survive on Windows or macOS',
+        );
+      }
+
+      await this.#vault.writeNote(owner, canonical, content);
+      return { note: await this.getNote(owner, canonical), created: existing === undefined };
+    });
+  }
+
   async deleteNote(owner: string, notePath: string): Promise<void> {
     const canonical = this.#assertNotePath(notePath);
 
