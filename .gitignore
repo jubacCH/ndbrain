@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+*.log
+
+# runtime data — never commit a vault or an index
+data/
+vaults/
+*.db
+*.db-shm
+*.db-wal
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db
