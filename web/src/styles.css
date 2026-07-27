@@ -1,0 +1,759 @@
+/*
+ * The rule this interface is built on: colour is reserved for meaning.
+ *
+ * There is no brand colour. Navigation, buttons, links and headings are neutral,
+ * and hierarchy comes from contrast, weight and spacing. The four semantic
+ * colours below are the only chromatic elements, and each one says something:
+ * orphaned or broken, untagged or stale, written by an agent, fine.
+ *
+ * Light and dark are tuned separately rather than inverted — a flipped red
+ * shouts on a dark ground.
+ */
+
+:root {
+  --bg: #fbfbfc;
+  --surface: #ffffff;
+  --surface-2: #f4f5f7;
+  --surface-3: #eceef1;
+  --line: #e5e7eb;
+  --line-2: #d2d6dd;
+  --text: #0e1013;
+  --text-2: #4a505a;
+  --text-3: #878d97;
+  --invert-bg: #14171c;
+  --invert-fg: #ffffff;
+
+  --ok: #1b7a4b;
+  --ok-bg: #e2f2e9;
+  --warn: #8f6300;
+  --warn-bg: #f7edd7;
+  --crit: #b23528;
+  --crit-bg: #f8e3e0;
+  --info: #2159c4;
+  --info-bg: #e3eafa;
+
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, 'Roboto Mono', monospace;
+  --r: 6px;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0c0f;
+    --surface: #121419;
+    --surface-2: #191c22;
+    --surface-3: #21252c;
+    --line: #24282f;
+    --line-2: #343943;
+    --text: #f1f2f4;
+    --text-2: #a9afb9;
+    --text-3: #6e747f;
+    --invert-bg: #f1f2f4;
+    --invert-fg: #0b0c0f;
+
+    --ok: #52c08a;
+    --ok-bg: #10241a;
+    --warn: #dfaa4e;
+    --warn-bg: #2a2113;
+    --crit: #f08376;
+    --crit-bg: #2e1815;
+    --info: #7fa6f2;
+    --info-bg: #151e31;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+/* ---- shell ------------------------------------------------------------- */
+
+.app {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  padding: 0 0.2rem;
+}
+
+.logo .mark {
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  border: 1.5px solid var(--text);
+  position: relative;
+  flex: none;
+}
+
+.logo .mark::after {
+  content: '';
+  position: absolute;
+  inset: 3px 3px auto 3px;
+  height: 1.5px;
+  background: var(--text);
+  box-shadow: 0 4px 0 var(--text);
+}
+
+.segs {
+  display: flex;
+  gap: 1px;
+  background: var(--surface-2);
+  border-radius: 5px;
+  padding: 2px;
+}
+
+.segs button {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.85rem;
+  border-radius: 4px;
+  color: var(--text-2);
+}
+
+.segs button:hover {
+  color: var(--text);
+}
+
+.segs button[aria-current='true'] {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.omni {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  border-radius: 5px;
+  padding: 0.27rem 0.5rem;
+  min-width: 220px;
+  color: var(--text-3);
+  font-size: 0.85rem;
+}
+
+.omni input {
+  border: none;
+  background: none;
+  color: var(--text);
+  outline: none;
+  width: 100%;
+}
+
+.who {
+  font-size: 0.8rem;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* ---- tree -------------------------------------------------------------- */
+
+.rail {
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.rail-scroll {
+  overflow-y: auto;
+  padding: 0.5rem 0.4rem;
+  flex: 1;
+}
+
+.tree,
+.tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.87rem;
+}
+
+.tree ul {
+  padding-left: 0.8rem;
+}
+
+.node {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.25rem 0.45rem;
+  border-radius: 5px;
+  color: var(--text-2);
+  position: relative;
+}
+
+.node:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.node[aria-current='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.node .tw {
+  width: 0.75rem;
+  flex: none;
+  font-size: 0.6rem;
+  color: var(--text-3);
+}
+
+.node .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The ambient state marker. A note with a finding carries a thin coloured tick
+ * at the left edge of its row, so the health of the vault is visible in passing
+ * without opening a view for it. This is the interface's signature device.
+ */
+.node .st {
+  position: absolute;
+  left: -1px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+}
+
+.st-crit {
+  background: var(--crit);
+}
+.st-warn {
+  background: var(--warn);
+}
+
+.rail-foot {
+  border-top: 1px solid var(--line);
+  padding: 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.fbtn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.45rem;
+  border-radius: 5px;
+  color: var(--text-2);
+}
+
+.fbtn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.fbtn .tick {
+  width: 2px;
+  height: 12px;
+  border-radius: 1px;
+  flex: none;
+}
+
+.fbtn .n {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- main -------------------------------------------------------------- */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.78rem;
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+
+.bar .cur {
+  color: var(--text-2);
+}
+
+/*
+ * The save indicator is permanent, not a toast. With data that lives only on the
+ * server, being able to see that it arrived is not a nicety.
+ */
+.saved {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--font);
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.saved i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+}
+
+.saved.dirty i {
+  background: var(--warn);
+}
+
+.saved.failed {
+  color: var(--crit);
+}
+
+.saved.failed i {
+  background: var(--crit);
+}
+
+.pane {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.pane.padded {
+  padding: 1.5rem 1.6rem 2.5rem;
+}
+
+/* ---- editor ------------------------------------------------------------ */
+
+.cm-editor {
+  height: 100%;
+  font-size: 15px;
+}
+
+.cm-editor .cm-scroller {
+  font-family: var(--mono);
+  line-height: 1.7;
+  padding: 1.2rem 1.4rem 3rem;
+}
+
+.cm-editor .cm-content {
+  max-width: 78ch;
+  caret-color: var(--text);
+}
+
+.cm-editor .cm-line {
+  padding: 0;
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+.cm-editor .cm-selectionBackground,
+.cm-editor ::selection {
+  background: var(--surface-3);
+}
+
+.cm-editor .cm-cursor {
+  border-left-color: var(--text);
+}
+
+/* ---- lists, tables, chips ---------------------------------------------- */
+
+.h-big {
+  font-size: 1.5rem;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+.h-sub {
+  color: var(--text-3);
+  font-size: 0.87rem;
+  margin: 0 0 1.6rem;
+}
+
+.cap {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0 0 0.55rem;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem 1.8rem;
+  align-items: start;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 5px;
+  font-size: 0.87rem;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  width: 100%;
+}
+
+.item:last-child {
+  border-bottom: none;
+}
+
+.item:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.item .t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item .r {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  white-space: nowrap;
+  flex: none;
+}
+
+.p-tag {
+  font-family: var(--mono);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.p-ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.p-warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+.p-crit {
+  color: var(--crit);
+  background: var(--crit-bg);
+}
+.p-info {
+  color: var(--info);
+  background: var(--info-bg);
+}
+
+.tablewrap {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tablescroll {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 520px;
+  font-size: 0.86rem;
+}
+
+thead th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 0.67rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  font-weight: 500;
+  padding: 0.55rem 0.7rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+tbody td {
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover td {
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+td.nm {
+  color: var(--text);
+}
+
+td.pth {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--text-3);
+}
+
+td.n {
+  font-family: var(--mono);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.btn {
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--text-2);
+  background: var(--surface);
+}
+
+.btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* The only filled button is inverted, never tinted — see the colour rule. */
+.btn-solid {
+  background: var(--invert-bg);
+  color: var(--invert-fg);
+  border-color: var(--invert-bg);
+}
+
+.btn-solid:hover {
+  background: var(--invert-bg);
+  color: var(--invert-fg);
+  opacity: 0.85;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- search results ---------------------------------------------------- */
+
+.hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.hit:hover {
+  background: var(--surface-2);
+}
+
+.hit .title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hit .path {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-3);
+  margin-left: 0.5rem;
+}
+
+.hit .snip {
+  display: block;
+  font-size: 0.83rem;
+  color: var(--text-2);
+  margin-top: 0.2rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- login ------------------------------------------------------------- */
+
+.login {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 2rem 1rem;
+}
+
+.login form {
+  width: min(22rem, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.login h1 {
+  font-size: 1.35rem;
+  letter-spacing: -0.03em;
+  margin: 0 0 0.2rem;
+}
+
+.login p {
+  color: var(--text-3);
+  font-size: 0.85rem;
+  margin: 0 0 1rem;
+}
+
+.login label {
+  font-size: 0.8rem;
+  color: var(--text-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.login input {
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 0.45rem 0.6rem;
+}
+
+.error {
+  color: var(--crit);
+  background: var(--crit-bg);
+  border-radius: 5px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.empty {
+  color: var(--text-3);
+  font-size: 0.87rem;
+  padding: 1rem 0.5rem;
+}
+
+/* ---- small screens ----------------------------------------------------- */
+
+@media (max-width: 720px) {
+  .body {
+    grid-template-columns: 1fr;
+  }
+
+  .rail {
+    display: none;
+  }
+
+  .app[data-mobile-tree='true'] .rail {
+    display: flex;
+  }
+
+  .app[data-mobile-tree='true'] .main {
+    display: none;
+  }
+
+  .omni {
+    min-width: 0;
+  }
+}
