@@ -196,13 +196,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as { content?: unknown };
     const content = typeof body.content === 'string' ? body.content : '';
 
-    const { note, created } = await app.putNote(owner, notePath, content);
+    const { note, created } = await app.putNote(owner, notePath, content, owner);
     return reply.code(created ? 201 : 200).send({ note });
   });
 
   fastify.delete('/api/v1/notes/*', async (request, reply) => {
     const owner = requireUser(request).id;
-    await app.deleteNote(owner, notePathOf(request));
+    await app.deleteNote(owner, notePathOf(request), owner);
     return reply.code(204).send();
   });
 
@@ -212,7 +212,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const from = typeof body.from === 'string' ? body.from : '';
     const to = typeof body.to === 'string' ? body.to : '';
 
-    return app.renameNote(owner, from, to);
+    return app.renameNote(owner, from, to, owner);
   });
 
   // ---- librarian ----------------------------------------------------------
@@ -262,6 +262,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   fastify.get('/api/v1/overview', async (request) => {
     const owner = requireUser(request).id;
+    const query = (request.query ?? {}) as { days?: unknown };
+    const days = Number(query.days);
+    const since = Date.now() - (Number.isFinite(days) && days > 0 ? days : 1) * 24 * 60 * 60 * 1000;
+
     return {
       counts: {
         notes: app.queries.countNotes(owner),
@@ -273,6 +277,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       recent: app.queries.recentNotes(owner, 12),
       tasks: app.queries.openTasks(owner).slice(0, 50),
       tags: app.queries.tagCounts(owner).slice(0, 30),
+      activity: app.queries.activity(owner, since, 20),
     };
   });
 

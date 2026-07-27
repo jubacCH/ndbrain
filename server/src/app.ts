@@ -22,40 +22,77 @@ export interface RenameResult {
   updatedLinks: string[];
 }
 
+export type EditAction = 'create' | 'update' | 'delete' | 'rename';
+
 export class App {
   readonly notes: NoteService;
   readonly indexer: Indexer;
   readonly queries: Queries;
+  readonly #db: Database;
 
   constructor(db: Database, notes: NoteService, indexer: Indexer) {
+    this.#db = db;
     this.notes = notes;
     this.indexer = indexer;
     this.queries = new Queries(db);
   }
 
-  async createNote(owner: string, notePath: string, content = ''): Promise<Note> {
+  /**
+   * Records who changed what.
+   *
+   * `actor` defaults to the owner because a person editing their own vault is
+   * the ordinary case; agents will pass their key name instead. Failing to log
+   * must never fail the write — the note is the valuable thing, the log entry is
+   * not.
+   */
+  #recordEdit(owner: string, notePath: string, action: EditAction, actor?: string): void {
+    try {
+      this.#db.run(
+        'INSERT INTO edits (owner, path, actor, action, at) VALUES (?, ?, ?, ?, ?)',
+        owner,
+        notePath,
+        actor ?? owner,
+        action,
+        Date.now(),
+      );
+    } catch {
+      // Intentionally swallowed; see above.
+    }
+  }
+
+  async createNote(owner: string, notePath: string, content = '', actor?: string): Promise<Note> {
     const note = await this.notes.createNote(owner, notePath, content);
     await this.indexer.indexNote(owner, note.path);
+    this.#recordEdit(owner, note.path, 'create', actor);
     return note;
   }
 
-  async updateNote(owner: string, notePath: string, content: string): Promise<Note> {
+  async updateNote(owner: string, notePath: string, content: string, actor?: string): Promise<Note> {
     const note = await this.notes.updateNote(owner, notePath, content);
     await this.indexer.indexNote(owner, note.path);
+    this.#recordEdit(owner, note.path, 'update', actor);
     return note;
   }
 
   /** Create-or-update in one call; see `NoteService.putNote` for why it is one call. */
-  async putNote(owner: string, notePath: string, content: string): Promise<{ note: Note; created: boolean }> {
+  async putNote(
+    owner: string,
+    notePath: string,
+    content: string,
+    actor?: string,
+  ): Promise<{ note: Note; created: boolean }> {
     const result = await this.notes.putNote(owner, notePath, content);
     await this.indexer.indexNote(owner, result.note.path);
+    this.#recordEdit(owner, result.note.path, result.created ? 'create' : 'update', actor);
     return result;
   }
 
-  async deleteNote(owner: string, notePath: string): Promise<void> {
+  async deleteNote(owner: string, notePath: string, actor?: string): Promise<void> {
     await this.notes.deleteNote(owner, notePath);
-    this.indexer.removeNote(owner, normalizeVaultPath(notePath));
+    const canonical = normalizeVaultPath(notePath);
+    this.indexer.removeNote(owner, canonical);
     this.indexer.resolveLinks(owner);
+    this.#recordEdit(owner, canonical, 'delete', actor);
   }
 
   /**
@@ -75,7 +112,7 @@ export class App {
    * search-and-replace would also hit occurrences inside code blocks, which the
    * parser deliberately does not treat as links.
    */
-  async renameNote(owner: string, from: string, to: string): Promise<RenameResult> {
+  async renameNote(owner: string, from: string, to: string, actor?: string): Promise<RenameResult> {
     const source = normalizeVaultPath(from);
     const target = normalizeVaultPath(to);
 
@@ -113,6 +150,7 @@ export class App {
       await this.indexer.indexNote(owner, path);
     }
     this.indexer.resolveLinks(owner);
+    this.#recordEdit(owner, target, 'rename', actor);
 
     return { note: await this.notes.getNote(owner, target), updatedLinks: updated };
   }

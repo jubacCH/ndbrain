@@ -18,6 +18,18 @@ export function ago(mtimeMs: number, now = Date.now()): string {
   return RELATIVE.format(Math.round(hours / 24), 'day');
 }
 
+/**
+ * The overview, as a bento grid.
+ *
+ * The unequal tile sizes are the point and also the justification: findings are
+ * what this product is for, so that tile is the largest; tags are a lookup aid,
+ * so theirs is the smallest. A bento whose tiles are all the same importance is
+ * just a grid with extra steps.
+ *
+ * It stops here. The editor needs a continuous column, the tree is a hierarchy,
+ * and the tidy table lives on aligned columns — tiling those would trade the
+ * tool for a shop window.
+ */
 export function OverviewView({
   data,
   onOpen,
@@ -36,35 +48,53 @@ export function OverviewView({
         {attention === 0 ? 'nichts zu tun' : `${attention} brauchen Aufmerksamkeit`}
       </p>
 
-      <div className="grid2">
-        <div>
-          <p className="cap">Zuletzt bearbeitet</p>
+      <div className="bento">
+        <section className="tile tile-wide">
+          <p className="cap">Braucht Aufmerksamkeit</p>
+          {attention === 0 ? (
+            <p className="empty">Nichts offen — der Vault ist sauber.</p>
+          ) : (
+            <div className="findings">
+              <Finding label="verwaist" kind="crit" count={counts.orphans} />
+              <Finding label="ins Leere" kind="crit" count={counts.deadLinks} />
+              <Finding label="ungetaggt" kind="warn" count={counts.untagged} />
+              <Finding label="still" kind="warn" count={counts.stale} />
+            </div>
+          )}
+        </section>
+
+        <section className="tile">
+          <p className="cap">Seit gestern</p>
           <div className="list">
-            {data.recent.length === 0 && <p className="empty">Noch nichts.</p>}
-            {data.recent.map((note) => (
-              <button type="button" className="item" key={note.path} onClick={() => onOpen(note.path)}>
-                <span className="t">{note.title}</span>
-                <span className="r">{ago(note.mtimeMs)}</span>
+            {data.activity.length === 0 && <p className="empty">Nichts passiert.</p>}
+            {data.activity.slice(0, 8).map((row) => (
+              <button
+                type="button"
+                className="item"
+                key={row.path}
+                disabled={row.deleted}
+                onClick={() => !row.deleted && onOpen(row.path)}
+              >
+                {/* The actor only earns a badge when it is not you — otherwise
+                    every row would carry the same label and say nothing. */}
+                {row.actor !== '' && row.action === 'delete' && <span className="pill p-crit">gelöscht</span>}
+                <span className="t" style={row.deleted ? { textDecoration: 'line-through' } : undefined}>
+                  {row.title}
+                </span>
+                <span className="r">
+                  {row.edits > 1 && `${row.edits}× · `}
+                  {ago(row.at)}
+                </span>
               </button>
             ))}
           </div>
-        </div>
+        </section>
 
-        <div>
-          <p className="cap">Braucht Aufmerksamkeit</p>
-          <div className="list">
-            <Finding label="verwaist" kind="crit" count={counts.orphans} />
-            <Finding label="ins Leere" kind="crit" count={counts.deadLinks} />
-            <Finding label="ungetaggt" kind="warn" count={counts.untagged} />
-            <Finding label="still" kind="warn" count={counts.stale} />
-          </div>
-        </div>
-
-        <div>
+        <section className="tile">
           <p className="cap">Offene Aufgaben</p>
           <div className="list">
             {data.tasks.length === 0 && <p className="empty">Keine offenen Aufgaben.</p>}
-            {data.tasks.slice(0, 12).map((task: TaskRow) => (
+            {data.tasks.slice(0, 8).map((task: TaskRow) => (
               <button
                 type="button"
                 className="item"
@@ -76,20 +106,32 @@ export function OverviewView({
               </button>
             ))}
           </div>
-        </div>
+        </section>
 
-        <div>
-          <p className="cap">Tags</p>
+        <section className="tile">
+          <p className="cap">Zuletzt bearbeitet</p>
           <div className="list">
-            {data.tags.length === 0 && <p className="empty">Noch keine Tags.</p>}
-            {data.tags.slice(0, 12).map((tag) => (
-              <div className="item" key={tag.tag}>
-                <span className="pill p-tag">#{tag.tag}</span>
-                <span className="r">{tag.count}</span>
-              </div>
+            {data.recent.length === 0 && <p className="empty">Noch nichts.</p>}
+            {data.recent.slice(0, 8).map((note) => (
+              <button type="button" className="item" key={note.path} onClick={() => onOpen(note.path)}>
+                <span className="t">{note.title}</span>
+                <span className="r">{ago(note.mtimeMs)}</span>
+              </button>
             ))}
           </div>
-        </div>
+        </section>
+
+        <section className="tile tile-short">
+          <p className="cap">Tags</p>
+          <div className="tagcloud">
+            {data.tags.length === 0 && <p className="empty">Noch keine Tags.</p>}
+            {data.tags.slice(0, 14).map((tag) => (
+              <span className="pill p-tag" key={tag.tag}>
+                #{tag.tag} <span style={{ opacity: 0.6 }}>{tag.count}</span>
+              </span>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -105,9 +147,9 @@ function Finding({
   count: number;
 }): React.JSX.Element {
   return (
-    <div className="item">
+    <div className="finding" data-empty={count === 0}>
+      <span className="finding-n">{count}</span>
       <span className={`pill p-${kind}`}>{label}</span>
-      <span className="t">{count === 0 ? 'nichts' : count}</span>
     </div>
   );
 }

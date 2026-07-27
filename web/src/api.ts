@@ -41,11 +41,22 @@ export interface TaskRow {
   text: string;
 }
 
+export interface ActivityRow {
+  path: string;
+  title: string;
+  actor: string;
+  action: 'create' | 'update' | 'delete' | 'rename';
+  at: number;
+  edits: number;
+  deleted: boolean;
+}
+
 export interface Overview {
   counts: { notes: number; orphans: number; untagged: number; deadLinks: number; stale: number };
   recent: NoteRow[];
   tasks: TaskRow[];
   tags: Array<{ tag: string; count: number }>;
+  activity: ActivityRow[];
 }
 
 export interface Tidy {

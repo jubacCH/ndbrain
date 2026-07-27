@@ -1026,3 +1026,87 @@ button.ref:hover {
     display: none;
   }
 }
+
+/* ---- bento overview ----------------------------------------------------- */
+
+/*
+ * Unequal tiles, and the inequality carries meaning: findings are what this
+ * product is for, so that tile is widest; tags are a lookup aid, so theirs is
+ * shortest. Equal tiles would make this a grid pretending to be a bento.
+ */
+.bento {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.tile {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 0.9rem 1rem 1rem;
+  min-width: 0;
+}
+
+@media (min-width: 60rem) {
+  .bento {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tile-wide {
+    grid-column: 1 / -1;
+  }
+}
+
+.tile-short .empty {
+  padding: 0.3rem 0;
+}
+
+.findings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.8rem;
+}
+
+.finding {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: flex-start;
+}
+
+.finding-n {
+  font-size: 1.9rem;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* A zero is not news, so it recedes instead of demanding a look. */
+.finding[data-empty='true'] .finding-n {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.finding[data-empty='true'] .pill {
+  opacity: 0.55;
+}
+
+.tagcloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.item:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.item:disabled:hover {
+  background: none;
+  color: var(--text-2);
+}
