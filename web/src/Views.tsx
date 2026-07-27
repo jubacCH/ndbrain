@@ -193,29 +193,102 @@ export function TidyView({
   );
 }
 
+export interface SearchFilters {
+  tag?: string;
+  dir?: string;
+  days?: number;
+}
+
 export function SearchView({
   query,
   hits,
+  filters,
+  tags,
+  dirs,
+  onToggleFilter,
+  onClearFilters,
   onOpen,
 }: {
   query: string;
   hits: SearchHit[];
+  filters: SearchFilters;
+  tags: Array<{ tag: string; count: number }>;
+  dirs: string[];
+  onToggleFilter: (patch: SearchFilters) => void;
+  onClearFilters: () => void;
   onOpen: (path: string) => void;
 }): React.JSX.Element {
+  const active = filters.tag !== undefined || filters.dir !== undefined || filters.days !== undefined;
+
+  const describe = (): string => {
+    const parts: string[] = [];
+    if (query.trim() !== '') parts.push(`„${query.trim()}"`);
+    if (filters.tag !== undefined) parts.push(`#${filters.tag}`);
+    if (filters.dir !== undefined) parts.push(`in ${filters.dir}`);
+    if (filters.days !== undefined) parts.push(`aus ${filters.days} Tagen`);
+    return parts.join(' · ');
+  };
+
   return (
     <div className="pane padded">
       <h2 className="h-big">Suche</h2>
       <p className="h-sub">
-        {hits.length === 0
-          ? `Nichts gefunden für „${query}"`
-          : `${hits.length} ${hits.length === 1 ? 'Treffer' : 'Treffer'} für „${query}"`}
+        {hits.length === 0 ? 'Nichts gefunden' : `${hits.length} Treffer`}
+        {describe() !== '' && ` — ${describe()}`}
       </p>
+
+      <div className="filters">
+        <span className="filter-label">Zeitraum</span>
+        {[7, 30, 90].map((days) => (
+          <button
+            type="button"
+            key={days}
+            className="filter"
+            aria-pressed={filters.days === days}
+            onClick={() => onToggleFilter({ days })}
+          >
+            {days} Tage
+          </button>
+        ))}
+
+        {dirs.length > 0 && <span className="filter-label">Ordner</span>}
+        {dirs.slice(0, 8).map((dir) => (
+          <button
+            type="button"
+            key={dir}
+            className="filter"
+            aria-pressed={filters.dir === dir}
+            onClick={() => onToggleFilter({ dir })}
+          >
+            {dir}
+          </button>
+        ))}
+
+        {tags.length > 0 && <span className="filter-label">Tag</span>}
+        {tags.slice(0, 10).map((tag) => (
+          <button
+            type="button"
+            key={tag.tag}
+            className="filter"
+            aria-pressed={filters.tag === tag.tag}
+            onClick={() => onToggleFilter({ tag: tag.tag })}
+          >
+            #{tag.tag} <span style={{ opacity: 0.6 }}>{tag.count}</span>
+          </button>
+        ))}
+
+        {active && (
+          <button type="button" className="filter" onClick={onClearFilters}>
+            zurücksetzen
+          </button>
+        )}
+      </div>
 
       {hits.map((hit) => (
         <button type="button" className="hit" key={hit.path} onClick={() => onOpen(hit.path)}>
           <span className="title">{hit.title}</span>
           <span className="path">{hit.path}</span>
-          <span className="snip">{hit.snippet}</span>
+          {hit.snippet !== '' && <span className="snip">{hit.snippet}</span>}
         </button>
       ))}
     </div>

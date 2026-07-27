@@ -12,8 +12,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, api, type Note, type NoteRow, type Overview, type SearchHit, type Tidy, type User } from './api';
 import { Editor } from './Editor';
 import { Login } from './Login';
+import { Palette } from './Palette';
 import { Tree, type Finding } from './Tree';
 import { OverviewView, SearchView, TidyView } from './Views';
+
+export interface Filters {
+  tag?: string;
+  dir?: string;
+  days?: number;
+}
 
 type View = 'note' | 'overview' | 'tidy' | 'search';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
@@ -47,6 +54,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [tidy, setTidy] = useState<Tidy | null>(null);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState<Filters>({});
+  const [tags, setTags] = useState<Array<{ tag: string; count: number }>>([]);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileTree, setMobileTree] = useState(false);
 
@@ -153,16 +163,62 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     }
   };
 
-  const runSearch = async (value: string): Promise<void> => {
+  const runSearch = useCallback(
+    async (value: string, active: Filters): Promise<void> => {
+      // A query with only filters is legitimate — "everything tagged #homelab" —
+      // so the search runs whenever either part is present.
+      const hasFilter = active.tag !== undefined || active.dir !== undefined || active.days !== undefined;
+      if (value.trim() === '' && !hasFilter) {
+        setHits([]);
+        return;
+      }
+
+      setView('search');
+      const { hits: found } = await api.search(value.trim(), active);
+      setHits(found);
+    },
+    [],
+  );
+
+  const onQueryChange = (value: string): void => {
     setQuery(value);
-    if (value.trim() === '') {
-      setHits([]);
-      return;
-    }
-    setView('search');
-    const { hits: found } = await api.search(value);
-    setHits(found);
+    void runSearch(value, filters).catch(() => setError('Suche fehlgeschlagen.'));
   };
+
+  const toggleFilter = (patch: Filters): void => {
+    const next: Filters = { ...filters };
+    for (const [key, value] of Object.entries(patch) as Array<[keyof Filters, unknown]>) {
+      if (next[key] === value) delete next[key];
+      else Object.assign(next, { [key]: value });
+    }
+    setFilters(next);
+    void runSearch(query, next).catch(() => setError('Suche fehlgeschlagen.'));
+  };
+
+  const clearFilters = (): void => {
+    setFilters({});
+    void runSearch(query, {}).catch(() => undefined);
+  };
+
+  // ⌘K on a Mac, Ctrl-K elsewhere. Registered on the window so it works while
+  // the editor has focus, which is where it will usually be pressed.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
+    api
+      .tags()
+      .then(({ tags: list }) => setTags(list))
+      .catch(() => undefined);
+  }, [notes]);
 
   const showView = async (next: View): Promise<void> => {
     if (pending.current !== null) await flush();
@@ -200,11 +256,23 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         <div className="omni">
           <input
             type="search"
-            placeholder="Suchen…"
+            placeholder="Volltext durchsuchen…"
             value={query}
-            onChange={(event) => void runSearch(event.target.value)}
+            onChange={(event) => onQueryChange(event.target.value)}
             aria-label="Notizen durchsuchen"
           />
+          <kbd
+            style={{
+              fontFamily: 'var(--mono)',
+              fontSize: '.68rem',
+              border: '1px solid var(--line-2)',
+              borderRadius: 3,
+              padding: '0 .25rem',
+            }}
+            title="Schnell zu einer Notiz springen"
+          >
+            ⌘K
+          </kbd>
         </div>
 
         <button type="button" className="btn" onClick={() => void createNote()}>
@@ -285,12 +353,37 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             <TidyView data={tidy} onOpen={(path) => void openNote(path)} />
           )}
           {view === 'search' && (
-            <SearchView query={query} hits={hits} onOpen={(path) => void openNote(path)} />
+            <SearchView
+              query={query}
+              hits={hits}
+              filters={filters}
+              tags={tags}
+              dirs={topLevelDirs(notes)}
+              onToggleFilter={toggleFilter}
+              onClearFilters={clearFilters}
+              onOpen={(path) => void openNote(path)}
+            />
           )}
         </main>
       </div>
+
+      <Palette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onOpenNote={(path) => void openNote(path)}
+      />
     </div>
   );
+}
+
+/** Top-level folders, for the folder filter. Derived, never hardcoded. */
+function topLevelDirs(notes: NoteRow[]): string[] {
+  const dirs = new Set<string>();
+  for (const note of notes) {
+    const first = note.path.split('/')[0];
+    if (first !== undefined && first !== note.path) dirs.add(first);
+  }
+  return [...dirs].sort((a, b) => a.localeCompare(b));
 }
 
 function SaveIndicator({ state }: { state: SaveState }): React.JSX.Element {
