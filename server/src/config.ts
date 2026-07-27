@@ -27,6 +27,8 @@ export interface Config {
   /** How often the watcher compares the whole vault against the index. */
   reconcileIntervalMs: number;
   logLevel: string;
+  /** Built web UI to serve. Absent means API only — the default in tests. */
+  webRoot?: string;
 }
 
 function envString(name: string, fallback: string): string {
@@ -61,6 +63,11 @@ export function loadConfig(env = process.env): Config {
     reconcileIntervalMs: envInt('NDBRAIN_RECONCILE_INTERVAL_MS', 5 * 60 * 1000),
     logLevel: envString('NDBRAIN_LOG_LEVEL', 'info'),
   };
+
+  const webRoot = process.env['NDBRAIN_WEB_ROOT'];
+  if (webRoot !== undefined && webRoot !== '') {
+    config.webRoot = path.resolve(webRoot);
+  }
 
   // SameSite=None without Secure is discarded by every current browser, which
   // presents as "login does nothing" with no error anywhere. Fail loudly instead.

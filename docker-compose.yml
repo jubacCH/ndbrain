@@ -1,0 +1,26 @@
+services:
+  ndbrain:
+    build: .
+    image: ndbrain:latest
+    container_name: ndbrain
+    restart: unless-stopped
+    # Reap zombies from the healthcheck's short-lived node processes.
+    init: true
+    ports:
+      - '3000:3000'
+    volumes:
+      # The vault is the truth and lives on the host, so `docker rm` can never
+      # take notes with it. The index sits beside it and is rebuildable.
+      - /srv/ndbrain/vaults:/data/vaults
+      - /srv/ndbrain/index:/data/index
+    environment:
+      TZ: Europe/Zurich
+      # Behind the reverse proxy, which terminates TLS. Set to false only for a
+      # plain-HTTP test, or the browser will refuse to keep the session cookie.
+      NDBRAIN_COOKIE_SECURE: 'true'
+      NDBRAIN_LOG_LEVEL: info
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'

@@ -9,7 +9,10 @@
  * the client sent. There is no `?user=` and no owner in a path.
  */
 
+import { existsSync } from 'node:fs';
+
 import cookiePlugin from '@fastify/cookie';
+import staticPlugin from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 
 import type { App } from '../app.js';
@@ -106,8 +109,26 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     void reply.code(problem.status).send({ code: problem.code, message: problem.message });
   });
 
-  fastify.setNotFoundHandler((_request, reply) => {
-    void reply.code(404).send({ code: 'not_found', message: 'no such endpoint' });
+  // ---- the web UI ---------------------------------------------------------
+  //
+  // Served by the same origin as the API, which is why there is no CORS
+  // configuration and no base URL to set: the cookie simply travels with the
+  // request. `webRoot` is absent in tests and during API-only development.
+  const serveWeb = config.webRoot !== undefined && existsSync(config.webRoot);
+  if (serveWeb && config.webRoot !== undefined) {
+    await fastify.register(staticPlugin, { root: config.webRoot, wildcard: false });
+  }
+
+  fastify.setNotFoundHandler((request, reply) => {
+    const pathname = decodeOnce(new URL(request.url, 'http://localhost').pathname);
+
+    // An unknown API route is an error. An unknown *page* is the single-page app
+    // being deep-linked, so it gets index.html and sorts the route out itself.
+    if (!pathname.startsWith('/api/') && serveWeb && request.method === 'GET') {
+      return reply.sendFile('index.html');
+    }
+
+    return reply.code(404).send({ code: 'not_found', message: 'no such endpoint' });
   });
 
   // ---- health -------------------------------------------------------------
