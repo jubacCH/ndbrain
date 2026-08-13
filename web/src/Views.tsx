@@ -6,7 +6,9 @@
  * rather than by colour.
  */
 
-import type { LinkRow, NoteRow, Overview, SearchHit, TaskRow, Tidy } from './api';
+import { useState } from 'react';
+
+import { refKey, type LinkRow, type NoteRow, type Overview, type SearchHit, type Share, type TaskRow, type Tidy } from './api';
 
 const RELATIVE = new Intl.RelativeTimeFormat('de', { numeric: 'auto' });
 
@@ -35,7 +37,7 @@ export function OverviewView({
   onOpen,
 }: {
   data: Overview;
-  onOpen: (path: string) => void;
+  onOpen: (owner: string, path: string) => void;
 }): React.JSX.Element {
   const { counts } = data;
   const attention = counts.orphans + counts.untagged + counts.deadLinks + counts.stale;
@@ -71,9 +73,9 @@ export function OverviewView({
               <button
                 type="button"
                 className="item"
-                key={row.path}
+                key={refKey(row.owner, row.path)}
                 disabled={row.deleted}
-                onClick={() => !row.deleted && onOpen(row.path)}
+                onClick={() => !row.deleted && onOpen(row.owner, row.path)}
               >
                 {/* The actor only earns a badge when it is not you — otherwise
                     every row would carry the same label and say nothing. */}
@@ -98,8 +100,8 @@ export function OverviewView({
               <button
                 type="button"
                 className="item"
-                key={`${task.path}:${task.line}`}
-                onClick={() => onOpen(task.path)}
+                key={`${refKey(task.owner, task.path)}:${task.line}`}
+                onClick={() => onOpen(task.owner, task.path)}
               >
                 <span className="t">{task.text}</span>
                 <span className="r">{task.path.split('/').slice(0, -1).join('/') || '—'}</span>
@@ -113,7 +115,12 @@ export function OverviewView({
           <div className="list">
             {data.recent.length === 0 && <p className="empty">Noch nichts.</p>}
             {data.recent.slice(0, 8).map((note) => (
-              <button type="button" className="item" key={note.path} onClick={() => onOpen(note.path)}>
+              <button
+                type="button"
+                className="item"
+                key={refKey(note.owner, note.path)}
+                onClick={() => onOpen(note.owner, note.path)}
+              >
                 <span className="t">{note.title}</span>
                 <span className="r">{ago(note.mtimeMs)}</span>
               </button>
@@ -161,6 +168,12 @@ function Finding({
  * of these matters, which can go. Selection and bulk actions live here rather
  * than in the tree, since tidying is a deliberate session, not something that
  * happens while writing.
+ *
+ * Your own vault only — the server answers this one without the shares, so the
+ * paths here need no owner. That is a product judgement rather than a permission
+ * limit: "orphaned", "untagged" and "stale" are verdicts on how somebody keeps
+ * their notes, and handing a guest a checkbox list to bulk-delete another
+ * person's notes by that verdict is the wrong default.
  */
 export function TidyView({
   data,
@@ -319,6 +332,7 @@ export function SearchView({
   filters,
   tags,
   dirs,
+  self,
   onToggleFilter,
   onClearFilters,
   onOpen,
@@ -328,9 +342,11 @@ export function SearchView({
   filters: SearchFilters;
   tags: Array<{ tag: string; count: number }>;
   dirs: string[];
+  /** The signed-in account; hits from elsewhere are marked with their vault. */
+  self: string;
   onToggleFilter: (patch: SearchFilters) => void;
   onClearFilters: () => void;
-  onOpen: (path: string) => void;
+  onOpen: (owner: string, path: string) => void;
 }): React.JSX.Element {
   const active = filters.tag !== undefined || filters.dir !== undefined || filters.days !== undefined;
 
@@ -399,12 +415,198 @@ export function SearchView({
       </div>
 
       {hits.map((hit) => (
-        <button type="button" className="hit" key={hit.path} onClick={() => onOpen(hit.path)}>
+        <button
+          type="button"
+          className="hit"
+          key={refKey(hit.owner, hit.path)}
+          onClick={() => onOpen(hit.owner, hit.path)}
+        >
           <span className="title">{hit.title}</span>
-          <span className="path">{hit.path}</span>
+          <span className="path">
+            {/* Search spans the shares, so a result can come from a vault that is
+                not yours. Without the label, the path alone reads as your own. */}
+            {hit.owner !== self && <span className="pill p-info">{hit.owner}</span>}
+            {hit.path}
+          </span>
           {hit.snippet !== '' && <span className="snip">{hit.snippet}</span>}
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Sharing: what you have opened up, and what has been opened to you.
+ *
+ * Both directions on one page, because they are the same question asked from
+ * two sides and somebody checking "who can see my notes" should not have to
+ * know which list to look in.
+ *
+ * The screen is deliberately plain — a table of grants and a form. Sharing in a
+ * self-hosted tool is a security boundary, and a boundary is easier to trust
+ * when it is legible: every row says who, which folder, and whether they can
+ * write, in that order, with no state hidden behind a toggle.
+ */
+export function SharesView({
+  granted,
+  received,
+  dirs,
+  busy,
+  onGrant,
+  onRevoke,
+}: {
+  granted: Share[];
+  received: Share[];
+  /** Top-level folders of the caller's own vault, offered as prefixes. */
+  dirs: string[];
+  busy: boolean;
+  onGrant: (grantee: string, prefix: string, canWrite: boolean) => void;
+  onRevoke: (share: Share) => void;
+}): React.JSX.Element {
+  const [grantee, setGrantee] = useState('');
+  const [prefix, setPrefix] = useState('');
+  const [canWrite, setCanWrite] = useState(false);
+
+  const submit = (event: React.FormEvent): void => {
+    event.preventDefault();
+    if (grantee.trim() === '' || busy) return;
+    onGrant(grantee.trim(), prefix.trim(), canWrite);
+    setGrantee('');
+    setPrefix('');
+    setCanWrite(false);
+  };
+
+  return (
+    <div className="pane padded">
+      <h2 className="h-big">Freigaben</h2>
+      <p className="h-sub">
+        Jeder Vault gehört einer Person. Eine Freigabe öffnet einen Ordner daraus — und nur den.
+      </p>
+
+      <section className="shares-block">
+        <h3 className="cap">Neu freigeben</h3>
+        <form className="share-form" onSubmit={submit}>
+          <label>
+            <span>Konto</span>
+            <input
+              value={grantee}
+              onChange={(event) => setGrantee(event.target.value)}
+              placeholder="benutzername"
+              aria-label="Konto, für das freigegeben wird"
+              autoComplete="off"
+            />
+          </label>
+
+          <label>
+            <span>Ordner</span>
+            <input
+              value={prefix}
+              onChange={(event) => setPrefix(event.target.value)}
+              placeholder="leer = ganzer Vault"
+              aria-label="Ordner, der freigegeben wird"
+              list="share-dirs"
+              autoComplete="off"
+            />
+            <datalist id="share-dirs">
+              {dirs.map((dir) => (
+                <option value={dir} key={dir} />
+              ))}
+            </datalist>
+          </label>
+
+          <label className="share-check">
+            <input type="checkbox" checked={canWrite} onChange={(event) => setCanWrite(event.target.checked)} />
+            <span>darf auch schreiben</span>
+          </label>
+
+          <button type="submit" className="btn btn-solid" disabled={grantee.trim() === '' || busy}>
+            Freigeben
+          </button>
+        </form>
+
+        {/*
+          Said before the click, not after. An empty folder field is the one
+          input on this screen that quietly means something much larger than it
+          looks, and it is a legitimate thing to want.
+        */}
+        <p className="share-note">
+          {prefix.trim() === ''
+            ? 'Ohne Ordner wird der ganze Vault freigegeben — inklusive allem, was später dazukommt.'
+            : `Freigegeben wird „${prefix.trim()}" mit allen Unterordnern.`}
+        </p>
+      </section>
+
+      <section className="shares-block">
+        <h3 className="cap">Von dir freigegeben · {granted.length}</h3>
+        {granted.length === 0 ? (
+          <p className="empty">Niemand sieht in deinen Vault.</p>
+        ) : (
+          <ShareTable shares={granted} column="Konto" nameOf={(share) => share.grantee} busy={busy} onRevoke={onRevoke} verb="Zurückziehen" />
+        )}
+      </section>
+
+      <section className="shares-block">
+        <h3 className="cap">Mit dir geteilt · {received.length}</h3>
+        {received.length === 0 ? (
+          <p className="empty">Niemand teilt etwas mit dir.</p>
+        ) : (
+          // The grantee may end it too. A share you cannot get out of is a folder
+          // somebody else can put things in your view forever.
+          <ShareTable shares={received} column="Vault von" nameOf={(share) => share.owner} busy={busy} onRevoke={onRevoke} verb="Ablehnen" />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ShareTable({
+  shares,
+  column,
+  nameOf,
+  busy,
+  verb,
+  onRevoke,
+}: {
+  shares: Share[];
+  column: string;
+  nameOf: (share: Share) => string;
+  busy: boolean;
+  verb: string;
+  onRevoke: (share: Share) => void;
+}): React.JSX.Element {
+  return (
+    <div className="tablewrap">
+      <div className="tablescroll">
+        <table>
+          <thead>
+            <tr>
+              <th>{column}</th>
+              <th>Ordner</th>
+              <th>Recht</th>
+              <th className="n" />
+            </tr>
+          </thead>
+          <tbody>
+            {shares.map((share) => (
+              <tr key={share.id}>
+                <td className="nm">{nameOf(share)}</td>
+                <td className="pth">{share.prefix === '' ? 'ganzer Vault' : share.prefix}</td>
+                <td>
+                  {/* Neutral either way. Half the rows in a colour would read as
+                      a warning about those grants specifically, and this table
+                      is a list of facts, not of findings. */}
+                  <span className="pill p-tag">{share.canWrite ? 'lesen + schreiben' : 'nur lesen'}</span>
+                </td>
+                <td className="n">
+                  <button type="button" className="btn" disabled={busy} onClick={() => onRevoke(share)}>
+                    {verb}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

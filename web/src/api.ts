@@ -3,7 +3,31 @@
  *
  * Same origin: the server serves this bundle, so there is no base URL to
  * configure and the session cookie travels automatically.
+ *
+ * Since sharing, a note is no longer identified by its path alone. Two people can
+ * each have a `Projekte/Notizen.md`, so every call that addresses one note takes
+ * an **owner** as well — the vault the note lives in, which is not necessarily
+ * the person signed in. The owner travels in the query string or the body and
+ * never in the path, where it would be indistinguishable from a folder of the
+ * same name; the server treats it as untrusted and decides what it means.
  */
+
+/** What it takes to name one note: which vault, and where in it. */
+export interface Ref {
+  owner: string;
+  path: string;
+}
+
+/**
+ * A stable identity for a note, for React keys and selection sets.
+ *
+ * NUL cannot occur in a vault path, so no owner/path pair can be spelled two
+ * ways — which matters, because a collision here would mean the wrong note
+ * highlighted, or worse, deleted.
+ */
+export function refKey(owner: string, path: string): string {
+  return `${owner}\u0000${path}`;
+}
 
 export interface Note {
   path: string;
@@ -13,11 +37,25 @@ export interface Note {
   mtimeMs: number;
 }
 
+/** A note as it was opened, with what the caller may do to it. */
+export interface OpenNote {
+  note: Note;
+  owner: string;
+  canWrite: boolean;
+}
+
 export interface NoteRow {
+  owner: string;
   path: string;
   title: string;
   size: number;
   mtimeMs: number;
+}
+
+/** A folder in the tree, with the vault it belongs to. */
+export interface DirRow {
+  owner: string;
+  path: string;
 }
 
 export interface SearchHit extends NoteRow {
@@ -26,6 +64,7 @@ export interface SearchHit extends NoteRow {
 }
 
 export interface LinkRow {
+  owner: string;
   source: string;
   targetRaw: string;
   targetPath: string | null;
@@ -35,6 +74,7 @@ export interface LinkRow {
 }
 
 export interface TaskRow {
+  owner: string;
   path: string;
   line: number;
   done: boolean;
@@ -42,6 +82,7 @@ export interface TaskRow {
 }
 
 export interface ActivityRow {
+  owner: string;
   path: string;
   title: string;
   actor: string;
@@ -70,6 +111,27 @@ export interface User {
   id: string;
   displayName: string;
   role: 'admin' | 'user';
+}
+
+/** One grant: a region of one vault, opened to one other account. */
+export interface Share {
+  id: string;
+  owner: string;
+  /** Path prefix, `''` for the whole vault. Ends in `/` when it names a folder. */
+  prefix: string;
+  grantee: string;
+  canWrite: boolean;
+  createdAt: number;
+}
+
+export interface PutResult {
+  note: Note;
+  created: boolean;
+  /**
+   * Set when this write displaced a version the writer had not seen; names the
+   * copy that version was kept in. Nothing was lost, but somebody has to be told.
+   */
+  conflictCopy?: string;
 }
 
 export interface BulkResult {
@@ -133,23 +195,34 @@ export const api = {
 
   logout: () => request<{ ok: boolean }>('/api/v1/auth/logout', { method: 'POST' }),
 
-  tree: () => request<{ notes: NoteRow[]; dirs: string[] }>('/api/v1/tree'),
+  tree: () => request<{ notes: NoteRow[]; dirs: DirRow[] }>('/api/v1/tree'),
 
-  getNote: (path: string) => request<{ note: Note }>(`/api/v1/notes/${encodePath(path)}`),
+  getNote: (owner: string, path: string) =>
+    request<OpenNote>(`/api/v1/notes/${encodePath(path)}?owner=${encodeURIComponent(owner)}`),
 
-  putNote: (path: string, content: string) =>
-    request<{ note: Note }>(`/api/v1/notes/${encodePath(path)}`, {
+  /**
+   * Writes a note.
+   *
+   * `baseMtimeMs` is the version the editor started from. The server needs it to
+   * tell "you are the only writer" from "somebody else changed this since you
+   * opened it" — without it a shared note silently loses the other person's
+   * paragraph, since the rule is last-writer-wins either way.
+   */
+  putNote: (owner: string, path: string, content: string, baseMtimeMs?: number) =>
+    request<PutResult>(`/api/v1/notes/${encodePath(path)}`, {
       method: 'PUT',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, owner, baseMtimeMs }),
     }),
 
-  deleteNote: (path: string) =>
-    request<void>(`/api/v1/notes/${encodePath(path)}`, { method: 'DELETE' }),
+  deleteNote: (owner: string, path: string) =>
+    request<void>(`/api/v1/notes/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, {
+      method: 'DELETE',
+    }),
 
-  rename: (from: string, to: string) =>
+  rename: (owner: string, from: string, to: string) =>
     request<{ note: Note; updatedLinks: string[] }>('/api/v1/rename', {
       method: 'POST',
-      body: JSON.stringify({ from, to }),
+      body: JSON.stringify({ from, to, owner }),
     }),
 
   search: (q: string, filters: { tag?: string; dir?: string; days?: number } = {}) => {
@@ -166,16 +239,41 @@ export const api = {
 
   tags: () => request<{ tags: Array<{ tag: string; count: number }> }>('/api/v1/tags'),
 
-  bulk: (action: 'move' | 'tag' | 'untag' | 'delete', paths: string[], extra: { tag?: string; dir?: string } = {}) =>
+  /**
+   * One vault per call, on purpose: the server refuses a selection that spans
+   * two, and "move these into Archiv" has no meaning across a vault boundary.
+   */
+  bulk: (
+    owner: string,
+    action: 'move' | 'tag' | 'untag' | 'delete',
+    paths: string[],
+    extra: { tag?: string; dir?: string } = {},
+  ) =>
     request<BulkResult>('/api/v1/bulk', {
       method: 'POST',
-      body: JSON.stringify({ action, paths, ...extra }),
+      body: JSON.stringify({ action, paths, owner, ...extra }),
     }),
 
-  links: (path: string) =>
-    request<{ backlinks: LinkRow[]; outgoing: LinkRow[] }>(`/api/v1/backlinks/${encodePath(path)}`),
+  links: (owner: string, path: string) =>
+    request<{ backlinks: LinkRow[]; outgoing: LinkRow[] }>(
+      `/api/v1/backlinks/${encodePath(path)}?owner=${encodeURIComponent(owner)}`,
+    ),
 
   overview: () => request<Overview>('/api/v1/overview'),
 
   tidy: () => request<Tidy>('/api/v1/tidy'),
+
+  // ---- sharing ------------------------------------------------------------
+  shares: () => request<{ granted: Share[]; received: Share[] }>('/api/v1/shares'),
+
+  /** Only ever opens a region of the caller's *own* vault — a held share is not theirs to pass on. */
+  grantShare: (grantee: string, prefix: string, canWrite: boolean) =>
+    request<{ share: Share }>('/api/v1/shares', {
+      method: 'POST',
+      body: JSON.stringify({ grantee, prefix, canWrite }),
+    }),
+
+  /** Withdraw as the owner, or decline as the grantee — the same call either way. */
+  revokeShare: (id: string) =>
+    request<void>(`/api/v1/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
