@@ -163,7 +163,7 @@ async function main(): Promise<void> {
     console.log(`\nSuche "qdevice"  → ${hits.map((h) => h.path).join(', ') || 'nichts'}`);
     console.log(
       `Backlinks auf Proxmox Cluster.md → ` +
-        `${q.backlinks('julian', 'Homelab/Proxmox Cluster.md').map((l) => l.source).join(', ') || '—'}`,
+        `${q.backlinks('julian', 'julian', 'Homelab/Proxmox Cluster.md').map((l) => l.source).join(', ') || '—'}`,
     );
 
     if (q.search('ramona', 'qdevice').length > 0) {

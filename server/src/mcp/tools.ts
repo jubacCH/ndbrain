@@ -13,6 +13,14 @@
  *  - **Refusals look like absence.** A note outside the key's scope is reported
  *    as not found — telling a scoped agent "that exists but you may not read it"
  *    hands it a map of what it is missing.
+ *
+ * **A key sees only its owner's own vault, never what others have shared with
+ * them.** Every query below passes the owner where the rest of the application
+ * passes a view. Someone who shares a folder with a person did not thereby agree
+ * to that person's agents reading it, and an agent key is exactly the credential
+ * most likely to end up in a config file on some other machine. Widening this
+ * later is one line; narrowing it after somebody's notes have been read by an
+ * agent they never heard of is not.
  */
 
 import type { App } from '../app.js';
@@ -198,9 +206,13 @@ export const TOOLS: ToolDefinition[] = [
       const notePath = assertInScope(context, 'get_links', String(input['path'] ?? ''));
 
       const backlinks = context.app.queries
-        .backlinks(context.key.owner, notePath)
+        .backlinks(context.key.owner, context.key.owner, notePath)
         .filter((link) => withinScope(context.key, link.source));
-      const outgoing = context.app.queries.outgoingLinks(context.key.owner, notePath);
+      const outgoing = context.app.queries.outgoingLinks(
+        context.key.owner,
+        context.key.owner,
+        notePath,
+      );
 
       context.keys.log(context.key, 'get_links', notePath, true);
 

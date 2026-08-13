@@ -129,7 +129,7 @@ describe('rename rewrites the links that pointed at the note', () => {
     await app.renameNote('julian', 'Inbox/Schnell.md', 'Homelab/Sortiert.md');
 
     expect(await read('julian', 'A.md')).toBe('Siehe [[Sortiert]].\n');
-    expect(app.queries.backlinks('julian', 'Homelab/Sortiert.md').map((l) => l.source)).toEqual([
+    expect(app.queries.backlinks('julian', 'julian', 'Homelab/Sortiert.md').map((l) => l.source)).toEqual([
       'A.md',
     ]);
     expect(app.queries.deadLinks('julian')).toHaveLength(0);
@@ -141,8 +141,8 @@ describe('rename rewrites the links that pointed at the note', () => {
 
     await app.renameNote('julian', 'Ziel.md', 'Neu.md');
 
-    expect(app.queries.getNote('julian', 'Ziel.md')).toBeUndefined();
-    expect(app.queries.getNote('julian', 'Neu.md')).toBeDefined();
+    expect(app.queries.getNote('julian', 'julian', 'Ziel.md')).toBeUndefined();
+    expect(app.queries.getNote('julian', 'julian', 'Neu.md')).toBeDefined();
     expect(app.queries.search('julian', 'Ziel')).toHaveLength(0);
   });
 
@@ -166,6 +166,6 @@ describe('rename rewrites the links that pointed at the note', () => {
 
     // Ramona's link still points at her own note, untouched.
     expect(await read('ramona', 'Ihre Notiz.md')).toBe('Siehe [[Ziel]].\n');
-    expect(app.queries.outgoingLinks('ramona', 'Ihre Notiz.md')[0]?.targetPath).toBe('Ziel.md');
+    expect(app.queries.outgoingLinks('ramona', 'ramona', 'Ihre Notiz.md')[0]?.targetPath).toBe('Ziel.md');
   });
 });
