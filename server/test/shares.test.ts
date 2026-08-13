@@ -193,6 +193,34 @@ describe('the permission matrix', () => {
       expect(body.counts.notes).toBe(3); // her own note plus the two shared ones
       expect(body.tasks.map((t: any) => t.text)).toContain('Termin fixieren');
     });
+
+    /**
+     * The findings are the one part of the overview that does not span shares.
+     *
+     * Caught in the browser: the guest's headline read "2 brauchen
+     * Aufmerksamkeit" while the tidy view beside it — own vault only, by design
+     * — was empty. A count nobody can act on is worse than no count, because it
+     * sends somebody looking for a list that is not there.
+     */
+    it('counts only your own notes as findings, matching the tidy view', async () => {
+      const overview = (await as('ramona', { url: '/api/v1/overview' })).body;
+      const tidy = (await as('ramona', { url: '/api/v1/tidy' })).body;
+
+      expect(overview.counts.untagged).toBe(tidy.untagged.length);
+      expect(overview.counts.orphans).toBe(tidy.orphans.length);
+      expect(overview.counts.deadLinks).toBe(tidy.deadLinks.length);
+      expect(overview.counts.stale).toBe(tidy.stale.length);
+
+      // Julian's shared Projekt/Plan.md has an unresolved [[Technik]]-style gap
+      // and an untagged sibling; none of that is Ramona's to clean up.
+      const attention =
+        overview.counts.orphans +
+        overview.counts.untagged +
+        overview.counts.deadLinks +
+        overview.counts.stale;
+      const own = tidy.orphans.length + tidy.untagged.length + tidy.deadLinks.length + tidy.stale.length;
+      expect(attention).toBe(own);
+    });
   });
 
   describe('with write access', () => {
