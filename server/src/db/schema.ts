@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -196,6 +196,38 @@ const MIGRATIONS: Array<(db: Database) => void> = [
       CREATE INDEX access_log_owner_at ON access_log (owner, at DESC);
     `);
   },
+
+  // v4 -> v5: shares
+  //
+  // A share is (owner, prefix) granted to one other account, read or write. The
+  // prefix carries a trailing slash, or is empty for the whole vault, so that a
+  // string comparison cannot let `Homelab` match `Homelab2`.
+  //
+  // Like `users` and `edits`, this is **not** derivable from the vault: who may
+  // see what is not written in the Markdown. It survives `clearIndex` for the
+  // same reason they do.
+  (db) => {
+    db.exec(`
+      CREATE TABLE shares (
+        id         TEXT PRIMARY KEY,
+        owner      TEXT NOT NULL,
+        -- Path prefix, '' for the whole vault, otherwise ending in '/'.
+        prefix     TEXT NOT NULL,
+        grantee    TEXT NOT NULL,
+        can_write  INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        -- One grant per (owner, prefix, grantee): re-granting changes the right
+        -- rather than stacking a second row that the resolver would have to
+        -- reconcile.
+        UNIQUE (owner, prefix, grantee),
+        FOREIGN KEY (owner)   REFERENCES users (id) ON DELETE CASCADE,
+        FOREIGN KEY (grantee) REFERENCES users (id) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX shares_grantee ON shares (grantee);
+      CREATE INDEX shares_owner   ON shares (owner);
+    `);
+  },
 ];
 
 /** Applies pending migrations. Safe to call on every start. */
@@ -222,8 +254,8 @@ export function migrate(db: Database): void {
 /**
  * Empties the index without touching the schema — used by a full rebuild.
  *
- * Deliberately leaves `users`, `sessions` and `edits` alone: a rebuild reads the
- * vault, and none of those three are derivable from it.
+ * Deliberately leaves `users`, `sessions`, `edits`, `api_keys` and `shares`
+ * alone: a rebuild reads the vault, and none of those are derivable from it.
  */
 export function clearIndex(db: Database, owner?: string): void {
   db.transaction(() => {

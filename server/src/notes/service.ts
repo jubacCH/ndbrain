@@ -30,6 +30,37 @@ export interface ParsedNoteRecord extends Note {
   parsed: ParsedNote;
 }
 
+export interface PutOptions {
+  /**
+   * The `mtimeMs` the client last saw. When the note on disk is newer, the
+   * version about to be overwritten is kept as a conflict copy.
+   */
+  baseMtimeMs?: number;
+}
+
+export interface PutResult {
+  note: Note;
+  created: boolean;
+  /** Path of the copy holding the displaced version, when there was one. */
+  conflictCopy?: string;
+}
+
+/**
+ * Names the copy that holds a displaced version.
+ *
+ * Local time and minute precision, because the name is read by a person deciding
+ * which of two files to keep. Seconds would be noise, and UTC would make the
+ * timestamp disagree with the one shown everywhere else in the UI.
+ */
+function conflictPath(notePath: string, when: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  const stamp =
+    `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ` +
+    `${pad(when.getHours())}.${pad(when.getMinutes())}`;
+
+  return `${notePath.replace(/\.md$/i, '')} (Konflikt ${stamp})${NOTE_EXTENSION}`;
+}
+
 export class NoteService {
   readonly #vault: Vault;
   readonly #locks = new KeyedMutex();
@@ -98,7 +129,12 @@ export class NoteService {
    * real directory entry answers "create, update or refuse" in one step,
    * identically everywhere.
    */
-  async putNote(owner: string, notePath: string, content: string): Promise<{ note: Note; created: boolean }> {
+  async putNote(
+    owner: string,
+    notePath: string,
+    content: string,
+    options: PutOptions = {},
+  ): Promise<PutResult> {
     const canonical = this.#assertNotePath(notePath);
 
     return this.#locks.run(lockKey(owner, canonical), async () => {
@@ -113,9 +149,56 @@ export class NoteService {
         );
       }
 
+      // Everything about the conflict check happens inside the lock. Outside it,
+      // the file could change between the comparison and the write, which is
+      // precisely the case being guarded against.
+      const conflictCopy =
+        existing === undefined ? null : await this.#preserveDisplaced(owner, canonical, content, options);
+
       await this.#vault.writeNote(owner, canonical, content);
-      return { note: await this.getNote(owner, canonical), created: existing === undefined };
+
+      const result: PutResult = {
+        note: await this.getNote(owner, canonical),
+        created: existing === undefined,
+      };
+      if (conflictCopy !== null) result.conflictCopy = conflictCopy;
+      return result;
     });
+  }
+
+  /**
+   * Keeps the version this write is about to displace, if it is not the version
+   * the writer had in front of them.
+   *
+   * The rule stays last-writer-wins — the incoming content lands, nobody is told
+   * "someone else got there first, try again". But the version being overwritten
+   * is written out beside the note first, so a shared note cannot silently eat
+   * somebody's paragraph. Nothing is merged: a merge that gets it wrong is worse
+   * than two files, because it looks finished.
+   *
+   * Only meaningful when the client says which version it started from; a client
+   * that sends nothing gets the old behaviour, which is right for a single-user
+   * vault where the only writer is the person watching.
+   */
+  async #preserveDisplaced(
+    owner: string,
+    canonical: string,
+    incoming: string,
+    options: PutOptions,
+  ): Promise<string | null> {
+    const base = options.baseMtimeMs;
+    if (base === undefined || base <= 0) return null;
+
+    const current = await this.getNote(owner, canonical);
+    if (current.mtimeMs <= base) return null;
+
+    // Identical content is not a conflict, whatever the timestamps say. Two
+    // clients autosaving the same text would otherwise litter the folder.
+    if (current.content === incoming) return null;
+
+    const copyPath = conflictPath(canonical, new Date());
+    await this.#vault.writeNote(owner, copyPath, current.content);
+    return copyPath;
   }
 
   async deleteNote(owner: string, notePath: string): Promise<void> {

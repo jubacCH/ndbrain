@@ -148,7 +148,7 @@ describe('link resolution', () => {
     );
     await indexer.rebuild('julian');
 
-    const links = q.outgoingLinks('julian', 'A.md');
+    const links = q.outgoingLinks('julian', 'julian', 'A.md');
     expect(links).toHaveLength(3);
     expect(links.every((l) => l.targetPath === 'Homelab/Proxmox.md')).toBe(true);
   });
@@ -158,13 +158,13 @@ describe('link resolution', () => {
     await indexer.rebuild('julian');
 
     expect(q.deadLinks('julian')).toHaveLength(1);
-    expect(q.outgoingLinks('julian', 'A.md')[0]?.targetPath).toBeNull();
+    expect(q.outgoingLinks('julian', 'julian', 'A.md')[0]?.targetPath).toBeNull();
 
     await notes.createNote('julian', 'Qdevice Wartung.md', 'Da bin ich.\n');
     await indexer.sync('julian');
 
     expect(q.deadLinks('julian')).toHaveLength(0);
-    expect(q.backlinks('julian', 'Qdevice Wartung.md').map((l) => l.source)).toEqual(['A.md']);
+    expect(q.backlinks('julian', 'julian', 'Qdevice Wartung.md').map((l) => l.source)).toEqual(['A.md']);
   });
 
   it('breaks the link again when the target is deleted', async () => {
@@ -184,14 +184,14 @@ describe('link resolution', () => {
     await notes.createNote('julian', 'A.md', '[[Proxmox]]\n');
     await indexer.rebuild('julian');
 
-    expect(q.outgoingLinks('julian', 'A.md')[0]?.targetPath).toBe('Proxmox.md');
+    expect(q.outgoingLinks('julian', 'julian', 'A.md')[0]?.targetPath).toBe('Proxmox.md');
   });
 
   it('resolves case-insensitively', async () => {
     await notes.createNote('julian', 'Proxmox.md', 'x');
     await notes.createNote('julian', 'A.md', '[[proxmox]] und [[PROXMOX]]\n');
     await indexer.rebuild('julian');
-    expect(q.outgoingLinks('julian', 'A.md').every((l) => l.targetPath === 'Proxmox.md')).toBe(true);
+    expect(q.outgoingLinks('julian', 'julian', 'A.md').every((l) => l.targetPath === 'Proxmox.md')).toBe(true);
   });
 
   it('keeps heading and alias for display', async () => {
@@ -199,7 +199,7 @@ describe('link resolution', () => {
     await notes.createNote('julian', 'A.md', '[[Proxmox#Storage|dort]]\n');
     await indexer.rebuild('julian');
 
-    expect(q.outgoingLinks('julian', 'A.md')[0]).toMatchObject({
+    expect(q.outgoingLinks('julian', 'julian', 'A.md')[0]).toMatchObject({
       heading: 'Storage',
       alias: 'dort',
       targetPath: 'Proxmox.md',
@@ -224,7 +224,7 @@ describe('tenant isolation in the index', () => {
   it('keeps notes with the same name apart', () => {
     expect(q.countNotes('julian')).toBe(3);
     expect(q.countNotes('ramona')).toBe(2);
-    expect(q.getNote('ramona', 'Homelab/Proxmox.md')).toBeUndefined();
+    expect(q.getNote('ramona', 'ramona', 'Homelab/Proxmox.md')).toBeUndefined();
   });
 
   it('does not leak the existence of a foreign note through a wikilink', async () => {
@@ -233,7 +233,7 @@ describe('tenant isolation in the index', () => {
     await notes.createNote('julian', 'Neugier.md', 'Siehe [[Tagebuch]].\n');
     await indexer.sync('julian');
 
-    const link = q.outgoingLinks('julian', 'Neugier.md')[0];
+    const link = q.outgoingLinks('julian', 'julian', 'Neugier.md')[0];
     expect(link?.targetPath).toBeNull();
     expect(q.deadLinks('julian').map((l) => l.targetRaw)).toContain('Tagebuch');
   });
@@ -243,8 +243,8 @@ describe('tenant isolation in the index', () => {
     await indexer.sync('ramona');
 
     // Ramona's link resolves to *her* Proxmox note, not Julian's.
-    expect(q.outgoingLinks('ramona', 'Verweis.md')[0]?.targetPath).toBe('Proxmox.md');
-    expect(q.backlinks('julian', 'Homelab/Proxmox.md').map((l) => l.source)).toEqual([
+    expect(q.outgoingLinks('ramona', 'ramona', 'Verweis.md')[0]?.targetPath).toBe('Proxmox.md');
+    expect(q.backlinks('julian', 'julian', 'Homelab/Proxmox.md').map((l) => l.source)).toEqual([
       'Homelab/LXC Storage.md',
     ]);
   });
@@ -279,7 +279,7 @@ describe('librarian queries', () => {
   });
 
   it('lists backlinks', () => {
-    expect(q.backlinks('julian', 'Homelab/Proxmox.md').map((l) => l.source)).toEqual([
+    expect(q.backlinks('julian', 'julian', 'Homelab/Proxmox.md').map((l) => l.source)).toEqual([
       'Homelab/LXC Storage.md',
     ]);
   });
@@ -297,7 +297,7 @@ describe('librarian queries', () => {
 
   it('lists open tasks with a file line number to jump to', () => {
     expect(q.openTasks('julian')).toEqual([
-      { path: 'Homelab/Proxmox.md', line: 8, done: false, text: 'RAM prüfen' },
+      { owner: 'julian', path: 'Homelab/Proxmox.md', line: 8, done: false, text: 'RAM prüfen' },
     ]);
   });
 

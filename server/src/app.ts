@@ -9,10 +9,10 @@
  */
 
 import type { Indexer } from './index/indexer.js';
-import { Queries, type NoteRow } from './index/queries.js';
+import { Queries, toView, type NoteRow, type Viewable } from './index/queries.js';
 import { addTag, removeTag } from './markdown/edit.js';
 import { parseNote } from './markdown/parse.js';
-import type { Note, NoteService } from './notes/service.js';
+import type { Note, NoteService, PutOptions, PutResult } from './notes/service.js';
 import type { Database } from './db/database.js';
 import { isNotePath, NOTE_EXTENSION, normalizeVaultPath, noteTitle } from './vault/paths.js';
 import { InvalidPathError } from './errors.js';
@@ -24,6 +24,12 @@ export interface RenameResult {
 }
 
 export type EditAction = 'create' | 'update' | 'delete' | 'rename';
+
+/** A folder in the tree, with the vault it belongs to. */
+export interface DirRow {
+  owner: string;
+  path: string;
+}
 
 export interface BulkResult {
   /** Final paths of the notes that succeeded — a move changes the path. */
@@ -87,10 +93,19 @@ export class App {
     notePath: string,
     content: string,
     actor?: string,
-  ): Promise<{ note: Note; created: boolean }> {
-    const result = await this.notes.putNote(owner, notePath, content);
+    options: PutOptions = {},
+  ): Promise<PutResult> {
+    const result = await this.notes.putNote(owner, notePath, content, options);
     await this.indexer.indexNote(owner, result.note.path);
     this.#recordEdit(owner, result.note.path, result.created ? 'create' : 'update', actor);
+
+    if (result.conflictCopy !== undefined) {
+      // Indexed and logged like any other note: a conflict copy that the search
+      // cannot find is a file somebody will discover months later in the folder.
+      await this.indexer.indexNote(owner, result.conflictCopy);
+      this.#recordEdit(owner, result.conflictCopy, 'create', actor);
+    }
+
     return result;
   }
 
@@ -131,7 +146,13 @@ export class App {
       return { note: await this.notes.getNote(owner, source), updatedLinks: [] };
     }
 
-    const referrers = [...new Set(this.queries.backlinks(owner, source).map((l) => l.source))];
+    // Owner's own vault on both sides, even when the person doing the renaming is
+    // someone the folder was shared with: a rename must never rewrite a line in a
+    // third party's file. Links do not cross vaults, so there is nothing outside
+    // this owner that could have needed following anyway.
+    const referrers = [
+      ...new Set(this.queries.backlinks(owner, owner, source).map((l) => l.source)),
+    ];
     const updated: string[] = [];
 
     for (const referrer of referrers) {
@@ -279,12 +300,29 @@ export class App {
     });
   }
 
-  /** Notes for the tree view: every note plus every directory. */
-  async tree(owner: string): Promise<{ notes: NoteRow[]; dirs: string[] }> {
-    return {
-      notes: this.queries.recentNotes(owner, 100_000),
-      dirs: await this.notes.listDirs(owner),
-    };
+  /**
+   * Notes for the tree view: every note plus every directory the caller may see.
+   *
+   * Directories come from the filesystem rather than the index because an empty
+   * folder has no notes to be derived from and would otherwise vanish from the
+   * tree the moment its last note moved out. With sharing, that listing is done
+   * per owner and then cut to the shared prefix — a folder above the shared one
+   * would name a part of the vault the caller was not given.
+   */
+  async tree(viewable: Viewable): Promise<{ notes: NoteRow[]; dirs: DirRow[] }> {
+    const view = toView(viewable);
+    const dirs: DirRow[] = [];
+
+    for (const scope of view) {
+      for (const dir of await this.notes.listDirs(scope.owner)) {
+        // `${dir}/` so a shared `Homelab` does not also surface `Homelab2`.
+        if (scope.prefix === '' || `${dir}/`.startsWith(scope.prefix)) {
+          dirs.push({ owner: scope.owner, path: dir });
+        }
+      }
+    }
+
+    return { notes: this.queries.recentNotes(view, 100_000), dirs };
   }
 }
 

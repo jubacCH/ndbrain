@@ -170,7 +170,7 @@ describe('what the watcher ignores', () => {
     await settle();
 
     expect(q.countNotes('julian')).toBe(1);
-    expect(q.getNote('julian', '.obsidian/workspace.md')).toBeUndefined();
+    expect(q.getNote('julian', 'julian', '.obsidian/workspace.md')).toBeUndefined();
   });
 
   it('ignores files that are not notes', async () => {

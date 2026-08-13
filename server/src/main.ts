@@ -20,6 +20,7 @@ async function main(): Promise<void> {
     users: runtime.users,
     sessions: runtime.sessions,
     keys: runtime.keys,
+    shares: runtime.shares,
     config,
   });
 

@@ -1,12 +1,19 @@
 /**
  * The HTTP layer.
  *
- * Thin on purpose: it decodes a request, names the owner, calls into `App`, and
+ * Thin on purpose: it decodes a request, names the caller, calls into `App`, and
  * maps errors. Every rule about what a user may see lives one layer down, so
  * there is one place to check rather than one per route.
  *
- * The owner of a request is *always* taken from the session, never from anything
- * the client sent. There is no `?user=` and no owner in a path.
+ * The **caller** is *always* taken from the session, never from anything the
+ * client sent. Since sharing arrived a request may also name an **owner** — the
+ * vault the note lives in — and that one does come from the client, which is
+ * exactly why it may not be used raw.
+ *
+ * So every route that addresses a note goes through `target()`, and there is no
+ * other way for a route to obtain an owner and a path. That is structural rather
+ * than a rule to remember: a route that skipped the permission check would have
+ * nothing to operate on.
  */
 
 import { existsSync } from 'node:fs';
@@ -15,8 +22,9 @@ import cookiePlugin from '@fastify/cookie';
 import staticPlugin from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 
-import type { App } from '../app.js';
+import type { App, BulkResult } from '../app.js';
 import type { ApiKeyService } from '../auth/keys.js';
+import { InvalidShareError, type Need, type ShareService } from '../auth/shares.js';
 import { SessionService, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
@@ -37,6 +45,7 @@ export interface ServerDeps {
   users: UserService;
   sessions: SessionService;
   keys: ApiKeyService;
+  shares: ShareService;
   config: Config;
   throttle?: LoginThrottle;
 }
@@ -45,8 +54,26 @@ export interface ServerDeps {
 const PUBLIC_ROUTES = new Set(['/api/v1/auth/login', '/api/v1/health']);
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const { app, users, sessions, keys, config } = deps;
+  const { app, users, sessions, keys, shares, config } = deps;
   const throttle = deps.throttle ?? new LoginThrottle();
+
+  /**
+   * Resolves what a request is addressing, and whether the caller may.
+   *
+   * The only way a route gets an owner and a path. `owner` comes from the query
+   * string or the body and defaults to the caller, so every existing single-user
+   * request keeps its exact meaning; naming somebody else's vault is checked
+   * against the shares table, and a refusal is indistinguishable from a missing
+   * note.
+   */
+  function target(request: FastifyRequest, need: Need): { owner: string; path: string } {
+    const caller = requireUser(request).id;
+    const path = notePathOf(request);
+    const owner = ownerOf(request, caller);
+
+    shares.check(caller, owner, path, need);
+    return { owner, path };
+  }
 
   const fastify = Fastify({
     logger: { level: config.logLevel },
@@ -192,43 +219,60 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ---- notes --------------------------------------------------------------
   fastify.get('/api/v1/tree', async (request) => {
-    const owner = requireUser(request).id;
-    return app.tree(owner);
+    return app.tree(shares.view(requireUser(request).id));
   });
 
   fastify.get('/api/v1/notes/*', async (request) => {
-    const owner = requireUser(request).id;
-    return { note: await app.notes.getNote(owner, notePathOf(request)) };
+    const { owner, path } = target(request, 'read');
+    const caller = requireUser(request).id;
+
+    return {
+      note: await app.notes.getNote(owner, path),
+      // Told to the client so the editor can say whose note this is and go
+      // read-only, rather than letting somebody type into a note they cannot save.
+      owner,
+      canWrite: shares.allows(caller, owner, path, 'write'),
+    };
   });
 
   fastify.put('/api/v1/notes/*', async (request, reply) => {
-    const owner = requireUser(request).id;
-    const notePath = notePathOf(request);
-    const body = (request.body ?? {}) as { content?: unknown };
+    const { owner, path } = target(request, 'write');
+    const caller = requireUser(request).id;
+    const body = (request.body ?? {}) as { content?: unknown; baseMtimeMs?: unknown };
     const content = typeof body.content === 'string' ? body.content : '';
 
-    const { note, created } = await app.putNote(owner, notePath, content, owner);
-    return reply.code(created ? 201 : 200).send({ note });
+    // Optional and only meaningful for a shared note: see App.putNote.
+    const base = Number(body.baseMtimeMs);
+    const options = Number.isFinite(base) && base > 0 ? { baseMtimeMs: base } : {};
+
+    const result = await app.putNote(owner, path, content, caller, options);
+    return reply.code(result.created ? 201 : 200).send(result);
   });
 
   fastify.delete('/api/v1/notes/*', async (request, reply) => {
-    const owner = requireUser(request).id;
-    await app.deleteNote(owner, notePathOf(request), owner);
+    const { owner, path } = target(request, 'write');
+    await app.deleteNote(owner, path, requireUser(request).id);
     return reply.code(204).send();
   });
 
   fastify.post('/api/v1/rename', async (request) => {
-    const owner = requireUser(request).id;
-    const body = (request.body ?? {}) as { from?: unknown; to?: unknown };
+    const caller = requireUser(request).id;
+    const body = (request.body ?? {}) as { from?: unknown; to?: unknown; owner?: unknown };
     const from = typeof body.from === 'string' ? body.from : '';
     const to = typeof body.to === 'string' ? body.to : '';
+    const owner = typeof body.owner === 'string' && body.owner !== '' ? body.owner : caller;
 
-    return app.renameNote(owner, from, to, owner);
+    // Both ends: moving a note *out* of a shared folder would otherwise let a
+    // grantee walk it into a part of the vault they were never given.
+    shares.check(caller, owner, from, 'write');
+    shares.check(caller, owner, to, 'write');
+
+    return app.renameNote(owner, from, to, caller);
   });
 
   // ---- librarian ----------------------------------------------------------
   fastify.get('/api/v1/search', async (request) => {
-    const owner = requireUser(request).id;
+    const view = shares.view(requireUser(request).id);
     const query = (request.query ?? {}) as Record<string, unknown>;
 
     const q = typeof query['q'] === 'string' ? query['q'] : '';
@@ -246,49 +290,49 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       options.sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
     }
 
-    return { hits: app.queries.search(owner, q, options) };
+    return { hits: app.queries.search(view, q, options) };
   });
 
   fastify.get('/api/v1/quickfind', async (request) => {
-    const owner = requireUser(request).id;
+    const view = shares.view(requireUser(request).id);
     const query = (request.query ?? {}) as { q?: unknown };
     const q = typeof query.q === 'string' ? query.q : '';
 
-    return { notes: app.queries.quickFind(owner, q, 12) };
+    return { notes: app.queries.quickFind(view, q, 12) };
   });
 
   fastify.get('/api/v1/tags', async (request) => {
-    const owner = requireUser(request).id;
-    return { tags: app.queries.tagCounts(owner) };
+    return { tags: app.queries.tagCounts(shares.view(requireUser(request).id)) };
   });
 
   fastify.get('/api/v1/backlinks/*', async (request) => {
-    const owner = requireUser(request).id;
-    const notePath = notePathOf(request);
+    const { owner, path } = target(request, 'read');
+    const view = shares.view(requireUser(request).id);
+
     return {
-      backlinks: app.queries.backlinks(owner, notePath),
-      outgoing: app.queries.outgoingLinks(owner, notePath),
+      backlinks: app.queries.backlinks(view, owner, path),
+      outgoing: app.queries.outgoingLinks(view, owner, path),
     };
   });
 
   fastify.get('/api/v1/overview', async (request) => {
-    const owner = requireUser(request).id;
+    const view = shares.view(requireUser(request).id);
     const query = (request.query ?? {}) as { days?: unknown };
     const days = Number(query.days);
     const since = Date.now() - (Number.isFinite(days) && days > 0 ? days : 1) * 24 * 60 * 60 * 1000;
 
     return {
       counts: {
-        notes: app.queries.countNotes(owner),
-        orphans: app.queries.orphans(owner).length,
-        untagged: app.queries.untagged(owner).length,
-        deadLinks: app.queries.deadLinks(owner).length,
-        stale: app.queries.stale(owner).length,
+        notes: app.queries.countNotes(view),
+        orphans: app.queries.orphans(view).length,
+        untagged: app.queries.untagged(view).length,
+        deadLinks: app.queries.deadLinks(view).length,
+        stale: app.queries.stale(view).length,
       },
-      recent: app.queries.recentNotes(owner, 12),
-      tasks: app.queries.openTasks(owner).slice(0, 50),
-      tags: app.queries.tagCounts(owner).slice(0, 30),
-      activity: app.queries.activity(owner, since, 20),
+      recent: app.queries.recentNotes(view, 12),
+      tasks: app.queries.openTasks(view).slice(0, 50),
+      tags: app.queries.tagCounts(view).slice(0, 30),
+      activity: app.queries.activity(view, since, 20),
     };
   });
 
@@ -297,8 +341,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // The differentiator. Each returns per-note results rather than failing
   // wholesale — see App.#overSelection for why that is not a transaction.
   fastify.post('/api/v1/bulk', async (request, reply) => {
-    const owner = requireUser(request).id;
+    const caller = requireUser(request).id;
     const body = (request.body ?? {}) as Record<string, unknown>;
+    // One vault per request. A selection spanning two vaults would have to report
+    // two different reasons for the same-looking failure, and "move these into
+    // Archiv" has no meaning across a boundary.
+    const owner = typeof body['owner'] === 'string' && body['owner'] !== '' ? body['owner'] : caller;
 
     const paths = Array.isArray(body['paths'])
       ? body['paths'].filter((value): value is string => typeof value === 'string')
@@ -321,26 +369,53 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const tag = typeof body['tag'] === 'string' ? body['tag'].trim().replace(/^#/, '').trim() : '';
     const dir = typeof body['dir'] === 'string' ? body['dir'] : '';
 
+    // Checked per note rather than once for the selection: a write-shared folder
+    // is a region, not a vault, and a selection may reach past its edge. Failing
+    // the whole request would also tell the caller which single path was the
+    // problem, so each one is left to fail on its own in the per-note result.
+    const allowed = paths.filter((path) => shares.allows(caller, owner, path, 'write'));
+    const refused = paths
+      .filter((path) => !allowed.includes(path))
+      .map((path) => ({ path, reason: 'note does not exist' }));
+
+    const merge = async (run: Promise<BulkResult>): Promise<BulkResult> => {
+      const result = await run;
+      return { ok: result.ok, failed: [...result.failed, ...refused] };
+    };
+
     switch (action) {
       case 'move':
-        return app.bulkMove(owner, paths, dir, owner);
+        // The destination too — otherwise a grantee could walk notes out of the
+        // shared folder into the rest of the vault.
+        if (!shares.allows(caller, owner, `${dir}/x.md`.replace(/^\/+/, ''), 'write')) {
+          return reply.code(404).send({ code: 'not_found', message: 'no such note' });
+        }
+        return merge(app.bulkMove(owner, allowed, dir, caller));
       case 'tag':
         if (tag === '') {
           return reply.code(400).send({ code: 'no_tag', message: 'no tag given' });
         }
-        return app.bulkTag(owner, paths, tag, owner);
+        return merge(app.bulkTag(owner, allowed, tag, caller));
       case 'untag':
         if (tag === '') {
           return reply.code(400).send({ code: 'no_tag', message: 'no tag given' });
         }
-        return app.bulkUntag(owner, paths, tag, owner);
+        return merge(app.bulkUntag(owner, allowed, tag, caller));
       case 'delete':
-        return app.bulkDelete(owner, paths, owner);
+        return merge(app.bulkDelete(owner, allowed, caller));
       default:
         return reply.code(400).send({ code: 'unknown_action', message: 'unknown bulk action' });
     }
   });
 
+  /**
+   * The tidy-up view is the caller's own vault only.
+   *
+   * Not a permission limit — the search and overview views do span shares. It is
+   * a product judgement: "orphaned", "untagged" and "stale" are verdicts on how
+   * somebody keeps their notes, and offering a stranger a checkbox list to bulk
+   * delete another person's notes by that verdict is the wrong default.
+   */
   fastify.get('/api/v1/tidy', async (request) => {
     const owner = requireUser(request).id;
     return {
@@ -349,6 +424,54 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       deadLinks: app.queries.deadLinks(owner),
       stale: app.queries.stale(owner),
     };
+  });
+
+  // ---- shares -------------------------------------------------------------
+  fastify.get('/api/v1/shares', async (request) => {
+    const caller = requireUser(request).id;
+    return { granted: shares.byOwner(caller), received: shares.toGrantee(caller) };
+  });
+
+  fastify.post('/api/v1/shares', async (request, reply) => {
+    const caller = requireUser(request).id;
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const grantee = typeof body['grantee'] === 'string' ? body['grantee'].trim() : '';
+    const prefix = typeof body['prefix'] === 'string' ? body['prefix'] : '';
+
+    if (grantee === '') {
+      return reply.code(400).send({ code: 'no_grantee', message: 'name somebody to share with' });
+    }
+    if (users.get(grantee) === undefined) {
+      // Named accounts only, and the caller already knows who they typed, so
+      // there is no oracle here to protect.
+      return reply.code(404).send({ code: 'no_such_user', message: 'no such account' });
+    }
+
+    try {
+      // Only ever grants access to the caller's *own* vault: a share the caller
+      // holds is not theirs to pass on.
+      return { share: shares.grant(caller, prefix, grantee, body['canWrite'] === true) };
+    } catch (error) {
+      if (error instanceof InvalidShareError) {
+        return reply.code(400).send({ code: 'invalid_share', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  fastify.delete('/api/v1/shares/:id', async (request, reply) => {
+    const caller = requireUser(request).id;
+    const { id } = request.params as { id: string };
+    const share = shares.get(id);
+
+    // Either side may end it: the owner withdraws, the grantee declines. Anybody
+    // else is told it does not exist.
+    if (share === undefined || (share.owner !== caller && share.grantee !== caller)) {
+      return reply.code(404).send({ code: 'not_found', message: 'no such share' });
+    }
+
+    shares.revoke(id);
+    return reply.code(204).send();
   });
 
   return fastify;
@@ -377,6 +500,23 @@ function requireUser(request: FastifyRequest): User {
 function notePathOf(request: FastifyRequest): string {
   const params = request.params as Record<string, string | undefined>;
   return params['*'] ?? '';
+}
+
+/**
+ * The vault a request is aimed at, defaulting to the caller's own.
+ *
+ * Taken from the query string or the body — never from the path, where it would
+ * be indistinguishable from a folder called `ramona`. The value is untrusted and
+ * is only ever handed to `shares.check`, which decides whether it means anything.
+ */
+function ownerOf(request: FastifyRequest, caller: string): string {
+  const fromQuery = (request.query ?? {}) as { owner?: unknown };
+  if (typeof fromQuery.owner === 'string' && fromQuery.owner !== '') return fromQuery.owner;
+
+  const fromBody = (request.body ?? {}) as { owner?: unknown };
+  if (typeof fromBody.owner === 'string' && fromBody.owner !== '') return fromBody.owner;
+
+  return caller;
 }
 
 /** Decodes once, tolerating malformed sequences rather than throwing on them. */

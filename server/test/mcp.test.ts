@@ -65,6 +65,7 @@ beforeEach(async () => {
     users: runtime.users,
     sessions: runtime.sessions,
     keys: runtime.keys,
+    shares: runtime.shares,
     config,
   });
 });
@@ -202,7 +203,7 @@ describe('scope narrows further, never wider', () => {
 
   it('cannot write outside its scope', async () => {
     await call(scopedKey, 'create_note', { path: 'Privat/Eingeschleust.md', content: 'x' });
-    expect(runtime.app.queries.getNote('julian', 'Privat/Eingeschleust.md')).toBeUndefined();
+    expect(runtime.app.queries.getNote('julian', 'julian', 'Privat/Eingeschleust.md')).toBeUndefined();
   });
 
   it('does not match a folder that merely starts the same', async () => {
