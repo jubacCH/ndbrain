@@ -292,6 +292,32 @@ describe('error taxonomy', () => {
     expect(response.json().code).toBe('case_collision');
   });
 
+  /**
+   * A malformed request is the caller's fault and has to be reported as one.
+   *
+   * Found against the running instance: a DELETE that carried a JSON content
+   * type but no body came back as a 500 and was logged as an unhandled error.
+   * The web client never does that — it only sets the header when there is a
+   * body — but curl and every other client will, and "internal error" tells them
+   * to look in the wrong place.
+   */
+  it.each([
+    ['an empty body under a JSON content type', 'DELETE', '/api/v1/shares/shr_egal', ''],
+    ['a body that is not JSON at all', 'POST', '/api/v1/shares', '{kaputt'],
+  ])('answers %s with a 400, not a 500', async (_label, method, url, payload) => {
+    const response = await server.inject({
+      method: method as 'POST',
+      url,
+      headers: { ...as(julianCookie), 'content-type': 'application/json' },
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().code).toBe('bad_request');
+    // The message is the point: it is the only thing that says what to change.
+    expect(response.json().message).not.toBe('internal error');
+  });
+
   it('never leaks a stack trace or a filesystem path', async () => {
     const responses = await Promise.all([
       server.inject({ url: '/api/v1/notes/Fehlt.md', headers: as(julianCookie) }),
