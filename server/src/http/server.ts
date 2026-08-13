@@ -316,18 +316,24 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   fastify.get('/api/v1/overview', async (request) => {
-    const view = shares.view(requireUser(request).id);
+    const caller = requireUser(request).id;
+    const view = shares.view(caller);
     const query = (request.query ?? {}) as { days?: unknown };
     const days = Number(query.days);
     const since = Date.now() - (Number.isFinite(days) && days > 0 ? days : 1) * 24 * 60 * 60 * 1000;
 
     return {
       counts: {
+        // What you can see spans the shares; what is *yours to tidy* does not.
+        // The findings deliberately match the tidy view, which is own-vault
+        // only: counting a stranger's untagged notes here produced a headline
+        // number ("2 brauchen Aufmerksamkeit") whose list was empty when it was
+        // clicked, because there was nothing there for this person to do.
         notes: app.queries.countNotes(view),
-        orphans: app.queries.orphans(view).length,
-        untagged: app.queries.untagged(view).length,
-        deadLinks: app.queries.deadLinks(view).length,
-        stale: app.queries.stale(view).length,
+        orphans: app.queries.orphans(caller).length,
+        untagged: app.queries.untagged(caller).length,
+        deadLinks: app.queries.deadLinks(caller).length,
+        stale: app.queries.stale(caller).length,
       },
       recent: app.queries.recentNotes(view, 12),
       tasks: app.queries.openTasks(view).slice(0, 50),

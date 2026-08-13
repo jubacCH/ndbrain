@@ -1456,7 +1456,8 @@ tbody tr[data-selected='true']:hover td {
   font-size: 0.84rem;
 }
 
-.share-check {
+/* Scoped to beat `.share-form label`, which sets a column above. */
+.share-form .share-check {
   flex-direction: row;
   align-items: center;
   gap: 0.4rem;
