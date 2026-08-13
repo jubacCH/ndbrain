@@ -11,16 +11,19 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { api, type NoteRow } from './api';
+import { api, refKey, type NoteRow } from './api';
 
 export function Palette({
   open,
+  self,
   onClose,
   onOpenNote,
 }: {
   open: boolean;
+  /** The signed-in account, so a hit from a shared vault can be marked as one. */
+  self: string;
   onClose: () => void;
-  onOpenNote: (path: string) => void;
+  onOpenNote: (owner: string, path: string) => void;
 }): React.JSX.Element | null {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<NoteRow[]>([]);
@@ -64,7 +67,7 @@ export function Palette({
 
   const choose = (note: NoteRow | undefined): void => {
     if (note === undefined) return;
-    onOpenNote(note.path);
+    onOpenNote(note.owner, note.path);
     onClose();
   };
 
@@ -109,14 +112,20 @@ export function Palette({
           {results.map((note, index) => (
             <button
               type="button"
-              key={note.path}
+              key={refKey(note.owner, note.path)}
               className="palette-item"
               data-active={index === active}
               onMouseEnter={() => setActive(index)}
               onClick={() => choose(note)}
             >
               <span className="t">{note.title}</span>
-              <span className="p">{note.path.split('/').slice(0, -1).join('/') || '/'}</span>
+              <span className="p">
+                {/* Two vaults can hold the same title, so a hit that is not yours
+                    has to say so — otherwise the switcher offers two identical
+                    rows and picking is a coin toss. */}
+                {note.owner !== self && <span className="pill p-info">{note.owner}</span>}
+                {note.path.split('/').slice(0, -1).join('/') || '/'}
+              </span>
             </button>
           ))}
         </div>

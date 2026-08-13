@@ -412,14 +412,20 @@ input {
   font-size: 15px;
 }
 
+/* Prose is set in the interface font, not monospace. The design direction
+   reserves monospace for paths, numbers and tags — the places where character
+   alignment carries information. A whole note in monospace reads as a config
+   file. Code spans and fences opt back in below. */
 .cm-editor .cm-scroller {
-  font-family: var(--mono);
-  line-height: 1.7;
+  font-family: var(--font);
+  line-height: 1.65;
   padding: 1.2rem 1.4rem 3rem;
 }
 
 .cm-editor .cm-content {
-  max-width: 78ch;
+  /* Prose wants a shorter measure than code: around 68 characters is where the
+     eye still finds the start of the next line without hunting. */
+  max-width: 68ch;
   caret-color: var(--text);
 }
 
@@ -438,6 +444,138 @@ input {
 
 .cm-editor .cm-cursor {
   border-left-color: var(--text);
+}
+
+/* CodeMirror tints the active line blue by default. Here it marks the one line
+   showing its own notation, which is a state, not a finding — so it gets the
+   neutral surface and leaves the chromatic range alone. */
+.cm-editor .cm-activeLine {
+  background: var(--surface-2);
+}
+
+/* ---- editor: live preview ----------------------------------------------
+   Nothing here introduces a colour. Blocks are told apart by a surface tint,
+   a hairline or a change of face — the four semantic colours stay reserved
+   for findings, so that a broken link still has the whole room to itself. */
+
+.cm-editor .cm-inline-code {
+  background: var(--surface-2);
+  border-radius: 3px;
+  padding: 0.08em 0.3em;
+  /* The chip must not push lines apart; the padding is horizontal in effect. */
+  margin: 0 0.02em;
+}
+
+.cm-editor .cm-block-code {
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+.cm-editor .cm-block-quote {
+  border-left: 2px solid var(--line-2);
+  padding-left: 0.8rem;
+  color: var(--text-2);
+}
+
+.cm-editor .cm-block-table {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  /* Columns line up only as far as the source does. Real alignment would mean
+     replacing the block with a rendered table, which takes editing away. */
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.cm-editor .cm-table-delimiter {
+  color: var(--text-3);
+}
+
+.cm-editor .cm-table-header {
+  font-weight: 650;
+}
+
+/* Frontmatter is addressing, not prose: present, legible, and quiet. */
+.cm-editor .cm-block-frontmatter {
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 0.88em;
+  color: var(--text-2);
+}
+
+.cm-editor .cm-wikilink {
+  text-decoration: underline;
+  text-decoration-color: var(--line-2);
+  text-underline-offset: 3px;
+  cursor: text;
+}
+
+.cm-editor .cm-bullet {
+  color: var(--text-3);
+}
+
+/* Drawn as a line rather than spelled as three dashes. Inline-block so that it
+   can carry a width inside a text line. */
+.cm-editor .cm-rule {
+  display: inline-block;
+  width: 100%;
+  vertical-align: middle;
+  border-top: 1px solid var(--line-2);
+}
+
+.cm-editor .cm-task {
+  vertical-align: -0.1em;
+  margin: 0 0.35em 0 0;
+  accent-color: var(--text-2);
+  cursor: pointer;
+}
+
+.cm-editor .cm-embed img {
+  max-width: 100%;
+  border-radius: var(--r);
+  display: block;
+  margin: 0.3rem 0;
+}
+
+.cm-editor .cm-embed-broken {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  color: var(--crit);
+}
+
+/* ---- editor: search panel ---------------------------------------------- */
+
+.cm-editor .cm-panels {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+
+.cm-editor .cm-panel.cm-search input,
+.cm-editor .cm-panel.cm-search button {
+  font: inherit;
+  font-size: 0.9em;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line-2);
+  border-radius: 3px;
+  padding: 0.15rem 0.4rem;
+}
+
+.cm-editor .cm-panel.cm-search label {
+  font-size: 0.85em;
+  color: var(--text-2);
+}
+
+/* A hit is a finding, so it may use the informational colour; the surrounding
+   matches stay neutral so the current one is still the loudest thing. */
+.cm-editor .cm-searchMatch {
+  background: var(--info-bg);
+  outline: 1px solid var(--info);
+}
+
+.cm-editor .cm-selectionMatch {
+  background: var(--surface-3);
 }
 
 /* ---- lists, tables, chips ---------------------------------------------- */
@@ -986,39 +1124,11 @@ button.ref:hover {
 
 /* ---- autocompletion ----------------------------------------------------- */
 
-.cm-tooltip.cm-tooltip-autocomplete {
-  border: 1px solid var(--line-2);
-  border-radius: 6px;
-  background: var(--surface);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 12%), 0 12px 28px -12px rgb(0 0 0 / 40%);
-  overflow: hidden;
-}
+/* The completion menu is styled in `editor/theme.ts`, not here. CodeMirror
+   injects its own base theme at runtime, after this stylesheet, and wins any
+   tie on specificity — so these rules have to travel as a CodeMirror theme to
+   take effect at all. */
 
-.cm-tooltip-autocomplete > ul {
-  font-family: var(--font);
-  font-size: 0.85rem;
-  max-height: 16rem;
-}
-
-.cm-tooltip-autocomplete > ul > li {
-  padding: 0.3rem 0.6rem;
-  color: var(--text-2);
-  display: flex;
-  gap: 0.6rem;
-}
-
-.cm-tooltip-autocomplete > ul > li[aria-selected] {
-  background: var(--surface-3);
-  color: var(--text);
-}
-
-.cm-completionDetail {
-  margin-left: auto;
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--text-3);
-  font-style: normal;
-}
 
 @media (max-width: 1000px) {
   /* Not enough room for three columns; the context panel is the one to go. */
@@ -1254,4 +1364,113 @@ tbody tr[data-selected='true']:hover td {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---- shared vaults ------------------------------------------------------ */
+
+/*
+ * A vault somebody shared with you is a separate place, not a branch of yours,
+ * and the tree says so structurally rather than with a colour: its own section,
+ * its own heading, its own root. Merging the two by path would make "delete this
+ * folder" ambiguous at the worst possible moment.
+ */
+.vault + .vault {
+  margin-top: 0.7rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+
+.vault-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.3rem;
+  padding: 0 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.vault-owner {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
+/*
+ * A note shared read-only. The tint is deliberately faint: it marks a surface
+ * that cannot be typed into, which is a state of the tool rather than a finding
+ * about the note, so it must not compete with the state ticks in the tree.
+ */
+.pane[data-readonly='true'] {
+  background: var(--surface-2);
+}
+
+/* Inline owner markers in results, where there is no section header to carry it. */
+.hit .path .pill,
+.palette-item .p .pill {
+  margin-right: 0.4rem;
+}
+
+/* ---- sharing ------------------------------------------------------------ */
+
+.shares-block {
+  margin-top: 1.4rem;
+  max-width: 46rem;
+}
+
+.shares-block .cap {
+  margin-bottom: 0.5rem;
+}
+
+.share-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.7rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.share-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.share-form input[type='text'],
+.share-form input:not([type]) {
+  min-width: 12rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.84rem;
+}
+
+.share-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-2);
+  font-size: 0.84rem;
+  padding-bottom: 0.35rem;
+}
+
+/*
+ * Says what the empty folder field means before it is used, not after. It is the
+ * one input here that quietly means something much larger than it looks.
+ */
+.share-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-2);
 }

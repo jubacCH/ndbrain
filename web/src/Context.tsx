@@ -11,20 +11,26 @@
 
 import { useEffect, useState } from 'react';
 
-import { api, type LinkRow } from './api';
+import { api, type LinkRow, type Ref } from './api';
 
 export function ContextPanel({
-  notePath,
+  note,
+  self,
+  canCreate,
   open,
   onToggle,
   onOpen,
   onCreate,
   reloadKey,
 }: {
-  notePath: string | null;
+  note: Ref | null;
+  /** The signed-in account, so a foreign note can say whose it is. */
+  self: string;
+  /** False on a note shared read-only: filling a gap would be refused anyway. */
+  canCreate: boolean;
   open: boolean;
   onToggle: () => void;
-  onOpen: (path: string) => void;
+  onOpen: (owner: string, path: string) => void;
   onCreate: (title: string) => void;
   /** Changes whenever the note was saved, so the panel refreshes with it. */
   reloadKey: number;
@@ -32,8 +38,11 @@ export function ContextPanel({
   const [backlinks, setBacklinks] = useState<LinkRow[]>([]);
   const [outgoing, setOutgoing] = useState<LinkRow[]>([]);
 
+  const owner = note?.owner ?? null;
+  const notePath = note?.path ?? null;
+
   useEffect(() => {
-    if (notePath === null) {
+    if (owner === null || notePath === null) {
       setBacklinks([]);
       setOutgoing([]);
       return;
@@ -41,7 +50,7 @@ export function ContextPanel({
 
     let current = true;
     api
-      .links(notePath)
+      .links(owner, notePath)
       .then((data) => {
         if (!current) return;
         setBacklinks(data.backlinks);
@@ -52,7 +61,7 @@ export function ContextPanel({
     return () => {
       current = false;
     };
-  }, [notePath, reloadKey]);
+  }, [owner, notePath, reloadKey]);
 
   if (!open) {
     return (
@@ -89,8 +98,8 @@ export function ContextPanel({
                 <button
                   type="button"
                   className="ref"
-                  key={`${link.source}:${link.offset}`}
-                  onClick={() => onOpen(link.source)}
+                  key={`${link.owner}:${link.source}:${link.offset}`}
+                  onClick={() => onOpen(link.owner, link.source)}
                 >
                   {titleOf(link.source)}
                   <small>{link.source}</small>
@@ -109,8 +118,8 @@ export function ContextPanel({
                 <button
                   type="button"
                   className="ref"
-                  key={`${link.targetPath}:${link.offset}`}
-                  onClick={() => link.targetPath !== null && onOpen(link.targetPath)}
+                  key={`${link.owner}:${link.targetPath}:${link.offset}`}
+                  onClick={() => link.targetPath !== null && onOpen(link.owner, link.targetPath)}
                 >
                   {titleOf(link.targetPath ?? '')}
                   {link.heading !== null && <small>↳ {link.heading}</small>}
@@ -124,9 +133,11 @@ export function ContextPanel({
                 {dead.map((link) => (
                   <div className="dead-link" key={`${link.targetRaw}:${link.offset}`}>
                     <span className="pill p-crit">{link.targetRaw}</span>
-                    <button type="button" className="btn" onClick={() => onCreate(link.targetRaw)}>
-                      anlegen
-                    </button>
+                    {canCreate && (
+                      <button type="button" className="btn" onClick={() => onCreate(link.targetRaw)}>
+                        anlegen
+                      </button>
+                    )}
                   </div>
                 ))}
               </section>
@@ -137,6 +148,13 @@ export function ContextPanel({
               <span className="ref mono" style={{ fontSize: '.74rem', display: 'block' }}>
                 {notePath}
               </span>
+              {/* Named only when it is somebody else's — see the tree for why
+                  your own vault is never labelled. */}
+              {owner !== null && owner !== self && (
+                <span className="ref mono" style={{ fontSize: '.74rem', display: 'block' }}>
+                  Vault von {owner}
+                </span>
+              )}
             </section>
           </>
         )}

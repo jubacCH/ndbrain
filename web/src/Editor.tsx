@@ -1,32 +1,58 @@
 /**
  * The writing surface: CodeMirror over the note's Markdown source.
  *
- * Plain source, not a WYSIWYG. v1 proved by experiment that a rich-text editor
- * destroys the Markdown round-trip — wikilinks come back escaped, frontmatter and
- * tables mangled — and the files being untouched is the whole product promise.
+ * The document is the file, byte for byte — that is the product promise and the
+ * reason v1's rich-text experiment was thrown away, since a converter round-trip
+ * came back with escaped wikilinks and mangled tables. What sits on top is only
+ * presentation: `./editor/livePreview` hides notation while the cursor is
+ * elsewhere and `./editor/theme` gives structure size and weight instead of
+ * colour. Nothing there can reach the text.
  *
  * Saving is debounced rather than immediate. Typing produces a keystroke every
  * few dozen milliseconds and each save is a file write plus a reindex; batching
  * turns a paragraph into one write instead of two hundred.
  */
 
-import { markdown } from '@codemirror/lang-markdown';
-import { EditorState } from '@codemirror/state';
-import { EditorView, keymap, drawSelection, highlightActiveLine } from '@codemirror/view';
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { markdown } from '@codemirror/lang-markdown';
+import { languages } from '@codemirror/language-data';
+import { bracketMatching, indentOnInput } from '@codemirror/language';
+import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
+import { EditorState } from '@codemirror/state';
+import { drawSelection, EditorView, highlightActiveLine, keymap } from '@codemirror/view';
 import { GFM } from '@lezer/markdown';
 import { useEffect, useRef } from 'react';
 
-import { wikilinkCompletion } from './wikilink';
+import { completion } from './editor/completion';
+import { formatKeymap } from './editor/format';
+import { livePreview } from './editor/livePreview';
+import { markdownTheme } from './editor/theme';
 
 export interface EditorProps {
-  /** Identifies the open note; changing it replaces the document. */
+  /**
+   * Identifies the open note; changing either part replaces the document.
+   *
+   * The owner belongs in the identity, not just the path: two vaults can hold a
+   * `Projekte/Notizen.md`, and switching between them must not leave the first
+   * one's text on screen under the second one's name.
+   */
+  owner: string;
   path: string;
   initialContent: string;
+  /**
+   * A note the caller may read but not write — shared read-only.
+   *
+   * Locked here as well as at the server, so the text cannot be typed into in
+   * the first place. Letting somebody write a paragraph and only then telling
+   * them it cannot be saved is how a person loses work in a tool that keeps
+   * exactly one copy.
+   */
+  readOnly?: boolean;
   onChange: (content: string) => void;
 }
 
-export function Editor({ path, initialContent, onChange }: EditorProps): React.JSX.Element {
+export function Editor({ owner, path, initialContent, readOnly = false, onChange }: EditorProps): React.JSX.Element {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
 
@@ -44,12 +70,40 @@ export function Editor({ path, initialContent, onChange }: EditorProps): React.J
         history(),
         drawSelection(),
         highlightActiveLine(),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
-        // GFM is needed for task lists and strikethrough, both of which appear
-        // in ordinary notes.
-        markdown({ extensions: [GFM] }),
-        wikilinkCompletion(),
+        indentOnInput(),
+        bracketMatching(),
+        closeBrackets(),
+        // Finding something inside a long note should not mean scrolling it.
+        search({ top: true }),
+        highlightSelectionMatches(),
+        keymap.of([
+          // Before the default bindings: both claim Backspace, and the
+          // bracket-aware one has to win when it applies. Formatting comes
+          // early too, since `Mod-i` and `Mod-k` are otherwise unclaimed but
+          // `Mod-e` is not.
+          ...closeBracketsKeymap,
+          ...formatKeymap,
+          ...searchKeymap,
+          ...historyKeymap,
+          ...defaultKeymap,
+        ]),
+        // GFM is needed for task lists, strikethrough and tables, all of which
+        // appear in ordinary notes. `markdown()` also installs its own keymap,
+        // which is what continues a list on Enter.
+        //
+        // `languages` is loaded for fenced blocks; each mode is a dynamic
+        // import, so the bundle grows by a lazy chunk rather than by every
+        // grammar CodeMirror ships.
+        markdown({ extensions: [GFM], codeLanguages: languages }),
+        markdownTheme(),
+        livePreview(),
+        completion(),
         EditorView.lineWrapping,
+        // `readOnly` refuses the edit; `editable` also stops the caret from
+        // appearing, so the surface looks like what it is instead of looking
+        // broken.
+        EditorState.readOnly.of(readOnly),
+        EditorView.editable.of(!readOnly),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString());
         }),
@@ -58,7 +112,7 @@ export function Editor({ path, initialContent, onChange }: EditorProps): React.J
 
     const instance = new EditorView({ state, parent: host.current });
     view.current = instance;
-    instance.focus();
+    if (!readOnly) instance.focus();
 
     return () => {
       instance.destroy();
@@ -67,7 +121,7 @@ export function Editor({ path, initialContent, onChange }: EditorProps): React.J
     // Rebuilt only when the open note changes — not when its content changes,
     // which would fight the person typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path]);
+  }, [owner, path, readOnly]);
 
-  return <div className="pane" ref={host} />;
+  return <div className="pane" data-readonly={readOnly} ref={host} />;
 }

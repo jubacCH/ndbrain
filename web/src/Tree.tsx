@@ -9,19 +9,29 @@
  * Every note that has a finding carries a thin coloured tick at the left edge of
  * its row. That is the signature device: the health of the vault is visible in
  * passing, without opening a view for it.
+ *
+ * Since sharing, the tree can show more than one vault. Foreign notes are never
+ * mixed into your own folders, however neatly the paths would line up: a
+ * `Homelab` somebody shared with you and your own `Homelab` are different
+ * places, and merging them would make "delete this folder" ambiguous at exactly
+ * the wrong moment. Each vault is its own labelled section, your own first.
  */
 
 import { useMemo, useState } from 'react';
 
-import type { NoteRow } from './api';
+import { refKey, type NoteRow, type Share } from './api';
 
 export type Finding = 'crit' | 'warn';
 
 export interface TreeProps {
   notes: NoteRow[];
-  selected: string | null;
+  /** The signed-in account, whose vault is shown first and without a header. */
+  self: string;
+  /** What has been shared *with* the caller — the source of the section labels. */
+  received: Share[];
+  selected: { owner: string; path: string } | null;
   findings: Map<string, Finding>;
-  onSelect: (path: string) => void;
+  onSelect: (owner: string, path: string) => void;
 }
 
 interface Folder {
@@ -63,42 +73,81 @@ function buildTree(notes: NoteRow[]): Folder {
   return root;
 }
 
-export function Tree({ notes, selected, findings, onSelect }: TreeProps): React.JSX.Element {
-  const root = useMemo(() => buildTree(notes), [notes]);
+/**
+ * How much of a foreign vault the caller may change.
+ *
+ * Only ever a label. The binding answer comes from the server when the note is
+ * opened, and the editor locks on that — a hint computed here from a share list
+ * that may be a few seconds stale must never be what decides whether a write is
+ * attempted.
+ */
+function writeLabel(owner: string, received: Share[]): string | null {
+  const mine = received.filter((share) => share.owner === owner);
+  if (mine.length === 0 || mine.every((share) => !share.canWrite)) return 'nur lesen';
+  if (mine.every((share) => share.canWrite)) return 'schreiben';
+  return 'teils schreiben';
+}
+
+export function Tree({ notes, self, received, selected, findings, onSelect }: TreeProps): React.JSX.Element {
+  const vaults = useMemo(() => {
+    const byOwner = new Map<string, NoteRow[]>();
+    for (const note of notes) {
+      const list = byOwner.get(note.owner);
+      if (list === undefined) byOwner.set(note.owner, [note]);
+      else list.push(note);
+    }
+
+    // Own vault first and always present, so a vault that has been emptied still
+    // shows its "create the first note" prompt rather than vanishing behind
+    // somebody else's folders.
+    const own = byOwner.get(self) ?? [];
+    byOwner.delete(self);
+
+    const foreign = [...byOwner.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([owner, rows]) => ({ owner, rows }));
+
+    return [{ owner: self, rows: own }, ...foreign];
+  }, [notes, self]);
+
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
-  const toggle = (path: string): void => {
+  const toggle = (key: string): void => {
     setCollapsed((previous) => {
       const next = new Set(previous);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
 
-  const renderFolder = (folder: Folder): React.JSX.Element[] => {
-    const open = !collapsed.has(folder.path);
+  const renderFolder = (owner: string, folder: Folder): React.JSX.Element[] => {
+    const open = !collapsed.has(refKey(owner, folder.path));
 
     return [
-      ...folder.folders.map((child) => (
-        <li key={`d:${child.path}`}>
-          <button type="button" className="node" onClick={() => toggle(child.path)}>
-            <span className="tw">{collapsed.has(child.path) ? '▸' : '▾'}</span>
-            <span className="nm">{child.name}</span>
-          </button>
-          {!collapsed.has(child.path) && <ul>{renderFolder(child)}</ul>}
-        </li>
-      )),
+      ...folder.folders.map((child) => {
+        const key = refKey(owner, child.path);
+        return (
+          <li key={`d:${key}`}>
+            <button type="button" className="node" onClick={() => toggle(key)}>
+              <span className="tw">{collapsed.has(key) ? '▸' : '▾'}</span>
+              <span className="nm">{child.name}</span>
+            </button>
+            {!collapsed.has(key) && <ul>{renderFolder(owner, child)}</ul>}
+          </li>
+        );
+      }),
       ...(open
         ? folder.notes.map((note) => {
-            const finding = findings.get(note.path);
+            const key = refKey(note.owner, note.path);
+            const finding = findings.get(key);
             return (
-              <li key={`f:${note.path}`}>
+              <li key={`f:${key}`}>
                 <button
                   type="button"
                   className="node"
-                  aria-current={note.path === selected}
-                  onClick={() => onSelect(note.path)}
+                  aria-current={selected !== null && selected.owner === note.owner && selected.path === note.path}
+                  onClick={() => onSelect(note.owner, note.path)}
                 >
                   {finding !== undefined && <span className={`st st-${finding}`} />}
                   <span className="tw" />
@@ -111,9 +160,40 @@ export function Tree({ notes, selected, findings, onSelect }: TreeProps): React.
     ];
   };
 
-  if (notes.length === 0) {
-    return <p className="empty">Noch keine Notizen. Leg mit „Neu" die erste an.</p>;
-  }
+  return (
+    <>
+      {vaults.map(({ owner, rows }) => {
+        const isOwn = owner === self;
+        const root = buildTree(rows);
 
-  return <ul className="tree">{renderFolder(root)}</ul>;
+        return (
+          <section className="vault" key={owner} data-foreign={!isOwn}>
+            {/*
+              Your own vault carries no header at all. Labelling it "Julian" would
+              make the single-user case — which is every case until somebody
+              shares something — look like it has an owner problem.
+            */}
+            {!isOwn && (
+              <h3 className="vault-head">
+                <span className="vault-owner mono">{owner}</span>
+                {/* Neutral, not coloured: the right is a fact about the folder,
+                    not a finding. Colour in this interface always means
+                    "something is wrong here" or "this is not yours", and the
+                    header itself already carries the second. */}
+                <span className="pill p-tag">{writeLabel(owner, received)}</span>
+              </h3>
+            )}
+
+            {rows.length === 0 ? (
+              <p className="empty">
+                {isOwn ? 'Noch keine Notizen. Leg mit „Neu" die erste an.' : 'Nichts freigegeben.'}
+              </p>
+            ) : (
+              <ul className="tree">{renderFolder(owner, root)}</ul>
+            )}
+          </section>
+        );
+      })}
+    </>
+  );
 }

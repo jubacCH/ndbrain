@@ -1,21 +1,39 @@
 /**
- * The application shell: tree on the left, one of three views on the right.
+ * The application shell: tree on the left, one of several views on the right.
  *
  * Saving is the part worth reading carefully. The editor holds the text, a
  * debounce turns a burst of typing into one write, and the header shows the real
  * state of that write at all times. With data that lives only on the server, a
  * silent save is not trustworthy — you have to be able to see that it arrived.
+ *
+ * Since sharing, an open note is a (vault, path) pair rather than a path, and
+ * that pair is carried through every call here. The two things it changes:
+ * a note may be read-only, which locks the editor; and a note may be written by
+ * somebody else between opening and saving, which the server answers with a
+ * conflict copy rather than a lost paragraph — so this layer has to say that
+ * out loud, or the copy is just a strange file somebody finds months later.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ApiError, api, type Note, type NoteRow, type Overview, type SearchHit, type Tidy, type User } from './api';
+import {
+  ApiError,
+  api,
+  refKey,
+  type NoteRow,
+  type OpenNote,
+  type Overview,
+  type SearchHit,
+  type Share,
+  type Tidy,
+  type User,
+} from './api';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { Login } from './Login';
 import { Palette } from './Palette';
 import { Tree, type Finding } from './Tree';
-import { OverviewView, SearchView, TidyView } from './Views';
+import { OverviewView, SearchView, SharesView, TidyView } from './Views';
 
 export interface Filters {
   tag?: string;
@@ -23,7 +41,7 @@ export interface Filters {
   days?: number;
 }
 
-type View = 'note' | 'overview' | 'tidy' | 'search';
+type View = 'note' | 'overview' | 'tidy' | 'search' | 'shares';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -49,7 +67,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [notes, setNotes] = useState<NoteRow[]>([]);
   const [findings, setFindings] = useState<Map<string, Finding>>(new Map());
   const [view, setView] = useState<View>('overview');
-  const [note, setNote] = useState<Note | null>(null);
+  const [open, setOpen] = useState<OpenNote | null>(null);
+  const [granted, setGranted] = useState<Share[]>([]);
+  const [received, setReceived] = useState<Share[]>([]);
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [tidy, setTidy] = useState<Tidy | null>(null);
@@ -60,6 +80,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
   const [contextOpen, setContextOpen] = useState(true);
   // Bumped after every successful save so the context panel re-reads the links.
   const [linksVersion, setLinksVersion] = useState(0);
@@ -67,7 +88,16 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [mobileTree, setMobileTree] = useState(false);
 
   const saveTimer = useRef<number | null>(null);
-  const pending = useRef<{ path: string; content: string } | null>(null);
+  const pending = useRef<{ owner: string; path: string; content: string } | null>(null);
+  /**
+   * The version the editor started from, sent with every write.
+   *
+   * Kept in a ref rather than state because it has to be right at the moment the
+   * debounce fires, not at the next render — and it is updated from each save's
+   * response, so a run of autosaves does not report the first one's version and
+   * make every later save look like a conflict.
+   */
+  const baseMtime = useRef<number | null>(null);
 
   const refreshTree = useCallback(async (): Promise<void> => {
     const [tree, tidyData] = await Promise.all([api.tree(), api.tidy()]);
@@ -75,13 +105,21 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     setTidy(tidyData);
 
     // The tree's state markers come from the same findings the tidy view lists,
-    // so the two can never disagree.
+    // so the two can never disagree. Tidy answers for the caller's own vault
+    // only, so every key here carries the caller as the owner — a marker keyed
+    // by path alone would light up a note of the same name in a shared vault.
     const map = new Map<string, Finding>();
-    for (const row of tidyData.untagged) map.set(row.path, 'warn');
-    for (const row of tidyData.stale) map.set(row.path, 'warn');
-    for (const row of tidyData.orphans) map.set(row.path, 'crit');
-    for (const row of tidyData.deadLinks) map.set(row.source, 'crit');
+    for (const row of tidyData.untagged) map.set(refKey(user.id, row.path), 'warn');
+    for (const row of tidyData.stale) map.set(refKey(user.id, row.path), 'warn');
+    for (const row of tidyData.orphans) map.set(refKey(user.id, row.path), 'crit');
+    for (const row of tidyData.deadLinks) map.set(refKey(user.id, row.source), 'crit');
     setFindings(map);
+  }, [user.id]);
+
+  const refreshShares = useCallback(async (): Promise<void> => {
+    const data = await api.shares();
+    setGranted(data.granted);
+    setReceived(data.received);
   }, []);
 
   const refreshOverview = useCallback(async (): Promise<void> => {
@@ -91,7 +129,8 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   useEffect(() => {
     void refreshTree().catch(() => setError('Der Server antwortet gerade nicht.'));
     void refreshOverview().catch(() => undefined);
-  }, [refreshTree, refreshOverview]);
+    void refreshShares().catch(() => undefined);
+  }, [refreshTree, refreshOverview, refreshShares]);
 
   /** Writes whatever is pending right now. */
   const flush = useCallback(async (): Promise<void> => {
@@ -101,8 +140,26 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     setSaveState('saving');
 
     try {
-      await api.putNote(outstanding.path, outstanding.content);
+      const result = await api.putNote(
+        outstanding.owner,
+        outstanding.path,
+        outstanding.content,
+        baseMtime.current ?? undefined,
+      );
+      // This write is now the version to compare the next one against.
+      baseMtime.current = result.note.mtimeMs;
       setSaveState(pending.current === null ? 'saved' : 'dirty');
+
+      // Somebody else's version was displaced and kept. Reported plainly and
+      // left on screen: the text on this screen won, and the other one is only
+      // recoverable if the person is told the file exists.
+      if (result.conflictCopy !== undefined) {
+        setError(
+          `Jemand anderes hat diese Notiz inzwischen geändert. Deine Fassung steht drin, ` +
+            `die andere liegt als „${result.conflictCopy}" daneben.`,
+        );
+      }
+
       // Links may have appeared or broken with this edit, so the panel and the
       // tree markers are re-read rather than left showing the previous state.
       setLinksVersion((version) => version + 1);
@@ -116,8 +173,8 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   }, [refreshTree]);
 
   const scheduleSave = useCallback(
-    (path: string, content: string): void => {
-      pending.current = { path, content };
+    (owner: string, path: string, content: string): void => {
+      pending.current = { owner, path, content };
       setSaveState('dirty');
       if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => void flush(), SAVE_DEBOUNCE_MS);
@@ -139,18 +196,22 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   }, [flush]);
 
   const openNote = useCallback(
-    async (path: string): Promise<void> => {
+    async (owner: string, path: string): Promise<void> => {
       // Never switch away from unsaved text without writing it first.
       if (pending.current !== null) await flush();
 
       try {
-        const { note: opened } = await api.getNote(path);
-        setNote(opened);
+        const opened = await api.getNote(owner, path);
+        setOpen(opened);
+        baseMtime.current = opened.note.mtimeMs;
         setView('note');
         setSaveState('saved');
         setMobileTree(false);
         setError(null);
       } catch {
+        // A note in a share that has just been withdrawn is gone in exactly the
+        // same way as a deleted one, and is told so in the same words. There is
+        // nothing to distinguish here — that is the point of the design.
         setError('Diese Notiz gibt es nicht mehr.');
         void refreshTree();
       }
@@ -159,7 +220,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   );
 
   const createNoteAt = useCallback(
-    async (rawName: string): Promise<void> => {
+    async (owner: string, rawName: string): Promise<void> => {
       const name = rawName.trim();
       if (name === '') return;
 
@@ -167,9 +228,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       const title = path.split('/').pop()?.replace(/\.md$/i, '') ?? '';
 
       try {
-        await api.putNote(path, `# ${title}\n\n`);
+        await api.putNote(owner, path, `# ${title}\n\n`);
         await refreshTree();
-        await openNote(path);
+        await openNote(owner, path);
       } catch (caught) {
         setError(caught instanceof ApiError ? caught.message : 'Anlegen fehlgeschlagen.');
       }
@@ -177,10 +238,14 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     [openNote, refreshTree],
   );
 
+  // Always in your own vault. Creating into somebody else's shared folder is
+  // possible through the dead-link button below, where the folder is implied by
+  // the note you are standing in; offering it here would mean a vault picker on
+  // the most-used button in the application.
   const createNote = async (): Promise<void> => {
     const name = window.prompt('Name der neuen Notiz (Ordner mit / möglich)');
     if (name === null) return;
-    await createNoteAt(name);
+    await createNoteAt(user.id, name);
   };
 
   /**
@@ -191,8 +256,12 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
    * just wanted the gap filled.
    */
   const createFromDeadLink = async (target: string): Promise<void> => {
-    const folder = note?.path.split('/').slice(0, -1).join('/') ?? '';
-    await createNoteAt(folder === '' ? target : `${folder}/${target}`);
+    if (open === null) return;
+    // Same vault as the note that links to it, not the caller's own: a link
+    // inside somebody's shared folder means a note in *their* vault, and filling
+    // the gap in yours would leave the link just as broken as before.
+    const folder = open.note.path.split('/').slice(0, -1).join('/');
+    await createNoteAt(open.owner, folder === '' ? target : `${folder}/${target}`);
   };
 
   const runSearch = useCallback(
@@ -252,6 +321,13 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       .catch(() => undefined);
   }, [notes]);
 
+  // Only your own folders can be shared out, so the suggestions on that form
+  // come from your own notes rather than from everything you can see.
+  const ownDirs = useMemo(
+    () => topLevelDirs(notes.filter((row) => row.owner === user.id)),
+    [notes, user.id],
+  );
+
   /**
    * Runs a bulk action over the current selection and reports honestly.
    *
@@ -279,7 +355,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 
     setBulkBusy(true);
     try {
-      const result = await api.bulk(action, paths, extra);
+      // The caller's own vault: the tidy view that feeds this selection never
+      // shows anybody else's notes.
+      const result = await api.bulk(user.id, action, paths, extra);
       setSelection(new Set());
       await refreshTree();
       await refreshOverview();
@@ -305,7 +383,44 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     if (pending.current !== null) await flush();
     if (next === 'overview') await refreshOverview();
     if (next === 'tidy') await refreshTree();
+    if (next === 'shares') await refreshShares();
     setView(next);
+  };
+
+  const grantShare = async (grantee: string, prefix: string, canWrite: boolean): Promise<void> => {
+    setShareBusy(true);
+    try {
+      await api.grantShare(grantee, prefix, canWrite);
+      await refreshShares();
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'Freigeben fehlgeschlagen.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const revokeShare = async (share: Share): Promise<void> => {
+    const own = share.owner === user.id;
+    const what = share.prefix === '' ? 'den ganzen Vault' : `„${share.prefix}"`;
+    const question = own
+      ? `${share.grantee} den Zugriff auf ${what} entziehen?`
+      : `Zugriff auf ${what} von ${share.owner} aufgeben?`;
+    if (!window.confirm(question)) return;
+
+    setShareBusy(true);
+    try {
+      await api.revokeShare(share.id);
+      await refreshShares();
+      // A withdrawn share can take the open note with it, and the tree still
+      // shows the vault until it is re-read.
+      await refreshTree();
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'Zurückziehen fehlgeschlagen.');
+    } finally {
+      setShareBusy(false);
+    }
   };
 
   const signOut = async (): Promise<void> => {
@@ -331,6 +446,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           </button>
           <button type="button" aria-current={view === 'tidy'} onClick={() => void showView('tidy')}>
             Aufräumen
+          </button>
+          <button type="button" aria-current={view === 'shares'} onClick={() => void showView('shares')}>
+            Freigaben
           </button>
         </div>
 
@@ -370,9 +488,11 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           <div className="rail-scroll">
             <Tree
               notes={notes}
-              selected={note?.path ?? null}
+              self={user.id}
+              received={received}
+              selected={open === null ? null : { owner: open.owner, path: open.note.path }}
               findings={findings}
-              onSelect={(path) => void openNote(path)}
+              onSelect={(owner, path) => void openNote(owner, path)}
             />
           </div>
           {tidy !== null && (
@@ -404,7 +524,17 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             >
               ☰
             </button>
-            <span className="cur">{note?.path ?? '—'}</span>
+            <span className="cur">{open?.note.path ?? '—'}</span>
+            {/*
+              Whose note this is, and whether it can be changed — next to the
+              path rather than in a panel, because it answers "am I about to
+              edit somebody else's file" at the moment that matters.
+            */}
+            {open !== null && open.owner !== user.id && (
+              <span className="pill p-info">
+                {open.owner} · {open.canWrite ? 'schreiben' : 'nur lesen'}
+              </span>
+            )}
             <SaveIndicator state={saveState} />
           </div>
 
@@ -415,20 +545,22 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           )}
 
           {view === 'note' &&
-            (note === null ? (
+            (open === null ? (
               <p className="empty" style={{ padding: '2rem' }}>
                 Wähle links eine Notiz oder leg mit „Neu" eine an.
               </p>
             ) : (
               <Editor
-                path={note.path}
-                initialContent={note.content}
-                onChange={(content) => scheduleSave(note.path, content)}
+                owner={open.owner}
+                path={open.note.path}
+                initialContent={open.note.content}
+                readOnly={!open.canWrite}
+                onChange={(content) => scheduleSave(open.owner, open.note.path, content)}
               />
             ))}
 
           {view === 'overview' && overview !== null && (
-            <OverviewView data={overview} onOpen={(path) => void openNote(path)} />
+            <OverviewView data={overview} onOpen={(owner, path) => void openNote(owner, path)} />
           )}
           {view === 'tidy' && tidy !== null && (
             <TidyView
@@ -450,7 +582,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
                 // "select all" should clear, which is what people expect.
                 setSelection((current) => (current.size === paths.length ? new Set() : new Set(paths)))
               }
-              onOpen={(path) => void openNote(path)}
+              onOpen={(path) => void openNote(user.id, path)}
               onBulk={(action) => void runBulk(action)}
             />
           )}
@@ -461,19 +593,32 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               filters={filters}
               tags={tags}
               dirs={topLevelDirs(notes)}
+              self={user.id}
               onToggleFilter={toggleFilter}
               onClearFilters={clearFilters}
-              onOpen={(path) => void openNote(path)}
+              onOpen={(owner, path) => void openNote(owner, path)}
+            />
+          )}
+          {view === 'shares' && (
+            <SharesView
+              granted={granted}
+              received={received}
+              dirs={ownDirs}
+              busy={shareBusy}
+              onGrant={(grantee, prefix, canWrite) => void grantShare(grantee, prefix, canWrite)}
+              onRevoke={(share) => void revokeShare(share)}
             />
           )}
         </main>
 
         {view === 'note' && (
           <ContextPanel
-            notePath={note?.path ?? null}
+            note={open === null ? null : { owner: open.owner, path: open.note.path }}
+            self={user.id}
+            canCreate={open?.canWrite ?? false}
             open={contextOpen}
             onToggle={() => setContextOpen((isOpen) => !isOpen)}
-            onOpen={(path) => void openNote(path)}
+            onOpen={(owner, path) => void openNote(owner, path)}
             onCreate={(target) => void createFromDeadLink(target)}
             reloadKey={linksVersion}
           />
@@ -482,8 +627,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 
       <Palette
         open={paletteOpen}
+        self={user.id}
         onClose={() => setPaletteOpen(false)}
-        onOpenNote={(path) => void openNote(path)}
+        onOpenNote={(owner, path) => void openNote(owner, path)}
       />
     </div>
   );

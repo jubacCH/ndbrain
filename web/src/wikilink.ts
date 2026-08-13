@@ -10,13 +10,11 @@
  * found here exactly as it is found there.
  */
 
-import {
-  autocompletion,
-  type Completion,
-  type CompletionContext,
-  type CompletionResult,
+import type {
+  Completion,
+  CompletionContext,
+  CompletionResult,
 } from '@codemirror/autocomplete';
-import type { Extension } from '@codemirror/state';
 
 import { api } from './api';
 
@@ -28,7 +26,9 @@ import { api } from './api';
  */
 const OPEN_LINK = /\[\[([^\]\n[]*)$/;
 
-async function complete(context: CompletionContext): Promise<CompletionResult | null> {
+export async function wikilinkSource(
+  context: CompletionContext,
+): Promise<CompletionResult | null> {
   const before = context.matchBefore(OPEN_LINK);
   if (before === null) return null;
 
@@ -61,13 +61,6 @@ async function complete(context: CompletionContext): Promise<CompletionResult | 
   };
 }
 
-export function wikilinkCompletion(): Extension {
-  return autocompletion({
-    override: [complete],
-    closeOnBlur: true,
-    icons: false,
-    // The note body is prose; an aggressive menu would fight ordinary typing.
-    activateOnTyping: true,
-    maxRenderedOptions: 12,
-  });
-}
+// The extension itself is assembled in `editor/completion.ts`, which serves this
+// source alongside the `/` menu — CodeMirror takes one autocompletion config per
+// editor, so the two cannot each install their own.
