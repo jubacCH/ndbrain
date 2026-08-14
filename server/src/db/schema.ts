@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -228,6 +228,44 @@ const MIGRATIONS: Array<(db: Database) => void> = [
       CREATE INDEX shares_owner   ON shares (owner);
     `);
   },
+
+  // v5 -> v6: frontmatter properties
+  //
+  // Frontmatter was parsed from the start and then thrown away — only `tags`
+  // survived, into its own table. Everything else a note declared about itself
+  // (`status: aktiv`, `type: moc`) existed in the file and nowhere the index
+  // could reach, so it could not be filtered on and could not be listed
+  // cheaply.
+  //
+  // Key/value rows rather than columns, because the vocabulary belongs to
+  // whoever keeps the vault. A column per property would mean a migration every
+  // time somebody invents a field, which is precisely the sort of structure this
+  // tool refuses to impose.
+  //
+  // Rebuildable from the vault like the rest of the index, so `clearIndex`
+  // wipes it without a second thought.
+  (db) => {
+    db.exec(`
+      CREATE TABLE props (
+        owner TEXT NOT NULL,
+        path  TEXT NOT NULL,
+        key   TEXT NOT NULL,
+        -- Always text. A YAML scalar can be a number, a date or a boolean, and
+        -- storing each in its own type would make "status = aktiv" and
+        -- "year = 2026" two different queries.
+        value TEXT NOT NULL,
+        -- Case-folded, so "Status: Aktiv" and "status: aktiv" answer the same
+        -- question — the same rule tags already follow.
+        key_fold   TEXT NOT NULL,
+        value_fold TEXT NOT NULL,
+        PRIMARY KEY (owner, path, key_fold, value_fold),
+        FOREIGN KEY (owner, path) REFERENCES notes (owner, path) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX props_owner_key   ON props (owner, key_fold);
+      CREATE INDEX props_owner_pair  ON props (owner, key_fold, value_fold);
+    `);
+  },
 ];
 
 /** Applies pending migrations. Safe to call on every start. */
@@ -260,10 +298,14 @@ export function migrate(db: Database): void {
 export function clearIndex(db: Database, owner?: string): void {
   db.transaction(() => {
     if (owner === undefined) {
-      db.exec('DELETE FROM notes_fts; DELETE FROM tasks; DELETE FROM links; DELETE FROM tags; DELETE FROM notes;');
+      db.exec(
+        'DELETE FROM notes_fts; DELETE FROM props; DELETE FROM tasks; ' +
+          'DELETE FROM links; DELETE FROM tags; DELETE FROM notes;',
+      );
       return;
     }
     db.run('DELETE FROM notes_fts WHERE owner = ?', owner);
+    db.run('DELETE FROM props WHERE owner = ?', owner);
     db.run('DELETE FROM tasks WHERE owner = ?', owner);
     db.run('DELETE FROM links WHERE owner = ?', owner);
     db.run('DELETE FROM tags WHERE owner = ?', owner);

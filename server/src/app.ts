@@ -14,8 +14,8 @@ import { addTag, removeTag } from './markdown/edit.js';
 import { parseNote } from './markdown/parse.js';
 import type { Note, NoteService, PutOptions, PutResult } from './notes/service.js';
 import type { Database } from './db/database.js';
-import { isNotePath, NOTE_EXTENSION, normalizeVaultPath, noteTitle } from './vault/paths.js';
-import { InvalidPathError } from './errors.js';
+import { caseKey, isNotePath, NOTE_EXTENSION, normalizeVaultPath, noteTitle } from './vault/paths.js';
+import { InvalidPathError, NotAFileError, NoteNotFoundError } from './errors.js';
 
 export interface RenameResult {
   note: Note;
@@ -80,11 +80,30 @@ export class App {
     return note;
   }
 
-  async updateNote(owner: string, notePath: string, content: string, actor?: string): Promise<Note> {
-    const note = await this.notes.updateNote(owner, notePath, content);
-    await this.indexer.indexNote(owner, note.path);
-    this.#recordEdit(owner, note.path, 'update', actor);
-    return note;
+  async updateNote(
+    owner: string,
+    notePath: string,
+    content: string,
+    actor?: string,
+    options: PutOptions = {},
+  ): Promise<PutResult> {
+    const result = await this.notes.updateNote(owner, notePath, content, options);
+    await this.indexer.indexNote(owner, result.note.path);
+    this.#recordEdit(owner, result.note.path, 'update', actor);
+    await this.#recordConflictCopy(owner, result, actor);
+    return result;
+  }
+
+  /**
+   * A displaced version is indexed and logged like any other note.
+   *
+   * A conflict copy the search cannot find is a file somebody discovers months
+   * later in a folder and cannot explain.
+   */
+  async #recordConflictCopy(owner: string, result: PutResult, actor?: string): Promise<void> {
+    if (result.conflictCopy === undefined) return;
+    await this.indexer.indexNote(owner, result.conflictCopy);
+    this.#recordEdit(owner, result.conflictCopy, 'create', actor);
   }
 
   /** Create-or-update in one call; see `NoteService.putNote` for why it is one call. */
@@ -98,14 +117,7 @@ export class App {
     const result = await this.notes.putNote(owner, notePath, content, options);
     await this.indexer.indexNote(owner, result.note.path);
     this.#recordEdit(owner, result.note.path, result.created ? 'create' : 'update', actor);
-
-    if (result.conflictCopy !== undefined) {
-      // Indexed and logged like any other note: a conflict copy that the search
-      // cannot find is a file somebody will discover months later in the folder.
-      await this.indexer.indexNote(owner, result.conflictCopy);
-      this.#recordEdit(owner, result.conflictCopy, 'create', actor);
-    }
-
+    await this.#recordConflictCopy(owner, result, actor);
     return result;
   }
 
@@ -298,6 +310,122 @@ export class App {
       await this.deleteNote(owner, notePath, actor);
       return notePath;
     });
+  }
+
+  // ---- folders ------------------------------------------------------------
+  //
+  // Folders were second-class until now: they came into being when a note was
+  // saved into them and vanished when the last one left. That is fine for a
+  // vault that only grows, and wrong for one somebody keeps — a structure you
+  // cannot prepare or correct is a structure you work around.
+
+  /** Creates an empty folder. Idempotent: an existing folder is not an error. */
+  async createFolder(owner: string, dirPath: string): Promise<string> {
+    const canonical = normalizeVaultPath(dirPath);
+    if (isNotePath(canonical)) {
+      throw new InvalidPathError('a folder name may not end in .md');
+    }
+    await this.notes.vault.createDir(owner, canonical);
+    return canonical;
+  }
+
+  /**
+   * Renames or moves a folder, carrying its notes and their links with it.
+   *
+   * Deliberately not a single `rename(2)` on the directory. Every note inside
+   * goes through `renameNote`, which is what rewrites the `[[wikilinks]]` that
+   * pointed at it by path. Renaming the directory in one step would be faster
+   * and would silently break every one of those links — the exact damage the
+   * note-level rename exists to prevent, only multiplied by the size of the
+   * folder.
+   *
+   * Empty subfolders are carried over separately afterwards: no note move would
+   * have taken them, and losing them would quietly flatten a structure somebody
+   * built on purpose.
+   */
+  async renameFolder(
+    owner: string,
+    from: string,
+    to: string,
+    actor?: string,
+  ): Promise<{ folder: string; movedNotes: string[]; updatedLinks: string[] }> {
+    const source = normalizeVaultPath(from);
+    const target = normalizeVaultPath(to);
+
+    if (isNotePath(source) || isNotePath(target)) {
+      throw new InvalidPathError('a folder name may not end in .md');
+    }
+    if (source === target) {
+      return { folder: source, movedNotes: [], updatedLinks: [] };
+    }
+    // Moving a folder into itself would move its own new location forever.
+    if (target.startsWith(`${source}/`)) {
+      throw new InvalidPathError('a folder cannot be moved inside itself');
+    }
+    if (!(await this.notes.vault.isDir(owner, source))) {
+      throw new NoteNotFoundError('no such folder');
+    }
+
+    // A pure case change is the one move that cannot go directly: on Windows and
+    // macOS the source and the target are the same directory, so every note
+    // would collide with itself. Going through a name that collides with
+    // neither turns it into two moves that are safe everywhere.
+    if (caseKey(source) === caseKey(target)) {
+      const temporary = `${source}.${Date.now().toString(36)}.tmp`;
+      const first = await this.renameFolder(owner, source, temporary, actor);
+      const second = await this.renameFolder(owner, temporary, target, actor);
+      return {
+        folder: target,
+        movedNotes: second.movedNotes,
+        updatedLinks: [...new Set([...first.updatedLinks, ...second.updatedLinks])],
+      };
+    }
+
+    const inside = (p: string): boolean => p === source || p.startsWith(`${source}/`);
+    const rebase = (p: string): string => `${target}${p.slice(source.length)}`;
+
+    // Recorded before anything moves: afterwards the old tree is gone.
+    const subdirs = (await this.notes.listDirs(owner)).filter(inside);
+    const notes = (await this.notes.listNotes(owner)).map((n) => n.path).filter(inside);
+
+    const movedNotes: string[] = [];
+    const updatedLinks = new Set<string>();
+
+    for (const notePath of notes) {
+      const result = await this.renameNote(owner, notePath, rebase(notePath), actor);
+      movedNotes.push(result.note.path);
+      for (const link of result.updatedLinks) updatedLinks.add(link);
+    }
+
+    // Whatever the note moves did not carry: the folder itself when it held no
+    // notes, and any empty subfolder below it.
+    for (const dir of subdirs) {
+      await this.notes.vault.createDir(owner, rebase(dir));
+    }
+    // Deepest first, so a parent is only removed once its children are gone.
+    for (const dir of [...subdirs].sort((a, b) => b.length - a.length)) {
+      await this.notes.vault.removeDirIfEmpty(owner, dir);
+    }
+
+    return { folder: target, movedNotes, updatedLinks: [...updatedLinks] };
+  }
+
+  /**
+   * Removes a folder, but only when nothing is left in it.
+   *
+   * No recursive delete on purpose. "Delete this folder and the fourteen notes
+   * you forgot were in it" is the one destructive action in this tool that
+   * cannot be undone from the interface, and the bulk view already offers a way
+   * to delete notes deliberately, with them listed in front of you.
+   */
+  async deleteFolder(owner: string, dirPath: string): Promise<void> {
+    const canonical = normalizeVaultPath(dirPath);
+    if (!(await this.notes.vault.isDir(owner, canonical))) {
+      throw new NoteNotFoundError('no such folder');
+    }
+    if (!(await this.notes.vault.removeDirIfEmpty(owner, canonical))) {
+      throw new NotAFileError('the folder is not empty');
+    }
   }
 
   /**

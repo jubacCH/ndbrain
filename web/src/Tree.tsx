@@ -32,6 +32,12 @@ export interface TreeProps {
   selected: { owner: string; path: string } | null;
   findings: Map<string, Finding>;
   onSelect: (owner: string, path: string) => void;
+  /**
+   * Offered on your own folders only. A folder move relocates everything under
+   * it, and a shared region is a *part* of somebody's vault — a rename that
+   * straddles its edge has no good answer, so it is not offered.
+   */
+  onRenameFolder: (path: string) => void;
 }
 
 interface Folder {
@@ -88,7 +94,15 @@ function writeLabel(owner: string, received: Share[]): string | null {
   return 'teils schreiben';
 }
 
-export function Tree({ notes, self, received, selected, findings, onSelect }: TreeProps): React.JSX.Element {
+export function Tree({
+  notes,
+  self,
+  received,
+  selected,
+  findings,
+  onSelect,
+  onRenameFolder,
+}: TreeProps): React.JSX.Element {
   const vaults = useMemo(() => {
     const byOwner = new Map<string, NoteRow[]>();
     for (const note of notes) {
@@ -129,10 +143,23 @@ export function Tree({ notes, self, received, selected, findings, onSelect }: Tr
         const key = refKey(owner, child.path);
         return (
           <li key={`d:${key}`}>
-            <button type="button" className="node" onClick={() => toggle(key)}>
-              <span className="tw">{collapsed.has(key) ? '▸' : '▾'}</span>
-              <span className="nm">{child.name}</span>
-            </button>
+            <div className="node-row">
+              <button type="button" className="node" onClick={() => toggle(key)}>
+                <span className="tw">{collapsed.has(key) ? '▸' : '▾'}</span>
+                <span className="nm">{child.name}</span>
+              </button>
+              {owner === self && (
+                <button
+                  type="button"
+                  className="node-act"
+                  title={`„${child.name}" umbenennen oder verschieben`}
+                  aria-label={`${child.name} umbenennen`}
+                  onClick={() => onRenameFolder(child.path)}
+                >
+                  ✎
+                </button>
+              )}
+            </div>
             {!collapsed.has(key) && <ul>{renderFolder(owner, child)}</ul>}
           </li>
         );

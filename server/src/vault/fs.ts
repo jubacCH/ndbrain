@@ -240,6 +240,53 @@ export class Vault {
     await fs.rename(source, target);
   }
 
+  /**
+   * Creates a folder, including its parents.
+   *
+   * A folder with no notes in it has nowhere else to be recorded — the index is
+   * built from notes, so an empty folder exists only as a directory on disk.
+   * That is also why it survives a full reindex: the filesystem is the truth.
+   */
+  async createDir(owner: string, vaultPath: string): Promise<void> {
+    const absolute = await this.resolve(owner, vaultPath);
+    await fs.mkdir(absolute, { recursive: true });
+  }
+
+  /** True if the path exists and is a directory. */
+  async isDir(owner: string, vaultPath: string): Promise<boolean> {
+    try {
+      const absolute = await this.resolve(owner, vaultPath);
+      return (await fs.stat(absolute)).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Moves a folder wholesale, after its notes have been moved one by one.
+   *
+   * Only ever called on what is left over: empty subdirectories that no note
+   * move would have carried across. Refuses to overwrite an existing target
+   * rather than merging two trees silently.
+   */
+  async moveDir(owner: string, from: string, to: string): Promise<void> {
+    const source = await this.resolve(owner, from);
+    const target = await this.resolve(owner, to);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.rename(source, target);
+  }
+
+  /** Removes a directory only if nothing is left in it. */
+  async removeDirIfEmpty(owner: string, vaultPath: string): Promise<boolean> {
+    const absolute = await this.resolve(owner, vaultPath);
+    try {
+      await fs.rmdir(absolute);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Removes directories that became empty after a move or delete. */
   async pruneEmptyDirs(owner: string, vaultPath: string): Promise<void> {
     const root = this.rootFor(owner);

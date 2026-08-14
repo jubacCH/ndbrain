@@ -192,6 +192,51 @@ export const TOOLS: ToolDefinition[] = [
   },
 
   {
+    name: 'vault_map',
+    title: 'Map the vault',
+    description:
+      'One line per note: path, title, tags and frontmatter properties, without any note text. ' +
+      'Ask for this first. It is the cheap way to see what exists and how it is described, so a ' +
+      'following get_note can be aimed rather than guessed — searching and pulling whole notes ' +
+      'back to find out what is in the vault costs far more and still misses whatever you did ' +
+      'not think to search for.',
+    readOnly: true,
+    inputSchema: schema(
+      {
+        folder: { type: 'string', description: 'Only map notes below this folder.' },
+        limit: { type: 'number', description: 'Maximum notes (default 500).' },
+      },
+      [],
+    ),
+    handler: async (context, input) => {
+      const folder = typeof input['folder'] === 'string' ? input['folder'] : '';
+      const prefix = folder === '' ? '' : `${folder.replace(/\/+$/, '')}/`;
+
+      const rows = context.app.queries
+        .vaultMap(context.key.owner, 5000)
+        // The key's own scope on top of the owner's vault, exactly as everywhere
+        // else: a key always sees less than its owner, never more.
+        .filter((row) => row.path.startsWith(context.key.scope))
+        .filter((row) => row.path.startsWith(prefix))
+        .slice(0, clampLimit(input['limit'], 500));
+
+      context.keys.log(context.key, 'vault_map', folder || null, true);
+      if (rows.length === 0) return 'No notes.';
+
+      const lines = rows.map((row) => {
+        const parts = [row.path];
+        if (row.tags.length > 0) parts.push(`tags: ${row.tags.join(', ')}`);
+        for (const [key, values] of Object.entries(row.props)) {
+          parts.push(`${key}: ${values.join(', ')}`);
+        }
+        return parts.join('  |  ');
+      });
+
+      return lines.join('\n');
+    },
+  },
+
+  {
     name: 'get_links',
     title: 'Show a note\'s connections',
     description:
@@ -283,14 +328,22 @@ export const TOOLS: ToolDefinition[] = [
       // adding one to a note that already ends in one.
       const separator = note.content.endsWith('\n\n') ? '' : note.content.endsWith('\n') ? '\n' : '\n\n';
 
-      await context.app.updateNote(
+      // The version this append was computed from. Between the read above and
+      // the write below, a person may have saved the same note in the browser —
+      // that window is real and invisible to the agent, so the base version goes
+      // along and a displaced version is kept rather than overwritten.
+      const result = await context.app.updateNote(
         context.key.owner,
         notePath,
         note.content + separator + addition,
         context.key.name,
+        { baseMtimeMs: note.mtimeMs },
       );
       context.keys.log(context.key, 'append_note', notePath, true);
-      return `Appended to ${notePath}`;
+      return result.conflictCopy === undefined
+        ? `Appended to ${notePath}`
+        : `Appended to ${notePath}. Somebody else had changed the note since it was read; ` +
+          `their version was kept as ${result.conflictCopy}.`;
     },
   },
 
@@ -328,14 +381,18 @@ export const TOOLS: ToolDefinition[] = [
         );
       }
 
-      await context.app.updateNote(
+      const result = await context.app.updateNote(
         context.key.owner,
         notePath,
         note.content.replace(find, String(input['replace'] ?? '')),
         context.key.name,
+        { baseMtimeMs: note.mtimeMs },
       );
       context.keys.log(context.key, 'edit_note', notePath, true);
-      return `Edited ${notePath}`;
+      return result.conflictCopy === undefined
+        ? `Edited ${notePath}`
+        : `Edited ${notePath}. Somebody else had changed the note since it was read; ` +
+          `their version was kept as ${result.conflictCopy}.`;
     },
   },
 ];

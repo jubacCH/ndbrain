@@ -27,6 +27,13 @@ export interface SearchOptions {
   dir?: string;
   /** Only notes modified at or after this timestamp. */
   sinceMs?: number;
+  /**
+   * Only notes declaring this frontmatter property.
+   *
+   * `{ key: 'status' }` asks which notes have a status at all; adding `value`
+   * narrows it to one. Both are matched case-folded, like tags.
+   */
+  prop?: { key: string; value?: string };
   limit?: number;
 }
 
@@ -146,6 +153,16 @@ export function toMatchQuery(input: string): string | null {
     .join(' AND ');
 }
 
+/**
+ * Separators for the aggregated columns in `vaultMap`.
+ *
+ * ASCII unit and record separators rather than commas or pipes: a tag or a
+ * property value may legitimately contain either, and splitting on a character
+ * that can occur in the data invents entries that were never there.
+ */
+const UNIT_SEP = '\u001f';
+const FIELD_SEP = '\u001e';
+
 export class Queries {
   readonly #db: Database;
 
@@ -225,6 +242,16 @@ export class Queries {
     if (options.sinceMs !== undefined) {
       conditions.push('n.mtime_ms >= ?');
       params.push(Math.trunc(options.sinceMs));
+    }
+
+    if (options.prop !== undefined && options.prop.key !== '') {
+      const value = options.prop.value;
+      conditions.push(
+        'EXISTS (SELECT 1 FROM props p WHERE p.owner = n.owner AND p.path = n.path ' +
+          `AND p.key_fold = ?${value === undefined || value === '' ? '' : ' AND p.value_fold = ?'})`,
+      );
+      params.push(caseKey(options.prop.key));
+      if (value !== undefined && value !== '') params.push(caseKey(value));
     }
 
     const match = toMatchQuery(query);
@@ -419,6 +446,95 @@ export class Queries {
         done: Number(row['done']) === 1,
         text: String(row['text']),
       }));
+  }
+
+  /**
+   * Every note as one line: path, title, tags, frontmatter properties.
+   *
+   * Exists for the reader that cannot skim. A person opens the tree and sees the
+   * shape of the vault in a second; an agent had no equivalent — its only way to
+   * find out what was in here was to full-text search and pull whole notes back,
+   * which costs its context and still misses everything nobody thought to search
+   * for. This is the cheap overview that makes a targeted second call possible.
+   *
+   * No note bodies, deliberately. The moment this returns content it stops being
+   * a map and becomes the expensive thing it was meant to replace.
+   */
+  vaultMap(view: Viewable, limit = 5000): Array<{
+    owner: string;
+    path: string;
+    title: string;
+    mtimeMs: number;
+    tags: string[];
+    props: Record<string, string[]>;
+  }> {
+    const scope = scopeSql('n', 'path', view);
+    const rows = this.#db.all(
+      `SELECT n.owner, n.path, n.title, n.mtime_ms,
+              (SELECT group_concat(t.tag, char(31)) FROM tags t
+                WHERE t.owner = n.owner AND t.path = n.path)  AS tag_list,
+              (SELECT group_concat(p.key || char(30) || p.value, char(31)) FROM props p
+                WHERE p.owner = n.owner AND p.path = n.path)  AS prop_list
+         FROM notes n
+        WHERE ${scope.sql}
+        ORDER BY n.path
+        LIMIT ?`,
+      ...scope.params,
+      Math.trunc(limit),
+    );
+
+    // Unit separators rather than commas: a tag or a property value may contain
+    // a comma, and splitting on one would invent entries that are not there.
+    const split = (value: unknown): string[] =>
+      value === null || value === undefined ? [] : String(value).split(UNIT_SEP).filter(Boolean);
+
+    return rows.map((row) => {
+      const props: Record<string, string[]> = {};
+      for (const pair of split(row['prop_list'])) {
+        const at = pair.indexOf(FIELD_SEP);
+        if (at === -1) continue;
+        const key = pair.slice(0, at);
+        (props[key] ??= []).push(pair.slice(at + 1));
+      }
+
+      return {
+        owner: String(row['owner']),
+        path: String(row['path']),
+        title: String(row['title']),
+        mtimeMs: Number(row['mtime_ms']),
+        tags: split(row['tag_list']),
+        props,
+      };
+    });
+  }
+
+  /** Which frontmatter keys exist, and how often — the vault's own vocabulary. */
+  propKeys(view: Viewable): Array<{ key: string; count: number }> {
+    const scope = scopeSql('p', 'path', view);
+    return this.#db
+      .all(
+        `SELECT p.key AS key, COUNT(DISTINCT p.path) AS n FROM props p
+          WHERE ${scope.sql}
+          GROUP BY p.key_fold
+          ORDER BY n DESC, key`,
+        ...scope.params,
+      )
+      .map((row) => ({ key: String(row['key']), count: Number(row['n']) }));
+  }
+
+  /** The values a given frontmatter key takes, most used first. */
+  propValues(view: Viewable, key: string): Array<{ value: string; count: number }> {
+    const scope = scopeSql('p', 'path', view);
+    return this.#db
+      .all(
+        `SELECT p.value AS value, COUNT(DISTINCT p.path) AS n FROM props p
+          WHERE ${scope.sql} AND p.key_fold = ?
+          GROUP BY p.value_fold
+          ORDER BY n DESC, value`,
+        ...scope.params,
+        caseKey(key),
+      )
+      .map((row) => ({ value: String(row['value']), count: Number(row['n']) }));
   }
 
   /** Tags with their note counts, most used first. */
