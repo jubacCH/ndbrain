@@ -1475,3 +1475,40 @@ tbody tr[data-selected='true']:hover td {
   font-size: 0.8rem;
   color: var(--text-2);
 }
+
+/* ---- folder actions ------------------------------------------------------ */
+
+/*
+ * A folder row now carries an action. It stays invisible until the row is
+ * hovered or the button is focused: the tree is read far more often than it is
+ * reorganised, and a pencil on every line would turn a quiet list into a
+ * toolbar.
+ */
+.node-row {
+  display: flex;
+  align-items: center;
+}
+
+.node-row .node {
+  flex: 1;
+  min-width: 0;
+}
+
+.node-act {
+  flex: none;
+  opacity: 0;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  border-radius: 4px;
+}
+
+.node-row:hover .node-act,
+.node-act:focus-visible {
+  opacity: 1;
+}
+
+.node-act:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}

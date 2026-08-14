@@ -12,7 +12,14 @@
 
 import { CaseCollisionError, NoteExistsError, NoteNotFoundError } from '../errors.js';
 import { parseNote, type ParsedNote } from '../markdown/parse.js';
-import { caseKey, isNotePath, NOTE_EXTENSION, normalizeVaultPath, parentDir } from '../vault/paths.js';
+import {
+  assertLinkableName,
+  caseKey,
+  isNotePath,
+  NOTE_EXTENSION,
+  normalizeVaultPath,
+  parentDir,
+} from '../vault/paths.js';
 import { Vault, type VaultEntry } from '../vault/fs.js';
 import { InvalidPathError } from '../errors.js';
 import { KeyedMutex } from './mutex.js';
@@ -101,6 +108,7 @@ export class NoteService {
 
   async createNote(owner: string, notePath: string, content = ''): Promise<Note> {
     const canonical = this.#assertNotePath(notePath);
+    assertLinkableName(canonical);
 
     return this.#locks.run(lockKey(owner, canonical), async () => {
       await this.#assertTargetFree(owner, canonical);
@@ -109,13 +117,31 @@ export class NoteService {
     });
   }
 
-  async updateNote(owner: string, notePath: string, content: string): Promise<Note> {
+  /**
+   * Overwrites an existing note.
+   *
+   * Takes the same `baseMtimeMs` as `putNote`, and for the same reason: an agent
+   * writing through MCP reads a note, thinks about it, and writes it back, and
+   * everything a person typed in between is inside that window. Without the base
+   * version this call cannot tell "I am the only writer" from "somebody else
+   * changed this since I read it", so it silently wins.
+   */
+  async updateNote(
+    owner: string,
+    notePath: string,
+    content: string,
+    options: PutOptions = {},
+  ): Promise<PutResult> {
     const canonical = this.#assertNotePath(notePath);
 
     return this.#locks.run(lockKey(owner, canonical), async () => {
       await this.#assertExactNoteExists(owner, canonical);
+      const conflictCopy = await this.#preserveDisplaced(owner, canonical, content, options);
       await this.#vault.writeNote(owner, canonical, content);
-      return this.getNote(owner, canonical);
+
+      const result: PutResult = { note: await this.getNote(owner, canonical), created: false };
+      if (conflictCopy !== null) result.conflictCopy = conflictCopy;
+      return result;
     });
   }
 
@@ -148,6 +174,11 @@ export class NoteService {
             'that pair cannot survive on Windows or macOS',
         );
       }
+
+      // Only a *new* note is held to the linkable-name rule. An existing note
+      // that arrived from another tool with brackets in its name must stay
+      // writable, or the import would leave notes that cannot be edited.
+      if (existing === undefined) assertLinkableName(canonical);
 
       // Everything about the conflict check happens inside the lock. Outside it,
       // the file could change between the comparison and the write, which is
@@ -222,6 +253,10 @@ export class NoteService {
   async renameNote(owner: string, from: string, to: string): Promise<Note> {
     const source = this.#assertNotePath(from);
     const target = this.#assertNotePath(to);
+    // Only the destination. A note that arrived from another tool with an
+    // unlinkable name must stay renameable — that rename is the way *out* of the
+    // problem, and blocking it would trap the note in it.
+    assertLinkableName(target);
 
     if (source === target) {
       return this.getNote(owner, source);

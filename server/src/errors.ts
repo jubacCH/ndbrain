@@ -49,3 +49,12 @@ export class CaseCollisionError extends NdbrainError {}
 
 /** The path pointed at a directory where a note was expected, or vice versa. */
 export class NotAFileError extends NdbrainError {}
+
+/**
+ * A note name was chosen that no `[[wikilink]]` could ever point at.
+ *
+ * Its own class rather than an `InvalidPathError`, because the path is not
+ * invalid — the file would be perfectly legal. What is broken is the note's
+ * reachability, and the message has to say so or the refusal looks arbitrary.
+ */
+export class UnlinkableNameError extends NdbrainError {}

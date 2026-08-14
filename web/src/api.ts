@@ -225,14 +225,43 @@ export const api = {
       body: JSON.stringify({ from, to, owner }),
     }),
 
-  search: (q: string, filters: { tag?: string; dir?: string; days?: number } = {}) => {
+  search: (
+    q: string,
+    filters: { tag?: string; dir?: string; days?: number; prop?: string; propValue?: string } = {},
+  ) => {
     const params = new URLSearchParams();
     if (q !== '') params.set('q', q);
     if (filters.tag !== undefined) params.set('tag', filters.tag);
     if (filters.dir !== undefined) params.set('dir', filters.dir);
     if (filters.days !== undefined) params.set('days', String(filters.days));
+    if (filters.prop !== undefined) params.set('prop', filters.prop);
+    if (filters.propValue !== undefined) params.set('propValue', filters.propValue);
     return request<{ hits: SearchHit[] }>(`/api/v1/search?${params.toString()}`);
   },
+
+  // ---- folders ------------------------------------------------------------
+  createFolder: (path: string) =>
+    request<{ folder: string }>('/api/v1/folders', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+
+  /** Moves the notes one by one, so the links that pointed into the folder follow. */
+  renameFolder: (from: string, to: string) =>
+    request<{ folder: string; movedNotes: string[]; updatedLinks: string[] }>(
+      '/api/v1/folders/rename',
+      { method: 'POST', body: JSON.stringify({ from, to }) },
+    ),
+
+  deleteFolder: (path: string) =>
+    request<void>(`/api/v1/folders/${encodePath(path)}`, { method: 'DELETE' }),
+
+  /** The vocabulary the vault declares about itself, for the search filters. */
+  propKeys: () =>
+    request<{ notes: unknown[]; props: Array<{ key: string; count: number }> }>('/api/v1/map?limit=1'),
+
+  propValues: (key: string) =>
+    request<{ values: Array<{ value: string; count: number }> }>(`/api/v1/props/${encodePath(key)}`),
 
   quickFind: (q: string) =>
     request<{ notes: NoteRow[] }>(`/api/v1/quickfind?q=${encodeURIComponent(q)}`),

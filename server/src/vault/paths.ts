@@ -17,7 +17,7 @@
 
 import path from 'node:path';
 
-import { InvalidPathError, InvalidUserError } from '../errors.js';
+import { InvalidPathError, InvalidUserError, UnlinkableNameError } from '../errors.js';
 
 /**
  * User ids appear verbatim as a directory name, so they are restricted to a
@@ -117,6 +117,41 @@ export function normalizeVaultPath(input: string): string {
 /** True if the path names a note (rather than a directory or an attachment). */
 export function isNotePath(vaultPath: string): boolean {
   return vaultPath.toLowerCase().endsWith(NOTE_EXTENSION);
+}
+
+/**
+ * Characters that are legal in a file name but cannot appear in a link target.
+ *
+ * `markdown/parse.ts` matches a wikilink as `[[([^\][|#\n]+?)…]]`, so a title
+ * containing a bracket, a pipe or a hash cannot be written as `[[…]]` at all.
+ */
+const UNLINKABLE_CHARS_RE = /[[\]|#]/;
+
+/**
+ * Refuses a note name that nothing could ever link to.
+ *
+ * The tool's central promise is that notes are found through their links, and
+ * the title *is* the link target because the title is the file name. That makes
+ * a name like `[CT 110] phpIPAM` a trap: the file is perfectly legal, but
+ * `[[[CT 110] phpIPAM]]` is not a link the parser recognises, so every reference
+ * to it silently becomes plain text — and the tidy-up view then reports the
+ * result as a dead link, blaming the symptom.
+ *
+ * Found the hard way while importing a Joplin vault, where 27 of 58 notes were
+ * named this way. Checked only when a name is *chosen* (create, rename), never
+ * when one is read: a vault may arrive from Obsidian full of such files, and
+ * refusing to index them would hide notes rather than protect anything.
+ */
+export function assertLinkableName(vaultPath: string): void {
+  const base = vaultPath.slice(vaultPath.lastIndexOf('/') + 1);
+  const stem = isNotePath(base) ? base.slice(0, -NOTE_EXTENSION.length) : base;
+
+  if (UNLINKABLE_CHARS_RE.test(stem)) {
+    throw new UnlinkableNameError(
+      `"${stem}" cannot be used as a note name: [ ] | and # cannot appear in a [[wikilink]] ` +
+        `target, so no note could ever link to it`,
+    );
+  }
 }
 
 /** Vault-relative path with the `.md` suffix removed — the note's title and link target. */

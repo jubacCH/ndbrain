@@ -209,6 +209,21 @@ export class Indexer {
         );
       }
 
+      // `tags` keeps its own table and is skipped here: it already has one, and
+      // duplicating it would give two answers to the same question.
+      for (const [key, value] of frontmatterProps(parsed.frontmatter)) {
+        this.#db.run(
+          `INSERT OR IGNORE INTO props (owner, path, key, value, key_fold, value_fold)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          owner,
+          notePath,
+          key,
+          value,
+          caseKey(key),
+          caseKey(value),
+        );
+      }
+
       for (const link of parsed.wikilinks) {
         this.#db.run(
           `INSERT INTO links (owner, source, target_raw, target_key, target_path, heading, alias, offset)
@@ -290,4 +305,47 @@ export class Indexer {
       }
     });
   }
+}
+
+/**
+ * Flattens frontmatter into the (key, value) pairs the index can answer on.
+ *
+ * Scalars become one row; a list becomes one row per entry, so `topic: [homelab,
+ * netz]` can be filtered on either. Nested maps are skipped rather than
+ * flattened into `a.b.c` keys: nothing in the product asks a nested question,
+ * and inventing a path syntax for it would be a vocabulary the user never chose.
+ *
+ * `tags` is left out — it has its own table, and two sources for one answer is
+ * how they start disagreeing.
+ */
+function frontmatterProps(frontmatter: Record<string, unknown> | null): Array<[string, string]> {
+  if (frontmatter === null) return [];
+
+  const out: Array<[string, string]> = [];
+
+  const scalar = (value: unknown): string | null => {
+    if (typeof value === 'string') return value.trim() === '' ? null : value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    // A YAML date arrives as a Date; the ISO day is what somebody filters on.
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    return null;
+  };
+
+  for (const [rawKey, value] of Object.entries(frontmatter)) {
+    const key = rawKey.trim();
+    if (key === '' || key.toLowerCase() === 'tags') continue;
+
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const text = scalar(entry);
+        if (text !== null) out.push([key, text]);
+      }
+      continue;
+    }
+
+    const text = scalar(value);
+    if (text !== null) out.push([key, text]);
+  }
+
+  return out;
 }

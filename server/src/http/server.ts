@@ -270,12 +270,47 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return app.renameNote(owner, from, to, caller);
   });
 
+  // ---- folders ------------------------------------------------------------
+  //
+  // Own vault only, and deliberately so. A folder operation moves everything
+  // under it, and the write-shared region a guest holds is a *part* of a vault:
+  // renaming a folder that straddles its edge would either move notes the guest
+  // may not touch or silently move only half of them. Neither is a good answer,
+  // so the question is not asked.
+  fastify.post('/api/v1/folders', async (request, reply) => {
+    const owner = requireUser(request).id;
+    const body = (request.body ?? {}) as { path?: unknown };
+    const dir = typeof body.path === 'string' ? body.path : '';
+
+    if (dir.trim() === '') {
+      return reply.code(400).send({ code: 'no_path', message: 'name the folder' });
+    }
+    return reply.code(201).send({ folder: await app.createFolder(owner, dir) });
+  });
+
+  fastify.post('/api/v1/folders/rename', async (request) => {
+    const owner = requireUser(request).id;
+    const body = (request.body ?? {}) as { from?: unknown; to?: unknown };
+    const from = typeof body.from === 'string' ? body.from : '';
+    const to = typeof body.to === 'string' ? body.to : '';
+
+    return app.renameFolder(owner, from, to, owner);
+  });
+
+  fastify.delete('/api/v1/folders/*', async (request, reply) => {
+    const owner = requireUser(request).id;
+    await app.deleteFolder(owner, notePathOf(request));
+    return reply.code(204).send();
+  });
+
   // ---- librarian ----------------------------------------------------------
   fastify.get('/api/v1/search', async (request) => {
     const view = shares.view(requireUser(request).id);
     const query = (request.query ?? {}) as Record<string, unknown>;
 
     const q = typeof query['q'] === 'string' ? query['q'] : '';
+    const propKey = typeof query['prop'] === 'string' ? query['prop'] : '';
+    const propValue = typeof query['propValue'] === 'string' ? query['propValue'] : '';
     const options: Parameters<typeof app.queries.search>[2] = {
       limit: clamp(Number(query['limit']) || 40, 1, 200),
     };
@@ -290,6 +325,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       options.sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
     }
 
+    // `?prop=status` asks which notes declare a status at all; adding
+    // `?propValue=aktiv` narrows it to one.
+    if (propKey !== '') {
+      options.prop = propValue === '' ? { key: propKey } : { key: propKey, value: propValue };
+    }
+
     return { hits: app.queries.search(view, q, options) };
   });
 
@@ -299,6 +340,29 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const q = typeof query.q === 'string' ? query.q : '';
 
     return { notes: app.queries.quickFind(view, q, 12) };
+  });
+
+  /**
+   * The whole vault as one line per note — no bodies.
+   *
+   * Cheap enough to ask for before deciding what to read, which is the point:
+   * it is the overview a person gets from the tree in a second and a client
+   * previously had no way to obtain at all.
+   */
+  fastify.get('/api/v1/map', async (request) => {
+    const view = shares.view(requireUser(request).id);
+    const query = (request.query ?? {}) as { limit?: unknown };
+    const limit = Number(query.limit);
+
+    return {
+      notes: app.queries.vaultMap(view, Number.isFinite(limit) && limit > 0 ? limit : 5000),
+      props: app.queries.propKeys(view),
+    };
+  });
+
+  fastify.get('/api/v1/props/*', async (request) => {
+    const view = shares.view(requireUser(request).id);
+    return { values: app.queries.propValues(view, notePathOf(request)) };
   });
 
   fastify.get('/api/v1/tags', async (request) => {

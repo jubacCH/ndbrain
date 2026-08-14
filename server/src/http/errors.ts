@@ -19,6 +19,7 @@ import {
   NotAFileError,
   NoteExistsError,
   NoteNotFoundError,
+  UnlinkableNameError,
 } from '../errors.js';
 import { UnknownUserError, UserExistsError } from '../auth/users.js';
 
@@ -41,6 +42,12 @@ export function toProblem(error: unknown): HttpProblem {
   }
   if (error instanceof InvalidPathError || error instanceof NotAFileError) {
     return { status: 400, code: 'invalid_path', message: error.message };
+  }
+  // Its own code, not `invalid_path`: the UI has to be able to say *why* the
+  // name was refused, and "unsafe path" would be a lie about a name that is
+  // perfectly safe and merely unreachable.
+  if (error instanceof UnlinkableNameError) {
+    return { status: 400, code: 'unlinkable_name', message: error.message };
   }
   if (error instanceof InvalidUserError) {
     return { status: 400, code: 'invalid_user', message: error.message };

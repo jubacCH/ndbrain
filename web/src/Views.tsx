@@ -324,6 +324,9 @@ export interface SearchFilters {
   tag?: string;
   dir?: string;
   days?: number;
+  /** A frontmatter key, optionally pinned to one of its values. */
+  prop?: string;
+  propValue?: string;
 }
 
 export function SearchView({
@@ -333,6 +336,8 @@ export function SearchView({
   tags,
   dirs,
   self,
+  props,
+  propValues,
   onToggleFilter,
   onClearFilters,
   onOpen,
@@ -342,13 +347,21 @@ export function SearchView({
   filters: SearchFilters;
   tags: Array<{ tag: string; count: number }>;
   dirs: string[];
+  /** Frontmatter keys the vault declares, most used first. */
+  props: Array<{ key: string; count: number }>;
+  /** Values for the key currently selected, if any. */
+  propValues: Array<{ value: string; count: number }>;
   /** The signed-in account; hits from elsewhere are marked with their vault. */
   self: string;
   onToggleFilter: (patch: SearchFilters) => void;
   onClearFilters: () => void;
   onOpen: (owner: string, path: string) => void;
 }): React.JSX.Element {
-  const active = filters.tag !== undefined || filters.dir !== undefined || filters.days !== undefined;
+  const active =
+    filters.tag !== undefined ||
+    filters.dir !== undefined ||
+    filters.days !== undefined ||
+    filters.prop !== undefined;
 
   const describe = (): string => {
     const parts: string[] = [];
@@ -356,6 +369,9 @@ export function SearchView({
     if (filters.tag !== undefined) parts.push(`#${filters.tag}`);
     if (filters.dir !== undefined) parts.push(`in ${filters.dir}`);
     if (filters.days !== undefined) parts.push(`aus ${filters.days} Tagen`);
+    if (filters.prop !== undefined) {
+      parts.push(filters.propValue === undefined ? `mit ${filters.prop}` : `${filters.prop}: ${filters.propValue}`);
+    }
     return parts.join(' · ');
   };
 
@@ -391,6 +407,37 @@ export function SearchView({
             onClick={() => onToggleFilter({ dir })}
           >
             {dir}
+          </button>
+        ))}
+
+        {/*
+          The vault's own vocabulary, read out of the frontmatter rather than
+          prescribed. Picking a key shows its values, so the second click is
+          "status: aktiv" instead of a text field somebody has to guess into.
+        */}
+        {props.length > 0 && <span className="filter-label">Eigenschaft</span>}
+        {props.slice(0, 8).map((p) => (
+          <button
+            type="button"
+            key={p.key}
+            className="filter"
+            aria-pressed={filters.prop === p.key}
+            onClick={() => onToggleFilter({ prop: p.key })}
+          >
+            {p.key} <span style={{ opacity: 0.6 }}>{p.count}</span>
+          </button>
+        ))}
+
+        {propValues.length > 0 && <span className="filter-label">{filters.prop} ist</span>}
+        {propValues.slice(0, 10).map((v) => (
+          <button
+            type="button"
+            key={v.value}
+            className="filter"
+            aria-pressed={filters.propValue === v.value}
+            onClick={() => onToggleFilter({ propValue: v.value })}
+          >
+            {v.value} <span style={{ opacity: 0.6 }}>{v.count}</span>
           </button>
         ))}
 

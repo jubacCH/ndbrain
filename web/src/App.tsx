@@ -39,6 +39,9 @@ export interface Filters {
   tag?: string;
   dir?: string;
   days?: number;
+  /** A frontmatter key, optionally pinned to one of its values. */
+  prop?: string;
+  propValue?: string;
 }
 
 type View = 'note' | 'overview' | 'tidy' | 'search' | 'shares';
@@ -81,6 +84,8 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
+  const [props, setProps] = useState<Array<{ key: string; count: number }>>([]);
+  const [propValues, setPropValues] = useState<Array<{ value: string; count: number }>>([]);
   const [contextOpen, setContextOpen] = useState(true);
   // Bumped after every successful save so the context panel re-reads the links.
   const [linksVersion, setLinksVersion] = useState(0);
@@ -248,6 +253,46 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     await createNoteAt(user.id, name);
   };
 
+  const createFolder = async (): Promise<void> => {
+    const name = window.prompt('Name des neuen Ordners (Unterordner mit / möglich)');
+    if (name === null || name.trim() === '') return;
+
+    try {
+      await api.createFolder(name.trim());
+      await refreshTree();
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'Ordner anlegen fehlgeschlagen.');
+    }
+  };
+
+  /**
+   * Renaming a folder moves every note inside it, which is what carries the
+   * links along. Reported afterwards rather than silently: moving forty notes
+   * and rewriting a dozen files is a big thing to have happen without a word.
+   */
+  const renameFolder = async (from: string): Promise<void> => {
+    const to = window.prompt('Ordner umbenennen oder verschieben (neuer Pfad)', from);
+    if (to === null || to.trim() === '' || to.trim() === from) return;
+
+    try {
+      const result = await api.renameFolder(from, to.trim());
+      await refreshTree();
+      setError(
+        `„${from}" → „${result.folder}": ${result.movedNotes.length} Notizen verschoben` +
+          (result.updatedLinks.length > 0
+            ? `, Verweise in ${result.updatedLinks.length} Notizen mitgezogen.`
+            : '.'),
+      );
+      // The open note may have moved with the folder.
+      if (open !== null && open.owner === user.id && open.note.path.startsWith(`${from}/`)) {
+        await openNote(user.id, `${result.folder}${open.note.path.slice(from.length)}`);
+      }
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'Umbenennen fehlgeschlagen.');
+    }
+  };
+
   /**
    * Creates the note a dead link points at, next to the note that links to it.
    *
@@ -292,12 +337,26 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       if (next[key] === value) delete next[key];
       else Object.assign(next, { [key]: value });
     }
+    // A value only means something under its key. Dropping the key has to drop
+    // the value with it, or the next search filters on a pair that is no longer
+    // on screen.
+    if (next.prop === undefined) delete next.propValue;
     setFilters(next);
     void runSearch(query, next).catch(() => setError('Suche fehlgeschlagen.'));
+
+    if (next.prop !== undefined && next.prop !== filters.prop) {
+      api
+        .propValues(next.prop)
+        .then(({ values }) => setPropValues(values))
+        .catch(() => setPropValues([]));
+    } else if (next.prop === undefined) {
+      setPropValues([]);
+    }
   };
 
   const clearFilters = (): void => {
     setFilters({});
+    setPropValues([]);
     void runSearch(query, {}).catch(() => undefined);
   };
 
@@ -318,6 +377,12 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     api
       .tags()
       .then(({ tags: list }) => setTags(list))
+      .catch(() => undefined);
+    // The vault's own vocabulary, re-read whenever its notes changed: a key
+    // exists exactly as long as some note declares it.
+    api
+      .propKeys()
+      .then(({ props: list }) => setProps(list))
       .catch(() => undefined);
   }, [notes]);
 
@@ -477,6 +542,11 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         <button type="button" className="btn" onClick={() => void createNote()}>
           Neu
         </button>
+        {/* A folder you can make before you have anything to put in it — the
+            structure is something you prepare, not only something that accretes. */}
+        <button type="button" className="btn" onClick={() => void createFolder()} title="Ordner anlegen">
+          Ordner
+        </button>
         <span className="who">{user.displayName}</span>
         <button type="button" className="btn" onClick={() => void signOut()}>
           Abmelden
@@ -493,6 +563,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               selected={open === null ? null : { owner: open.owner, path: open.note.path }}
               findings={findings}
               onSelect={(owner, path) => void openNote(owner, path)}
+              onRenameFolder={(path) => void renameFolder(path)}
             />
           </div>
           {tidy !== null && (
@@ -594,6 +665,8 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               tags={tags}
               dirs={topLevelDirs(notes)}
               self={user.id}
+              props={props}
+              propValues={propValues}
               onToggleFilter={toggleFilter}
               onClearFilters={clearFilters}
               onOpen={(owner, path) => void openNote(owner, path)}
