@@ -341,6 +341,7 @@ export function SearchView({
   onToggleFilter,
   onClearFilters,
   onOpen,
+  onQuery,
 }: {
   query: string;
   hits: SearchHit[];
@@ -356,6 +357,8 @@ export function SearchView({
   onToggleFilter: (patch: SearchFilters) => void;
   onClearFilters: () => void;
   onOpen: (owner: string, path: string) => void;
+  /** Das Eingabefeld gehört in die Ansicht, seit die Kopfzeile keins mehr hat. */
+  onQuery: (value: string) => void;
 }): React.JSX.Element {
   const active =
     filters.tag !== undefined ||
@@ -378,6 +381,16 @@ export function SearchView({
   return (
     <div className="pane padded">
       <h2 className="h-big">Suche</h2>
+      <div className="searchbox">
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => onQuery(event.target.value)}
+          placeholder="Volltext durchsuchen…"
+          aria-label="Volltext durchsuchen"
+          autoFocus
+        />
+      </div>
       <p className="h-sub">
         {hits.length === 0 ? 'Nichts gefunden' : `${hits.length} Treffer`}
         {describe() !== '' && ` — ${describe()}`}

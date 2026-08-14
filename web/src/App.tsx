@@ -93,11 +93,11 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [pulse, setPulse] = useState<PulseEvent[]>([]);
   /** Zeitstempel des Servers, ab dem das nächste Mal gefragt wird. */
   const pulseSince = useRef<number | undefined>(undefined);
-  const [contextOpen, setContextOpen] = useState(true);
   // Bumped after every successful save so the context panel re-reads the links.
   const [linksVersion, setLinksVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [mobileTree, setMobileTree] = useState(false);
+  /** Der Ordnerbaum überlagert die Fläche, statt ihr dauerhaft Platz wegzunehmen. */
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<{ owner: string; path: string; content: string } | null>(null);
@@ -221,7 +221,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         baseMtime.current = opened.note.mtimeMs;
         setView('note');
         setSaveState('saved');
-        setMobileTree(false);
+        setDrawerOpen(false);
         setError(null);
       } catch {
         // A note in a share that has just been withdrawn is gone in exactly the
@@ -550,14 +550,26 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   };
 
   return (
-    <div className="app" data-mobile-tree={mobileTree}>
-      <header className="top">
-        <div className="logo">
-          <span className="mark" />
-          ndBrain
-        </div>
+    <div className="app" data-drawer={drawerOpen}>
+      {/*
+        Eine Fläche statt drei fester Spalten. Der Text ist die Hauptsache und
+        bekommt die Mitte; Navigation, Ordnerbaum und Befunde schweben als Glas
+        darüber und treten zurück, wenn man sie nicht braucht.
+      */}
+      <div className="topbar">
+        <button
+          type="button"
+          className="tb-icon"
+          onClick={() => setDrawerOpen((o) => !o)}
+          aria-label="Ordnerbaum"
+          aria-expanded={drawerOpen}
+        >
+          ☰
+        </button>
 
-        <div className="segs" role="group" aria-label="Ansicht">
+        <span className="tb-sep" />
+
+        <div className="tb-views" role="group" aria-label="Ansicht">
           <button type="button" aria-current={view === 'note'} onClick={() => void showView('note')}>
             Notiz
           </button>
@@ -570,115 +582,56 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           <button type="button" aria-current={view === 'tidy'} onClick={() => void showView('tidy')}>
             Aufräumen
           </button>
-          <button type="button" aria-current={view === 'shares'} onClick={() => void showView('shares')}>
-            Freigaben
+          <button type="button" aria-current={view === 'search'} onClick={() => void showView('search')}>
+            Suche
           </button>
         </div>
 
-        <div className="omni">
-          <input
-            type="search"
-            placeholder="Volltext durchsuchen…"
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            aria-label="Notizen durchsuchen"
-          />
-          <kbd
-            style={{
-              fontFamily: 'var(--mono)',
-              fontSize: '.68rem',
-              border: '1px solid var(--line-2)',
-              borderRadius: 3,
-              padding: '0 .25rem',
-            }}
-            title="Schnell zu einer Notiz springen"
-          >
-            ⌘K
-          </kbd>
+        <span className="tb-sep" />
+
+        <button
+          type="button"
+          className="tb-icon k"
+          onClick={() => setPaletteOpen(true)}
+          title="Springen oder anlegen"
+        >
+          ⌘K
+        </button>
+      </div>
+
+      {/* Der Zustand des Geschriebenen gehört dorthin, wo geschrieben wird. */}
+      {view === 'note' && open !== null && (
+        <div className="statusbar">
+          <span className="cur mono">{open.note.path}</span>
+          {open.owner !== user.id && (
+            <span className="pill p-info">
+              {open.owner} · {open.canWrite ? 'schreiben' : 'nur lesen'}
+            </span>
+          )}
+          <SaveIndicator state={saveState} />
         </div>
+      )}
 
-        <button type="button" className="btn" onClick={() => void createNote()}>
-          Neu
-        </button>
-        {/* A folder you can make before you have anything to put in it — the
-            structure is something you prepare, not only something that accretes. */}
-        <button type="button" className="btn" onClick={() => void createFolder()} title="Ordner anlegen">
-          Ordner
-        </button>
-        <span className="who">{user.displayName}</span>
-        <button type="button" className="btn" onClick={() => void signOut()}>
-          Abmelden
-        </button>
-      </header>
-
-      <div className="body">
-        <nav className="rail" aria-label="Vault">
-          <div className="rail-scroll">
-            <Tree
-              notes={notes}
-              self={user.id}
-              received={received}
-              selected={open === null ? null : { owner: open.owner, path: open.note.path }}
-              findings={findings}
-              onSelect={(owner, path) => void openNote(owner, path)}
-              onRenameFolder={(path) => void renameFolder(path)}
-            />
-          </div>
-          {tidy !== null && (
-            <div className="rail-foot">
-              <button type="button" className="fbtn" onClick={() => void showView('tidy')}>
-                <span className="tick" style={{ background: 'var(--crit)' }} />
-                Verwaist <span className="n">{tidy.orphans.length}</span>
-              </button>
-              <button type="button" className="fbtn" onClick={() => void showView('tidy')}>
-                <span className="tick" style={{ background: 'var(--warn)' }} />
-                Ungetaggt <span className="n">{tidy.untagged.length}</span>
-              </button>
-              <button type="button" className="fbtn" onClick={() => void showView('tidy')}>
-                <span className="tick" style={{ background: 'var(--crit)' }} />
-                Links ins Leere <span className="n">{tidy.deadLinks.length}</span>
-              </button>
-            </div>
-          )}
-        </nav>
-
-        <main className="main">
-          <div className="bar">
-            <button
-              type="button"
-              className="btn"
-              style={{ padding: '0 .4rem' }}
-              onClick={() => setMobileTree((open) => !open)}
-              aria-label="Ordner anzeigen"
-            >
-              ☰
+      <main className="surface">
+        {error !== null && (
+          <div className="floaterror" role="status">
+            <span>{error}</span>
+            <button type="button" onClick={() => setError(null)} aria-label="Meldung schliessen">
+              ✕
             </button>
-            <span className="cur">{open?.note.path ?? '—'}</span>
-            {/*
-              Whose note this is, and whether it can be changed — next to the
-              path rather than in a panel, because it answers "am I about to
-              edit somebody else's file" at the moment that matters.
-            */}
-            {open !== null && open.owner !== user.id && (
-              <span className="pill p-info">
-                {open.owner} · {open.canWrite ? 'schreiben' : 'nur lesen'}
-              </span>
-            )}
-            <SaveIndicator state={saveState} />
           </div>
+        )}
 
-          {error !== null && (
-            <div className="error" style={{ margin: '.6rem .9rem' }}>
-              {error}
-            </div>
-          )}
-
-          {view === 'note' &&
-            (open === null ? (
-              <p className="empty" style={{ padding: '2rem' }}>
-                Wähle links eine Notiz oder leg mit „Neu" eine an.
+        {view === 'note' &&
+          (open === null ? (
+            <div className="sheet sheet-empty">
+              <p className="empty">
+                Drück <kbd>⌘K</kbd> und tipp einen Titel — vorhandene Notizen erscheinen beim
+                Tippen, ein neuer Name wird angelegt.
               </p>
-            ) : (
+            </div>
+          ) : (
+            <div className="sheet">
               <Editor
                 owner={open.owner}
                 path={open.note.path}
@@ -686,43 +639,57 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
                 readOnly={!open.canWrite}
                 onChange={(content) => scheduleSave(open.owner, open.note.path, content)}
               />
-            ))}
+              {/*
+                Der Kontext sitzt unter der Notiz statt in einer dritten Spalte:
+                dort liest man ihn, wenn man mit der Notiz fertig ist, statt ihn
+                die ganze Zeit im Augenwinkel zu haben.
+              */}
+              <ContextPanel
+                note={{ owner: open.owner, path: open.note.path }}
+                self={user.id}
+                canCreate={open.canWrite}
+                onOpen={(owner, path) => void openNote(owner, path)}
+                onCreate={(target) => void createFromDeadLink(target)}
+                reloadKey={linksVersion}
+              />
+            </div>
+          ))}
 
-          {view === 'overview' && overview !== null && (
+        {view === 'overview' && overview !== null && (
+          <div className="pagewrap">
             <OverviewView data={overview} onOpen={(owner, path) => void openNote(owner, path)} />
-          )}
+          </div>
+        )}
 
-          {view === 'brain' &&
-            (graph === null ? (
-              <p className="empty" style={{ padding: '2rem' }}>
-                Beziehungen werden geladen…
-              </p>
-            ) : (
-              <div className="brainwrap">
-                <Brain
-                  data={graph}
-                  events={pulse}
-                  onOpen={(owner, path) => void openNote(owner, path)}
-                />
-                <div className="brainlegend">
-                  <span>
-                    <i style={{ background: '#7fe9f0' }} />
-                    gelesen
-                  </span>
-                  <span>
-                    <i style={{ background: '#ffb86b' }} />
-                    geschrieben
-                  </span>
-                </div>
-                <div className="brainfoot">
-                  {graph.nodes.length} Notizen · {graph.edges.length} Verweise ·{' '}
-                  {graph.nodes.filter((n) => n.links === 0).length} ohne Verbindung
-                  <span className="sep" />
-                  Doppelklick öffnet die Notiz
-                </div>
+        {view === 'brain' &&
+          (graph === null ? (
+            <div className="sheet sheet-empty">
+              <p className="empty">Beziehungen werden geladen…</p>
+            </div>
+          ) : (
+            <div className="brainwrap">
+              <Brain data={graph} events={pulse} onOpen={(owner, path) => void openNote(owner, path)} />
+              <div className="brainlegend">
+                <span>
+                  <i style={{ background: '#7fe9f0' }} />
+                  gelesen
+                </span>
+                <span>
+                  <i style={{ background: '#ffb86b' }} />
+                  geschrieben
+                </span>
               </div>
-            ))}
-          {view === 'tidy' && tidy !== null && (
+              <div className="brainfoot">
+                {graph.nodes.length} Notizen · {graph.edges.length} Verweise ·{' '}
+                {graph.nodes.filter((n) => n.links === 0).length} ohne Verbindung
+                <span className="sep" />
+                Doppelklick öffnet die Notiz
+              </div>
+            </div>
+          ))}
+
+        {view === 'tidy' && tidy !== null && (
+          <div className="pagewrap">
             <TidyView
               data={tidy}
               selected={selection}
@@ -745,8 +712,11 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               onOpen={(path) => void openNote(user.id, path)}
               onBulk={(action) => void runBulk(action)}
             />
-          )}
-          {view === 'search' && (
+          </div>
+        )}
+
+        {view === 'search' && (
+          <div className="pagewrap">
             <SearchView
               query={query}
               hits={hits}
@@ -759,9 +729,13 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               onToggleFilter={toggleFilter}
               onClearFilters={clearFilters}
               onOpen={(owner, path) => void openNote(owner, path)}
+              onQuery={onQueryChange}
             />
-          )}
-          {view === 'shares' && (
+          </div>
+        )}
+
+        {view === 'shares' && (
+          <div className="pagewrap">
             <SharesView
               granted={granted}
               received={received}
@@ -770,22 +744,72 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               onGrant={(grantee, prefix, canWrite) => void grantShare(grantee, prefix, canWrite)}
               onRevoke={(share) => void revokeShare(share)}
             />
-          )}
-        </main>
-
-        {view === 'note' && (
-          <ContextPanel
-            note={open === null ? null : { owner: open.owner, path: open.note.path }}
-            self={user.id}
-            canCreate={open?.canWrite ?? false}
-            open={contextOpen}
-            onToggle={() => setContextOpen((isOpen) => !isOpen)}
-            onOpen={(owner, path) => void openNote(owner, path)}
-            onCreate={(target) => void createFromDeadLink(target)}
-            reloadKey={linksVersion}
-          />
+          </div>
         )}
-      </div>
+      </main>
+
+      {/* Ordnerbaum: überlagernd, auf Abruf. */}
+      <aside className="drawer" aria-label="Vault" aria-hidden={!drawerOpen}>
+        <div className="dr-head">
+          <span className="dr-title">{user.displayName}</span>
+          <button type="button" className="dr-act" onClick={() => void createNote()}>
+            Neu
+          </button>
+          <button type="button" className="dr-act" onClick={() => void createFolder()}>
+            Ordner
+          </button>
+          <button
+            type="button"
+            className="dr-icon"
+            onClick={() => setDrawerOpen(false)}
+            aria-label="Schliessen"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="dr-tree">
+          <Tree
+            notes={notes}
+            self={user.id}
+            received={received}
+            selected={open === null ? null : { owner: open.owner, path: open.note.path }}
+            findings={findings}
+            onSelect={(owner, path) => {
+              void openNote(owner, path);
+              setDrawerOpen(false);
+            }}
+            onRenameFolder={(path) => void renameFolder(path)}
+          />
+        </div>
+        <div className="dr-foot">
+          <button type="button" onClick={() => void showView('shares')}>
+            Freigaben
+          </button>
+          <button type="button" onClick={() => void signOut()}>
+            Abmelden
+          </button>
+        </div>
+      </aside>
+
+      {/* Befunde: ambient, immer sichtbar, ein Klick führt zur Aufräum-Ansicht. */}
+      {tidy !== null && view !== 'brain' && (
+        <div className="health">
+          <button type="button" onClick={() => void showView('tidy')}>
+            <i style={{ background: 'var(--crit)' }} />
+            verwaist <b>{tidy.orphans.length}</b>
+          </button>
+          <button type="button" onClick={() => void showView('tidy')}>
+            <i style={{ background: 'var(--warn)' }} />
+            ungetaggt <b>{tidy.untagged.length}</b>
+          </button>
+          {tidy.deadLinks.length > 0 && (
+            <button type="button" onClick={() => void showView('tidy')}>
+              <i style={{ background: 'var(--crit)' }} />
+              ins Leere <b>{tidy.deadLinks.length}</b>
+            </button>
+          )}
+        </div>
+      )}
 
       <Palette
         open={paletteOpen}
