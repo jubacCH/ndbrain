@@ -365,6 +365,34 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return { values: app.queries.propValues(view, notePathOf(request)) };
   });
 
+  /**
+   * What is happening in the vault right now.
+   *
+   * Polled, not streamed. A persistent connection would mean reconnect logic,
+   * proxy timeouts and a second lifecycle to reason about, and this is a tool
+   * with one person and the occasional agent — asking every couple of seconds
+   * costs a query against two indexed tables and survives every restart and
+   * every proxy without special handling.
+   *
+   * `now` comes back with the events so the client can ask for exactly what it
+   * has not seen yet, without trusting its own clock.
+   */
+  fastify.get('/api/v1/pulse', async (request) => {
+    const owner = requireUser(request).id;
+    const query = (request.query ?? {}) as { since?: unknown; limit?: unknown };
+
+    const since = Number(query.since);
+    const now = Date.now();
+    // A client without a starting point gets the last five minutes rather than
+    // the whole history — enough to fill the view on load, never a full dump.
+    const from = Number.isFinite(since) && since > 0 ? since : now - 5 * 60 * 1000;
+
+    return {
+      now,
+      events: app.queries.pulse(owner, from, clamp(Number(query.limit) || 200, 1, 500)),
+    };
+  });
+
   fastify.get('/api/v1/tags', async (request) => {
     return { tags: app.queries.tagCounts(shares.view(requireUser(request).id)) };
   });
