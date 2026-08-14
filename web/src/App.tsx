@@ -114,7 +114,10 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     // only, so every key here carries the caller as the owner — a marker keyed
     // by path alone would light up a note of the same name in a shared vault.
     const map = new Map<string, Finding>();
-    for (const row of tidyData.untagged) map.set(refKey(user.id, row.path), 'warn');
+    // `untagged` steht bewusst nicht im Baum. Es trifft in einem Vault, in dem
+    // Tags keine Gewohnheit sind, auf praktisch jede Notiz — und eine Marke, die
+    // an jeder Zeile steht, zeigt nirgends mehr etwas an. Sie bleibt in der
+    // Aufräum-Ansicht und in der Leiste unten, wo eine Zahl das Richtige ist.
     for (const row of tidyData.stale) map.set(refKey(user.id, row.path), 'warn');
     for (const row of tidyData.orphans) map.set(refKey(user.id, row.path), 'crit');
     for (const row of tidyData.deadLinks) map.set(refKey(user.id, row.source), 'crit');

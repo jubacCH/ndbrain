@@ -85,6 +85,20 @@ export interface ActivityRow {
   deleted: boolean;
 }
 
+/** One thing that happened in a vault: a change, or an agent reading. */
+export interface PulseEvent {
+  at: number;
+  /** `write` covers create, update, delete and rename; `read` is an agent looking. */
+  kind: 'read' | 'write';
+  /** The edit action, or the MCP tool name. */
+  what: string;
+  /** Null for activity without one note — a search, a listing, a vault map. */
+  path: string | null;
+  /** Account name for a person, key name for an agent. */
+  who: string;
+  agent: boolean;
+}
+
 /** A view, or the shorthand for "just this owner's own vault". */
 export type Viewable = string | View;
 
@@ -535,6 +549,54 @@ export class Queries {
         caseKey(key),
       )
       .map((row) => ({ value: String(row['value']), count: Number(row['n']) }));
+  }
+
+  /**
+   * Everything that happened in this vault since a moment, newest first.
+   *
+   * Two logs, one answer. `edits` records who changed what; `access_log` records
+   * every MCP call an agent made, including the ones that only read. Together
+   * they are the only way to see what an agent is *doing* — reads leave no other
+   * trace anywhere, because reading a note changes nothing.
+   *
+   * Deliberately the caller's own vault only, never the shared view. Activity in
+   * somebody else's vault is information about that person — when they work, how
+   * often, on what — and sharing a folder is not consent to being watched.
+   *
+   * Writes come from `edits` alone, even when an agent made them. An agent write
+   * lands in *both* tables, and taking it from both would show every agent edit
+   * twice.
+   */
+  pulse(owner: string, sinceMs: number, limit = 200): PulseEvent[] {
+    const rows = this.#db.all(
+      `SELECT at, 'write' AS kind, action AS what, path, actor AS who, 0 AS agent
+         FROM edits
+        WHERE owner = ? AND at > ?
+       UNION ALL
+       SELECT a.at, 'read' AS kind, a.tool AS what, a.path, k.name AS who, 1 AS agent
+         FROM access_log a
+         JOIN api_keys k ON k.id = a.key_id
+        WHERE a.owner = ? AND a.at > ? AND a.allowed = 1
+          AND a.tool IN ('get_note', 'search_notes', 'list_notes', 'get_links', 'vault_map')
+        ORDER BY at DESC
+        LIMIT ?`,
+      owner,
+      Math.trunc(sinceMs),
+      owner,
+      Math.trunc(sinceMs),
+      Math.trunc(limit),
+    );
+
+    return rows.map((row) => ({
+      at: Number(row['at']),
+      kind: String(row['kind']) === 'read' ? 'read' : 'write',
+      what: String(row['what']),
+      // A search or a listing has no single note behind it — null is the honest
+      // answer, and the view can show it as activity without a location.
+      path: row['path'] === null || row['path'] === undefined ? null : String(row['path']),
+      who: String(row['who']),
+      agent: Number(row['agent']) === 1,
+    }));
   }
 
   /** Tags with their note counts, most used first. */
