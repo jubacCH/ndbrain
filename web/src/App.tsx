@@ -24,10 +24,13 @@ import {
   type OpenNote,
   type Overview,
   type SearchHit,
+  type GraphData,
+  type PulseEvent,
   type Share,
   type Tidy,
   type User,
 } from './api';
+import { Brain } from './Brain';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { Login } from './Login';
@@ -44,7 +47,7 @@ export interface Filters {
   propValue?: string;
 }
 
-type View = 'note' | 'overview' | 'tidy' | 'search' | 'shares';
+type View = 'note' | 'overview' | 'brain' | 'tidy' | 'search' | 'shares';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -86,6 +89,10 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [shareBusy, setShareBusy] = useState(false);
   const [props, setProps] = useState<Array<{ key: string; count: number }>>([]);
   const [propValues, setPropValues] = useState<Array<{ value: string; count: number }>>([]);
+  const [graph, setGraph] = useState<GraphData | null>(null);
+  const [pulse, setPulse] = useState<PulseEvent[]>([]);
+  /** Zeitstempel des Servers, ab dem das nächste Mal gefragt wird. */
+  const pulseSince = useRef<number | undefined>(undefined);
   const [contextOpen, setContextOpen] = useState(true);
   // Bumped after every successful save so the context panel re-reads the links.
   const [linksVersion, setLinksVersion] = useState(0);
@@ -389,6 +396,39 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       .catch(() => undefined);
   }, [notes]);
 
+  /**
+   * Der Puls: alle zwei Sekunden fragen, was passiert ist.
+   *
+   * Nur während die Gehirn-Ansicht offen ist. Im Hintergrund weiterzufragen
+   * hiesse, den Server für etwas zu beschäftigen, das niemand sieht — und die
+   * Ereignisse wären beim Zurückkehren ohnehin verpasst, weil sie als Impuls
+   * durchlaufen und nicht als Liste liegenbleiben.
+   */
+  useEffect(() => {
+    if (view !== 'brain') return;
+
+    let alive = true;
+    const tick = (): void => {
+      api
+        .pulse(pulseSince.current)
+        .then(({ now, events: fresh }) => {
+          if (!alive) return;
+          pulseSince.current = now;
+          if (fresh.length > 0) {
+            setPulse(fresh.map((e) => ({ ...e, owner: user.id })));
+          }
+        })
+        .catch(() => undefined);
+    };
+
+    tick();
+    const timer = window.setInterval(tick, 2000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [view, user.id]);
+
   // Only your own folders can be shared out, so the suggestions on that form
   // come from your own notes rather than from everything you can see.
   const ownDirs = useMemo(
@@ -452,6 +492,18 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     if (next === 'overview') await refreshOverview();
     if (next === 'tidy') await refreshTree();
     if (next === 'shares') await refreshShares();
+    if (next === 'brain') {
+      // Beim Öffnen einmal den Graphen holen und den Puls auf jetzt setzen —
+      // sonst käme beim ersten Tick die halbe Vergangenheit als Gewitter herein.
+      try {
+        const [g, p] = await Promise.all([api.graph(), api.pulse()]);
+        setGraph(g);
+        pulseSince.current = p.now;
+        setPulse([]);
+      } catch {
+        setError('Die Beziehungen konnten nicht geladen werden.');
+      }
+    }
     setView(next);
   };
 
@@ -511,6 +563,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           </button>
           <button type="button" aria-current={view === 'overview'} onClick={() => void showView('overview')}>
             Übersicht
+          </button>
+          <button type="button" aria-current={view === 'brain'} onClick={() => void showView('brain')}>
+            Beziehungen
           </button>
           <button type="button" aria-current={view === 'tidy'} onClick={() => void showView('tidy')}>
             Aufräumen
@@ -636,6 +691,37 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           {view === 'overview' && overview !== null && (
             <OverviewView data={overview} onOpen={(owner, path) => void openNote(owner, path)} />
           )}
+
+          {view === 'brain' &&
+            (graph === null ? (
+              <p className="empty" style={{ padding: '2rem' }}>
+                Beziehungen werden geladen…
+              </p>
+            ) : (
+              <div className="brainwrap">
+                <Brain
+                  data={graph}
+                  events={pulse}
+                  onOpen={(owner, path) => void openNote(owner, path)}
+                />
+                <div className="brainlegend">
+                  <span>
+                    <i style={{ background: '#7fe9f0' }} />
+                    gelesen
+                  </span>
+                  <span>
+                    <i style={{ background: '#ffb86b' }} />
+                    geschrieben
+                  </span>
+                </div>
+                <div className="brainfoot">
+                  {graph.nodes.length} Notizen · {graph.edges.length} Verweise ·{' '}
+                  {graph.nodes.filter((n) => n.links === 0).length} ohne Verbindung
+                  <span className="sep" />
+                  Doppelklick öffnet die Notiz
+                </div>
+              </div>
+            ))}
           {view === 'tidy' && tidy !== null && (
             <TidyView
               data={tidy}

@@ -1512,3 +1512,82 @@ tbody tr[data-selected='true']:hover td {
   color: var(--text);
   background: var(--surface-3);
 }
+
+/* ---- Beziehungen ---------------------------------------------------------- */
+
+/*
+ * Die einzige Ansicht auf dunklem Grund. Das ist keine Laune: Leuchten setzt
+ * Dunkelheit voraus — auf hellem Grund gibt es kein Glühen, nur blasse Flecken.
+ * Sie ist auch die einzige Ansicht, die nicht Dokument ist, sondern Beobachtung.
+ */
+.brainwrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #05090d;
+  overflow: hidden;
+}
+
+.brain {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.brainlegend,
+.brainfoot {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(20, 44, 56, 0.55);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(140, 220, 235, 0.2);
+  font-size: 0.72rem;
+  color: rgba(200, 232, 240, 0.9);
+}
+
+.brainlegend {
+  top: 0.75rem;
+  right: 0.75rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  border-radius: 12px;
+}
+
+.brainlegend span {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.brainlegend i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex: none;
+}
+
+.brainfoot {
+  left: 50%;
+  bottom: 0.75rem;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  max-width: calc(100% - 1.5rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.brainfoot .sep {
+  width: 1px;
+  height: 0.8rem;
+  background: rgba(140, 220, 235, 0.25);
+}
