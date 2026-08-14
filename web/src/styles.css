@@ -108,11 +108,6 @@ input {
 
 /* ---- shell ------------------------------------------------------------- */
 
-.app {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  height: 100%;
-}
 
 .top {
   display: flex;
@@ -203,29 +198,10 @@ input {
   white-space: nowrap;
 }
 
-.body {
-  display: grid;
-  /* Tree, writing surface, context. The context column collapses to its toggle
-     rather than disappearing, so the way back is always visible. */
-  grid-template-columns: 260px minmax(0, 1fr) auto;
-  min-height: 0;
-}
 
 /* ---- tree -------------------------------------------------------------- */
 
-.rail {
-  border-right: 1px solid var(--line);
-  background: var(--surface);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
 
-.rail-scroll {
-  overflow-y: auto;
-  padding: 0.5rem 0.4rem;
-  flex: 1;
-}
 
 .tree,
 .tree ul {
@@ -339,23 +315,7 @@ input {
 
 /* ---- main -------------------------------------------------------------- */
 
-.main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
 
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.45rem 0.9rem;
-  border-bottom: 1px solid var(--line);
-  font-size: 0.78rem;
-  color: var(--text-3);
-  font-family: var(--mono);
-}
 
 .bar .cur {
   color: var(--text-2);
@@ -1034,44 +994,14 @@ td.n {
 
 /* ---- context panel ------------------------------------------------------ */
 
-.ctx {
-  border-left: 1px solid var(--line);
-  background: var(--surface);
-  display: flex;
-  min-height: 0;
-}
 
-.ctx-toggle {
-  width: 22px;
-  flex: none;
-  border-right: 1px solid var(--line);
-  color: var(--text-3);
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  align-self: stretch;
-}
 
 .ctx-toggle:hover {
   background: var(--surface-2);
   color: var(--text);
 }
 
-.ctx-inner {
-  padding: 0.85rem 0.8rem;
-  overflow-y: auto;
-  flex: 1;
-  min-width: 0;
-}
 
-.ctx h4 {
-  font-family: var(--mono);
-  font-size: 0.66rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-3);
-  font-weight: 500;
-  margin: 0 0 0.5rem;
-}
 
 .ctx section + section {
   margin-top: 1.4rem;
@@ -1590,4 +1520,528 @@ tbody tr[data-selected='true']:hover td {
   width: 1px;
   height: 0.8rem;
   background: rgba(140, 220, 235, 0.25);
+}
+
+
+/* ===================== GLAS ===================== */
+/*
+ * Die Oberfläche: Glas über einer hellen, farbigen Fläche.
+ *
+ * Zwei Regeln, die den Entwurf tragen:
+ *
+ *  1. **Glas braucht etwas dahinter.** Ohne die weichen Farbfelder im Grund ist
+ *     eine durchscheinende Fläche nur trüb — die Farbe ist keine Zier, sie ist
+ *     die Bedingung, unter der der Effekt überhaupt existiert.
+ *  2. **Fliesstext scheint nie durch.** Glas liegt auf Leisten, Schubladen und
+ *     Overlays; die Notiz selbst sitzt auf einem fast deckenden Blatt. Text über
+ *     einem farbigen Grund liest sich nach zehn Minuten nicht mehr.
+ *
+ * Die frühere Regel „Farbe ist ausschliesslich für Bedeutung reserviert" gilt so
+ * nicht mehr: der Grund trägt Farbe. Die Befundfarben bleiben davon getrennt und
+ * werden nirgends sonst verwendet.
+ */
+
+:root {
+  --glass: rgba(255, 255, 255, 0.58);
+  --glass-strong: rgba(255, 255, 255, 0.84);
+  --glass-edge: rgba(255, 255, 255, 0.78);
+  --glass-shadow: 0 16px 40px -12px rgba(20, 45, 60, 0.28);
+  --blur: 22px;
+
+  --sheet: rgba(255, 255, 255, 0.93);
+  --ink: #10202a;
+  --ink-2: #47606e;
+  --ink-3: #7d94a1;
+  --hair: rgba(16, 32, 42, 0.1);
+
+  --crit: #c0392b;
+  --warn: #96690a;
+  --info: #0f6d76;
+}
+
+body {
+  background: #eef4f6;
+}
+
+.app {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  isolation: isolate;
+  display: block;
+  color: var(--ink);
+}
+
+/* Der Grund. Statisch: Bewegung hinter einem Text, den man liest, ist Ablenkung. */
+.app::before {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 46% at 18% 22%, #8fd3d0 0%, rgba(143, 211, 208, 0) 68%),
+    radial-gradient(42% 38% at 82% 12%, #a8d0ea 0%, rgba(168, 208, 234, 0) 70%),
+    radial-gradient(46% 52% at 74% 86%, #b3c2ea 0%, rgba(179, 194, 234, 0) 72%),
+    radial-gradient(40% 42% at 28% 86%, #b8e4d5 0%, rgba(184, 228, 213, 0) 70%),
+    linear-gradient(160deg, #f0f6f7 0%, #e4edf1 100%);
+}
+
+/* ---- Schwebende Kopfleiste ---- */
+
+.topbar {
+  position: absolute;
+  top: 0.8rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 999px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.7);
+  backdrop-filter: blur(var(--blur)) saturate(1.7);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-shadow);
+  max-width: calc(100% - 1.4rem);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.topbar::-webkit-scrollbar {
+  display: none;
+}
+
+.topbar button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 0.77rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  line-height: 1;
+  white-space: nowrap;
+  flex: none;
+}
+.topbar button:hover {
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--ink);
+}
+.topbar button[aria-current='true'] {
+  background: rgba(16, 32, 42, 0.9);
+  color: #f2fbfc;
+  font-weight: 600;
+}
+.topbar .k {
+  font-family: var(--mono);
+  font-size: 0.69rem;
+}
+.tb-sep {
+  width: 1px;
+  height: 1.1rem;
+  background: rgba(16, 32, 42, 0.14);
+  flex: none;
+  margin: 0 0.15rem;
+}
+.tb-views {
+  display: flex;
+  gap: 0.15rem;
+}
+
+/* ---- Zustandszeile ---- */
+
+.statusbar {
+  position: absolute;
+  top: 0.85rem;
+  right: 1rem;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur));
+  backdrop-filter: blur(var(--blur));
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-shadow);
+  font-size: 0.7rem;
+  color: var(--ink-3);
+  max-width: 40%;
+}
+.statusbar .cur {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .statusbar {
+    display: none;
+  }
+}
+
+/* ---- Die Fläche ---- */
+
+.surface {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow-y: auto;
+  padding: 4.2rem 1rem 4rem;
+}
+
+.sheet {
+  max-width: 44rem;
+  margin: 0 auto;
+  background: var(--sheet);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 16px;
+  box-shadow: 0 20px 48px -16px rgba(20, 45, 60, 0.26);
+  padding: 1.4rem clamp(1rem, 3vw, 2rem) 1.6rem;
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+}
+.sheet-empty {
+  min-height: 0;
+  padding: 2.2rem;
+}
+
+.pagewrap {
+  max-width: 56rem;
+  margin: 0 auto;
+}
+
+/* Der Editor sitzt im Blatt und bringt keinen eigenen Rahmen mit. */
+.sheet .pane {
+  background: transparent;
+  flex: 1;
+  min-height: 24rem;
+}
+.sheet .cm-editor {
+  background: transparent;
+}
+
+/* ---- Ordnerbaum als Schublade ---- */
+
+.drawer {
+  position: absolute;
+  top: 0.8rem;
+  bottom: 0.8rem;
+  left: 0.8rem;
+  width: 16rem;
+  z-index: 7;
+  border-radius: 16px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.7);
+  backdrop-filter: blur(var(--blur)) saturate(1.7);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-shadow);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(calc(-100% - 1.1rem));
+  transition: transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.app[data-drawer='true'] .drawer {
+  transform: translateX(0);
+}
+@media (max-width: 560px) {
+  .drawer {
+    width: calc(100% - 1.6rem);
+  }
+}
+
+.dr-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.55);
+}
+.dr-title {
+  font-size: 0.75rem;
+  font-weight: 620;
+  color: var(--ink);
+  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dr-act,
+.dr-icon,
+.dr-foot button {
+  border: 0;
+  background: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  color: var(--ink-2);
+  flex: none;
+}
+.dr-act:hover,
+.dr-icon:hover,
+.dr-foot button:hover {
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+}
+.dr-icon {
+  padding: 0.22rem 0.4rem;
+  background: none;
+}
+
+.dr-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.4rem 0.35rem;
+}
+
+.dr-foot {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.5rem 0.7rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.55);
+}
+
+/* Baum im Glas: die alten Rail-Farben passen hier nicht mehr. */
+.drawer .tree,
+.drawer .tree ul {
+  font-size: 0.79rem;
+}
+.drawer .node {
+  color: var(--ink-2);
+  border-radius: 8px;
+  padding: 0.24rem 0.5rem;
+}
+.drawer .node:hover {
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--ink);
+}
+.drawer .node[aria-current='true'] {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  font-weight: 620;
+}
+.drawer .vault-head {
+  color: var(--ink-3);
+}
+.drawer .vault + .vault {
+  border-top-color: rgba(16, 32, 42, 0.12);
+}
+.drawer .node .st {
+  left: 0;
+}
+
+/* ---- Befunde, ambient ---- */
+
+.health {
+  position: absolute;
+  left: 0.85rem;
+  bottom: 0.85rem;
+  z-index: 4;
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.3rem;
+  border-radius: 999px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.6);
+  backdrop-filter: blur(var(--blur)) saturate(1.6);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-shadow);
+}
+.health button {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+}
+.health button:hover {
+  background: rgba(255, 255, 255, 0.65);
+  color: var(--ink);
+}
+.health i {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  flex: none;
+}
+.health b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 620;
+  color: var(--ink);
+}
+@media (max-width: 620px) {
+  .health {
+    display: none;
+  }
+}
+
+/* ---- Meldungen ---- */
+
+.floaterror {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  max-width: 44rem;
+  margin: 0 auto 0.8rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 12px;
+  background: rgba(255, 244, 242, 0.94);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(192, 57, 43, 0.28);
+  color: #7a2418;
+  font-size: 0.85rem;
+  box-shadow: 0 14px 34px -14px rgba(20, 45, 60, 0.3);
+}
+.floaterror button {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  padding: 0 0.2rem;
+  flex: none;
+}
+
+/* ---- Kontext unter der Notiz ---- */
+
+.ctx {
+  margin-top: 1.6rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--hair);
+  display: grid;
+  gap: 1rem;
+}
+.ctx h4 {
+  font-size: 0.63rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 0.4rem;
+  font-weight: 600;
+}
+.ctx > section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: flex-start;
+}
+.ctx .ref {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  border: 1px solid var(--hair);
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: left;
+  max-width: 100%;
+}
+.ctx .ref:hover {
+  background: #ffffff;
+  color: var(--ink);
+}
+.ctx .ref small {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx .dead-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ---- Glas für die Listenansichten ---- */
+
+.pagewrap .tile,
+.pagewrap .tablewrap,
+.pagewrap .share-form {
+  background: rgba(255, 255, 255, 0.86);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 14px 34px -14px rgba(20, 45, 60, 0.22);
+}
+.pagewrap .h-big {
+  color: var(--ink);
+}
+.pagewrap .h-sub {
+  color: var(--ink-2);
+}
+.pagewrap .filter {
+  background: rgba(255, 255, 255, 0.7);
+  border-color: rgba(255, 255, 255, 0.9);
+}
+.pagewrap .hit {
+  background: rgba(255, 255, 255, 0.78);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border-radius: 12px;
+  margin-bottom: 0.5rem;
+  padding: 0.7rem 0.9rem;
+}
+
+/* ---- Beziehungen: die eine dunkle Ansicht ---- */
+
+.brainwrap {
+  position: absolute;
+  inset: 0;
+  background: #05090d;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer {
+    transition: none;
+  }
+}
+
+.searchbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.7rem;
+  background: rgba(255, 255, 255, 0.86);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  padding: 0.45rem 1rem;
+  box-shadow: 0 14px 34px -14px rgba(20, 45, 60, 0.22);
+}
+
+.searchbox input {
+  flex: 1;
+  border: 0;
+  outline: none;
+  background: none;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--ink);
 }

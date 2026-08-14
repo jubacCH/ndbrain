@@ -17,8 +17,6 @@ export function ContextPanel({
   note,
   self,
   canCreate,
-  open,
-  onToggle,
   onOpen,
   onCreate,
   reloadKey,
@@ -28,8 +26,6 @@ export function ContextPanel({
   self: string;
   /** False on a note shared read-only: filling a gap would be refused anyway. */
   canCreate: boolean;
-  open: boolean;
-  onToggle: () => void;
   onOpen: (owner: string, path: string) => void;
   onCreate: (title: string) => void;
   /** Changes whenever the note was saved, so the panel refreshes with it. */
@@ -63,30 +59,14 @@ export function ContextPanel({
     };
   }, [owner, notePath, reloadKey]);
 
-  if (!open) {
-    return (
-      <aside className="ctx collapsed">
-        <button type="button" className="ctx-toggle" onClick={onToggle} aria-expanded={false} title="Kontext einblenden">
-          ◀
-        </button>
-      </aside>
-    );
-  }
-
   const dead = outgoing.filter((link) => link.targetPath === null);
   const live = outgoing.filter((link) => link.targetPath !== null);
 
+  if (notePath === null) return <></>;
+
   return (
-    <aside className="ctx" aria-label="Kontext">
-      <button type="button" className="ctx-toggle" onClick={onToggle} aria-expanded title="Kontext ausblenden">
-        ▶
-      </button>
-
-      <div className="ctx-inner">
-        {notePath === null && <p className="empty">Keine Notiz geöffnet.</p>}
-
-        {notePath !== null && (
-          <>
+    <section className="ctx" aria-label="Kontext">
+      <>
             <section>
               <h4>Verweist hierher · {backlinks.length}</h4>
               {backlinks.length === 0 && (
@@ -156,10 +136,8 @@ export function ContextPanel({
                 </span>
               )}
             </section>
-          </>
-        )}
-      </div>
-    </aside>
+      </>
+    </section>
   );
 }
 
