@@ -599,6 +599,62 @@ export class Queries {
     }));
   }
 
+  /**
+   * The link graph: one entry per note, one per resolved connection.
+   *
+   * Only resolved links become edges. A link into the void has no other end to
+   * draw to — it is a finding for the tidy view, not a line. Duplicates collapse:
+   * mentioning the same note three times in one page is one relationship, and
+   * three overlapping lines would just look like a thicker one.
+   *
+   * The degree is counted from resolved links in both directions, because for
+   * "how connected is this note" it makes no difference who pointed at whom.
+   */
+  graph(view: Viewable): {
+    nodes: Array<{ owner: string; path: string; title: string; folder: string; links: number }>;
+    edges: Array<{ owner: string; from: string; to: string }>;
+  } {
+    const nodeScope = scopeSql('n', 'path', view);
+    const nodes = this.#db
+      .all(
+        `SELECT n.owner, n.path, n.title,
+                (SELECT COUNT(*) FROM links l
+                  WHERE l.owner = n.owner AND l.target_path IS NOT NULL
+                    AND (l.source = n.path OR l.target_path = n.path)) AS deg
+           FROM notes n
+          WHERE ${nodeScope.sql}
+          ORDER BY n.path`,
+        ...nodeScope.params,
+      )
+      .map((row) => {
+        const p = String(row['path']);
+        const cut = p.lastIndexOf('/');
+        return {
+          owner: String(row['owner']),
+          path: p,
+          title: String(row['title']),
+          folder: cut === -1 ? '' : p.slice(0, cut),
+          links: Number(row['deg']),
+        };
+      });
+
+    const edgeScope = scopeSql('l', 'source', view);
+    const edges = this.#db
+      .all(
+        `SELECT DISTINCT l.owner, l.source, l.target_path
+           FROM links l
+          WHERE ${edgeScope.sql} AND l.target_path IS NOT NULL AND l.target_path <> l.source`,
+        ...edgeScope.params,
+      )
+      .map((row) => ({
+        owner: String(row['owner']),
+        from: String(row['source']),
+        to: String(row['target_path']),
+      }));
+
+    return { nodes, edges };
+  }
+
   /** Tags with their note counts, most used first. */
   tagCounts(view: Viewable): Array<{ tag: string; count: number }> {
     const scope = scopeSql('t', 'path', view);

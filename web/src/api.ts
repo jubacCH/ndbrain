@@ -113,6 +113,26 @@ export interface User {
   role: 'admin' | 'user';
 }
 
+export interface GraphData {
+  nodes: Array<{ owner: string; path: string; title: string; folder: string; links: number }>;
+  edges: Array<{ owner: string; from: string; to: string }>;
+}
+
+/** One thing that happened in the vault: a change, or an agent reading. */
+export interface PulseEvent {
+  at: number;
+  kind: 'read' | 'write';
+  /** The edit action, or the MCP tool name. */
+  what: string;
+  /** Null for activity without one note — a search, a listing, a vault map. */
+  path: string | null;
+  /** Account name for a person, key name for an agent. */
+  who: string;
+  agent: boolean;
+  /** Always the caller: the pulse never reports another vault. */
+  owner: string;
+}
+
 /** One grant: a region of one vault, opened to one other account. */
 export interface Share {
   id: string;
@@ -289,6 +309,18 @@ export const api = {
     ),
 
   overview: () => request<Overview>('/api/v1/overview'),
+
+  graph: () => request<GraphData>('/api/v1/graph'),
+
+  /**
+   * What has happened since a moment. `now` comes back with it, so the next call
+   * asks for exactly what has not been seen — without trusting the local clock,
+   * which on a laptop that just woke up is routinely wrong.
+   */
+  pulse: (since?: number) =>
+    request<{ now: number; events: Omit<PulseEvent, 'owner'>[] }>(
+      `/api/v1/pulse${since === undefined ? '' : `?since=${since}`}`,
+    ),
 
   tidy: () => request<Tidy>('/api/v1/tidy'),
 

@@ -377,6 +377,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * `now` comes back with the events so the client can ask for exactly what it
    * has not seen yet, without trusting its own clock.
    */
+  fastify.get('/api/v1/graph', async (request) => {
+    return app.queries.graph(shares.view(requireUser(request).id));
+  });
+
   fastify.get('/api/v1/pulse', async (request) => {
     const owner = requireUser(request).id;
     const query = (request.query ?? {}) as { since?: unknown; limit?: unknown };
