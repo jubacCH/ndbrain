@@ -1544,7 +1544,7 @@ tbody tr[data-selected='true']:hover td {
 :root {
   --glass: rgba(255, 255, 255, 0.58);
   --glass-strong: rgba(255, 255, 255, 0.84);
-  --glass-edge: rgba(255, 255, 255, 0.78);
+  --glass-edge: var(--glass-card);
   --glass-shadow: 0 16px 40px -12px rgba(20, 45, 60, 0.28);
   --blur: 22px;
 
@@ -1627,7 +1627,7 @@ body {
   flex: none;
 }
 .topbar button:hover {
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--glass-soft);
   color: var(--ink);
 }
 .topbar button[aria-current='true'] {
@@ -1699,7 +1699,7 @@ body {
   background: var(--sheet);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--glass-line);
   border-radius: 16px;
   box-shadow: 0 20px 48px -16px rgba(20, 45, 60, 0.26);
   padding: 1.4rem clamp(1rem, 3vw, 2rem) 1.6rem;
@@ -1761,7 +1761,7 @@ body {
   align-items: center;
   gap: 0.35rem;
   padding: 0.6rem 0.7rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.55);
+  border-bottom: 1px solid var(--glass-line);
 }
 .dr-title {
   font-size: 0.75rem;
@@ -1776,7 +1776,7 @@ body {
 .dr-icon,
 .dr-foot button {
   border: 0;
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--glass-soft);
   cursor: pointer;
   font: inherit;
   font-size: 0.72rem;
@@ -1788,7 +1788,7 @@ body {
 .dr-act:hover,
 .dr-icon:hover,
 .dr-foot button:hover {
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--glass-line);
   color: var(--ink);
 }
 .dr-icon {
@@ -1807,7 +1807,7 @@ body {
   display: flex;
   gap: 0.35rem;
   padding: 0.5rem 0.7rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.55);
+  border-top: 1px solid var(--glass-line);
 }
 
 /* Baum im Glas: die alten Rail-Farben passen hier nicht mehr. */
@@ -1821,11 +1821,11 @@ body {
   padding: 0.24rem 0.5rem;
 }
 .drawer .node:hover {
-  background: rgba(255, 255, 255, 0.68);
+  background: var(--glass-soft);
   color: var(--ink);
 }
 .drawer .node[aria-current='true'] {
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--glass-hi);
   color: var(--ink);
   font-weight: 620;
 }
@@ -1870,7 +1870,7 @@ body {
   border-radius: 999px;
 }
 .health button:hover {
-  background: rgba(255, 255, 255, 0.65);
+  background: var(--glass-soft);
   color: var(--ink);
 }
 .health i {
@@ -1950,7 +1950,7 @@ body {
   align-items: baseline;
   gap: 0.5rem;
   border: 1px solid var(--hair);
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--glass-soft);
   border-radius: 999px;
   padding: 0.2rem 0.7rem;
   font-size: 0.78rem;
@@ -1960,7 +1960,7 @@ body {
   max-width: 100%;
 }
 .ctx .ref:hover {
-  background: #ffffff;
+  background: var(--glass-hi);
   color: var(--ink);
 }
 .ctx .ref small {
@@ -1982,10 +1982,10 @@ body {
 .pagewrap .tile,
 .pagewrap .tablewrap,
 .pagewrap .share-form {
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--glass-card);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
-  border-color: rgba(255, 255, 255, 0.9);
+  border-color: var(--glass-line);
   box-shadow: 0 14px 34px -14px rgba(20, 45, 60, 0.22);
 }
 .pagewrap .h-big {
@@ -1995,11 +1995,11 @@ body {
   color: var(--ink-2);
 }
 .pagewrap .filter {
-  background: rgba(255, 255, 255, 0.7);
-  border-color: rgba(255, 255, 255, 0.9);
+  background: var(--glass-soft);
+  border-color: var(--glass-line);
 }
 .pagewrap .hit {
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--glass-card);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   border-radius: 12px;
@@ -2027,10 +2027,10 @@ body {
   align-items: center;
   gap: 0.5rem;
   margin: 0 0 0.7rem;
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--glass-card);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--glass-line);
   border-radius: 999px;
   padding: 0.45rem 1rem;
   box-shadow: 0 14px 34px -14px rgba(20, 45, 60, 0.22);
@@ -2044,4 +2044,91 @@ body {
   font: inherit;
   font-size: 0.9rem;
   color: var(--ink);
+}
+
+/* ===================== NACHTVARIANTE =====================
+ *
+ * Keine Kür. Zwei Helligkeiten nebeneinander — helles Blatt neben dunklem
+ * Panel — blenden abends, und ein Werkzeug, in dem man abends Notizen liest,
+ * braucht die dunkle Seite genauso wie die helle.
+ *
+ * Nicht invertiert, sondern eigens abgestimmt: ein umgedrehtes Glas wird trüb,
+ * und ein umgedrehtes Rot schreit auf dunklem Grund. Die Farbfelder im Grund
+ * bleiben dieselben Farben, nur tief und entsättigt — sonst verliert das Glas
+ * das, was es überhaupt sichtbar macht.
+ */
+
+:root {
+  --glass-line: rgba(255, 255, 255, 0.9);
+  --glass-hi: rgba(255, 255, 255, 0.92);
+  --glass-card: rgba(255, 255, 255, 0.86);
+  --glass-soft: rgba(255, 255, 255, 0.65);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --glass: rgba(30, 52, 64, 0.55);
+    --glass-strong: rgba(24, 44, 55, 0.86);
+    --glass-edge: rgba(140, 210, 225, 0.18);
+    --glass-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.55);
+    --glass-line: rgba(140, 210, 225, 0.16);
+    --glass-hi: rgba(70, 108, 125, 0.75);
+    --glass-card: rgba(26, 45, 56, 0.8);
+    --glass-soft: rgba(90, 140, 158, 0.22);
+
+    --sheet: rgba(18, 32, 40, 0.92);
+    --ink: #e8f2f5;
+    --ink-2: #9fb6c0;
+    --ink-3: #74909c;
+    --hair: rgba(180, 220, 232, 0.14);
+
+    /* Gesättigter und heller als am Tag: auf dunklem Grund verliert eine
+       Befundfarbe sonst genau die Aufmerksamkeit, für die sie da ist. */
+    --crit: #e8705c;
+    --warn: #d9a441;
+    --info: #5fc9d2;
+
+    --surface: #16232b;
+    --surface-2: #1d2d36;
+    --surface-3: #26363f;
+    --line: rgba(180, 220, 232, 0.12);
+    --line-2: rgba(180, 220, 232, 0.2);
+    --text: #e8f2f5;
+    --text-2: #9fb6c0;
+    --text-3: #74909c;
+    --invert-bg: #e8f2f5;
+    --invert-fg: #0b1419;
+  }
+
+  body {
+    background: #0a141a;
+  }
+
+  .app::before {
+    background:
+      radial-gradient(38% 46% at 18% 22%, #12414a 0%, rgba(18, 65, 74, 0) 68%),
+      radial-gradient(42% 38% at 82% 12%, #17384f 0%, rgba(23, 56, 79, 0) 70%),
+      radial-gradient(46% 52% at 74% 86%, #1b2f52 0%, rgba(27, 47, 82, 0) 72%),
+      radial-gradient(40% 42% at 28% 86%, #124038 0%, rgba(18, 64, 56, 0) 70%),
+      linear-gradient(160deg, #0d1a21 0%, #0a141a 100%);
+  }
+
+  .topbar button[aria-current='true'] {
+    background: rgba(127, 233, 240, 0.9);
+    color: #06232a;
+  }
+
+  .floaterror {
+    background: rgba(58, 24, 20, 0.92);
+    border-color: rgba(232, 112, 92, 0.4);
+    color: #f4c9c0;
+  }
+
+  /* Der Editor bringt eigene Farben mit und muss mitgezogen werden. */
+  .sheet .cm-editor .cm-content {
+    color: var(--ink);
+  }
+  .sheet .cm-editor .cm-cursor {
+    border-left-color: var(--ink);
+  }
 }
