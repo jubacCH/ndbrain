@@ -158,6 +158,36 @@ describe('the index stays a cache', () => {
   });
 });
 
+/**
+ * The bug this guards against was found on the running instance, not here: the
+ * migration created an empty table, the startup sync saw unchanged content
+ * hashes, and the feature reported an empty vocabulary for a vault full of
+ * frontmatter. A migration that adds derived data has to invalidate what it
+ * derives from.
+ */
+describe('a schema upgrade fills in what it added', () => {
+  it('reindexes existing notes after the properties table appears', async () => {
+    // Exactly the situation after the upgrade: notes on disk, index rows intact,
+    // but nothing in `props`.
+    runtime.db.exec('DELETE FROM props');
+    expect(runtime.app.queries.propKeys('julian')).toEqual([]);
+
+    // A sync alone must not be trusted to fix it — the content did not change.
+    await runtime.indexer.sync('julian');
+    expect(runtime.app.queries.propKeys('julian')).toEqual([]);
+
+    // Dropping the derived rows is what makes the next sync rebuild them, which
+    // is what the migration does.
+    runtime.db.exec('DELETE FROM notes_fts; DELETE FROM notes;');
+    await runtime.indexer.sync('julian');
+    expect(runtime.app.queries.propKeys('julian').map((k) => k.key).sort()).toEqual([
+      'status',
+      'topic',
+      'type',
+    ]);
+  });
+});
+
 describe('one vault never sees another', () => {
   it('keeps properties owner-scoped', async () => {
     await runtime.users.create('ramona', 'ihr gutes passwort');

@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -265,6 +265,22 @@ const MIGRATIONS: Array<(db: Database) => void> = [
       CREATE INDEX props_owner_key   ON props (owner, key_fold);
       CREATE INDEX props_owner_pair  ON props (owner, key_fold, value_fold);
     `);
+  },
+
+  // v6 -> v7: force the properties to actually be filled
+  //
+  // v6 added an empty table and nothing put anything in it. The sync on startup
+  // compares content hashes, and no file changed, so every existing note was
+  // "unchanged" and its frontmatter was never read — leaving a feature that
+  // silently answered "no notes declare anything" on a vault full of notes that
+  // do.
+  //
+  // The general rule this is an instance of: **a migration that adds derived
+  // data has to invalidate what it derives from.** Dropping the note rows is
+  // safe precisely because they are derived — the next sync rebuilds them from
+  // the files, which is the same promise the whole index rests on.
+  (db) => {
+    db.exec('DELETE FROM notes_fts; DELETE FROM props; DELETE FROM notes;');
   },
 ];
 
