@@ -2132,3 +2132,25 @@ body {
     border-left-color: var(--ink);
   }
 }
+
+/* Die alte Kontext-Spalte setzte `.ref` auf volle Breite. Unter der Notiz sind
+   es Chips, die sich auf ihren Inhalt zusammenziehen sollen. */
+.ctx .ref {
+  width: auto;
+  max-width: 100%;
+}
+
+@media (prefers-color-scheme: dark) {
+  /* Der Live-Preview-Editor bringt eigene helle Flächen mit — Frontmatter,
+     Codeblöcke, Tabellen. Ohne diese Zeilen bleiben sie nachts weiss. */
+  .sheet .cm-editor .cm-line span[class*='fm'],
+  .sheet .cm-editor .cm-frontmatter,
+  .sheet .cm-editor .cm-codeblock,
+  .sheet .cm-editor pre {
+    background: rgba(140, 210, 225, 0.08) !important;
+    color: var(--ink-2) !important;
+  }
+  .sheet .cm-editor .cm-activeLine {
+    background: rgba(140, 210, 225, 0.06);
+  }
+}
