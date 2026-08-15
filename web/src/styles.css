@@ -2330,3 +2330,42 @@ body {
   inset: 0;
   border-radius: 0;
 }
+
+/*
+ * In einer 21rem-Spalte darf nichts seitwärts schieben. Die Referenz-Chips
+ * tragen den vollen Pfad; der bricht hier um statt die Spalte zu sprengen, und
+ * die Dateizeile bricht mitten im Pfad, weil sie sonst als ein Wort gilt.
+ */
+.side-info {
+  overflow-x: hidden;
+}
+
+.side-info .ref {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  border-radius: 10px;
+  padding: 0.3rem 0.6rem;
+  width: 100%;
+  line-height: 1.35;
+}
+
+.side-info .ref small {
+  max-width: 100%;
+  font-size: 0.62rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-info .ctx .ref.mono,
+.side-info .ctx span.ref {
+  word-break: break-all;
+  white-space: normal;
+  font-size: 0.66rem !important;
+}
+
+.side-info .dead-link {
+  flex-wrap: wrap;
+}
