@@ -360,7 +360,7 @@ export function SearchView({
   onToggleFilter: (patch: SearchFilters) => void;
   onClearFilters: () => void;
   onOpen: (owner: string, path: string) => void;
-  /** Das Eingabefeld gehört in die Ansicht, seit die Kopfzeile keins mehr hat. */
+  /** The field belongs to this view, since the header no longer carries one. */
   onQuery: (value: string) => void;
 }): React.JSX.Element {
   const active =
