@@ -2483,3 +2483,10 @@ td.n,
 .bar-k {
   font-family: var(--font) !important;
 }
+
+/* Auch die Schlüssel im Frontmatter treten zurück — fett gesetzte Feldnamen
+   ziehen den Blick genauso an wie der Kasten, den sie eben verloren haben. */
+.cm-editor .cm-block-frontmatter * {
+  font-weight: 400 !important;
+  color: inherit !important;
+}
