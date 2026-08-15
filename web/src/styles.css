@@ -2466,3 +2466,20 @@ td.n,
 .nav-actions button {
   letter-spacing: -0.005em;
 }
+
+/* Der Frontmatter-Block stand als grau hinterlegter Monospace-Kasten ganz oben in
+ * jeder Notiz — das erste und lauteste Element auf dem Bildschirm, obwohl dieselbe
+ * Angabe eine Zeile tiefer bereits lesbar aufbereitet erscheint. Er bleibt
+ * editierbar, tritt aber zurück: keine Fläche, Schrift wie der Rest, gedämpft. */
+.cm-editor .cm-block-frontmatter {
+  background: transparent !important;
+  font-family: var(--font) !important;
+  font-size: 0.8em !important;
+  color: var(--ink-3) !important;
+  opacity: 0.75;
+}
+
+/* ⌘K ist die letzte Monospace-Stelle ausserhalb von Code. */
+.bar-k {
+  font-family: var(--font) !important;
+}
