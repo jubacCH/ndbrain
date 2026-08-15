@@ -11,6 +11,8 @@ WORKDIR /build/web
 COPY web/package.json web/package-lock.json* ./
 RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 COPY web/ ./
+# One definition of the API shape, compiled into both sides. See shared/schema.ts.
+COPY shared/ /build/shared/
 RUN npx vite build
 
 FROM node:24-bookworm-slim AS server
@@ -18,6 +20,7 @@ WORKDIR /build/server
 COPY server/package.json server/package-lock.json* ./
 RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 COPY server/ ./
+COPY shared/ /build/shared/
 RUN npx tsc -p tsconfig.json && npm prune --omit=dev
 
 FROM node:24-bookworm-slim AS runtime
@@ -45,7 +48,7 @@ COPY --from=web /build/web/dist ./web
 # Without this the invocation is `node dist/src/cli.js`, which is a path that
 # has to be looked up every time and quietly changes whenever the build layout
 # does. The wrapper is the documented name.
-RUN printf '#!/bin/sh\nexec node /app/dist/src/cli.js "$@"\n' > /usr/local/bin/ndbrain-user \
+RUN printf '#!/bin/sh\nexec node /app/dist/server/src/cli.js "$@"\n' > /usr/local/bin/ndbrain-user \
  && chmod +x /usr/local/bin/ndbrain-user
 
 # The vault holds the user's notes; it must outlive the container.
@@ -59,4 +62,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.NDBRAIN_PORT||3000)+'/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "dist/src/main.js"]
+CMD ["node", "dist/server/src/main.js"]

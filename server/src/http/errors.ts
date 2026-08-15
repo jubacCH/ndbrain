@@ -12,6 +12,8 @@
  *     for notes — a 403 would confirm the note exists.
  */
 
+import { ZodError } from 'zod';
+
 import {
   CaseCollisionError,
   InvalidPathError,
@@ -31,6 +33,19 @@ export interface HttpProblem {
 }
 
 export function toProblem(error: unknown): HttpProblem {
+  // A request body that does not match its schema. Reported with the offending
+  // field named: "invalid request" tells a caller nothing it can act on, and the
+  // field name is the caller's own text, so it discloses nothing of ours.
+  if (error instanceof ZodError) {
+    const first = error.issues[0];
+    const where = first === undefined ? '' : first.path.join('.');
+    const why = first?.message ?? 'did not match the expected shape';
+    return {
+      status: 400,
+      code: 'invalid_body',
+      message: where === '' ? why : `${where}: ${why}`,
+    };
+  }
   if (error instanceof NoteNotFoundError) {
     return { status: 404, code: 'not_found', message: 'note does not exist' };
   }
