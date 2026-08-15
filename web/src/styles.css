@@ -2369,3 +2369,19 @@ body {
 .side-info .dead-link {
   flex-wrap: wrap;
 }
+
+/*
+ * Die Flexbox-Falle: ein Flex-Kind hat `min-width: auto` und schrumpft damit
+ * nie unter seinen breitesten Inhalt. Der lange Pfad in einem `small` hat so
+ * den ganzen Abschnitt auf 463px aufgezogen — in einer 334px-Spalte.
+ * `min-width: 0` gibt das Schrumpfen frei; erst danach greifen die Umbrüche.
+ */
+.side-info .ctx,
+.side-info .ctx > section,
+.side-info .ctx .ref {
+  min-width: 0;
+}
+
+.side-info .ctx > section > * {
+  max-width: 100%;
+}
