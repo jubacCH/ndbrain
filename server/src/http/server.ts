@@ -430,6 +430,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         untagged: app.queries.untagged(caller).length,
         deadLinks: app.queries.deadLinks(caller).length,
         stale: app.queries.stale(caller).length,
+        // Notes, not findings — the four above overlap heavily. See attentionCount.
+        attention: app.queries.attentionCount(caller),
+        tagsInUse: app.queries.tagsInUse(caller),
       },
       recent: app.queries.recentNotes(view, 12),
       tasks: app.queries.openTasks(view).slice(0, 50),

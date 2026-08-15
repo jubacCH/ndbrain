@@ -94,19 +94,19 @@ export function Palette({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="palette" role="dialog" aria-modal="true" aria-label="Notiz suchen">
+      <div className="palette" role="dialog" aria-modal="true" aria-label="Find a note">
         <input
           ref={input}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Notiz öffnen…"
-          aria-label="Notiztitel"
+          placeholder="Open a note…"
+          aria-label="Note title"
         />
 
         <div className="palette-list" ref={listRef}>
           {results.length === 0 && (
-            <p className="empty">{query === '' ? 'Zuletzt bearbeitet erscheint hier.' : 'Nichts gefunden.'}</p>
+            <p className="empty">{query === '' ? 'Recently edited notes appear here.' : 'Nothing found.'}</p>
           )}
 
           {results.map((note, index) => (
@@ -132,7 +132,7 @@ export function Palette({
 
         <div className="palette-foot">
           <kbd>↑</kbd>
-          <kbd>↓</kbd> wählen · <kbd>⏎</kbd> öffnen · <kbd>Esc</kbd> schliessen
+          <kbd>↓</kbd> choose · <kbd>⏎</kbd> open · <kbd>Esc</kbd> close
         </div>
       </div>
     </div>

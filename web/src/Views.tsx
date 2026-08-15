@@ -10,7 +10,7 @@ import { useState } from 'react';
 
 import { refKey, type LinkRow, type NoteRow, type Overview, type SearchHit, type Share, type TaskRow, type Tidy } from './api';
 
-const RELATIVE = new Intl.RelativeTimeFormat('de', { numeric: 'auto' });
+const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
 
 export function ago(mtimeMs: number, now = Date.now()): string {
   const minutes = Math.round((mtimeMs - now) / 60_000);
@@ -40,35 +40,38 @@ export function OverviewView({
   onOpen: (owner: string, path: string) => void;
 }): React.JSX.Element {
   const { counts } = data;
-  const attention = counts.orphans + counts.untagged + counts.deadLinks + counts.stale;
+  // Counted by the server as distinct notes. Adding the four findings together
+  // here was the bug: they overlap, and the total ran past the number of notes.
+  const attention = counts.attention;
 
   return (
     <div className="pane padded">
-      <h2 className="h-big">Übersicht</h2>
+      <h2 className="h-big">Overview</h2>
       <p className="h-sub">
-        {counts.notes} {counts.notes === 1 ? 'Notiz' : 'Notizen'} ·{' '}
-        {attention === 0 ? 'nichts zu tun' : `${attention} brauchen Aufmerksamkeit`}
+        {counts.notes} {counts.notes === 1 ? 'note' : 'notes'} ·{' '}
+        {attention === 0 ? 'nothing to do' : `${attention} need attention`}
       </p>
 
       <div className="bento">
         <section className="tile tile-wide">
-          <p className="cap">Braucht Aufmerksamkeit</p>
+          <p className="cap">Needs attention</p>
           {attention === 0 ? (
-            <p className="empty">Nichts offen — der Vault ist sauber.</p>
+            <p className="empty">Nothing open — the vault is clean.</p>
           ) : (
             <div className="findings">
-              <Finding label="verwaist" kind="crit" count={counts.orphans} />
-              <Finding label="ins Leere" kind="crit" count={counts.deadLinks} />
-              <Finding label="ungetaggt" kind="warn" count={counts.untagged} />
-              <Finding label="still" kind="warn" count={counts.stale} />
+              <Finding label="orphaned" kind="crit" count={counts.orphans} />
+              <Finding label="broken links" kind="crit" count={counts.deadLinks} />
+              {/* Withheld where no note is tagged: see Queries.tagsInUse. */}
+              {counts.tagsInUse && <Finding label="untagged" kind="warn" count={counts.untagged} />}
+              <Finding label="untouched" kind="warn" count={counts.stale} />
             </div>
           )}
         </section>
 
         <section className="tile">
-          <p className="cap">Seit gestern</p>
+          <p className="cap">Since yesterday</p>
           <div className="list">
-            {data.activity.length === 0 && <p className="empty">Nichts passiert.</p>}
+            {data.activity.length === 0 && <p className="empty">Nothing happened.</p>}
             {data.activity.slice(0, 8).map((row) => (
               <button
                 type="button"
@@ -79,7 +82,7 @@ export function OverviewView({
               >
                 {/* The actor only earns a badge when it is not you — otherwise
                     every row would carry the same label and say nothing. */}
-                {row.actor !== '' && row.action === 'delete' && <span className="pill p-crit">gelöscht</span>}
+                {row.actor !== '' && row.action === 'delete' && <span className="pill p-crit">deleted</span>}
                 <span className="t" style={row.deleted ? { textDecoration: 'line-through' } : undefined}>
                   {row.title}
                 </span>
@@ -93,9 +96,9 @@ export function OverviewView({
         </section>
 
         <section className="tile">
-          <p className="cap">Offene Aufgaben</p>
+          <p className="cap">Open tasks</p>
           <div className="list">
-            {data.tasks.length === 0 && <p className="empty">Keine offenen Aufgaben.</p>}
+            {data.tasks.length === 0 && <p className="empty">No open tasks.</p>}
             {data.tasks.slice(0, 8).map((task: TaskRow) => (
               <button
                 type="button"
@@ -111,9 +114,9 @@ export function OverviewView({
         </section>
 
         <section className="tile">
-          <p className="cap">Zuletzt bearbeitet</p>
+          <p className="cap">Recently edited</p>
           <div className="list">
-            {data.recent.length === 0 && <p className="empty">Noch nichts.</p>}
+            {data.recent.length === 0 && <p className="empty">Nothing yet.</p>}
             {data.recent.slice(0, 8).map((note) => (
               <button
                 type="button"
@@ -131,7 +134,7 @@ export function OverviewView({
         <section className="tile tile-short">
           <p className="cap">Tags</p>
           <div className="tagcloud">
-            {data.tags.length === 0 && <p className="empty">Noch keine Tags.</p>}
+            {data.tags.length === 0 && <p className="empty">No tags yet.</p>}
             {data.tags.slice(0, 14).map((tag) => (
               <span className="pill p-tag" key={tag.tag}>
                 #{tag.tag} <span style={{ opacity: 0.6 }}>{tag.count}</span>
@@ -205,28 +208,28 @@ export function TidyView({
     ...data.orphans.map((n: NoteRow) => ({
       path: n.path,
       title: n.title,
-      finding: 'verwaist',
+      finding: 'orphaned',
       kind: 'crit' as const,
       when: ago(n.mtimeMs),
     })),
     ...data.deadLinks.map((l: LinkRow) => ({
       path: l.source,
       title: l.targetRaw,
-      finding: 'ins Leere',
+      finding: 'broken link',
       kind: 'crit' as const,
       when: '—',
     })),
     ...data.untagged.map((n: NoteRow) => ({
       path: n.path,
       title: n.title,
-      finding: 'ungetaggt',
+      finding: 'untagged',
       kind: 'warn' as const,
       when: ago(n.mtimeMs),
     })),
     ...data.stale.map((n: NoteRow) => ({
       path: n.path,
       title: n.title,
-      finding: 'still',
+      finding: 'untouched',
       kind: 'warn' as const,
       when: ago(n.mtimeMs),
     })),
@@ -234,11 +237,11 @@ export function TidyView({
 
   return (
     <div className="pane padded">
-      <h2 className="h-big">Aufräumen</h2>
+      <h2 className="h-big">Tidy up</h2>
       <p className="h-sub">
         {rows.length === 0
-          ? 'Nichts zu tun — der Vault ist sauber.'
-          : `${rows.length} Befunde · struktur-unabhängig, gilt für jeden Ordner`}
+          ? 'Nothing to do — the vault is clean.'
+          : `${rows.length} findings · independent of structure, applies to any folder`}
       </p>
 
       {rows.length > 0 && (
@@ -249,13 +252,13 @@ export function TidyView({
           */}
           <div className="bulkbar" data-active={selected.size > 0}>
             <span className="bulkcount">
-              {selected.size === 0 ? 'Nichts ausgewählt' : `${selected.size} ausgewählt`}
+              {selected.size === 0 ? 'Nothing selected' : `${selected.size} selected`}
             </span>
             <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('move')}>
               Verschieben…
             </button>
             <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('tag')}>
-              Taggen…
+              Tag…
             </button>
             <button
               type="button"
@@ -263,9 +266,9 @@ export function TidyView({
               disabled={selected.size === 0 || busy}
               onClick={() => onBulk('delete')}
             >
-              Löschen…
+              Delete…
             </button>
-            <span className="bulkhint">Verweise ziehen beim Verschieben mit</span>
+            <span className="bulkhint">Links follow when notes move</span>
           </div>
 
           <div className="tablewrap">
@@ -276,15 +279,15 @@ export function TidyView({
                     <th className="pick">
                       <input
                         type="checkbox"
-                        aria-label="Alle auswählen"
+                        aria-label="Select all"
                         checked={selected.size > 0 && selected.size === new Set(rows.map((r) => r.path)).size}
                         onChange={() => onToggleAll([...new Set(rows.map((r) => r.path))])}
                       />
                     </th>
-                    <th>Notiz</th>
+                    <th>Note</th>
                     <th>Pfad</th>
                     <th>Befund</th>
-                    <th className="n">Zuletzt</th>
+                    <th className="n">Last touched</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -299,7 +302,7 @@ export function TidyView({
                           type="checkbox"
                           checked={selected.has(row.path)}
                           onChange={() => onToggle(row.path)}
-                          aria-label={`${row.title} auswählen`}
+                          aria-label={`Select ${row.title}`}
                         />
                       </td>
                       <td className="nm">{row.title}</td>
@@ -371,7 +374,7 @@ export function SearchView({
     if (query.trim() !== '') parts.push(`„${query.trim()}"`);
     if (filters.tag !== undefined) parts.push(`#${filters.tag}`);
     if (filters.dir !== undefined) parts.push(`in ${filters.dir}`);
-    if (filters.days !== undefined) parts.push(`aus ${filters.days} Tagen`);
+    if (filters.days !== undefined) parts.push(`from the last ${filters.days} days`);
     if (filters.prop !== undefined) {
       parts.push(filters.propValue === undefined ? `mit ${filters.prop}` : `${filters.prop}: ${filters.propValue}`);
     }
@@ -380,7 +383,7 @@ export function SearchView({
 
   return (
     <div className="pane padded">
-      <h2 className="h-big">Suche</h2>
+      <h2 className="h-big">Search</h2>
       <div className="searchbox">
         <input
           type="search"
@@ -392,7 +395,7 @@ export function SearchView({
         />
       </div>
       <p className="h-sub">
-        {hits.length === 0 ? 'Nichts gefunden' : `${hits.length} Treffer`}
+        {hits.length === 0 ? 'Nothing found' : `${hits.length} ${hits.length === 1 ? 'result' : 'results'}`}
         {describe() !== '' && ` — ${describe()}`}
       </p>
 
@@ -406,11 +409,11 @@ export function SearchView({
             aria-pressed={filters.days === days}
             onClick={() => onToggleFilter({ days })}
           >
-            {days} Tage
+            {days} days
           </button>
         ))}
 
-        {dirs.length > 0 && <span className="filter-label">Ordner</span>}
+        {dirs.length > 0 && <span className="filter-label">Folder</span>}
         {dirs.slice(0, 8).map((dir) => (
           <button
             type="button"
@@ -469,7 +472,7 @@ export function SearchView({
 
         {active && (
           <button type="button" className="filter" onClick={onClearFilters}>
-            zurücksetzen
+            clear
           </button>
         )}
       </div>
@@ -538,13 +541,13 @@ export function SharesView({
 
   return (
     <div className="pane padded">
-      <h2 className="h-big">Freigaben</h2>
+      <h2 className="h-big">Sharing</h2>
       <p className="h-sub">
-        Jeder Vault gehört einer Person. Eine Freigabe öffnet einen Ordner daraus — und nur den.
+        Every vault belongs to one person. A share opens one folder out of it — and only that folder.
       </p>
 
       <section className="shares-block">
-        <h3 className="cap">Neu freigeben</h3>
+        <h3 className="cap">Share something</h3>
         <form className="share-form" onSubmit={submit}>
           <label>
             <span>Konto</span>
@@ -552,18 +555,18 @@ export function SharesView({
               value={grantee}
               onChange={(event) => setGrantee(event.target.value)}
               placeholder="benutzername"
-              aria-label="Konto, für das freigegeben wird"
+              aria-label="Account to share with"
               autoComplete="off"
             />
           </label>
 
           <label>
-            <span>Ordner</span>
+            <span>Folder</span>
             <input
               value={prefix}
               onChange={(event) => setPrefix(event.target.value)}
               placeholder="leer = ganzer Vault"
-              aria-label="Ordner, der freigegeben wird"
+              aria-label="Folder to share"
               list="share-dirs"
               autoComplete="off"
             />
@@ -576,7 +579,7 @@ export function SharesView({
 
           <label className="share-check">
             <input type="checkbox" checked={canWrite} onChange={(event) => setCanWrite(event.target.checked)} />
-            <span>darf auch schreiben</span>
+            <span>may also write</span>
           </label>
 
           <button type="submit" className="btn btn-solid" disabled={grantee.trim() === '' || busy}>
@@ -591,7 +594,7 @@ export function SharesView({
         */}
         <p className="share-note">
           {prefix.trim() === ''
-            ? 'Ohne Ordner wird der ganze Vault freigegeben — inklusive allem, was später dazukommt.'
+            ? 'With no folder the whole vault is shared — including anything added later.'
             : `Freigegeben wird „${prefix.trim()}" mit allen Unterordnern.`}
         </p>
       </section>
@@ -601,7 +604,7 @@ export function SharesView({
         {granted.length === 0 ? (
           <p className="empty">Niemand sieht in deinen Vault.</p>
         ) : (
-          <ShareTable shares={granted} column="Konto" nameOf={(share) => share.grantee} busy={busy} onRevoke={onRevoke} verb="Zurückziehen" />
+          <ShareTable shares={granted} column="Account" nameOf={(share) => share.grantee} busy={busy} onRevoke={onRevoke} verb="Withdraw" />
         )}
       </section>
 
@@ -641,7 +644,7 @@ function ShareTable({
           <thead>
             <tr>
               <th>{column}</th>
-              <th>Ordner</th>
+              <th>Folder</th>
               <th>Recht</th>
               <th className="n" />
             </tr>
@@ -655,7 +658,7 @@ function ShareTable({
                   {/* Neutral either way. Half the rows in a colour would read as
                       a warning about those grants specifically, and this table
                       is a list of facts, not of findings. */}
-                  <span className="pill p-tag">{share.canWrite ? 'lesen + schreiben' : 'nur lesen'}</span>
+                  <span className="pill p-tag">{share.canWrite ? 'read + write' : 'read only'}</span>
                 </td>
                 <td className="n">
                   <button type="button" className="btn" disabled={busy} onClick={() => onRevoke(share)}>

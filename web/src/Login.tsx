@@ -30,7 +30,7 @@ export function Login({ onSignedIn }: { onSignedIn: (user: User) => void }): Rea
       setError(
         caught instanceof ApiError && caught.status === 429
           ? 'Zu viele Versuche. Warte einen Moment.'
-          : 'Name oder Passwort stimmt nicht.',
+          : 'That name and password do not match.',
       );
       setBusy(false);
     }
@@ -56,7 +56,7 @@ export function Login({ onSignedIn }: { onSignedIn: (user: User) => void }): Rea
         </label>
 
         <label>
-          Passwort
+          Password
           <input
             type="password"
             value={password}
@@ -67,7 +67,7 @@ export function Login({ onSignedIn }: { onSignedIn: (user: User) => void }): Rea
         </label>
 
         <button type="submit" className="btn btn-solid" disabled={busy}>
-          {busy ? 'Einen Moment…' : 'Anmelden'}
+          {busy ? 'One moment…' : 'Sign in'}
         </button>
       </form>
     </div>

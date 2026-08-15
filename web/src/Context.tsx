@@ -68,10 +68,10 @@ export function ContextPanel({
     <section className="ctx" aria-label="Kontext">
       <>
             <section>
-              <h4>Verweist hierher · {backlinks.length}</h4>
+              <h4>Links here · {backlinks.length}</h4>
               {backlinks.length === 0 && (
                 <p className="empty" style={{ padding: '.2rem 0' }}>
-                  Niemand — diese Notiz ist verwaist.
+                  Nobody — this note is orphaned.
                 </p>
               )}
               {backlinks.map((link) => (
@@ -88,10 +88,10 @@ export function ContextPanel({
             </section>
 
             <section>
-              <h4>Verweist auf · {live.length}</h4>
+              <h4>Links out · {live.length}</h4>
               {live.length === 0 && (
                 <p className="empty" style={{ padding: '.2rem 0' }}>
-                  Noch keine Links. Tippe <code>[[</code> im Editor.
+                  No links yet. Type <code>[[</code> in the editor.
                 </p>
               )}
               {live.map((link) => (
@@ -109,7 +109,7 @@ export function ContextPanel({
 
             {dead.length > 0 && (
               <section>
-                <h4>Zeigt ins Leere · {dead.length}</h4>
+                <h4>Points nowhere · {dead.length}</h4>
                 {dead.map((link) => (
                   <div className="dead-link" key={`${link.targetRaw}:${link.offset}`}>
                     <span className="pill p-crit">{link.targetRaw}</span>
@@ -124,7 +124,7 @@ export function ContextPanel({
             )}
 
             <section>
-              <h4>Datei</h4>
+              <h4>File</h4>
               <span className="ref mono" style={{ fontSize: '.74rem', display: 'block' }}>
                 {notePath}
               </span>

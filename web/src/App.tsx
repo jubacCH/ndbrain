@@ -52,6 +52,40 @@ type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
 
 const SAVE_DEBOUNCE_MS = 500;
 
+/**
+ * Recently opened notes.
+ *
+ * Most navigation is return traffic rather than discovery, and the tree is the
+ * slowest possible way to reach a note you had open ten minutes ago. Kept in the
+ * browser, not on the server: it is a property of this screen, and syncing it
+ * would make two people sharing a vault steer each other's sidebar.
+ */
+const RECENTS_KEY = 'ndbrain.recents';
+const RECENTS_SHOWN = 5;
+
+interface Recent {
+  owner: string;
+  path: string;
+}
+
+function loadRecents(): Recent[] {
+  try {
+    const raw = window.localStorage.getItem(RECENTS_KEY);
+    return raw === null ? [] : (JSON.parse(raw) as Recent[]);
+  } catch {
+    return [];
+  }
+}
+
+function pushRecent(owner: string, path: string): void {
+  try {
+    const next = [{ owner, path }, ...loadRecents().filter((r) => !(r.owner === owner && r.path === path))];
+    window.localStorage.setItem(RECENTS_KEY, JSON.stringify(next.slice(0, 12)));
+  } catch {
+    // Private browsing, a full quota — none of it is worth an error message.
+  }
+}
+
 export function App(): React.JSX.Element {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
@@ -98,6 +132,8 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [error, setError] = useState<string | null>(null);
   /** Der Ordnerbaum überlagert die Fläche, statt ihr dauerhaft Platz wegzunehmen. */
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [treeFilter, setTreeFilter] = useState('');
+  const [recents, setRecents] = useState<Recent[]>(loadRecents);
 
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<{ owner: string; path: string; content: string } | null>(null);
@@ -142,7 +178,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   }, []);
 
   useEffect(() => {
-    void refreshTree().catch(() => setError('Der Server antwortet gerade nicht.'));
+    void refreshTree().catch(() => setError('The server is not answering right now.'));
     void refreshOverview().catch(() => undefined);
     void refreshShares().catch(() => undefined);
     // Der Graph wird gleich zu Beginn gebraucht: die Nachbarschaft rechts unten
@@ -182,7 +218,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       // recoverable if the person is told the file exists.
       if (result.conflictCopy !== undefined) {
         setError(
-          `Jemand anderes hat diese Notiz inzwischen geändert. Deine Fassung steht drin, ` +
+          `Somebody else changed this note in the meantime. Your version is the one in place, ` +
             `die andere liegt als „${result.conflictCopy}" daneben.`,
         );
       }
@@ -197,7 +233,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     } catch (caught) {
       setSaveState('failed');
       setError(
-        caught instanceof ApiError ? caught.message : 'Speichern fehlgeschlagen. Text bleibt im Editor.',
+        caught instanceof ApiError ? caught.message : 'Could not save. Your text stays in the editor.',
       );
     }
   }, [refreshTree]);
@@ -238,11 +274,13 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         setSaveState('saved');
         setDrawerOpen(false);
         setError(null);
+        pushRecent(owner, path);
+        setRecents(loadRecents());
       } catch {
         // A note in a share that has just been withdrawn is gone in exactly the
         // same way as a deleted one, and is told so in the same words. There is
         // nothing to distinguish here — that is the point of the design.
-        setError('Diese Notiz gibt es nicht mehr.');
+        setError('That note is gone.');
         void refreshTree();
       }
     },
@@ -262,7 +300,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         await refreshTree();
         await openNote(owner, path);
       } catch (caught) {
-        setError(caught instanceof ApiError ? caught.message : 'Anlegen fehlgeschlagen.');
+        setError(caught instanceof ApiError ? caught.message : 'Could not create that.');
       }
     },
     [openNote, refreshTree],
@@ -273,13 +311,13 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   // the note you are standing in; offering it here would mean a vault picker on
   // the most-used button in the application.
   const createNote = async (): Promise<void> => {
-    const name = window.prompt('Name der neuen Notiz (Ordner mit / möglich)');
+    const name = window.prompt('Name for the new note (use / for a folder)');
     if (name === null) return;
     await createNoteAt(user.id, name);
   };
 
   const createFolder = async (): Promise<void> => {
-    const name = window.prompt('Name des neuen Ordners (Unterordner mit / möglich)');
+    const name = window.prompt('Name for the new folder (use / to nest)');
     if (name === null || name.trim() === '') return;
 
     try {
@@ -287,7 +325,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       await refreshTree();
       setError(null);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Ordner anlegen fehlgeschlagen.');
+      setError(caught instanceof ApiError ? caught.message : 'Could not create that folder.');
     }
   };
 
@@ -297,16 +335,16 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
    * and rewriting a dozen files is a big thing to have happen without a word.
    */
   const renameFolder = async (from: string): Promise<void> => {
-    const to = window.prompt('Ordner umbenennen oder verschieben (neuer Pfad)', from);
+    const to = window.prompt('Rename or move this folder (new path)', from);
     if (to === null || to.trim() === '' || to.trim() === from) return;
 
     try {
       const result = await api.renameFolder(from, to.trim());
       await refreshTree();
       setError(
-        `„${from}" → „${result.folder}": ${result.movedNotes.length} Notizen verschoben` +
+        `“${from}” → “${result.folder}”: ${result.movedNotes.length} notes moved` +
           (result.updatedLinks.length > 0
-            ? `, Verweise in ${result.updatedLinks.length} Notizen mitgezogen.`
+            ? `, links updated in ${result.updatedLinks.length} notes.`
             : '.'),
       );
       // The open note may have moved with the folder.
@@ -314,7 +352,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         await openNote(user.id, `${result.folder}${open.note.path.slice(from.length)}`);
       }
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Umbenennen fehlgeschlagen.');
+      setError(caught instanceof ApiError ? caught.message : 'Could not rename that.');
     }
   };
 
@@ -353,7 +391,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 
   const onQueryChange = (value: string): void => {
     setQuery(value);
-    void runSearch(value, filters).catch(() => setError('Suche fehlgeschlagen.'));
+    void runSearch(value, filters).catch(() => setError('Search failed.'));
   };
 
   const toggleFilter = (patch: Filters): void => {
@@ -367,7 +405,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     // on screen.
     if (next.prop === undefined) delete next.propValue;
     setFilters(next);
-    void runSearch(query, next).catch(() => setError('Suche fehlgeschlagen.'));
+    void runSearch(query, next).catch(() => setError('Search failed.'));
 
     if (next.prop !== undefined && next.prop !== filters.prop) {
       api
@@ -453,6 +491,27 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
    * sind ein Knäuel, und die Frage beim Schreiben ist ohnehin eine andere —
    * nicht „wie sieht mein Vault aus", sondern „woran hängt das hier".
    */
+  /**
+   * The recents list resolved against the notes that actually exist.
+   *
+   * Resolving rather than trusting what was stored: a note that has been
+   * deleted, renamed, or un-shared since it was last opened simply drops out of
+   * the list instead of sitting there as a row that errors when clicked.
+   */
+  const recentRows = useMemo((): NoteRow[] => {
+    const byKey = new Map(notes.map((note) => [refKey(note.owner, note.path), note]));
+    const out: NoteRow[] = [];
+    for (const recent of recents) {
+      const note = byKey.get(refKey(recent.owner, recent.path));
+      // The note you are looking at does not need a shortcut to itself.
+      if (note === undefined) continue;
+      if (open !== null && open.owner === note.owner && open.note.path === note.path) continue;
+      out.push(note);
+      if (out.length === RECENTS_SHOWN) break;
+    }
+    return out;
+  }, [recents, notes, open]);
+
   const local = useMemo((): GraphData | null => {
     if (graph === null || open === null) return null;
 
@@ -496,14 +555,14 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     let extra: { tag?: string; dir?: string } = {};
 
     if (action === 'move') {
-      const dir = window.prompt(`${paths.length} Notizen verschieben nach (leer = Vault-Wurzel)`, 'Archiv');
+      const dir = window.prompt(`Move ${paths.length} notes to (empty = top of the vault)`, 'Archive');
       if (dir === null) return;
       extra = { dir };
     } else if (action === 'tag') {
-      const tag = window.prompt(`${paths.length} Notizen taggen mit`);
+      const tag = window.prompt(`Tag ${paths.length} notes with`);
       if (tag === null || tag.trim() === '') return;
       extra = { tag };
-    } else if (!window.confirm(`${paths.length} Notizen wirklich löschen? Das lässt sich nicht rückgängig machen.`)) {
+    } else if (!window.confirm(`Delete ${paths.length} notes? This cannot be undone.`)) {
       return;
     }
 
@@ -527,7 +586,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         );
       }
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Sammelaktion fehlgeschlagen.');
+      setError(caught instanceof ApiError ? caught.message : 'That bulk action failed.');
     } finally {
       setBulkBusy(false);
     }
@@ -548,7 +607,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       await refreshShares();
       setError(null);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Freigeben fehlgeschlagen.');
+      setError(caught instanceof ApiError ? caught.message : 'Could not share that.');
     } finally {
       setShareBusy(false);
     }
@@ -556,7 +615,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 
   const revokeShare = async (share: Share): Promise<void> => {
     const own = share.owner === user.id;
-    const what = share.prefix === '' ? 'den ganzen Vault' : `„${share.prefix}"`;
+    const what = share.prefix === '' ? 'the whole vault' : `“${share.prefix}”`;
     const question = own
       ? `${share.grantee} den Zugriff auf ${what} entziehen?`
       : `Zugriff auf ${what} von ${share.owner} aufgeben?`;
@@ -571,7 +630,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       await refreshTree();
       setError(null);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Zurückziehen fehlgeschlagen.');
+      setError(caught instanceof ApiError ? caught.message : 'Could not withdraw that.');
     } finally {
       setShareBusy(false);
     }
@@ -586,41 +645,86 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   return (
     <div className="app" data-drawer={drawerOpen} data-wide={view !== 'note'}>
       {/*
-        Alles gleichzeitig statt hintereinander. Reiter sind Moduswechsel: sie
-        verstecken das meiste hinter einem Klick. Ein Werkzeug, das den ganzen
-        Tag offen ist, zeigt lieber alles auf einmal — links wohin, in der Mitte
-        woran, rechts womit es zusammenhängt.
+        Everything at once rather than one thing at a time. Tabs are a mode
+        switch: they hide most of the tool behind a click. Something that stays
+        open all day would rather show it all — on the left where, in the middle
+        what, on the right what it connects to.
       */}
       <nav className="nav" aria-label="Navigation">
         <div className="nav-head">
           <span className="nav-who">{user.displayName}</span>
-          <button type="button" className="nav-x" onClick={() => setDrawerOpen(false)} aria-label="Menü schliessen">
+          <button type="button" className="nav-x" onClick={() => setDrawerOpen(false)} aria-label="Close menu">
             ✕
           </button>
         </div>
 
         <div className="nav-actions">
-          <button type="button" onClick={() => void createNote()}>Neue Notiz</button>
-          <button type="button" onClick={() => void createFolder()}>Ordner</button>
+          <button type="button" onClick={() => void createNote()}>New note</button>
+          <button type="button" onClick={() => void createFolder()}>Folder</button>
         </div>
 
-        <div className="nav-views" role="group" aria-label="Ansicht">
+        <div className="nav-views" role="group" aria-label="View">
           <button type="button" aria-current={view === 'note'} onClick={() => void showView('note')}>
-            Schreiben
+            Write
           </button>
           <button type="button" aria-current={view === 'overview'} onClick={() => void showView('overview')}>
-            Übersicht
+            Overview
           </button>
           <button type="button" aria-current={view === 'brain'} onClick={() => void showView('brain')}>
-            Ganzes Netz
+            Whole network
           </button>
           <button type="button" aria-current={view === 'tidy'} onClick={() => void showView('tidy')}>
-            Aufräumen
+            Tidy up
           </button>
           <button type="button" aria-current={view === 'search'} onClick={() => void showView('search')}>
-            Suche
+            Search
           </button>
         </div>
+
+        {/*
+          Filtering the tree, not searching the text — this only ever looks at
+          names, answers on every keystroke, and never leaves the sidebar. Full
+          text search is its own view, and ⌘K is for jumping. Three ways to find
+          something sounds like two too many, but they answer different
+          questions: where is it filed, where have I read this word, and take me
+          to the one I am already thinking of.
+        */}
+        <div className="nav-find">
+          <input
+            type="search"
+            value={treeFilter}
+            placeholder="Filter by name…"
+            aria-label="Filter the tree by name"
+            onChange={(event) => setTreeFilter(event.target.value)}
+          />
+          {treeFilter !== '' && (
+            <button type="button" onClick={() => setTreeFilter('')} aria-label="Clear filter">
+              ✕
+            </button>
+          )}
+        </div>
+
+        {/* Return traffic, not discovery — hidden while filtering, when the
+            answer on screen is the one you just typed for. */}
+        {treeFilter === '' && recentRows.length > 0 && (
+          <div className="nav-recent">
+            <p className="cap">Recent</p>
+            <ul>
+              {recentRows.map((note) => (
+                <li key={refKey(note.owner, note.path)}>
+                  <button
+                    type="button"
+                    className="node"
+                    aria-current={open !== null && open.owner === note.owner && open.note.path === note.path}
+                    onClick={() => void openNote(note.owner, note.path)}
+                  >
+                    <span className="nm">{note.title}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="nav-tree">
           <Tree
@@ -629,6 +733,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             received={received}
             selected={open === null ? null : { owner: open.owner, path: open.note.path }}
             findings={findings}
+            filter={treeFilter.trim().toLowerCase()}
             onSelect={(owner, path) => {
               void openNote(owner, path);
               setDrawerOpen(false);
@@ -641,24 +746,27 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           <div className="nav-health">
             <button type="button" onClick={() => void showView('tidy')}>
               <i style={{ background: 'var(--crit)' }} />
-              verwaist <b>{tidy.orphans.length}</b>
+              orphaned <b>{tidy.orphans.length}</b>
             </button>
-            <button type="button" onClick={() => void showView('tidy')}>
-              <i style={{ background: 'var(--warn)' }} />
-              ungetaggt <b>{tidy.untagged.length}</b>
-            </button>
+            {/* Withheld while nothing is tagged — see Queries.tagsInUse. */}
+            {overview?.counts.tagsInUse === true && (
+              <button type="button" onClick={() => void showView('tidy')}>
+                <i style={{ background: 'var(--warn)' }} />
+                untagged <b>{tidy.untagged.length}</b>
+              </button>
+            )}
             {tidy.deadLinks.length > 0 && (
               <button type="button" onClick={() => void showView('tidy')}>
                 <i style={{ background: 'var(--crit)' }} />
-                ins Leere <b>{tidy.deadLinks.length}</b>
+                broken <b>{tidy.deadLinks.length}</b>
               </button>
             )}
           </div>
         )}
 
         <div className="nav-foot">
-          <button type="button" onClick={() => void showView('shares')}>Freigaben</button>
-          <button type="button" onClick={() => void signOut()}>Abmelden</button>
+          <button type="button" onClick={() => void showView('shares')}>Sharing</button>
+          <button type="button" onClick={() => void signOut()}>Sign out</button>
         </div>
       </nav>
 
@@ -668,11 +776,11 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             type="button"
             className="bar-menu"
             onClick={() => setDrawerOpen((o) => !o)}
-            aria-label="Menü"
+            aria-label="Menu"
           >
             ☰
           </button>
-          <span className="cur mono">{view === 'note' ? open?.note.path ?? 'Keine Notiz' : titleOfView(view)}</span>
+          <span className="cur mono">{view === 'note' ? open?.note.path ?? 'No note open' : titleOfView(view)}</span>
           {view === 'note' && open !== null && open.owner !== user.id && (
             <span className="pill p-info">
               {open.owner} · {open.canWrite ? 'schreiben' : 'nur lesen'}
@@ -697,7 +805,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           {view === 'note' &&
             (open === null ? (
               <p className="empty" style={{ padding: '2rem' }}>
-                Wähle links eine Notiz, oder drück <kbd>⌘K</kbd> und tipp einen Titel.
+                Pick a note on the left, or press <kbd>⌘K</kbd> and type a title.
               </p>
             ) : (
               <Editor
@@ -720,14 +828,14 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               <div className="brainwrap">
                 <Brain data={graph} events={pulse} onOpen={(owner, path) => void openNote(owner, path)} />
                 <div className="brainlegend">
-                  <span><i style={{ background: '#7fe9f0' }} />gelesen</span>
-                  <span><i style={{ background: '#ffb86b' }} />geschrieben</span>
+                  <span><i style={{ background: '#7fe9f0' }} />read</span>
+                  <span><i style={{ background: '#ffb86b' }} />written</span>
                 </div>
                 <div className="brainfoot">
-                  {graph.nodes.length} Notizen · {graph.edges.length} Verweise ·{' '}
+                  {graph.nodes.length} notes · {graph.edges.length} links ·{' '}
                   {graph.nodes.filter((n) => n.links === 0).length} ohne Verbindung
                   <span className="sep" />
-                  Doppelklick öffnet die Notiz
+                  Double-click opens the note
                 </div>
               </div>
             ))}
@@ -786,12 +894,12 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       </main>
 
       {/*
-        Die rechte Spalte gehört zur offenen Notiz und erscheint nur mit ihr.
-        Oben, was diese Notiz ist und woran sie hängt; unten ihre Nachbarschaft
-        als Bild — nicht das ganze Netz, das wäre in dieser Grösse ein Knäuel.
+        The right column belongs to the open note and appears only with it.
+        Above, what this note is and what it hangs on; below, its neighbourhood
+        as a picture — not the whole network, which at this size would be a knot.
       */}
       {view === 'note' && open !== null && (
-        <aside className="side" aria-label="Zur offenen Notiz">
+        <aside className="side" aria-label="About the open note">
           <div className="side-info">
             <ContextPanel
               note={{ owner: open.owner, path: open.note.path }}
@@ -805,16 +913,16 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 
           <div className="side-graph">
             <div className="side-graph-head">
-              <span>Nachbarschaft</span>
-              <button type="button" onClick={() => void showView('brain')} title="Ganzes Netz zeigen">
-                ganzes Netz
+              <span>Neighbourhood</span>
+              <button type="button" onClick={() => void showView('brain')} title="Show the whole network">
+                whole network
               </button>
             </div>
             {local === null ? (
               <p className="empty small">Wird geladen…</p>
             ) : local.nodes.length <= 1 ? (
               <p className="empty small">
-                Diese Notiz hat keine Verweise. Tipp <code>[[</code> im Text, um sie zu verbinden.
+                No links yet. Type <code>[[</code> in the text to connect this note.
               </p>
             ) : (
               <Brain data={local} events={pulse} onOpen={(owner, path) => void openNote(owner, path)} />
@@ -837,9 +945,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 function titleOfView(view: string): string {
   return (
     {
-      overview: 'Übersicht',
-      brain: 'Ganzes Netz',
-      tidy: 'Aufräumen',
+      overview: 'Overview',
+      brain: 'Whole network',
+      tidy: 'Tidy up',
       search: 'Suche',
       shares: 'Freigaben',
     }[view] ?? ''
@@ -859,9 +967,9 @@ function topLevelDirs(notes: NoteRow[]): string[] {
 function SaveIndicator({ state }: { state: SaveState }): React.JSX.Element {
   const label = {
     saved: 'Gespeichert',
-    dirty: 'Nicht gespeichert',
-    saving: 'Speichert…',
-    failed: 'Speichern fehlgeschlagen',
+    dirty: 'Unsaved',
+    saving: 'Saving…',
+    failed: 'Save failed',
   }[state];
 
   return (
