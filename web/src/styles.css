@@ -32,7 +32,8 @@
   --info: #2159c4;
   --info-bg: #e3eafa;
 
-  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font: 'Segoe UI Variable Text', ui-sans-serif, system-ui, -apple-system,
+    'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, 'Roboto Mono', monospace;
   --r: 6px;
 
@@ -2384,4 +2385,84 @@ body {
 
 .side-info .ctx > section > * {
   max-width: 100%;
+}
+
+/* ===================== TYPOGRAFIE, ENTTECHNISIERT =====================
+ *
+ * Der Terminal-Eindruck kam nicht von der Schriftart, sondern von zwei
+ * Gewohnheiten: Monospace für alles, was nach Daten aussieht, und gesperrte
+ * Grossbuchstaben als Beschriftung. Beides zusammen liest sich wie eine Konsole.
+ *
+ * Monospace bleibt genau dort, wo die Zeichenbreite etwas bedeutet — in Code.
+ * Ein Dateipfad ist kein Code, er ist ein Name.
+ */
+
+body {
+  font-size: 15.5px;
+  line-height: 1.58;
+  letter-spacing: -0.005em;
+}
+
+/* Beschriftungen: normal geschrieben statt geschrien. */
+.cap,
+.ctx h4,
+.side-graph-head,
+.vault-head,
+.dgrp,
+.tile .cap,
+.filter-label,
+thead th {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-family: var(--font) !important;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.side-graph-head {
+  font-size: 0.72rem;
+}
+
+/* Pfade in der Oberfläche sind Namen, keine Befehle. */
+.main-bar .cur,
+.main-bar .cur.mono,
+.side-info .ref small,
+.side-info .ctx span.ref,
+.hit .p,
+.hit .path,
+.palette-item .p,
+.cmd .r .k {
+  font-family: var(--font) !important;
+  letter-spacing: 0 !important;
+}
+
+.main-bar .cur {
+  font-size: 0.78rem;
+}
+
+.side-info .ref small {
+  font-size: 0.68rem !important;
+}
+
+/* Zahlen bleiben tabellarisch — dort trägt gleiche Breite tatsächlich etwas bei,
+   ohne dass die Schrift wechseln muss. */
+.nav-health b,
+.finding-n,
+.big,
+td.n,
+.fbtn .n {
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Überschriften etwas grosszügiger und weicher. */
+.h-big {
+  letter-spacing: -0.03em;
+  font-weight: 650;
+}
+
+.nav-views button,
+.nav-actions button {
+  letter-spacing: -0.005em;
 }
