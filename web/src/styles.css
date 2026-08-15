@@ -2490,3 +2490,124 @@ td.n,
   font-weight: 400 !important;
   color: inherit !important;
 }
+
+/* ===================== NAVIGATION, ORIENTIERBAR =====================
+ *
+ * Drei Gewohnheiten, die den Baum auch bei vielen Ordnern lesbar halten: er
+ * startet zu, Tippen filtert, und zuletzt Geöffnetes steht oben. Keine davon
+ * fasst die Ablage an — die Ordner auf der Platte bleiben, wie sie sind.
+ */
+
+.nav-find {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.5rem 0.6rem 0.4rem;
+}
+.nav-find input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.32rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-soft);
+  color: var(--ink);
+}
+.nav-find input::placeholder {
+  color: var(--ink-3);
+}
+.nav-find input:focus {
+  outline: none;
+  border-color: rgba(90, 190, 205, 0.55);
+  background: var(--glass-hi);
+}
+.nav-find input::-webkit-search-cancel-button {
+  display: none;
+}
+.nav-find > button {
+  flex: none;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--ink-3);
+  font-size: 0.7rem;
+  padding: 0.2rem 0.25rem;
+  border-radius: 6px;
+}
+.nav-find > button:hover {
+  color: var(--ink);
+  background: var(--glass-soft);
+}
+
+.nav-recent {
+  padding: 0.1rem 0.4rem 0.45rem;
+  border-bottom: 1px solid var(--glass-line);
+}
+.nav-recent .cap {
+  padding: 0 0.35rem 0.15rem;
+  margin: 0;
+}
+.nav-recent ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Die Zahl am zugeklappten Ordner sagt, was drin steckt — offen wäre sie
+   Doppelung, weil du die Zeilen dann siehst. */
+.node .cnt {
+  margin-left: auto;
+  padding-left: 0.5rem;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  flex: none;
+}
+.node[aria-current='true'] .cnt {
+  color: inherit;
+  opacity: 0.7;
+}
+
+/* Trefferliste: flach, jeder Treffer mit seinem Ablageort darunter. Ein
+   gefilterter *Baum* zwingt dich, weiter die Hierarchie zu lesen. */
+.tree-hits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.node-hit {
+  flex-direction: column;
+  align-items: flex-start !important;
+  gap: 0.05rem;
+  padding-top: 0.28rem;
+  padding-bottom: 0.28rem;
+}
+.node-hit .where {
+  font-size: 0.66rem;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.node-hit[aria-current='true'] .where {
+  color: inherit;
+  opacity: 0.75;
+}
+
+/* Three columns once there is room for them.
+ *
+ * Two fixed columns meant a nearly empty tile — no open tasks, no tags — still
+ * claimed half the width, and the grid ran out of content halfway down the
+ * screen. The tiles are unequal on purpose (see OverviewView), so what they need
+ * is a denser arrangement, not a bigger one. */
+@media (min-width: 78rem) {
+  .bento {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .tile-wide {
+    grid-column: 1 / -1;
+  }
+}

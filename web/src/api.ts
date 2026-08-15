@@ -93,7 +93,17 @@ export interface ActivityRow {
 }
 
 export interface Overview {
-  counts: { notes: number; orphans: number; untagged: number; deadLinks: number; stale: number };
+  counts: {
+    notes: number;
+    orphans: number;
+    untagged: number;
+    deadLinks: number;
+    stale: number;
+    /** Distinct notes affected — not the sum of the four above, which overlap. */
+    attention: number;
+    /** False where no note carries a tag, which makes "untagged" meaningless. */
+    tagsInUse: boolean;
+  };
   recent: NoteRow[];
   tasks: TaskRow[];
   tags: Array<{ tag: string; count: number }>;

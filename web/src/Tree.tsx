@@ -15,13 +15,45 @@
  * `Homelab` somebody shared with you and your own `Homelab` are different
  * places, and merging them would make "delete this folder" ambiguous at exactly
  * the wrong moment. Each vault is its own labelled section, your own first.
+ *
+ * Three habits keep it legible as a vault grows, none of which touch the files:
+ *
+ * - It starts closed. Measured on a real vault, 72% of notes hung under a single
+ *   branch, so opening everything by default meant scrolling a long alphabetical
+ *   list to reach anything.
+ * - Typing filters. Past a few hundred folders nobody scrolls to a note, and a
+ *   filtered *tree* still makes you read the hierarchy — so matches are listed
+ *   flat, each under its own path.
+ * - Sort prefixes are hidden. `00_`, `20_` and friends exist to make a dumb file
+ *   browser sort correctly; a tool that sorts deliberately does not need to read
+ *   them out. Display only — the path on disk is untouched, and links keep
+ *   resolving against the real name.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { refKey, type NoteRow, type Share } from './api';
 
 export type Finding = 'crit' | 'warn';
+
+/**
+ * The name without its sort prefix.
+ *
+ * Deliberately narrow: digits, one separator, then a character that is not a
+ * digit. `21_Homelab` loses its prefix; `2026-07-27` and `100 Ideen` keep every
+ * character, because those digits are the name rather than a sorting device.
+ */
+export function displayName(name: string): string {
+  const stripped = name.replace(/^\d{1,3}[_\-.]\s*(?=\D)/, '');
+  return stripped === '' ? name : stripped;
+}
+
+/** A path with each segment de-prefixed, for the breadcrumb under a hit. */
+export function displayPath(path: string): string {
+  const segments = path.split('/');
+  segments.pop();
+  return segments.map(displayName).join(' › ');
+}
 
 export interface TreeProps {
   notes: NoteRow[];
@@ -31,6 +63,8 @@ export interface TreeProps {
   received: Share[];
   selected: { owner: string; path: string } | null;
   findings: Map<string, Finding>;
+  /** Lower-cased already; empty means show the tree rather than a result list. */
+  filter: string;
   onSelect: (owner: string, path: string) => void;
   /**
    * Offered on your own folders only. A folder move relocates everything under
@@ -69,6 +103,8 @@ function buildTree(notes: NoteRow[]): Folder {
     folder.notes.push(note);
   }
 
+  // Sorted on the real name, so a vault that uses numeric prefixes keeps the
+  // order they were chosen for even though the digits are not shown.
   const sort = (folder: Folder): void => {
     folder.folders.sort((a, b) => a.name.localeCompare(b.name));
     folder.notes.sort((a, b) => a.title.localeCompare(b.title));
@@ -89,9 +125,33 @@ function buildTree(notes: NoteRow[]): Folder {
  */
 function writeLabel(owner: string, received: Share[]): string | null {
   const mine = received.filter((share) => share.owner === owner);
-  if (mine.length === 0 || mine.every((share) => !share.canWrite)) return 'nur lesen';
-  if (mine.every((share) => share.canWrite)) return 'schreiben';
-  return 'teils schreiben';
+  if (mine.length === 0 || mine.every((share) => !share.canWrite)) return 'read only';
+  if (mine.every((share) => share.canWrite)) return 'can write';
+  return 'partly writable';
+}
+
+const OPEN_KEY = 'ndbrain.openFolders';
+
+function loadOpen(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(OPEN_KEY);
+    return new Set(raw === null ? [] : (JSON.parse(raw) as string[]));
+  } catch {
+    return new Set();
+  }
+}
+
+/** Every ancestor folder of a note, so the selection can reveal itself. */
+function ancestors(owner: string, path: string): string[] {
+  const segments = path.split('/');
+  segments.pop();
+  const out: string[] = [];
+  let prefix = '';
+  for (const segment of segments) {
+    prefix = prefix === '' ? segment : `${prefix}/${segment}`;
+    out.push(refKey(owner, prefix));
+  }
+  return out;
 }
 
 export function Tree({
@@ -100,6 +160,7 @@ export function Tree({
   received,
   selected,
   findings,
+  filter,
   onSelect,
   onRenameFolder,
 }: TreeProps): React.JSX.Element {
@@ -124,10 +185,34 @@ export function Tree({
     return [{ owner: self, rows: own }, ...foreign];
   }, [notes, self]);
 
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Which folders are *open*, not which are closed: the default has to survive
+  // a vault growing a new folder, and an unknown folder should start shut.
+  const [open, setOpen] = useState<Set<string>>(loadOpen);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(OPEN_KEY, JSON.stringify([...open]));
+    } catch {
+      // A vault that cannot remember which folders were open is still usable.
+    }
+  }, [open]);
+
+  // Opening a note from search, from a link or from the palette reveals it in
+  // the tree. Without this the selected row would sit inside a shut folder and
+  // the tree would look like it had lost track of where you are.
+  useEffect(() => {
+    if (selected === null) return;
+    const needed = ancestors(selected.owner, selected.path);
+    setOpen((previous) => {
+      if (needed.every((key) => previous.has(key))) return previous;
+      const next = new Set(previous);
+      for (const key of needed) next.add(key);
+      return next;
+    });
+  }, [selected]);
 
   const toggle = (key: string): void => {
-    setCollapsed((previous) => {
+    setOpen((previous) => {
       const next = new Set(previous);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -135,63 +220,66 @@ export function Tree({
     });
   };
 
-  const renderFolder = (owner: string, folder: Folder): React.JSX.Element[] => {
-    const open = !collapsed.has(refKey(owner, folder.path));
-
-    return [
-      ...folder.folders.map((child) => {
-        const key = refKey(owner, child.path);
-        return (
-          <li key={`d:${key}`}>
-            <div className="node-row">
-              <button type="button" className="node" onClick={() => toggle(key)}>
-                <span className="tw">{collapsed.has(key) ? '▸' : '▾'}</span>
-                <span className="nm">{child.name}</span>
-              </button>
-              {owner === self && (
-                <button
-                  type="button"
-                  className="node-act"
-                  title={`„${child.name}" umbenennen oder verschieben`}
-                  aria-label={`${child.name} umbenennen`}
-                  onClick={() => onRenameFolder(child.path)}
-                >
-                  ✎
-                </button>
-              )}
-            </div>
-            {!collapsed.has(key) && <ul>{renderFolder(owner, child)}</ul>}
-          </li>
-        );
-      }),
-      ...(open
-        ? folder.notes.map((note) => {
-            const key = refKey(note.owner, note.path);
-            const finding = findings.get(key);
-            return (
-              <li key={`f:${key}`}>
-                <button
-                  type="button"
-                  className="node"
-                  aria-current={selected !== null && selected.owner === note.owner && selected.path === note.path}
-                  onClick={() => onSelect(note.owner, note.path)}
-                >
-                  {finding !== undefined && <span className={`st st-${finding}`} />}
-                  <span className="tw" />
-                  <span className="nm">{note.title}</span>
-                </button>
-              </li>
-            );
-          })
-        : []),
-    ];
+  const noteRow = (note: NoteRow, showPath: boolean): React.JSX.Element => {
+    const key = refKey(note.owner, note.path);
+    const finding = findings.get(key);
+    const where = displayPath(note.path);
+    return (
+      <li key={`f:${key}`}>
+        <button
+          type="button"
+          className={showPath ? 'node node-hit' : 'node'}
+          aria-current={selected !== null && selected.owner === note.owner && selected.path === note.path}
+          onClick={() => onSelect(note.owner, note.path)}
+        >
+          {finding !== undefined && <span className={`st st-${finding}`} />}
+          {!showPath && <span className="tw" />}
+          <span className="nm">{note.title}</span>
+          {showPath && where !== '' && <span className="where">{where}</span>}
+        </button>
+      </li>
+    );
   };
+
+  const renderFolder = (owner: string, folder: Folder): React.JSX.Element[] => [
+    ...folder.folders.map((child) => {
+      const key = refKey(owner, child.path);
+      const isOpen = open.has(key);
+      const count = countNotes(child);
+      return (
+        <li key={`d:${key}`}>
+          <div className="node-row">
+            <button type="button" className="node" onClick={() => toggle(key)} aria-expanded={isOpen}>
+              <span className="tw">{isOpen ? '▾' : '▸'}</span>
+              <span className="nm">{displayName(child.name)}</span>
+              {/* Shown only while shut: once it is open you can see them. */}
+              {!isOpen && <span className="cnt">{count}</span>}
+            </button>
+            {owner === self && (
+              <button
+                type="button"
+                className="node-act"
+                title={`Rename or move “${displayName(child.name)}”`}
+                aria-label={`Rename ${displayName(child.name)}`}
+                onClick={() => onRenameFolder(child.path)}
+              >
+                ✎
+              </button>
+            )}
+          </div>
+          {isOpen && <ul>{renderFolder(owner, child)}</ul>}
+        </li>
+      );
+    }),
+    ...folder.notes.map((note) => noteRow(note, false)),
+  ];
 
   return (
     <>
       {vaults.map(({ owner, rows }) => {
         const isOwn = owner === self;
-        const root = buildTree(rows);
+        const hits =
+          filter === '' ? [] : rows.filter((note) => matches(note, filter)).slice(0, 60);
 
         return (
           <section className="vault" key={owner} data-foreign={!isOwn}>
@@ -202,7 +290,7 @@ export function Tree({
             */}
             {!isOwn && (
               <h3 className="vault-head">
-                <span className="vault-owner mono">{owner}</span>
+                <span className="vault-owner">{owner}</span>
                 {/* Neutral, not coloured: the right is a fact about the folder,
                     not a finding. Colour in this interface always means
                     "something is wrong here" or "this is not yours", and the
@@ -213,14 +301,34 @@ export function Tree({
 
             {rows.length === 0 ? (
               <p className="empty">
-                {isOwn ? 'Noch keine Notizen. Leg mit „Neu" die erste an.' : 'Nichts freigegeben.'}
+                {isOwn ? 'No notes yet. Start one with “New note”.' : 'Nothing shared.'}
               </p>
+            ) : filter !== '' ? (
+              hits.length === 0 ? (
+                isOwn ? <p className="empty">No match.</p> : null
+              ) : (
+                <ul className="tree tree-hits">{hits.map((note) => noteRow(note, true))}</ul>
+              )
             ) : (
-              <ul className="tree">{renderFolder(owner, root)}</ul>
+              <ul className="tree">{renderFolder(owner, buildTree(rows))}</ul>
             )}
           </section>
         );
       })}
     </>
   );
+}
+
+function countNotes(folder: Folder): number {
+  return folder.notes.length + folder.folders.reduce((sum, child) => sum + countNotes(child), 0);
+}
+
+/**
+ * Matched against the title and the path, so both "proxmox" and "homelab" find
+ * `21_Homelab/Proxmox Cluster.md`. The path is matched with its prefixes
+ * stripped as well, so typing what you *see* works.
+ */
+function matches(note: NoteRow, filter: string): boolean {
+  const haystack = `${note.title} ${note.path} ${displayPath(note.path)}`.toLowerCase();
+  return filter.split(/\s+/).every((word) => haystack.includes(word));
 }

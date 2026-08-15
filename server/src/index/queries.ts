@@ -445,6 +445,42 @@ export class Queries {
       .map(toNoteRow);
   }
 
+  /**
+   * Whether tagging is a convention in this vault at all.
+   *
+   * "Untagged" is only a finding where tags mean something. A vault that has
+   * never used one is not sixty notes behind — it simply files differently, and
+   * reporting every note as a defect says more about the tool's assumptions than
+   * about the vault. The finding switches itself on the moment one note carries
+   * a tag, so nothing has to be configured and nothing stays hidden once the
+   * convention exists.
+   */
+  tagsInUse(view: Viewable): boolean {
+    const scope = scopeSql('t', 'path', view);
+    return this.#db.all(`SELECT 1 FROM tags t WHERE ${scope.sql} LIMIT 1`, ...scope.params).length > 0;
+  }
+
+  /**
+   * How many notes need attention — counted as notes, not as findings.
+   *
+   * Adding the four finding counts together overstates the total, because one
+   * note is routinely orphaned *and* untagged *and* stale; on this vault that
+   * arithmetic produced "100 need attention" against 60 notes, a number no
+   * amount of tidying could ever bring down to zero. What a person wants to know
+   * is how many notes they would have to open, so the sets are unioned by path.
+   *
+   * Dead links are counted at their source: the note holding the broken link is
+   * the one that has to be edited.
+   */
+  attentionCount(view: Viewable): number {
+    const paths = new Set<string>();
+    for (const note of this.orphans(view)) paths.add(note.path);
+    for (const note of this.stale(view)) paths.add(note.path);
+    for (const link of this.deadLinks(view)) paths.add(link.source);
+    if (this.tagsInUse(view)) for (const note of this.untagged(view)) paths.add(note.path);
+    return paths.size;
+  }
+
   openTasks(view: Viewable): TaskRow[] {
     const scope = scopeSql('t', 'path', view);
     return this.#db
