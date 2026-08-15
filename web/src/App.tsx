@@ -35,7 +35,7 @@ import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { Login } from './Login';
 import { Palette } from './Palette';
-import { Tree, type Finding } from './Tree';
+import { Tree, displayPath, type Finding } from './Tree';
 import { OverviewView, SearchView, SharesView, TidyView } from './Views';
 
 export interface Filters {
@@ -125,12 +125,12 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [propValues, setPropValues] = useState<Array<{ value: string; count: number }>>([]);
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [pulse, setPulse] = useState<PulseEvent[]>([]);
-  /** Zeitstempel des Servers, ab dem das nächste Mal gefragt wird. */
+  /** The server's timestamp to ask from next time. */
   const pulseSince = useRef<number | undefined>(undefined);
   // Bumped after every successful save so the context panel re-reads the links.
   const [linksVersion, setLinksVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  /** Der Ordnerbaum überlagert die Fläche, statt ihr dauerhaft Platz wegzunehmen. */
+  /** On a narrow screen the tree overlays the page rather than keeping a column. */
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [treeFilter, setTreeFilter] = useState('');
   const [recents, setRecents] = useState<Recent[]>(loadRecents);
@@ -157,10 +157,10 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     // only, so every key here carries the caller as the owner — a marker keyed
     // by path alone would light up a note of the same name in a shared vault.
     const map = new Map<string, Finding>();
-    // `untagged` steht bewusst nicht im Baum. Es trifft in einem Vault, in dem
-    // Tags keine Gewohnheit sind, auf praktisch jede Notiz — und eine Marke, die
-    // an jeder Zeile steht, zeigt nirgends mehr etwas an. Sie bleibt in der
-    // Aufräum-Ansicht und in der Leiste unten, wo eine Zahl das Richtige ist.
+    // `untagged` is deliberately absent from the tree. In a vault where tagging
+    // is not a habit it matches nearly every note, and a marker on every row
+    // points at nothing. It stays in the tidy view and in the strip below, where
+    // a number is the right shape for it.
     for (const row of tidyData.stale) map.set(refKey(user.id, row.path), 'warn');
     for (const row of tidyData.orphans) map.set(refKey(user.id, row.path), 'crit');
     for (const row of tidyData.deadLinks) map.set(refKey(user.id, row.source), 'crit');
@@ -450,12 +450,12 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   }, [notes]);
 
   /**
-   * Der Puls: alle zwei Sekunden fragen, was passiert ist.
+   * The pulse: ask every two seconds what happened.
    *
-   * Nur während die Gehirn-Ansicht offen ist. Im Hintergrund weiterzufragen
-   * hiesse, den Server für etwas zu beschäftigen, das niemand sieht — und die
-   * Ereignisse wären beim Zurückkehren ohnehin verpasst, weil sie als Impuls
-   * durchlaufen und nicht als Liste liegenbleiben.
+   * Only while a network view is on screen. Polling in the background would keep
+   * the server busy for something nobody is looking at, and the events would be
+   * missed on return anyway — they run through as a pulse rather than piling up
+   * as a list.
    */
   useEffect(() => {
     // Auch beim Schreiben: rechts unten leuchtet die Nachbarschaft mit.
@@ -484,12 +484,11 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   }, [view, user.id]);
 
   /**
-   * Die Nachbarschaft der offenen Notiz: sie selbst und alles, was direkt mit
-   * ihr verbunden ist.
+   * The open note's neighbourhood: itself and whatever links to or from it.
    *
-   * Bewusst nicht das ganze Netz. Sechzig Knoten in einem Feld von dieser Grösse
-   * sind ein Knäuel, und die Frage beim Schreiben ist ohnehin eine andere —
-   * nicht „wie sieht mein Vault aus", sondern „woran hängt das hier".
+   * Deliberately not the whole network. Sixty nodes in a panel this size are a
+   * knot, and the question while writing is a different one anyway — not "what
+   * does my vault look like" but "what does this hang on".
    */
   /**
    * The recents list resolved against the notes that actually exist.
@@ -780,7 +779,17 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           >
             ☰
           </button>
-          <span className="cur mono">{view === 'note' ? open?.note.path ?? 'No note open' : titleOfView(view)}</span>
+          {/* The same de-prefixed reading as the tree, and no longer marked
+              `mono`: a path here is a name, not code. The literal path is not
+              lost — it is shown in full under "File" in the right column, which
+              is the one place that is *about* the file on disk. */}
+          <span className="cur">
+            {view === 'note'
+              ? open === null
+                ? 'No note open'
+                : [displayPath(open.note.path), open.note.title].filter((part) => part !== '').join(' › ')
+              : titleOfView(view)}
+          </span>
           {view === 'note' && open !== null && open.owner !== user.id && (
             <span className="pill p-info">
               {open.owner} · {open.canWrite ? 'schreiben' : 'nur lesen'}
@@ -966,7 +975,7 @@ function topLevelDirs(notes: NoteRow[]): string[] {
 
 function SaveIndicator({ state }: { state: SaveState }): React.JSX.Element {
   const label = {
-    saved: 'Gespeichert',
+    saved: 'Saved',
     dirty: 'Unsaved',
     saving: 'Saving…',
     failed: 'Save failed',
