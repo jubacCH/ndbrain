@@ -218,8 +218,8 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       // recoverable if the person is told the file exists.
       if (result.conflictCopy !== undefined) {
         setError(
-          `Somebody else changed this note in the meantime. Your version is the one in place, ` +
-            `die andere liegt als „${result.conflictCopy}" daneben.`,
+          `Somebody else changed this note in the meantime. Your version is the one in ` +
+            `place; theirs was kept alongside it as “${result.conflictCopy}”.`,
         );
       }
 
@@ -227,8 +227,8 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       // tree markers are re-read rather than left showing the previous state.
       setLinksVersion((version) => version + 1);
       void refreshTree();
-      // Ein neuer [[Verweis]] ist eine neue Kante — sonst zeigt die
-      // Nachbarschaft den Stand von vorhin.
+      // A new [[link]] is a new edge — otherwise the neighbourhood shows the
+      // state from a moment ago.
       void api.graph().then(setGraph).catch(() => undefined);
     } catch (caught) {
       setSaveState('failed');
