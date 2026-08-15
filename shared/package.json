@@ -1,0 +1,6 @@
+{
+  "name": "@ndbrain/shared",
+  "private": true,
+  "type": "module",
+  "//": "Not a published package and never installed. It exists so Node's module resolution — which decides CommonJS vs ESM from the nearest package.json — reads these files as ES modules. Without it the server's NodeNext build treats shared/schema.ts as CommonJS and rejects every export in it."
+}

@@ -97,6 +97,8 @@ export interface PulseEvent {
   /** Account name for a person, key name for an agent. */
   who: string;
   agent: boolean;
+  /** Always the caller: the pulse never reports another vault. */
+  owner: string;
 }
 
 /** A view, or the shorthand for "just this owner's own vault". */
@@ -632,6 +634,12 @@ export class Queries {
       path: row['path'] === null || row['path'] === undefined ? null : String(row['path']),
       who: String(row['who']),
       agent: Number(row['agent']) === 1,
+      // Always the caller: both halves of the union are filtered on this owner.
+      // Carried explicitly rather than left implicit, because the network view
+      // keys its nodes by (owner, path) and silently had `undefined` here —
+      // which meant no pulse ever matched a node and the live highlight never
+      // once fired. An invariant the client has to reconstruct is a bug waiting.
+      owner,
     }));
   }
 

@@ -2610,3 +2610,111 @@ td.n,
     grid-column: 1 / -1;
   }
 }
+
+/* ===================== THE CRASH SCREEN =====================
+ *
+ * Deliberately plain: it has to render when the rest of the interface has just
+ * proved it cannot. No glass, no custom properties that a failed import might
+ * have left undefined — literal colours only, so this page cannot fail for the
+ * same reason the app did. */
+.crash {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 3rem 1rem;
+  overflow-y: auto;
+  background: #f4f7f8;
+  color: #17242a;
+  font-family: 'Segoe UI Variable Text', ui-sans-serif, system-ui, sans-serif;
+}
+.crash-box {
+  width: min(46rem, 100%);
+  background: #ffffff;
+  border: 1px solid #d8e2e5;
+  border-radius: 14px;
+  padding: 1.6rem 1.8rem 1.4rem;
+  box-shadow: 0 12px 32px rgba(20, 40, 50, 0.1);
+}
+.crash h1 {
+  margin: 0 0 0.6rem;
+  font-size: 1.3rem;
+  letter-spacing: -0.02em;
+}
+.crash p {
+  margin: 0 0 0.8rem;
+  line-height: 1.55;
+}
+.crash-warn {
+  font-weight: 600;
+  color: #8a3d1a;
+}
+.crash-path {
+  font-size: 0.8rem;
+  color: #5d6f76;
+}
+.crash textarea {
+  width: 100%;
+  min-height: 12rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 0.7rem;
+  border: 1px solid #d8e2e5;
+  border-radius: 8px;
+  background: #fbfdfd;
+  color: inherit;
+  resize: vertical;
+}
+.crash-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0 0.4rem;
+}
+.crash-actions button {
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.45rem 1.1rem;
+  border-radius: 8px;
+  border: 0;
+  background: #10202a;
+  color: #f2fbfc;
+}
+.crash details {
+  margin-top: 0.6rem;
+  font-size: 0.8rem;
+  color: #5d6f76;
+}
+.crash summary {
+  cursor: pointer;
+}
+.crash pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0.5rem 0 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .crash {
+    background: #0d1417;
+    color: #e6f1f3;
+  }
+  .crash-box {
+    background: #141f24;
+    border-color: #26363c;
+  }
+  .crash textarea {
+    background: #0f181c;
+    border-color: #26363c;
+  }
+  .crash-warn {
+    color: #f0a875;
+  }
+  .crash-actions button {
+    background: #7fe9f0;
+    color: #06181c;
+  }
+}

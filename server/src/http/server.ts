@@ -30,6 +30,8 @@ import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
 import { toProblem } from './errors.js';
 import { LoginThrottle } from './throttle.js';
+import type { ZodType } from 'zod';
+import * as S from '../../../shared/schema.js';
 
 export const SESSION_COOKIE = 'ndbrain_session';
 
@@ -161,6 +163,20 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return reply.code(404).send({ code: 'not_found', message: 'no such endpoint' });
   });
 
+  /**
+   * A request body, checked against its schema.
+   *
+   * Replaces the hand-written `typeof body.x === 'string' ? body.x : ''` dance
+   * that ran at the top of every mutating route. That pattern silently turned a
+   * wrong type into a default, so a client sending `{ paths: "a.md" }` instead of
+   * an array got "nothing selected" rather than being told what was wrong with
+   * the request — and every new route had to remember to repeat it.
+   *
+   * Throws `ZodError`, which the error handler renders as a 400 naming the field.
+   */
+  const body = <T>(request: { body?: unknown }, schema: ZodType<T>): T =>
+    schema.parse(request.body ?? {});
+
   // ---- health -------------------------------------------------------------
   fastify.get('/api/v1/health', async () => ({ status: 'ok' }));
 
@@ -174,9 +190,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ---- authentication -----------------------------------------------------
   fastify.post('/api/v1/auth/login', async (request, reply) => {
-    const body = (request.body ?? {}) as { user?: unknown; password?: unknown };
-    const id = typeof body.user === 'string' ? body.user : '';
-    const password = typeof body.password === 'string' ? body.password : '';
+    const { user: id, password } = body(request, S.LoginRequest);
 
     const key = `${request.ip}|${id}`;
     const wait = throttle.retryAfter(key);
@@ -238,12 +252,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   fastify.put('/api/v1/notes/*', async (request, reply) => {
     const { owner, path } = target(request, 'write');
     const caller = requireUser(request).id;
-    const body = (request.body ?? {}) as { content?: unknown; baseMtimeMs?: unknown };
-    const content = typeof body.content === 'string' ? body.content : '';
+    const { content, baseMtimeMs } = body(request, S.PutNoteRequest);
 
     // Optional and only meaningful for a shared note: see App.putNote.
-    const base = Number(body.baseMtimeMs);
-    const options = Number.isFinite(base) && base > 0 ? { baseMtimeMs: base } : {};
+    const options = baseMtimeMs !== undefined && baseMtimeMs > 0 ? { baseMtimeMs } : {};
 
     const result = await app.putNote(owner, path, content, caller, options);
     return reply.code(result.created ? 201 : 200).send(result);
@@ -279,8 +291,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // so the question is not asked.
   fastify.post('/api/v1/folders', async (request, reply) => {
     const owner = requireUser(request).id;
-    const body = (request.body ?? {}) as { path?: unknown };
-    const dir = typeof body.path === 'string' ? body.path : '';
+    const { path: dir } = body(request, S.CreateFolderRequest);
 
     if (dir.trim() === '') {
       return reply.code(400).send({ code: 'no_path', message: 'name the folder' });
@@ -290,9 +301,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   fastify.post('/api/v1/folders/rename', async (request) => {
     const owner = requireUser(request).id;
-    const body = (request.body ?? {}) as { from?: unknown; to?: unknown };
-    const from = typeof body.from === 'string' ? body.from : '';
-    const to = typeof body.to === 'string' ? body.to : '';
+    const { from, to } = body(request, S.RenameFolderRequest);
 
     return app.renameFolder(owner, from, to, owner);
   });

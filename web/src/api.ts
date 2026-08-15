@@ -12,6 +12,38 @@
  * same name; the server treats it as untrusted and decides what it means.
  */
 
+import { z, type ZodType } from 'zod';
+
+import * as S from '../../shared/schema';
+
+/**
+ * Types come from the shared schemas rather than being declared twice.
+ *
+ * Re-exported so the rest of the app keeps importing them from here — the api
+ * module stays the single door to the server, and no component needs to know
+ * that the shapes are defined a directory up.
+ */
+export type PutResult = z.infer<typeof S.PutNoteResponse>;
+export type BulkResult = z.infer<typeof S.BulkResponse>;
+
+export type {
+  ActivityRow,
+  FileRow,
+  GraphData,
+  LinkRow,
+  Note,
+  NoteRow,
+  OpenNote,
+  Overview,
+  PulseEvent,
+  SearchHit,
+  Share,
+  TaskRow,
+  Tidy,
+  UploadResult,
+  User,
+} from '../../shared/schema';
+
 /** What it takes to name one note: which vault, and where in it. */
 export interface Ref {
   owner: string;
@@ -29,28 +61,8 @@ export function refKey(owner: string, path: string): string {
   return `${owner}\u0000${path}`;
 }
 
-export interface Note {
-  path: string;
-  title: string;
-  content: string;
-  size: number;
-  mtimeMs: number;
-}
 
-/** A note as it was opened, with what the caller may do to it. */
-export interface OpenNote {
-  note: Note;
-  owner: string;
-  canWrite: boolean;
-}
 
-export interface NoteRow {
-  owner: string;
-  path: string;
-  title: string;
-  size: number;
-  mtimeMs: number;
-}
 
 /** A folder in the tree, with the vault it belongs to. */
 export interface DirRow {
@@ -58,117 +70,17 @@ export interface DirRow {
   path: string;
 }
 
-export interface SearchHit extends NoteRow {
-  snippet: string;
-  rank: number;
-}
 
-export interface LinkRow {
-  owner: string;
-  source: string;
-  targetRaw: string;
-  targetPath: string | null;
-  heading: string | null;
-  alias: string | null;
-  offset: number;
-}
 
-export interface TaskRow {
-  owner: string;
-  path: string;
-  line: number;
-  done: boolean;
-  text: string;
-}
 
-export interface ActivityRow {
-  owner: string;
-  path: string;
-  title: string;
-  actor: string;
-  action: 'create' | 'update' | 'delete' | 'rename';
-  at: number;
-  edits: number;
-  deleted: boolean;
-}
 
-export interface Overview {
-  counts: {
-    notes: number;
-    orphans: number;
-    untagged: number;
-    deadLinks: number;
-    stale: number;
-    /** Distinct notes affected — not the sum of the four above, which overlap. */
-    attention: number;
-    /** False where no note carries a tag, which makes "untagged" meaningless. */
-    tagsInUse: boolean;
-  };
-  recent: NoteRow[];
-  tasks: TaskRow[];
-  tags: Array<{ tag: string; count: number }>;
-  activity: ActivityRow[];
-}
 
-export interface Tidy {
-  orphans: NoteRow[];
-  untagged: NoteRow[];
-  deadLinks: LinkRow[];
-  stale: NoteRow[];
-}
 
-export interface User {
-  id: string;
-  displayName: string;
-  role: 'admin' | 'user';
-}
 
-export interface GraphData {
-  nodes: Array<{ owner: string; path: string; title: string; folder: string; links: number }>;
-  edges: Array<{ owner: string; from: string; to: string }>;
-}
 
-/** One thing that happened in the vault: a change, or an agent reading. */
-export interface PulseEvent {
-  at: number;
-  kind: 'read' | 'write';
-  /** The edit action, or the MCP tool name. */
-  what: string;
-  /** Null for activity without one note — a search, a listing, a vault map. */
-  path: string | null;
-  /** Account name for a person, key name for an agent. */
-  who: string;
-  agent: boolean;
-  /** Always the caller: the pulse never reports another vault. */
-  owner: string;
-}
 
-/** One grant: a region of one vault, opened to one other account. */
-export interface Share {
-  id: string;
-  owner: string;
-  /** Path prefix, `''` for the whole vault. Ends in `/` when it names a folder. */
-  prefix: string;
-  grantee: string;
-  canWrite: boolean;
-  createdAt: number;
-}
 
-export interface PutResult {
-  note: Note;
-  created: boolean;
-  /**
-   * Set when this write displaced a version the writer had not seen; names the
-   * copy that version was kept in. Nothing was lost, but somebody has to be told.
-   */
-  conflictCopy?: string;
-}
 
-export interface BulkResult {
-  /** Final paths of the notes that succeeded — a move changes the path. */
-  ok: string[];
-  failed: Array<{ path: string; reason: string }>;
-}
 
 /** Carries the server's error code so callers can react to `case_collision` and friends. */
 export class ApiError extends Error {
@@ -183,7 +95,35 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/**
+ * Raised when the server answered with a shape this build does not understand.
+ *
+ * Separate from `ApiError` on purpose: an ApiError is the server saying no for a
+ * reason a person can act on, while this one means the two halves of the system
+ * disagree about the contract. Almost always a stale browser tab against a newer
+ * server, which is why the message says so — a reload genuinely fixes it.
+ */
+export class ContractError extends Error {
+  constructor(
+    readonly endpoint: string,
+    readonly detail: string,
+  ) {
+    super(`The server's answer for ${endpoint} was not the shape this page expects. Reload to pick up the current version.`);
+    this.name = 'ContractError';
+  }
+}
+
+/**
+ * One request, with the answer checked rather than assumed.
+ *
+ * The old version ended in `return parsed as T` — a cast, which TypeScript
+ * erases at build time, so nothing at all verified that the server sent what the
+ * types promised. A renamed field survived compilation and surfaced later as
+ * `undefined is not an object` somewhere in a render, blaming a component that
+ * had nothing to do with it. Now the failure lands here, names the endpoint, and
+ * says what was wrong with which field.
+ */
+async function request<T>(path: string, schema: ZodType<T>, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body !== undefined && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
@@ -191,18 +131,37 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
 
-  if (response.status === 204) return undefined as T;
-
-  const text = await response.text();
-  const parsed: unknown = text.length > 0 ? JSON.parse(text) : {};
+  const text = response.status === 204 ? '' : await response.text();
+  let parsed: unknown = {};
+  if (text.length > 0) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new ContractError(path, 'the response was not JSON');
+    }
+  }
 
   if (!response.ok) {
+    // Error bodies are read loosely and never validated: an error is the one
+    // answer that must always get through, even from a proxy that knows nothing
+    // about this API and replies with its own HTML.
     const problem = parsed as { code?: string; message?: string };
     throw new ApiError(response.status, problem.code ?? 'unknown', problem.message ?? 'request failed');
   }
 
-  return parsed as T;
+  const result = schema.safeParse(parsed);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const where = first === undefined ? 'unknown field' : first.path.join('.') || '(root)';
+    const why = first?.message ?? 'did not match';
+    console.error(`ndBrain: ${path} failed validation`, result.error.issues, parsed);
+    throw new ContractError(path, `${where}: ${why}`);
+  }
+  return result.data;
 }
+
+/** For the handful of endpoints that answer 204 and nothing else. */
+const Empty = z.object({}).transform(() => undefined);
 
 /**
  * Encodes a vault path for a URL without destroying its separators.
@@ -215,20 +174,20 @@ export function encodePath(vaultPath: string): string {
 }
 
 export const api = {
-  me: () => request<{ user: User }>('/api/v1/auth/me'),
+  me: () => request('/api/v1/auth/me', S.MeResponse),
 
   login: (user: string, password: string) =>
-    request<{ user: User }>('/api/v1/auth/login', {
+    request('/api/v1/auth/login', S.MeResponse, {
       method: 'POST',
       body: JSON.stringify({ user, password }),
     }),
 
-  logout: () => request<{ ok: boolean }>('/api/v1/auth/logout', { method: 'POST' }),
+  logout: () => request('/api/v1/auth/logout', S.LogoutResponse, { method: 'POST' }),
 
-  tree: () => request<{ notes: NoteRow[]; dirs: DirRow[] }>('/api/v1/tree'),
+  tree: () => request('/api/v1/tree', S.TreeResponse),
 
   getNote: (owner: string, path: string) =>
-    request<OpenNote>(`/api/v1/notes/${encodePath(path)}?owner=${encodeURIComponent(owner)}`),
+    request(`/api/v1/notes/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, S.OpenNote),
 
   /**
    * Writes a note.
@@ -239,18 +198,18 @@ export const api = {
    * paragraph, since the rule is last-writer-wins either way.
    */
   putNote: (owner: string, path: string, content: string, baseMtimeMs?: number) =>
-    request<PutResult>(`/api/v1/notes/${encodePath(path)}`, {
+    request(`/api/v1/notes/${encodePath(path)}`, S.PutNoteResponse, {
       method: 'PUT',
       body: JSON.stringify({ content, owner, baseMtimeMs }),
     }),
 
   deleteNote: (owner: string, path: string) =>
-    request<void>(`/api/v1/notes/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, {
+    request(`/api/v1/notes/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, Empty, {
       method: 'DELETE',
     }),
 
   rename: (owner: string, from: string, to: string) =>
-    request<{ note: Note; updatedLinks: string[] }>('/api/v1/rename', {
+    request('/api/v1/rename', S.RenameNoteResponse, {
       method: 'POST',
       body: JSON.stringify({ from, to, owner }),
     }),
@@ -266,37 +225,37 @@ export const api = {
     if (filters.days !== undefined) params.set('days', String(filters.days));
     if (filters.prop !== undefined) params.set('prop', filters.prop);
     if (filters.propValue !== undefined) params.set('propValue', filters.propValue);
-    return request<{ hits: SearchHit[] }>(`/api/v1/search?${params.toString()}`);
+    return request(`/api/v1/search?${params.toString()}`, S.SearchResponse);
   },
 
   // ---- folders ------------------------------------------------------------
   createFolder: (path: string) =>
-    request<{ folder: string }>('/api/v1/folders', {
+    request('/api/v1/folders', S.CreateFolderResponse, {
       method: 'POST',
       body: JSON.stringify({ path }),
     }),
 
   /** Moves the notes one by one, so the links that pointed into the folder follow. */
   renameFolder: (from: string, to: string) =>
-    request<{ folder: string; movedNotes: string[]; updatedLinks: string[] }>(
-      '/api/v1/folders/rename',
-      { method: 'POST', body: JSON.stringify({ from, to }) },
-    ),
+    request('/api/v1/folders/rename', S.RenameFolderResponse, {
+      method: 'POST',
+      body: JSON.stringify({ from, to }),
+    }),
 
   deleteFolder: (path: string) =>
-    request<void>(`/api/v1/folders/${encodePath(path)}`, { method: 'DELETE' }),
+    request(`/api/v1/folders/${encodePath(path)}`, Empty, { method: 'DELETE' }),
 
   /** The vocabulary the vault declares about itself, for the search filters. */
   propKeys: () =>
-    request<{ notes: unknown[]; props: Array<{ key: string; count: number }> }>('/api/v1/map?limit=1'),
+    request('/api/v1/map?limit=1', S.MapResponse),
 
   propValues: (key: string) =>
-    request<{ values: Array<{ value: string; count: number }> }>(`/api/v1/props/${encodePath(key)}`),
+    request(`/api/v1/props/${encodePath(key)}`, S.PropValuesResponse),
 
   quickFind: (q: string) =>
-    request<{ notes: NoteRow[] }>(`/api/v1/quickfind?q=${encodeURIComponent(q)}`),
+    request(`/api/v1/quickfind?q=${encodeURIComponent(q)}`, S.QuickFindResponse),
 
-  tags: () => request<{ tags: Array<{ tag: string; count: number }> }>('/api/v1/tags'),
+  tags: () => request('/api/v1/tags', S.TagsResponse),
 
   /**
    * One vault per call, on purpose: the server refuses a selection that spans
@@ -308,19 +267,20 @@ export const api = {
     paths: string[],
     extra: { tag?: string; dir?: string } = {},
   ) =>
-    request<BulkResult>('/api/v1/bulk', {
+    request('/api/v1/bulk', S.BulkResponse, {
       method: 'POST',
       body: JSON.stringify({ action, paths, owner, ...extra }),
     }),
 
   links: (owner: string, path: string) =>
-    request<{ backlinks: LinkRow[]; outgoing: LinkRow[] }>(
+    request(
       `/api/v1/backlinks/${encodePath(path)}?owner=${encodeURIComponent(owner)}`,
+      S.LinksResponse,
     ),
 
-  overview: () => request<Overview>('/api/v1/overview'),
+  overview: () => request('/api/v1/overview', S.OverviewResponse),
 
-  graph: () => request<GraphData>('/api/v1/graph'),
+  graph: () => request('/api/v1/graph', S.GraphResponse),
 
   /**
    * What has happened since a moment. `now` comes back with it, so the next call
@@ -328,23 +288,21 @@ export const api = {
    * which on a laptop that just woke up is routinely wrong.
    */
   pulse: (since?: number) =>
-    request<{ now: number; events: Omit<PulseEvent, 'owner'>[] }>(
-      `/api/v1/pulse${since === undefined ? '' : `?since=${since}`}`,
-    ),
+    request(`/api/v1/pulse${since === undefined ? '' : `?since=${since}`}`, S.PulseResponse),
 
-  tidy: () => request<Tidy>('/api/v1/tidy'),
+  tidy: () => request('/api/v1/tidy', S.TidyResponse),
 
   // ---- sharing ------------------------------------------------------------
-  shares: () => request<{ granted: Share[]; received: Share[] }>('/api/v1/shares'),
+  shares: () => request('/api/v1/shares', S.SharesResponse),
 
   /** Only ever opens a region of the caller's *own* vault — a held share is not theirs to pass on. */
   grantShare: (grantee: string, prefix: string, canWrite: boolean) =>
-    request<{ share: Share }>('/api/v1/shares', {
+    request('/api/v1/shares', S.GrantShareResponse, {
       method: 'POST',
       body: JSON.stringify({ grantee, prefix, canWrite }),
     }),
 
   /** Withdraw as the owner, or decline as the grantee — the same call either way. */
   revokeShare: (id: string) =>
-    request<void>(`/api/v1/shares/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    request(`/api/v1/shares/${encodeURIComponent(id)}`, Empty, { method: 'DELETE' }),
 };

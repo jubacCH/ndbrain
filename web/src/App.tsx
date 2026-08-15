@@ -211,6 +211,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       );
       // This write is now the version to compare the next one against.
       baseMtime.current = result.note.mtimeMs;
+      // Cleared only when nothing was typed while the write was in flight —
+      // otherwise this would drop text newer than the version just stored.
+      if (pending.current === null) window.__ndbrainPending = null;
       setSaveState(pending.current === null ? 'saved' : 'dirty');
 
       // Somebody else's version was displaced and kept. Reported plainly and
@@ -241,6 +244,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const scheduleSave = useCallback(
     (owner: string, path: string, content: string): void => {
       pending.current = { owner, path, content };
+      // Mirrored where the error boundary can still reach it: if a render fault
+      // tears this tree down, the boundary is what hands the text back.
+      window.__ndbrainPending = { path, content };
       setSaveState('dirty');
       if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => void flush(), SAVE_DEBOUNCE_MS);

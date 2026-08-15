@@ -5,7 +5,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "dist",
-    "rootDir": ".",
+    "rootDir": "..",
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -17,7 +17,11 @@
     "declaration": true,
     "sourceMap": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+
+    // shared/ sits outside this project, so a bare "zod" import there has no
+    // node_modules to walk up into. Mapped rather than duplicated.
+    "paths": { "zod": ["./node_modules/zod/index.d.ts"] }
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "../shared/**/*.ts"]
 }
