@@ -5,7 +5,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "types": ["vite/client", "node"],
+    "types": ["vite/client", "node", "vitest/globals"],
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -23,5 +23,5 @@
     // node_modules to walk up into. Mapped rather than duplicated.
     "paths": { "zod": ["./node_modules/zod/index.d.ts"] }
   },
-  "include": ["src", "vite.config.ts", "../shared"]
+  "include": ["src", "test", "vite.config.ts", "../shared"]
 }
