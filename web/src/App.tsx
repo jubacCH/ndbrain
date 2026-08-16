@@ -766,14 +766,24 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     const out: NoteRow[] = [];
     for (const recent of recents) {
       const note = byKey.get(refKey(recent.owner, recent.path));
-      // The note you are looking at does not need a shortcut to itself.
       if (note === undefined) continue;
-      if (open !== null && open.owner === note.owner && open.note.path === note.path) continue;
+      // Hidden only while you are actually looking at it. With the "Write" entry
+      // gone from the menu — it did nothing that opening a note does not already
+      // do — this list is the way back to the note you stepped away from, and a
+      // list that hides exactly that note is no way back at all.
+      if (
+        view === 'note' &&
+        open !== null &&
+        open.owner === note.owner &&
+        open.note.path === note.path
+      ) {
+        continue;
+      }
       out.push(note);
       if (out.length >= prefs.recentCount) break;
     }
     return out;
-  }, [recents, notes, open, prefs.recentCount]);
+  }, [recents, notes, open, view, prefs.recentCount]);
 
   const local = useMemo((): GraphData | null => {
     if (graph === null || open === null) return null;
@@ -927,10 +937,15 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           <button type="button" onClick={() => void createFolder()}>{copy.nav.folder}</button>
         </div>
 
+        {/*
+          No "Write" entry. Opening a note from the tree, the recents, the
+          palette or a search hit already switches to it, so the button only ever
+          did one thing nothing else did: show an empty pane telling you to pick
+          a note. The way back to a note you stepped away from is the recents
+          list above, which is why that list stops hiding the open note as soon
+          as you are looking at something else.
+        */}
         <div className="nav-views" role="group" aria-label={copy.nav.view}>
-          <button type="button" aria-current={view === 'note'} onClick={() => void showView('note')}>
-            {copy.nav.write}
-          </button>
           <button type="button" aria-current={view === 'overview'} onClick={() => void showView('overview')}>
             {copy.nav.overview}
           </button>
