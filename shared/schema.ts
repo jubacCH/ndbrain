@@ -284,6 +284,30 @@ export const UploadResult = z.object({
 
 export const UploadResponse = z.object({ results: z.array(UploadResult) });
 
+/* ---- settings and account ------------------------------------------------ */
+
+export const UserSettings = z.object({
+  /** Days a note may sit untouched before the tidy view calls it stale. */
+  staleDays: z.number().int().min(1).max(3650),
+});
+
+export const SettingsResponse = z.object({ settings: UserSettings });
+
+/** Partial on purpose: two tabs on this page must not undo each other. */
+export const SettingsRequest = UserSettings.partial().strict();
+
+export const ChangePasswordRequest = z
+  .object({
+    /** Required even though the caller holds a session — see the route. */
+    currentPassword: z.string().min(1),
+    // The same floor the CLI enforces. Length beats composition rules, which
+    // mostly teach people to put an exclamation mark at the end.
+    newPassword: z.string().min(10).max(1024),
+  })
+  .strict();
+
+export const OkResponse = z.object({ ok: z.boolean() });
+
 /* ---- requests ------------------------------------------------------------ */
 
 export const LoginRequest = z
@@ -338,5 +362,6 @@ export type Share = z.infer<typeof Share>;
 export type GraphData = z.infer<typeof GraphResponse>;
 export type PulseEvent = z.infer<typeof PulseEvent>;
 export type FileRow = z.infer<typeof FileRow>;
+export type UserSettings = z.infer<typeof UserSettings>;
 export type FilesResponse = z.infer<typeof FilesResponse>;
 export type UploadResult = z.infer<typeof UploadResult>;

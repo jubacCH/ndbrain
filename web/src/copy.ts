@@ -33,6 +33,7 @@ export const copy = {
     tidy: 'Tidy up',
     search: 'Search',
     files: 'Files',
+    settings: 'Settings',
     sharing: 'Sharing',
     signOut: 'Sign out',
     closeMenu: 'Close menu',
@@ -105,6 +106,7 @@ export const copy = {
     conflict: (copyName: string) =>
       `Somebody else changed this note in the meantime. Your version is the one in ` +
       `place; theirs was kept alongside it as “${copyName}”.`,
+    settingsFailed: 'Could not save that setting.',
     closeMessage: 'Dismiss message',
   },
 
@@ -255,6 +257,54 @@ export const copy = {
       `${notes} notes · ${links} links · ${loose} without a connection`,
     doubleClick: 'Double-click opens the note',
     loading: 'Relationships are loading…',
+  },
+
+  settings: {
+    title: 'Settings',
+    subtitle: 'Most of these belong to this browser. One of them changes what the server reports.',
+
+    appearance: 'Appearance',
+    theme: 'Theme',
+    themeHint: 'The interface follows your system unless you say otherwise.',
+    textSize: 'Text size',
+    textSizeHint: 'Scales the whole interface, not only the note.',
+
+    navigation: 'Navigation',
+    startView: 'Open on',
+    startViewHint: 'Which view you land in when ndBrain starts.',
+    hidePrefixes: 'Hide sort prefixes',
+    hidePrefixesHint:
+      'Shows 20_Areas as “Areas”. Display only — the folder on disk keeps its digits.',
+    recentCount: 'Recent notes',
+    recentCountHint: 'How many recently opened notes the sidebar keeps.',
+    off: 'off',
+
+    writing: 'Writing',
+    saveDelay: 'Save after',
+    saveDelayHint: 'How long typing pauses before the note is written.',
+
+    findings: 'Findings',
+    serverSide: 'Stored on the server, so every device reports the same thing.',
+    staleDays: 'Call a note untouched after',
+    staleDaysHint: 'Decides which notes the tidy view reports as gone quiet.',
+    days: (n: number) => `${n} days`,
+
+    account: 'Account',
+    roleAdmin: 'Administrator',
+    roleUser: 'Account',
+    passwordWhy:
+      'Changing your password signs out every other device. This one stays signed in.',
+    currentPassword: 'Current password',
+    newPassword: 'New password',
+    repeatPassword: 'Repeat new password',
+    changePassword: 'Change password',
+    signOutEverywhere: 'Sign out everywhere else',
+    confirmSignOutAll: 'Sign out every other device? You stay signed in here.',
+    passwordMismatch: 'The two new passwords do not match.',
+    passwordChanged: 'Password changed. Every other device has been signed out.',
+    passwordFailed: 'Could not change the password.',
+    sessionsRevoked: 'Every other device has been signed out.',
+    sessionsFailed: 'Could not sign the other devices out.',
   },
 
   crash: {

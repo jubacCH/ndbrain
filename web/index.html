@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <!-- viewport-fit=cover plus the safe-area padding in the stylesheet keeps the
@@ -19,6 +19,32 @@
     <meta name="apple-mobile-web-app-title" content="ndBrain" />
 
     <title>ndBrain</title>
+
+    <!--
+      The theme, applied before the first paint.
+
+      It has to run here rather than in React: by the time the bundle has parsed
+      and mounted, the browser has already painted one frame, and on a dark
+      choice against a light system that frame is a white flash in a dark room.
+      Inline and synchronous is the only placement that beats it.
+
+      Deliberately forgiving — a blocked localStorage or a stray value must leave
+      the page on the system default rather than throw before anything renders.
+    -->
+    <script>
+      (function () {
+        try {
+          var choice = localStorage.getItem('ndbrain.theme');
+          if (choice === 'dark' || choice === 'light') {
+            document.documentElement.setAttribute('data-theme', choice);
+          }
+          var size = localStorage.getItem('ndbrain.textSize');
+          if (size) document.documentElement.style.setProperty('--text-scale', size);
+        } catch (e) {
+          /* system default */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

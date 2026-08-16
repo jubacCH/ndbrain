@@ -343,6 +343,26 @@ export const api = {
       method: 'DELETE',
     }),
 
+  // ---- settings and account -------------------------------------------------
+
+  settings: () => request('/api/v1/settings', S.SettingsResponse),
+
+  saveSettings: (patch: { staleDays?: number }) =>
+    request('/api/v1/settings', S.SettingsResponse, {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    }),
+
+  /** The current password is required even though a session is already held. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request('/api/v1/account/password', S.OkResponse, {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+
+  revokeSessions: () =>
+    request('/api/v1/account/sessions/revoke', S.OkResponse, { method: 'POST' }),
+
   // ---- sharing ------------------------------------------------------------
   shares: () => request('/api/v1/shares', S.SharesResponse),
 
