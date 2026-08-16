@@ -27,7 +27,6 @@ export const copy = {
   nav: {
     newNote: 'New note',
     folder: 'Folder',
-    write: 'Write',
     overview: 'Overview',
     network: 'Whole network',
     tidy: 'Tidy up',
