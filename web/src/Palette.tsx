@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { copy } from './copy';
 
 import { api, refKey, type NoteRow } from './api';
 
@@ -94,19 +95,19 @@ export function Palette({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="palette" role="dialog" aria-modal="true" aria-label="Find a note">
+      <div className="palette" role="dialog" aria-modal="true" aria-label={copy.palette.label}>
         <input
           ref={input}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Open a note…"
-          aria-label="Note title"
+          placeholder={copy.palette.placeholder}
+          aria-label={copy.palette.titleLabel}
         />
 
         <div className="palette-list" ref={listRef}>
           {results.length === 0 && (
-            <p className="empty">{query === '' ? 'Recently edited notes appear here.' : 'Nothing found.'}</p>
+            <p className="empty">{query === '' ? copy.palette.recentAppearHere : copy.palette.nothingFound}</p>
           )}
 
           {results.map((note, index) => (
@@ -132,7 +133,7 @@ export function Palette({
 
         <div className="palette-foot">
           <kbd>↑</kbd>
-          <kbd>↓</kbd> choose · <kbd>⏎</kbd> open · <kbd>Esc</kbd> close
+          <kbd>↓</kbd> {copy.palette.choose} · <kbd>⏎</kbd> {copy.palette.open} · <kbd>Esc</kbd> {copy.palette.close}
         </div>
       </div>
     </div>

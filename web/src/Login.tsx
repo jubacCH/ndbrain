@@ -7,6 +7,7 @@
  */
 
 import { useState, type FormEvent } from 'react';
+import { copy } from './copy';
 
 import { ApiError, api, type User } from './api';
 
@@ -29,8 +30,8 @@ export function Login({ onSignedIn }: { onSignedIn: (user: User) => void }): Rea
       // password; repeating that here rather than guessing keeps it that way.
       setError(
         caught instanceof ApiError && caught.status === 429
-          ? 'Zu viele Versuche. Warte einen Moment.'
-          : 'That name and password do not match.',
+          ? copy.login.tooMany
+          : copy.login.wrong,
       );
       setBusy(false);
     }
@@ -40,7 +41,7 @@ export function Login({ onSignedIn }: { onSignedIn: (user: User) => void }): Rea
     <div className="login">
       <form onSubmit={(event) => void submit(event)}>
         <h1>ndBrain</h1>
-        <p>Konten legt der Administrator an — eine Registrierung gibt es bewusst nicht.</p>
+        <p>{copy.login.noSelfService}</p>
 
         {error !== null && <div className="error">{error}</div>}
 
@@ -56,7 +57,7 @@ export function Login({ onSignedIn }: { onSignedIn: (user: User) => void }): Rea
         </label>
 
         <label>
-          Password
+          {copy.login.password}
           <input
             type="password"
             value={password}
@@ -67,7 +68,7 @@ export function Login({ onSignedIn }: { onSignedIn: (user: User) => void }): Rea
         </label>
 
         <button type="submit" className="btn btn-solid" disabled={busy}>
-          {busy ? 'One moment…' : 'Sign in'}
+          {busy ? copy.login.working : copy.login.signIn}
         </button>
       </form>
     </div>
