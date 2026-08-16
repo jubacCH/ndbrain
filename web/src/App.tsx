@@ -1114,8 +1114,8 @@ function titleOfView(view: string): string {
       brain: copy.nav.network,
       tidy: copy.nav.tidy,
       files: copy.nav.files,
-      search: 'Suche',
-      shares: 'Freigaben',
+      search: copy.nav.search,
+      shares: copy.nav.sharing,
     }[view] ?? ''
   );
 }
