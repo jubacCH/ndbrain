@@ -1310,8 +1310,11 @@ function Shell({
                   <span><i style={{ background: '#ffb86b' }} />{copy.network.written}</span>
                 </div>
                 <div className="brainfoot">
-                  {graph.nodes.length} notes · {graph.edges.length} links ·{' '}
-                  {graph.nodes.filter((n) => n.links === 0).length} ohne Verbindung
+                  {copy.network.stats(
+                    graph.nodes.length,
+                    graph.edges.length,
+                    graph.nodes.filter((n) => n.links === 0).length,
+                  )}
                   <span className="sep" />
                   {copy.network.doubleClick}
                 </div>
