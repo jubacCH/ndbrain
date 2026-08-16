@@ -21,16 +21,15 @@ import {
   api,
   refKey,
   type NoteRow,
-  type OpenNote,
-  type Overview,
   type SearchHit,
   type GraphData,
   type PulseEvent,
   type FileRow,
   type Share,
-  type Tidy,
   type User,
 } from './api';
+import { useQueryClient } from '@tanstack/react-query';
+
 import { Brain } from './Brain';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
@@ -39,6 +38,18 @@ import { Login } from './Login';
 import { Palette } from './Palette';
 import { Tree, displayPath, type Finding } from './Tree';
 import { OverviewView, SearchView, SharesView, TidyView } from './Views';
+import {
+  invalidate,
+  keys,
+  useFiles,
+  useGraph,
+  useNote,
+  useOverview,
+  useShares,
+  useTags,
+  useTidy,
+  useTree,
+} from './queries';
 
 export interface Filters {
   tag?: string;
@@ -106,36 +117,34 @@ export function App(): React.JSX.Element {
 }
 
 function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): React.JSX.Element {
-  const [notes, setNotes] = useState<NoteRow[]>([]);
-  const [findings, setFindings] = useState<Map<string, Finding>>(new Map());
   const [view, setView] = useState<View>('overview');
-  const [open, setOpen] = useState<OpenNote | null>(null);
-  const [granted, setGranted] = useState<Share[]>([]);
-  const [received, setReceived] = useState<Share[]>([]);
+  /** Which note is open — the identity, not its content. */
+  const [openRef, setOpenRef] = useState<{ owner: string; path: string } | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [tidy, setTidy] = useState<Tidy | null>(null);
-  const [hits, setHits] = useState<SearchHit[]>([]);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<Filters>({});
-  const [tags, setTags] = useState<Array<{ tag: string; count: number }>>([]);
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  /**
+   * Which search is the current one.
+   *
+   * Typing fires a request per keystroke and they do not come back in order. The
+   * old code had no guard at all, so a slow answer for "prox" could land after a
+   * fast one for "proxmox" and leave the wrong results under the right query.
+   */
+  const searchSeq = useRef(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
   const [props, setProps] = useState<Array<{ key: string; count: number }>>([]);
   const [propValues, setPropValues] = useState<Array<{ value: string; count: number }>>([]);
-  const [graph, setGraph] = useState<GraphData | null>(null);
   const [pulse, setPulse] = useState<PulseEvent[]>([]);
   /** The server's timestamp to ask from next time. */
   const pulseSince = useRef<number | undefined>(undefined);
-  // Bumped after every successful save so the context panel re-reads the links.
-  const [linksVersion, setLinksVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   /** On a narrow screen the tree overlays the page rather than keeping a column. */
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [treeFilter, setTreeFilter] = useState('');
-  const [files, setFiles] = useState<{ files: FileRow[]; dirs: string[]; truncated: boolean } | null>(null);
   const [filesDir, setFilesDir] = useState('');
   const [filesBusy, setFilesBusy] = useState(false);
   const [recents, setRecents] = useState<Recent[]>(loadRecents);
@@ -152,53 +161,73 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
    */
   const baseMtime = useRef<number | null>(null);
 
-  const refreshTree = useCallback(async (): Promise<void> => {
-    const [tree, tidyData] = await Promise.all([api.tree(), api.tidy()]);
-    setNotes(tree.notes);
-    setTidy(tidyData);
+  const client = useQueryClient();
 
-    // The tree's state markers come from the same findings the tidy view lists,
-    // so the two can never disagree. Tidy answers for the caller's own vault
-    // only, so every key here carries the caller as the owner — a marker keyed
-    // by path alone would light up a note of the same name in a shared vault.
+  const treeQuery = useTree();
+  const tidyQuery = useTidy();
+  const overviewQuery = useOverview(true);
+  const sharesQuery = useShares();
+  const tagsQuery = useTags();
+  const noteQuery = useNote(openRef);
+  // The graph feeds both the big network view and the neighbourhood panel beside
+  // an open note, so it is wanted in exactly those two places and nowhere else.
+  const graphQuery = useGraph(view === 'brain' || view === 'note');
+  const filesQuery = useFiles(view === 'files');
+
+  const notes = treeQuery.data?.notes ?? [];
+  const tidy = tidyQuery.data ?? null;
+  const overview = overviewQuery.data ?? null;
+  const granted = sharesQuery.data?.granted ?? [];
+  const received = sharesQuery.data?.received ?? [];
+  const tags = tagsQuery.data?.tags ?? [];
+  const graph = graphQuery.data ?? null;
+  const files = filesQuery.data ?? null;
+  const open = noteQuery.data ?? null;
+
+  /**
+   * The tree's state markers, derived rather than stored.
+   *
+   * They come from the same findings the tidy view lists, so the two cannot
+   * disagree. Tidy answers for the caller's own vault only, so every key carries
+   * the caller as the owner — a marker keyed by path alone would light up a note
+   * of the same name in a shared vault.
+   */
+  const findings = useMemo((): Map<string, Finding> => {
     const map = new Map<string, Finding>();
-    // `untagged` is deliberately absent from the tree. In a vault where tagging
-    // is not a habit it matches nearly every note, and a marker on every row
-    // points at nothing. It stays in the tidy view and in the strip below, where
-    // a number is the right shape for it.
-    for (const row of tidyData.stale) map.set(refKey(user.id, row.path), 'warn');
-    for (const row of tidyData.orphans) map.set(refKey(user.id, row.path), 'crit');
-    for (const row of tidyData.deadLinks) map.set(refKey(user.id, row.source), 'crit');
-    setFindings(map);
-  }, [user.id]);
+    if (tidy === null) return map;
+    // `untagged` is deliberately absent. In a vault where tagging is not a habit
+    // it matches nearly every note, and a marker on every row points at nothing.
+    for (const row of tidy.stale) map.set(refKey(user.id, row.path), 'warn');
+    for (const row of tidy.orphans) map.set(refKey(user.id, row.path), 'crit');
+    for (const row of tidy.deadLinks) map.set(refKey(user.id, row.source), 'crit');
+    return map;
+  }, [tidy, user.id]);
+
+  /** Kept for the handful of places that still ask for everything explicitly. */
+  const refreshTree = useCallback(async (): Promise<void> => {
+    invalidate.afterStructure(client);
+  }, [client]);
 
   const refreshShares = useCallback(async (): Promise<void> => {
-    const data = await api.shares();
-    setGranted(data.granted);
-    setReceived(data.received);
-  }, []);
+    await client.invalidateQueries({ queryKey: keys.shares });
+  }, [client]);
 
   const refreshOverview = useCallback(async (): Promise<void> => {
-    setOverview(await api.overview());
-  }, []);
+    await client.invalidateQueries({ queryKey: keys.overview });
+  }, [client]);
+
+  const refreshFiles = useCallback(async (): Promise<void> => {
+    await client.invalidateQueries({ queryKey: keys.files });
+  }, [client]);
 
   useEffect(() => {
-    void refreshTree().catch(() => setError('The server is not answering right now.'));
-    void refreshOverview().catch(() => undefined);
-    void refreshShares().catch(() => undefined);
-    // Der Graph wird gleich zu Beginn gebraucht: die Nachbarschaft rechts unten
-    // steht neben jeder offenen Notiz, nicht erst in der grossen Ansicht.
-    void api
-      .graph()
-      .then(setGraph)
-      .catch(() => undefined);
     void api
       .pulse()
       .then(({ now }) => {
         pulseSince.current = now;
       })
       .catch(() => undefined);
-  }, [refreshTree, refreshOverview, refreshShares]);
+  }, []);
 
   /** Writes whatever is pending right now. */
   const flush = useCallback(async (): Promise<void> => {
@@ -231,20 +260,23 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         );
       }
 
-      // Links may have appeared or broken with this edit, so the panel and the
-      // tree markers are re-read rather than left showing the previous state.
-      setLinksVersion((version) => version + 1);
-      void refreshTree();
-      // A new [[link]] is a new edge — otherwise the neighbourhood shows the
-      // state from a moment ago.
-      void api.graph().then(setGraph).catch(() => undefined);
+      // An edit can move links, so the panel, the findings and the graph are
+      // marked stale. Note what is *not* here: the note list. Notes appear and
+      // disappear on create, delete and rename — not when their text changes —
+      // and re-reading the whole tree plus a four-scan tidy pass on every pause
+      // in typing was pure waste. Marking is also not fetching: a stale query
+      // nobody is rendering costs nothing until something asks for it.
+      invalidate.afterEdit(client, outstanding.owner, outstanding.path);
+      // A newly created note *is* a structural change: the conflict copy above
+      // is a new file, and so is a first save of a note typed into the palette.
+      if (result.created || result.conflictCopy !== undefined) invalidate.afterStructure(client);
     } catch (caught) {
       setSaveState('failed');
       setError(
         caught instanceof ApiError ? caught.message : 'Could not save. Your text stays in the editor.',
       );
     }
-  }, [refreshTree]);
+  }, [client]);
 
   const scheduleSave = useCallback(
     (owner: string, path: string, content: string): void => {
@@ -278,8 +310,18 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       if (pending.current !== null) await flush();
 
       try {
-        const opened = await api.getNote(owner, path);
-        setOpen(opened);
+        // Fetched through the cache under this note's own key rather than into
+        // one shared `open` slot. That is what removes the race: two quick
+        // clicks used to be two responses landing in arrival order, so a slow
+        // answer for the note you had already left could overwrite the one you
+        // were looking at. Now a late answer updates its own entry and changes
+        // nothing on screen.
+        const opened = await client.fetchQuery({
+          queryKey: keys.note(owner, path),
+          queryFn: () => api.getNote(owner, path),
+          staleTime: Infinity,
+        });
+        setOpenRef({ owner, path });
         baseMtime.current = opened.note.mtimeMs;
         setView('note');
         setSaveState('saved');
@@ -292,10 +334,11 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         // same way as a deleted one, and is told so in the same words. There is
         // nothing to distinguish here — that is the point of the design.
         setError('That note is gone.');
-        void refreshTree();
+        setOpenRef(null);
+        invalidate.afterStructure(client);
       }
     },
-    [flush, refreshTree],
+    [flush, client],
   );
 
   const createNoteAt = useCallback(
@@ -389,12 +432,18 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       // so the search runs whenever either part is present.
       const hasFilter = active.tag !== undefined || active.dir !== undefined || active.days !== undefined;
       if (value.trim() === '' && !hasFilter) {
+        searchSeq.current += 1; // an in-flight search must not refill the list
         setHits([]);
         return;
       }
 
       setView('search');
+      const seq = (searchSeq.current += 1);
       const { hits: found } = await api.search(value.trim(), active);
+      // Answers do not arrive in the order they were asked for. Without this,
+      // a slow response for "prox" lands after a fast one for "proxmox" and
+      // leaves the wrong results sitting under the right query.
+      if (seq !== searchSeq.current) return;
       setHits(found);
     },
     [],
@@ -448,10 +497,6 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   }, []);
 
   useEffect(() => {
-    api
-      .tags()
-      .then(({ tags: list }) => setTags(list))
-      .catch(() => undefined);
     // The vault's own vocabulary, re-read whenever its notes changed: a key
     // exists exactly as long as some note declares it.
     api
@@ -508,10 +553,6 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
    * deleted, renamed, or un-shared since it was last opened simply drops out of
    * the list instead of sitting there as a row that errors when clicked.
    */
-  const refreshFiles = useCallback(async (): Promise<void> => {
-    setFiles(await api.files());
-  }, []);
-
   /**
    * Uploads a batch, one request per file.
    *
@@ -572,7 +613,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         if (file.isNote) {
           await refreshTree();
           // The open note may be the one just deleted.
-          if (open !== null && open.note.path === file.path) setOpen(null);
+          if (open !== null && open.note.path === file.path) setOpenRef(null);
         }
         setError(null);
       } catch (caught) {
@@ -1026,7 +1067,6 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               canCreate={open.canWrite}
               onOpen={(owner, path) => void openNote(owner, path)}
               onCreate={(target) => void createFromDeadLink(target)}
-              reloadKey={linksVersion}
             />
           </div>
 

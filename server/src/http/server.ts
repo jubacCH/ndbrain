@@ -711,13 +711,44 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * somebody keeps their notes, and offering a stranger a checkbox list to bulk
    * delete another person's notes by that verdict is the wrong default.
    */
+  /**
+   * The findings, bounded and honest about it.
+   *
+   * Each list is capped and the response says whether anything was left out. A
+   * silent cap is the worse failure here: this view exists to be worked through,
+   * and a table that quietly stops at 500 reads as "that was all of them" — so
+   * the tidying looks finished when it is not.
+   *
+   * The tree, by contrast, is deliberately *not* capped. It is the navigation,
+   * and a tree that omits notes is worse than a large response.
+   */
   fastify.get('/api/v1/tidy', async (request) => {
     const owner = requireUser(request).id;
+    const query = (request.query ?? {}) as { limit?: unknown };
+    const limit = clamp(Number(query.limit) || 500, 1, 5000);
+
+    const orphans = app.queries.orphans(owner);
+    const untagged = app.queries.untagged(owner);
+    const deadLinks = app.queries.deadLinks(owner);
+    const stale = app.queries.stale(owner);
+
     return {
-      orphans: app.queries.orphans(owner),
-      untagged: app.queries.untagged(owner),
-      deadLinks: app.queries.deadLinks(owner),
-      stale: app.queries.stale(owner),
+      orphans: orphans.slice(0, limit),
+      untagged: untagged.slice(0, limit),
+      deadLinks: deadLinks.slice(0, limit),
+      stale: stale.slice(0, limit),
+      truncated:
+        orphans.length > limit ||
+        untagged.length > limit ||
+        deadLinks.length > limit ||
+        stale.length > limit,
+      /** The real totals, so a capped list can still report what it stands for. */
+      totals: {
+        orphans: orphans.length,
+        untagged: untagged.length,
+        deadLinks: deadLinks.length,
+        stale: stale.length,
+      },
     };
   });
 

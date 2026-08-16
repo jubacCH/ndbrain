@@ -9,9 +9,9 @@
  * Collapsible, because the writing surface should be able to have the screen.
  */
 
-import { useEffect, useState } from 'react';
 
-import { api, type LinkRow, type Ref } from './api';
+import type { Ref } from './api';
+import { useLinks } from './queries';
 
 export function ContextPanel({
   note,
@@ -19,7 +19,6 @@ export function ContextPanel({
   canCreate,
   onOpen,
   onCreate,
-  reloadKey,
 }: {
   note: Ref | null;
   /** The signed-in account, so a foreign note can say whose it is. */
@@ -29,35 +28,22 @@ export function ContextPanel({
   onOpen: (owner: string, path: string) => void;
   onCreate: (title: string) => void;
   /** Changes whenever the note was saved, so the panel refreshes with it. */
-  reloadKey: number;
 }): React.JSX.Element {
-  const [backlinks, setBacklinks] = useState<LinkRow[]>([]);
-  const [outgoing, setOutgoing] = useState<LinkRow[]>([]);
 
   const owner = note?.owner ?? null;
   const notePath = note?.path ?? null;
 
-  useEffect(() => {
-    if (owner === null || notePath === null) {
-      setBacklinks([]);
-      setOutgoing([]);
-      return;
-    }
-
-    let current = true;
-    api
-      .links(owner, notePath)
-      .then((data) => {
-        if (!current) return;
-        setBacklinks(data.backlinks);
-        setOutgoing(data.outgoing);
-      })
-      .catch(() => undefined);
-
-    return () => {
-      current = false;
-    };
-  }, [owner, notePath, reloadKey]);
+  /**
+   * Read through the cache, keyed by the note it belongs to.
+   *
+   * The hand-rolled version had a `current` flag to ignore a late answer, which
+   * is the same guard written once per component and forgotten in the next one.
+   * Keyed caching does it structurally: an answer for a note nobody is looking at
+   * updates that note's entry and never reaches this render.
+   */
+  const linksQuery = useLinks(owner === null || notePath === null ? null : { owner, path: notePath });
+  const backlinks = linksQuery.data?.backlinks ?? [];
+  const outgoing = linksQuery.data?.outgoing ?? [];
 
   const dead = outgoing.filter((link) => link.targetPath === null);
   const live = outgoing.filter((link) => link.targetPath !== null);
