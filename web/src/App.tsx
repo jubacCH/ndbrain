@@ -165,7 +165,10 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 
   const treeQuery = useTree();
   const tidyQuery = useTidy();
-  const overviewQuery = useOverview(true);
+  // Only while it is on screen. It is the most expensive answer the server gives
+  // — `attentionCount` alone walks the notes four times — and nothing outside
+  // this view needs it now that the nav strip reads tags from the tag list.
+  const overviewQuery = useOverview(view === 'overview');
   const sharesQuery = useShares();
   const tagsQuery = useTags();
   const noteQuery = useNote(openRef);
@@ -879,8 +882,11 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               <i style={{ background: 'var(--crit)' }} />
               orphaned <b>{tidy.orphans.length}</b>
             </button>
-            {/* Withheld while nothing is tagged — see Queries.tagsInUse. */}
-            {overview?.counts.tagsInUse === true && (
+            {/* Withheld while nothing is tagged — see Queries.tagsInUse. Read
+                from the tag list rather than from the overview: it answers the
+                same question, and it is already loaded and far cheaper than the
+                overview, which runs four full scans to count what needs doing. */}
+            {tags.length > 0 && (
               <button type="button" onClick={() => void showView('tidy')}>
                 <i style={{ background: 'var(--warn)' }} />
                 untagged <b>{tidy.untagged.length}</b>
