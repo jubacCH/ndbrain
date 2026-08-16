@@ -135,23 +135,46 @@ export function SettingsView({
           onChange={(value) => set('hidePrefixes', value)}
         />
 
-        <div className="setrow">
-          <div className="setlabel">
-            <span>{copy.settings.recentCount}</span>
-            <small>{copy.settings.recentCountHint}</small>
+        {/*
+          A switch, then a count — rather than a count whose zero end doubles as
+          an off switch. Somebody who wants the list gone looks for something to
+          turn off; hiding that at one end of a slider means the setting exists
+          and cannot be found, which is the same as not having it.
+
+          The count remembers itself across a switch-off, so turning the list
+          back on restores the length you chose rather than a default.
+        */}
+        <Toggle
+          label={copy.settings.showRecent}
+          hint={copy.settings.showRecentHint}
+          checked={prefs.recentCount > 0}
+          onChange={(on) => set('recentCount', on ? (prefs.lastRecentCount || 5) : 0)}
+        />
+
+        {prefs.recentCount > 0 && (
+          <div className="setrow setrow-sub">
+            <div className="setlabel">
+              <span>{copy.settings.recentCount}</span>
+              <small>{copy.settings.recentCountHint}</small>
+            </div>
+            <div className="slider">
+              <input
+                type="range"
+                min={1}
+                max={12}
+                value={prefs.recentCount}
+                aria-label={copy.settings.recentCount}
+                onChange={(event) => {
+                  // Both, so switching the list off and on again comes back to
+                  // the length that was chosen rather than to a default.
+                  const next = Number(event.target.value);
+                  onPrefs({ ...prefs, recentCount: next, lastRecentCount: next });
+                }}
+              />
+              <span className="sliderval">{prefs.recentCount}</span>
+            </div>
           </div>
-          <div className="slider">
-            <input
-              type="range"
-              min={0}
-              max={12}
-              value={prefs.recentCount}
-              aria-label={copy.settings.recentCount}
-              onChange={(event) => set('recentCount', Number(event.target.value))}
-            />
-            <span className="sliderval">{prefs.recentCount === 0 ? copy.settings.off : prefs.recentCount}</span>
-          </div>
-        </div>
+        )}
       </section>
 
       <section className="setgroup">
