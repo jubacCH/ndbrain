@@ -22,7 +22,7 @@ import { useState } from 'react';
 
 import { ApiError, api } from './api';
 import { copy } from './copy';
-import type { Prefs, StartView, Theme } from './prefs';
+import type { Measure, Prefs, StartView, Theme } from './prefs';
 
 export interface SettingsProps {
   prefs: Prefs;
@@ -39,6 +39,12 @@ const THEMES: Array<{ value: Theme; label: string; hint: string }> = [
   { value: 'system', label: 'System', hint: 'Follow the operating system' },
   { value: 'light', label: 'Light', hint: 'Always light' },
   { value: 'dark', label: 'Dark', hint: 'Always dark' },
+];
+
+const MEASURES: Array<{ value: Measure; label: string; hint: string }> = [
+  { value: 'narrow', label: 'Narrow', hint: 'About 68 characters — best for continuous reading' },
+  { value: 'medium', label: 'Medium', hint: 'About 92 characters' },
+  { value: 'wide', label: 'Wide', hint: 'The full width of the pane' },
 ];
 
 const START_VIEWS: Array<{ value: StartView; label: string }> = [
@@ -105,6 +111,27 @@ export function SettingsView({
               onChange={(event) => set('textScale', Number(event.target.value) / 100)}
             />
             <span className="sliderval">{Math.round(prefs.textScale * 100)}%</span>
+          </div>
+        </div>
+
+        <div className="setrow">
+          <div className="setlabel">
+            <span>{copy.settings.measure}</span>
+            <small>{copy.settings.measureHint}</small>
+          </div>
+          <div className="segmented" role="radiogroup" aria-label={copy.settings.measure}>
+            {MEASURES.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={prefs.measure === option.value}
+                title={option.hint}
+                onClick={() => set('measure', option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </div>
       </section>

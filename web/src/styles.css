@@ -3915,3 +3915,89 @@ tr[data-disabled='true'] .adminname {
   background: rgba(16, 32, 42, 0.9);
   color: #f2fbfc;
 }
+
+
+/* ===================== THE MEASURE =====================
+ *
+ * The reading measure moves from the content box to the lines inside it, so that
+ * prose can keep a comfortable width while a table or a code block uses what it
+ * needs. Measured before this: every row of a wide table was its own horizontal
+ * scroller, overflowing by as little as six pixels, inside a column of 2806.
+ *
+ * `--measure` is set from the settings page. Continuous prose reads best at
+ * 45–75 characters; a vault that is mostly tables is not continuous prose, so
+ * the number is the reader's to choose rather than mine to impose. */
+:root {
+  --measure: 68ch;
+}
+
+.cm-editor .cm-content {
+  /* No longer the thing that carries the measure — the lines are. */
+  max-width: none;
+}
+
+.cm-editor .cm-line {
+  max-width: var(--measure);
+  margin-inline: auto;
+}
+
+/*
+ * Content that is wide because it is wide.
+ *
+ * A table row and a fenced code line are not prose and gain nothing from a
+ * prose measure; capping them only converts horizontal space the pane already
+ * has into a scrollbar. They stay aligned with the prose on the left rather
+ * than being centred on their own, so the left edge of the note stays straight.
+ */
+.cm-editor .cm-line.cm-block-table,
+.cm-editor .cm-line.cm-block-code,
+.cm-editor .cm-line.cm-block-frontmatter {
+  max-width: min(100%, 140ch);
+  margin-inline: auto;
+}
+
+/* ===================== SCROLLBARS =====================
+ *
+ * The platform's default bars are chunky, high-contrast and drawn in a grey that
+ * belongs to no palette here — they read as a browser artefact sitting on top of
+ * the page rather than as part of it. Thin, in the interface's own ink, and only
+ * as present as they need to be to say "there is more this way".
+ *
+ * `scrollbar-width` and `scrollbar-color` are the standard properties; the
+ * WebKit pseudo-elements cover Chromium and Safari, which still need them. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--glass-line) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--glass-line);
+  border-radius: var(--r-full);
+  /* Inset by a transparent border, so the bar reads as a slim pill rather than
+     as a block filling its gutter. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Inside the note, quieter still: a scrollbar under a table should not compete
+   with the table. */
+.cm-editor .cm-line::-webkit-scrollbar {
+  height: 6px;
+}
+.cm-editor .cm-line::-webkit-scrollbar-thumb {
+  border-width: 2px;
+}

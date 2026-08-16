@@ -20,11 +20,21 @@
 
 export type Theme = 'system' | 'light' | 'dark';
 export type StartView = 'overview' | 'note' | 'search' | 'files';
+/** How wide a line of prose may get before it wraps. */
+export type Measure = 'narrow' | 'medium' | 'wide';
 
 export interface Prefs {
   theme: Theme;
   /** Multiplier on the base type size; everything else is sized in rem. */
   textScale: number;
+  /**
+   * The reading measure.
+   *
+   * 45–75 characters is where continuous prose reads best, and a vault that
+   * is mostly tables is not continuous prose — so this is a judgement about
+   * somebody's notes rather than about typography, and it is theirs.
+   */
+  measure: Measure;
   /** Which view opens on load. */
   startView: StartView;
   /** Hide `00_`-style prefixes in the tree and the breadcrumb. Display only. */
@@ -48,6 +58,7 @@ export interface Prefs {
 export const DEFAULT_PREFS: Prefs = {
   theme: 'system',
   textScale: 1,
+  measure: 'medium',
   startView: 'overview',
   hidePrefixes: true,
   saveDelayMs: 500,
@@ -92,6 +103,9 @@ export function loadPrefs(): Prefs {
           ? stored.theme
           : DEFAULT_PREFS.theme,
       textScale: clamp(Number(stored.textScale), LIMITS.textScale, DEFAULT_PREFS.textScale),
+      measure: (['narrow', 'medium', 'wide'] as Measure[]).includes(stored.measure as Measure)
+        ? (stored.measure as Measure)
+        : DEFAULT_PREFS.measure,
       startView: (['overview', 'note', 'search', 'files'] as StartView[]).includes(
         stored.startView as StartView,
       )
@@ -141,6 +155,10 @@ export function applyPrefs(prefs: Prefs): void {
   else root.setAttribute('data-theme', prefs.theme);
 
   root.style.setProperty('--text-scale', String(prefs.textScale));
+  root.style.setProperty(
+    '--measure',
+    prefs.measure === 'narrow' ? '68ch' : prefs.measure === 'medium' ? '92ch' : 'none',
+  );
 
   // Keeps the browser's own chrome — the address bar on a phone — in step with
   // the choice, which the two <meta> tags alone cannot do once it is explicit.

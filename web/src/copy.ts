@@ -288,6 +288,8 @@ export const copy = {
     themeHint: 'The interface follows your system unless you say otherwise.',
     textSize: 'Text size',
     textSizeHint: 'Scales the whole interface, not only the note.',
+    measure: 'Line width',
+    measureHint: 'How wide a line of prose gets. Tables and code always use the room they need.',
 
     navigation: 'Navigation',
     startView: 'Open on',
