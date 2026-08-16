@@ -132,22 +132,31 @@ async function request<T>(path: string, schema: ZodType<T>, init: RequestInit = 
   const response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
 
   const text = response.status === 204 ? '' : await response.text();
+
   let parsed: unknown = {};
+  let json = true;
   if (text.length > 0) {
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw new ContractError(path, 'the response was not JSON');
+      json = false;
     }
   }
 
+  // Status first, shape second. Getting this the other way round meant a 502
+  // from the reverse proxy — which answers in HTML and knows nothing about this
+  // API — was reported as a broken contract, so the interface told somebody to
+  // reload for a newer version when in fact the server was simply not there.
   if (!response.ok) {
-    // Error bodies are read loosely and never validated: an error is the one
-    // answer that must always get through, even from a proxy that knows nothing
-    // about this API and replies with its own HTML.
-    const problem = parsed as { code?: string; message?: string };
-    throw new ApiError(response.status, problem.code ?? 'unknown', problem.message ?? 'request failed');
+    const problem = json ? (parsed as { code?: string; message?: string }) : {};
+    throw new ApiError(
+      response.status,
+      problem.code ?? 'unknown',
+      problem.message ?? `the server answered ${response.status}`,
+    );
   }
+
+  if (!json) throw new ContractError(path, 'the response was not JSON');
 
   const result = schema.safeParse(parsed);
   if (!result.success) {
