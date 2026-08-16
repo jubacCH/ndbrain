@@ -323,8 +323,9 @@ export const api = {
     request(`/api/v1/files/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, S.UploadResult, {
       method: 'POST',
       body: file,
-      // Left to the browser: an explicit JSON content type here would have the
-      // server parse a PNG as JSON and fail before the route ever ran.
+      // Never empty: a `File` the browser cannot type reports `''`, and a request
+      // with no content type is parsed as JSON, which the upload route refuses
+      // because a parsed object can no longer produce the bytes that made it.
       headers: { 'content-type': file.type === '' ? 'application/octet-stream' : file.type },
     }),
 
