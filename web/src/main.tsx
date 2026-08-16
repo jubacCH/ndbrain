@@ -1,9 +1,26 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
 import { App } from './App';
 import { Boundary } from './Boundary';
 import './styles.css';
+
+/**
+ * The cache the whole application reads the server through.
+ *
+ * `retry: false` because this server is one hop away on a LAN: a failure here is
+ * almost always a real answer — signed out, gone, refused — and retrying it three
+ * times only delays telling somebody. `refetchOnWindowFocus` is off for the same
+ * reason it would be tempting to leave on: coming back to a tab must not pull the
+ * text out from under a half-written note.
+ */
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false, refetchOnWindowFocus: false },
+  },
+});
 
 const host = document.getElementById('root');
 if (host === null) throw new Error('#root is missing from index.html');
@@ -11,7 +28,9 @@ if (host === null) throw new Error('#root is missing from index.html');
 createRoot(host).render(
   <StrictMode>
     <Boundary>
-      <App />
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
     </Boundary>
   </StrictMode>,
 );

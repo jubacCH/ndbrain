@@ -2860,3 +2860,15 @@ td.n,
 .files {
   position: relative;
 }
+
+/* A cap that is not shown reads as "that was all of them", which is the one
+   thing a findings list must never imply. */
+.warnline {
+  margin: 0.2rem 0 0.8rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  background: rgba(214, 138, 60, 0.12);
+  border: 1px solid rgba(214, 138, 60, 0.3);
+  color: var(--ink);
+}

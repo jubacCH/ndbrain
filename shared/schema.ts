@@ -129,6 +129,15 @@ export const TidyResponse = z.object({
   untagged: z.array(NoteRow),
   deadLinks: z.array(LinkRow),
   stale: z.array(NoteRow),
+  /** True when any list was capped. Shown, never swallowed. */
+  truncated: z.boolean(),
+  /** The real counts, so a capped list still reports what it stands for. */
+  totals: z.object({
+    orphans: z.number(),
+    untagged: z.number(),
+    deadLinks: z.number(),
+    stale: z.number(),
+  }),
 });
 
 export const SearchResponse = z.object({ hits: z.array(SearchHit) });

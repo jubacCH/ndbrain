@@ -238,6 +238,13 @@ export function TidyView({
   return (
     <div className="pane padded">
       <h2 className="h-big">Tidy up</h2>
+      {data.truncated && (
+        <p className="warnline" role="status">
+          More findings than fit in one answer — showing the first {data.orphans.length} of{' '}
+          {data.totals.orphans} orphaned, {data.untagged.length} of {data.totals.untagged} untagged.
+          Work through these and the rest will appear.
+        </p>
+      )}
       <p className="h-sub">
         {rows.length === 0
           ? 'Nothing to do — the vault is clean.'
