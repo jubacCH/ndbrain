@@ -105,12 +105,21 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     done(null, payload);
   });
 
-  fastify.addHook('onSend', async (_request, reply) => {
+  fastify.addHook('onSend', async (request, reply) => {
     // A notes server has no business being framed, sniffed or used as a referrer
     // source for a URL that contains a note name.
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Referrer-Policy', 'no-referrer');
+
+    // Nothing behind the session gate may be cached. Two reasons, and the second
+    // is the one that bit: vault contents are private, and they are mutable —
+    // replacing a file and downloading it handed back the *previous* bytes from
+    // the browser cache, because a 200 with no cache directives is fair game for
+    // heuristic caching. Static assets keep their own caching; this is /api only.
+    if (request.url.startsWith('/api/')) {
+      reply.header('Cache-Control', 'no-store, private');
+    }
   });
 
   /**
