@@ -263,7 +263,7 @@ export function TidyView({
               {selected.size === 0 ? copy.tidy.nothingSelected : copy.tidy.selected(selected.size)}
             </span>
             <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('move')}>
-              Verschieben…
+              {copy.tidy.move}
             </button>
             <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('tag')}>
               {copy.tidy.tag}
@@ -293,7 +293,7 @@ export function TidyView({
                       />
                     </th>
                     <th>{copy.tidy.note}</th>
-                    <th>Pfad</th>
+                    <th>{copy.tidy.path}</th>
                     <th>{copy.tidy.finding}</th>
                     <th className="n">{copy.tidy.lastTouched}</th>
                   </tr>
