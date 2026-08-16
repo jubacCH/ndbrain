@@ -31,6 +31,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { copy } from './copy';
 
 import { refKey, type NoteRow, type Share } from './api';
 
@@ -125,9 +126,9 @@ function buildTree(notes: NoteRow[]): Folder {
  */
 function writeLabel(owner: string, received: Share[]): string | null {
   const mine = received.filter((share) => share.owner === owner);
-  if (mine.length === 0 || mine.every((share) => !share.canWrite)) return 'read only';
-  if (mine.every((share) => share.canWrite)) return 'can write';
-  return 'partly writable';
+  if (mine.length === 0 || mine.every((share) => !share.canWrite)) return copy.shares.readOnly;
+  if (mine.every((share) => share.canWrite)) return copy.shares.readWrite;
+  return copy.shares.partlyWritable;
 }
 
 const OPEN_KEY = 'ndbrain.openFolders';
@@ -259,8 +260,8 @@ export function Tree({
               <button
                 type="button"
                 className="node-act"
-                title={`Rename or move “${displayName(child.name)}”`}
-                aria-label={`Rename ${displayName(child.name)}`}
+                title={copy.tree.renameFolder(displayName(child.name))}
+                aria-label={copy.tree.renameFolderLabel(displayName(child.name))}
                 onClick={() => onRenameFolder(child.path)}
               >
                 ✎
@@ -301,11 +302,11 @@ export function Tree({
 
             {rows.length === 0 ? (
               <p className="empty">
-                {isOwn ? 'No notes yet. Start one with “New note”.' : 'Nothing shared.'}
+                {isOwn ? copy.tree.noNotes : copy.tree.nothingShared}
               </p>
             ) : filter !== '' ? (
               hits.length === 0 ? (
-                isOwn ? <p className="empty">No match.</p> : null
+                isOwn ? <p className="empty">{copy.tree.noMatch}</p> : null
               ) : (
                 <ul className="tree tree-hits">{hits.map((note) => noteRow(note, true))}</ul>
               )

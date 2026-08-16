@@ -18,6 +18,7 @@
  */
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { copy } from './copy';
 
 /**
  * Where the shell parks unsaved text.
@@ -60,17 +61,15 @@ export class Boundary extends Component<{ children: ReactNode }, State> {
     return (
       <div className="crash" role="alert">
         <div className="crash-box">
-          <h1>ndBrain stopped drawing this page</h1>
+          <h1>{copy.crash.title}</h1>
           <p>
-            Something in the interface threw an error. Your notes on the server are untouched — this
-            went wrong in the browser, after they were saved.
+            {copy.crash.explain}
           </p>
 
           {pending !== null && pending.content !== '' && (
             <>
               <p className="crash-warn">
-                One note had changes that had not reached the server yet. Copy them out before
-                reloading:
+                {copy.crash.pendingWarning}
               </p>
               <p className="crash-path">{pending.path}</p>
               <textarea readOnly value={pending.content} spellCheck={false} />
@@ -79,12 +78,12 @@ export class Boundary extends Component<{ children: ReactNode }, State> {
 
           <div className="crash-actions">
             <button type="button" onClick={() => window.location.reload()}>
-              Reload
+              {copy.crash.reload}
             </button>
           </div>
 
           <details>
-            <summary>What went wrong</summary>
+            <summary>{copy.crash.whatWentWrong}</summary>
             <pre>{`${error.name}: ${error.message}`}</pre>
           </details>
         </div>

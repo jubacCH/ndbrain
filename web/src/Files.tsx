@@ -18,6 +18,7 @@
  */
 
 import { useMemo, useRef, useState } from 'react';
+import { copy } from './copy';
 
 import { api, type FileRow } from './api';
 import { displayName } from './Tree';
@@ -118,16 +119,16 @@ export function FilesView({
       onDragLeave={() => setDragging(false)}
       onDrop={drop}
     >
-      <h2 className="h-big">Files</h2>
+      <h2 className="h-big">{copy.files.title}</h2>
       <p className="h-sub">
-        The vault as it is on disk — notes and everything beside them.{' '}
-        {truncated && <strong>Showing the first 5000 only.</strong>}
+        {copy.files.subtitle}{' '}
+        {truncated && <strong>{copy.files.capped}</strong>}
       </p>
 
       <div className="files-bar">
-        <nav className="crumbs" aria-label="Folder">
+        <nav className="crumbs" aria-label={copy.files.folderLabel}>
           <button type="button" onClick={() => onDir('')} disabled={dir === ''}>
-            Vault
+            {copy.files.vault}
           </button>
           {crumbs.map((segment, i) => (
             <button
@@ -143,12 +144,12 @@ export function FilesView({
 
         <div className="files-actions">
           <button type="button" onClick={() => importRef.current?.click()} disabled={busy}>
-            Import files…
+            {copy.files.import}
           </button>
           {/* An ordinary link, not a fetch: the browser saves the stream as it
               arrives instead of the page holding an entire vault in memory. */}
           <a className="btn" href={api.exportUrl()} download>
-            Download all
+            {copy.files.downloadAll}
           </a>
         </div>
       </div>
@@ -179,16 +180,16 @@ export function FilesView({
 
       {here.childDirs.length === 0 && here.childFiles.length === 0 ? (
         <p className="empty">
-          This folder is empty. Drop files here, or use “Import files”.
+          {copy.files.empty}
         </p>
       ) : (
         <table className="tbl files-tbl">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Kind</th>
-              <th className="n">Size</th>
-              <th className="n">Actions</th>
+              <th>{copy.files.name}</th>
+              <th>{copy.files.kind}</th>
+              <th className="n">{copy.files.size}</th>
+              <th className="n">{copy.files.actions}</th>
             </tr>
           </thead>
           <tbody>
@@ -199,8 +200,8 @@ export function FilesView({
                     <span aria-hidden>▸</span> {displayName(folder.slice(folder.lastIndexOf('/') + 1))}
                   </button>
                 </td>
-                <td className="dim">folder</td>
-                <td className="n dim">{countIn(folder)} files</td>
+                <td className="dim">{copy.files.folderKind}</td>
+                <td className="n dim">{copy.files.fileCount(countIn(folder))}</td>
                 <td className="n" />
               </tr>
             ))}
@@ -226,7 +227,7 @@ export function FilesView({
                   <td className="n">{humanSize(file.size)}</td>
                   <td className="n files-row-actions">
                     <a href={api.fileUrl(owner, file.path)} download={name}>
-                      Download
+                      {copy.files.download}
                     </a>
                     <button
                       type="button"
@@ -236,7 +237,7 @@ export function FilesView({
                       }}
                       disabled={busy}
                     >
-                      Replace
+                      {copy.files.replace}
                     </button>
                     <button
                       type="button"
@@ -244,7 +245,7 @@ export function FilesView({
                       onClick={() => onDelete(file)}
                       disabled={busy}
                     >
-                      Delete
+                      {copy.files.delete}
                     </button>
                   </td>
                 </tr>
@@ -254,7 +255,7 @@ export function FilesView({
         </table>
       )}
 
-      {dragging && <div className="files-drop">Drop to upload into {dir === '' ? 'the vault' : dir}</div>}
+      {dragging && <div className="files-drop">{copy.files.dropInto(dir === '' ? copy.files.theVault : dir)}</div>}
     </div>
   );
 }

@@ -33,6 +33,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Brain } from './Brain';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
+import { copy } from './copy';
 import { FilesView } from './Files';
 import { Login } from './Login';
 import { Palette } from './Palette';
@@ -258,8 +259,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       // recoverable if the person is told the file exists.
       if (result.conflictCopy !== undefined) {
         setError(
-          `Somebody else changed this note in the meantime. Your version is the one in ` +
-            `place; theirs was kept alongside it as “${result.conflictCopy}”.`,
+          copy.errors.conflict(result.conflictCopy),
         );
       }
 
@@ -276,7 +276,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     } catch (caught) {
       setSaveState('failed');
       setError(
-        caught instanceof ApiError ? caught.message : 'Could not save. Your text stays in the editor.',
+        caught instanceof ApiError ? caught.message : copy.errors.saveFailed,
       );
     }
   }, [client]);
@@ -336,7 +336,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         // A note in a share that has just been withdrawn is gone in exactly the
         // same way as a deleted one, and is told so in the same words. There is
         // nothing to distinguish here — that is the point of the design.
-        setError('That note is gone.');
+        setError(copy.errors.noteGone);
         setOpenRef(null);
         invalidate.afterStructure(client);
       }
@@ -357,7 +357,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         await refreshTree();
         await openNote(owner, path);
       } catch (caught) {
-        setError(caught instanceof ApiError ? caught.message : 'Could not create that.');
+        setError(caught instanceof ApiError ? caught.message : copy.errors.createFailed);
       }
     },
     [openNote, refreshTree],
@@ -368,13 +368,13 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   // the note you are standing in; offering it here would mean a vault picker on
   // the most-used button in the application.
   const createNote = async (): Promise<void> => {
-    const name = window.prompt('Name for the new note (use / for a folder)');
+    const name = window.prompt(copy.ask.newNoteName);
     if (name === null) return;
     await createNoteAt(user.id, name);
   };
 
   const createFolder = async (): Promise<void> => {
-    const name = window.prompt('Name for the new folder (use / to nest)');
+    const name = window.prompt(copy.ask.newFolderName);
     if (name === null || name.trim() === '') return;
 
     try {
@@ -382,7 +382,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       await refreshTree();
       setError(null);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Could not create that folder.');
+      setError(caught instanceof ApiError ? caught.message : copy.errors.createFolderFailed);
     }
   };
 
@@ -392,7 +392,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
    * and rewriting a dozen files is a big thing to have happen without a word.
    */
   const renameFolder = async (from: string): Promise<void> => {
-    const to = window.prompt('Rename or move this folder (new path)', from);
+    const to = window.prompt(copy.ask.renameFolder, from);
     if (to === null || to.trim() === '' || to.trim() === from) return;
 
     try {
@@ -409,7 +409,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         await openNote(user.id, `${result.folder}${open.note.path.slice(from.length)}`);
       }
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Could not rename that.');
+      setError(caught instanceof ApiError ? caught.message : copy.errors.renameFailed);
     }
   };
 
@@ -454,7 +454,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 
   const onQueryChange = (value: string): void => {
     setQuery(value);
-    void runSearch(value, filters).catch(() => setError('Search failed.'));
+    void runSearch(value, filters).catch(() => setError(copy.errors.searchFailed));
   };
 
   const toggleFilter = (patch: Filters): void => {
@@ -468,7 +468,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     // on screen.
     if (next.prop === undefined) delete next.propValue;
     setFilters(next);
-    void runSearch(query, next).catch(() => setError('Search failed.'));
+    void runSearch(query, next).catch(() => setError(copy.errors.searchFailed));
 
     if (next.prop !== undefined && next.prop !== filters.prop) {
       api
@@ -579,7 +579,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         await refreshFiles();
         // An uploaded note is a note: the tree and the index have to catch up.
         if (picked.some((file) => file.name.toLowerCase().endsWith('.md'))) await refreshTree();
-        setError(failed.length === 0 ? null : `Could not import ${failed.length}: ${failed[0] ?? ''}`);
+        setError(failed.length === 0 ? null : copy.errors.importFailed(failed.length, failed[0] ?? ''));
       } finally {
         setFilesBusy(false);
       }
@@ -596,7 +596,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         if (path.toLowerCase().endsWith('.md')) await refreshTree();
         setError(null);
       } catch (caught) {
-        setError(caught instanceof ApiError ? caught.message : 'Could not replace that file.');
+        setError(caught instanceof ApiError ? caught.message : copy.errors.replaceFailed);
       } finally {
         setFilesBusy(false);
       }
@@ -607,7 +607,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const removeFile = useCallback(
     async (file: FileRow): Promise<void> => {
       const name = file.path.slice(file.path.lastIndexOf('/') + 1);
-      if (!window.confirm(`Delete “${name}”? This cannot be undone.`)) return;
+      if (!window.confirm(copy.ask.deleteFile(name))) return;
 
       setFilesBusy(true);
       try {
@@ -620,7 +620,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         }
         setError(null);
       } catch (caught) {
-        setError(caught instanceof ApiError ? caught.message : 'Could not delete that file.');
+        setError(caught instanceof ApiError ? caught.message : copy.errors.deleteFileFailed);
       } finally {
         setFilesBusy(false);
       }
@@ -685,14 +685,14 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     let extra: { tag?: string; dir?: string } = {};
 
     if (action === 'move') {
-      const dir = window.prompt(`Move ${paths.length} notes to (empty = top of the vault)`, 'Archive');
+      const dir = window.prompt(copy.ask.moveTo(paths.length), 'Archive');
       if (dir === null) return;
       extra = { dir };
     } else if (action === 'tag') {
-      const tag = window.prompt(`Tag ${paths.length} notes with`);
+      const tag = window.prompt(copy.ask.tagWith(paths.length));
       if (tag === null || tag.trim() === '') return;
       extra = { tag };
-    } else if (!window.confirm(`Delete ${paths.length} notes? This cannot be undone.`)) {
+    } else if (!window.confirm(copy.ask.deleteNotes(paths.length))) {
       return;
     }
 
@@ -716,7 +716,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         );
       }
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'That bulk action failed.');
+      setError(caught instanceof ApiError ? caught.message : copy.errors.bulkFailed);
     } finally {
       setBulkBusy(false);
     }
@@ -738,7 +738,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       await refreshShares();
       setError(null);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Could not share that.');
+      setError(caught instanceof ApiError ? caught.message : copy.errors.shareFailed);
     } finally {
       setShareBusy(false);
     }
@@ -761,7 +761,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       await refreshTree();
       setError(null);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Could not withdraw that.');
+      setError(caught instanceof ApiError ? caught.message : copy.errors.revokeFailed);
     } finally {
       setShareBusy(false);
     }
@@ -784,34 +784,34 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       <nav className="nav" aria-label="Navigation">
         <div className="nav-head">
           <span className="nav-who">{user.displayName}</span>
-          <button type="button" className="nav-x" onClick={() => setDrawerOpen(false)} aria-label="Close menu">
+          <button type="button" className="nav-x" onClick={() => setDrawerOpen(false)} aria-label={copy.nav.closeMenu}>
             ✕
           </button>
         </div>
 
         <div className="nav-actions">
-          <button type="button" onClick={() => void createNote()}>New note</button>
-          <button type="button" onClick={() => void createFolder()}>Folder</button>
+          <button type="button" onClick={() => void createNote()}>{copy.nav.newNote}</button>
+          <button type="button" onClick={() => void createFolder()}>{copy.nav.folder}</button>
         </div>
 
-        <div className="nav-views" role="group" aria-label="View">
+        <div className="nav-views" role="group" aria-label={copy.nav.view}>
           <button type="button" aria-current={view === 'note'} onClick={() => void showView('note')}>
-            Write
+            {copy.nav.write}
           </button>
           <button type="button" aria-current={view === 'overview'} onClick={() => void showView('overview')}>
-            Overview
+            {copy.nav.overview}
           </button>
           <button type="button" aria-current={view === 'brain'} onClick={() => void showView('brain')}>
-            Whole network
+            {copy.nav.network}
           </button>
           <button type="button" aria-current={view === 'tidy'} onClick={() => void showView('tidy')}>
-            Tidy up
+            {copy.nav.tidy}
           </button>
           <button type="button" aria-current={view === 'search'} onClick={() => void showView('search')}>
-            Search
+            {copy.nav.search}
           </button>
           <button type="button" aria-current={view === 'files'} onClick={() => void showView('files')}>
-            Files
+            {copy.nav.files}
           </button>
         </div>
 
@@ -827,12 +827,12 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           <input
             type="search"
             value={treeFilter}
-            placeholder="Filter by name…"
-            aria-label="Filter the tree by name"
+            placeholder={copy.nav.filterPlaceholder}
+            aria-label={copy.nav.filterLabel}
             onChange={(event) => setTreeFilter(event.target.value)}
           />
           {treeFilter !== '' && (
-            <button type="button" onClick={() => setTreeFilter('')} aria-label="Clear filter">
+            <button type="button" onClick={() => setTreeFilter('')} aria-label={copy.nav.clearFilter}>
               ✕
             </button>
           )}
@@ -842,7 +842,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             answer on screen is the one you just typed for. */}
         {treeFilter === '' && recentRows.length > 0 && (
           <div className="nav-recent">
-            <p className="cap">Recent</p>
+            <p className="cap">{copy.nav.recent}</p>
             <ul>
               {recentRows.map((note) => (
                 <li key={refKey(note.owner, note.path)}>
@@ -880,7 +880,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           <div className="nav-health">
             <button type="button" onClick={() => void showView('tidy')}>
               <i style={{ background: 'var(--crit)' }} />
-              orphaned <b>{tidy.orphans.length}</b>
+              {copy.nav.orphaned} <b>{tidy.orphans.length}</b>
             </button>
             {/* Withheld while nothing is tagged — see Queries.tagsInUse. Read
                 from the tag list rather than from the overview: it answers the
@@ -889,21 +889,21 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             {tags.length > 0 && (
               <button type="button" onClick={() => void showView('tidy')}>
                 <i style={{ background: 'var(--warn)' }} />
-                untagged <b>{tidy.untagged.length}</b>
+                {copy.nav.untagged} <b>{tidy.untagged.length}</b>
               </button>
             )}
             {tidy.deadLinks.length > 0 && (
               <button type="button" onClick={() => void showView('tidy')}>
                 <i style={{ background: 'var(--crit)' }} />
-                broken <b>{tidy.deadLinks.length}</b>
+                {copy.nav.broken} <b>{tidy.deadLinks.length}</b>
               </button>
             )}
           </div>
         )}
 
         <div className="nav-foot">
-          <button type="button" onClick={() => void showView('shares')}>Sharing</button>
-          <button type="button" onClick={() => void signOut()}>Sign out</button>
+          <button type="button" onClick={() => void showView('shares')}>{copy.nav.sharing}</button>
+          <button type="button" onClick={() => void signOut()}>{copy.nav.signOut}</button>
         </div>
       </nav>
 
@@ -913,7 +913,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             type="button"
             className="bar-menu"
             onClick={() => setDrawerOpen((o) => !o)}
-            aria-label="Menu"
+            aria-label={copy.nav.menu}
           >
             ☰
           </button>
@@ -924,7 +924,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           <span className="cur">
             {view === 'note'
               ? open === null
-                ? 'No note open'
+                ? copy.note.none
                 : [displayPath(open.note.path), open.note.title].filter((part) => part !== '').join(' › ')
               : titleOfView(view)}
           </span>
@@ -942,7 +942,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         {error !== null && (
           <div className="floaterror" role="status">
             <span>{error}</span>
-            <button type="button" onClick={() => setError(null)} aria-label="Meldung schliessen">
+            <button type="button" onClick={() => setError(null)} aria-label={copy.errors.closeMessage}>
               ✕
             </button>
           </div>
@@ -970,19 +970,19 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 
           {view === 'brain' &&
             (graph === null ? (
-              <p className="empty" style={{ padding: '2rem' }}>Beziehungen werden geladen…</p>
+              <p className="empty" style={{ padding: '2rem' }}>{copy.overview.loadingGraph}</p>
             ) : (
               <div className="brainwrap">
                 <Brain data={graph} events={pulse} onOpen={(owner, path) => void openNote(owner, path)} />
                 <div className="brainlegend">
-                  <span><i style={{ background: '#7fe9f0' }} />read</span>
-                  <span><i style={{ background: '#ffb86b' }} />written</span>
+                  <span><i style={{ background: '#7fe9f0' }} />{copy.network.read}</span>
+                  <span><i style={{ background: '#ffb86b' }} />{copy.network.written}</span>
                 </div>
                 <div className="brainfoot">
                   {graph.nodes.length} notes · {graph.edges.length} links ·{' '}
                   {graph.nodes.filter((n) => n.links === 0).length} ohne Verbindung
                   <span className="sep" />
-                  Double-click opens the note
+                  {copy.network.doubleClick}
                 </div>
               </div>
             ))}
@@ -1065,7 +1065,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         as a picture — not the whole network, which at this size would be a knot.
       */}
       {view === 'note' && open !== null && (
-        <aside className="side" aria-label="About the open note">
+        <aside className="side" aria-label={copy.note.aboutOpen}>
           <div className="side-info">
             <ContextPanel
               note={{ owner: open.owner, path: open.note.path }}
@@ -1078,13 +1078,13 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 
           <div className="side-graph">
             <div className="side-graph-head">
-              <span>Neighbourhood</span>
-              <button type="button" onClick={() => void showView('brain')} title="Show the whole network">
-                whole network
+              <span>{copy.note.neighbourhood}</span>
+              <button type="button" onClick={() => void showView('brain')} title={copy.note.showWholeNetwork}>
+                {copy.note.wholeNetwork}
               </button>
             </div>
             {local === null ? (
-              <p className="empty small">Wird geladen…</p>
+              <p className="empty small">{copy.note.loadingNeighbourhood}</p>
             ) : local.nodes.length <= 1 ? (
               <p className="empty small">
                 No links yet. Type <code>[[</code> in the text to connect this note.
@@ -1110,10 +1110,10 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 function titleOfView(view: string): string {
   return (
     {
-      overview: 'Overview',
-      brain: 'Whole network',
-      tidy: 'Tidy up',
-      files: 'Files',
+      overview: copy.nav.overview,
+      brain: copy.nav.network,
+      tidy: copy.nav.tidy,
+      files: copy.nav.files,
       search: 'Suche',
       shares: 'Freigaben',
     }[view] ?? ''
@@ -1132,10 +1132,10 @@ function topLevelDirs(notes: NoteRow[]): string[] {
 
 function SaveIndicator({ state }: { state: SaveState }): React.JSX.Element {
   const label = {
-    saved: 'Saved',
-    dirty: 'Unsaved',
-    saving: 'Saving…',
-    failed: 'Save failed',
+    saved: copy.save.saved,
+    dirty: copy.save.dirty,
+    saving: copy.save.saving,
+    failed: copy.save.failed,
   }[state];
 
   return (
