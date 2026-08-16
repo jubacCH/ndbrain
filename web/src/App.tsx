@@ -1052,6 +1052,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               setDrawerOpen(false);
             }}
             onRenameFolder={(path) => void renameFolder(path)}
+            onCreateFirst={() => void createNote()}
           />
         </div>
 

@@ -260,3 +260,50 @@ describe('keyboard navigation', () => {
     expect(document.activeElement).toBe(rows()[0]);
   });
 });
+
+describe('the first screen a new account sees', () => {
+  it('names the action rather than reporting an absence', () => {
+    const onCreateFirst = vi.fn();
+    render(
+      <Tree
+        notes={[]}
+        self="julian"
+        received={[]}
+        selected={null}
+        findings={new Map()}
+        filter=""
+        hidePrefixes
+        onSelect={vi.fn()}
+        onRenameFolder={vi.fn()}
+        onCreateFirst={onCreateFirst}
+      />,
+    );
+
+    // Carbon's anatomy: an action title, a line on what it gets you, one control.
+    expect(screen.getByText(/Start your first note/i)).toBeInTheDocument();
+    expect(screen.getByText(/link to each other/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /New note/i })).toBeInTheDocument();
+  });
+
+  it('offers the action, not just the words', async () => {
+    const user = userEvent.setup();
+    const onCreateFirst = vi.fn();
+    render(
+      <Tree
+        notes={[]}
+        self="julian"
+        received={[]}
+        selected={null}
+        findings={new Map()}
+        filter=""
+        hidePrefixes
+        onSelect={vi.fn()}
+        onRenameFolder={vi.fn()}
+        onCreateFirst={onCreateFirst}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /New note/i }));
+    expect(onCreateFirst).toHaveBeenCalledTimes(1);
+  });
+});

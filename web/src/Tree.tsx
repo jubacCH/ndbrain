@@ -82,6 +82,8 @@ export interface TreeProps {
    * straddles its edge has no good answer, so it is not offered.
    */
   onRenameFolder: (path: string) => void;
+  /** Offered on the first-run empty state only. */
+  onCreateFirst?: () => void;
 }
 
 interface Folder {
@@ -260,6 +262,7 @@ export function Tree({
   hidePrefixes,
   onSelect,
   onRenameFolder,
+  onCreateFirst,
 }: TreeProps): React.JSX.Element {
   const box = useRef<HTMLDivElement>(null);
   const onKeyDown = useTreeKeys(box);
@@ -417,9 +420,22 @@ export function Tree({
             )}
 
             {rows.length === 0 ? (
-              <p className="empty">
-                {isOwn ? copy.tree.noNotes : copy.tree.nothingShared}
-              </p>
+              isOwn ? (
+                /* The one screen a new person sees. It names the action, says
+                   what it gets them, and offers the control — rather than
+                   reporting that they have nothing. */
+                <div className="firstrun">
+                  <p className="firstrun-title">{copy.tree.noNotes}</p>
+                  <p className="firstrun-why">{copy.tree.noNotesWhy}</p>
+                  {onCreateFirst !== undefined && (
+                    <button type="button" onClick={onCreateFirst}>
+                      {copy.tree.noNotesAction}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="empty">{copy.tree.nothingShared}</p>
+              )
             ) : filter !== '' ? (
               hits.length === 0 ? (
                 isOwn ? <p className="empty">{copy.tree.noMatch}</p> : null

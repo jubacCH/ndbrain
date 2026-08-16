@@ -80,8 +80,12 @@ export const copy = {
     renameFolder: 'Rename or move this folder (new path)',
     moveTo: (count: number) => `Move ${count} notes to (empty = top of the vault)`,
     tagWith: (count: number) => `Tag ${count} notes with`,
-    deleteNotes: (count: number) => `Delete ${count} notes? This cannot be undone.`,
+    /* No longer 'cannot be undone': the sidecar keeps every version, and the
+       history panel puts them back. Saying otherwise was true last week. */
+    deleteNotes: (count: number) =>
+      `Delete ${count} notes? Earlier versions stay in the history.`,
     deleteFile: (name: string) => `Delete “${name}”? This cannot be undone.`,
+    deleteNote: (name: string) => `Delete “${name}”? Earlier versions stay in the history.`,
     revokeShare: (what: string) => `Stop sharing ${what}?`,
   },
 
@@ -116,7 +120,10 @@ export const copy = {
     nothingToDo: 'nothing to do',
     needAttention: (count: number) => `${count} need attention`,
     needsAttention: 'Needs attention',
-    clean: 'Nothing open — the vault is clean.',
+    clean: 'Nothing needs attention. The vault is in good order.',
+    /** The findings that came back empty, said once and quietly. */
+    noneOf: (labels: string[]) =>
+      `No ${labels.length === 1 ? labels[0] : labels.slice(0, -1).join(', ') + ' or ' + labels[labels.length - 1]}.`,
     orphaned: 'orphaned',
     brokenLinks: 'broken links',
     untagged: 'untagged',
@@ -161,6 +168,9 @@ export const copy = {
   search: {
     title: 'Search',
     nothingFound: 'Nothing found',
+    /* Obsidian and Notion both do this: the query you typed is usually the
+       title of the note you were looking for and did not have yet. */
+    createInstead: (q: string) => `Create “${q}”`,
     results: (count: number) => `${count} ${count === 1 ? 'result' : 'results'}`,
     fromLastDays: (days: number) => `from the last ${days} days`,
     days: (days: number) => `${days} days`,
@@ -213,7 +223,12 @@ export const copy = {
   },
 
   tree: {
-    noNotes: 'No notes yet. Start one with “New note”.',
+    /* Carbon's empty-state anatomy: name the action, say what it gets you, offer
+       the one control that does it. "You have no notes" states a deficiency and
+       leaves the person exactly where they were. */
+    noNotes: 'Start your first note',
+    noNotesWhy: 'Notes link to each other with [[double brackets]]. The links build the map.',
+    noNotesAction: 'New note',
     nothingShared: 'Nothing shared.',
     noMatch: 'No match.',
     renameFolder: (name: string) => `Rename or move “${name}”`,

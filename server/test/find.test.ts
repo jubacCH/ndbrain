@@ -214,3 +214,68 @@ describe('tags endpoint', () => {
     expect((await server.inject({ url: '/api/v1/quickfind?q=x' })).statusCode).toBe(401);
   });
 });
+
+describe('excerpts that distinguish one hit from another', () => {
+  const META = '> **type:** reference · **topic:** proxmox, homelab · **updated:** 2026-06-06';
+
+  beforeEach(async () => {
+    // The shape 53 of the 60 notes in the real vault have: an import wrote the
+    // metadata as the first line of the body, so FTS5 finds its match there
+    // every time and every excerpt comes back identical.
+    await runtime.app.createNote(
+      'julian',
+      'Meta/Eins.md',
+      `${META}\n\nDer Cluster hat zwei Nodes und ein Qdevice auf dns01.\n`,
+    );
+    await runtime.app.createNote(
+      'julian',
+      'Meta/Zwei.md',
+      `${META}\n\nProxmox speichert die Gäste auf local-lvm, nicht auf dem NAS.\n`,
+    );
+  });
+
+  it('does not hand back the same boilerplate for every result', async () => {
+    const response = await server.inject({ url: '/api/v1/search?q=proxmox', headers: { cookie } });
+    const hits = (response.json() as { hits: Array<{ path: string; snippet: string }> }).hits.filter(
+      (h) => h.path.startsWith('Meta/'),
+    );
+
+    expect(hits).toHaveLength(2);
+    for (const hit of hits) {
+      expect(hit.snippet).not.toContain('**type:**');
+    }
+    // And they differ, which is the whole point of an excerpt.
+    expect(hits[0]!.snippet).not.toBe(hits[1]!.snippet);
+  });
+
+  it('keeps the match marked, so the highlighting stays consistent', async () => {
+    const response = await server.inject({ url: '/api/v1/search?q=Qdevice', headers: { cookie } });
+    const hit = (response.json() as { hits: Array<{ path: string; snippet: string }> }).hits.find(
+      (h) => h.path === 'Meta/Eins.md',
+    );
+
+    expect(hit?.snippet).toContain('[Qdevice]');
+  });
+
+  it('leaves an ordinary excerpt alone', async () => {
+    // Nothing to rescue when the note has no metadata line: the FTS excerpt is
+    // already the best available answer and must come through untouched.
+    const response = await server.inject({ url: '/api/v1/search?q=Qdevice', headers: { cookie } });
+    const hit = (response.json() as { hits: Array<{ path: string; snippet: string }> }).hits.find(
+      (h) => h.path === 'Homelab/Proxmox Cluster.md',
+    );
+
+    expect(hit?.snippet).toContain('[Qdevice]');
+  });
+
+  it('still finds a note whose only match is in that line', async () => {
+    // Presentation only. Stripping the line from the index would have made this
+    // note unfindable; it is still matched, just shown differently.
+    await runtime.app.createNote('julian', 'Meta/Nur.md', `${META}\n\nKeine weiteren Worte.\n`);
+
+    const response = await server.inject({ url: '/api/v1/search?q=homelab', headers: { cookie } });
+    const paths = (response.json() as { hits: Array<{ path: string }> }).hits.map((h) => h.path);
+
+    expect(paths).toContain('Meta/Nur.md');
+  });
+});

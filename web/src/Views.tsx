@@ -48,6 +48,27 @@ export function OverviewView({
   // here was the bug: they overlap, and the total ran past the number of notes.
   const attention = counts.attention;
 
+  /**
+   * Only the findings that found something.
+   *
+   * A zero rendered at the same size as a forty is worse than no tile at all:
+   * the eye reads size as importance before it reads the digit, so two large
+   * noughts beside one large forty say "three things to look at". The zeros are
+   * still reported — as a single quiet line — because "nothing broken" is
+   * genuinely worth knowing, just not worth a third of the tile.
+   */
+  const findings = [
+    { label: copy.overview.orphaned, kind: 'crit' as const, count: counts.orphans },
+    { label: copy.overview.brokenLinks, kind: 'crit' as const, count: counts.deadLinks },
+    // Withheld where no note is tagged: see Queries.tagsInUse.
+    ...(counts.tagsInUse
+      ? [{ label: copy.overview.untagged, kind: 'warn' as const, count: counts.untagged }]
+      : []),
+    { label: copy.overview.untouched, kind: 'warn' as const, count: counts.stale },
+  ];
+  const active = findings.filter((f) => f.count > 0);
+  const clear = findings.filter((f) => f.count === 0);
+
   return (
     <div className="pane padded">
       <h2 className="h-big">{copy.overview.title}</h2>
@@ -60,22 +81,27 @@ export function OverviewView({
         <section className="tile tile-wide">
           <p className="cap">{copy.overview.needsAttention}</p>
           {attention === 0 ? (
-            <p className="empty">{copy.overview.clean}</p>
+            /* Not an apology for having nothing to show. A vault with no
+               findings is the goal state, so it reads as one. */
+            <p className="allclear">{copy.overview.clean}</p>
           ) : (
-            <div className="findings">
-              <Finding onOpen={onFindings} label={copy.overview.orphaned} kind="crit" count={counts.orphans} />
-              <Finding onOpen={onFindings} label={copy.overview.brokenLinks} kind="crit" count={counts.deadLinks} />
-              {/* Withheld where no note is tagged: see Queries.tagsInUse. */}
-              {counts.tagsInUse && <Finding onOpen={onFindings} label={copy.overview.untagged} kind="warn" count={counts.untagged} />}
-              <Finding onOpen={onFindings} label={copy.overview.untouched} kind="warn" count={counts.stale} />
-            </div>
+            <>
+              <div className="findings">
+                {active.map((f) => (
+                  <Finding key={f.label} onOpen={onFindings} label={f.label} kind={f.kind} count={f.count} />
+                ))}
+              </div>
+              {clear.length > 0 && (
+                <p className="clearline">{copy.overview.noneOf(clear.map((f) => f.label))}</p>
+              )}
+            </>
           )}
         </section>
 
+        {data.activity.length > 0 && (
         <section className="tile">
           <p className="cap">{copy.overview.sinceYesterday}</p>
           <div className="list">
-            {data.activity.length === 0 && <p className="empty">{copy.overview.nothingHappened}</p>}
             {data.activity.slice(0, 8).map((row) => (
               <button
                 type="button"
@@ -98,11 +124,12 @@ export function OverviewView({
             ))}
           </div>
         </section>
+        )}
 
+        {data.tasks.length > 0 && (
         <section className="tile">
           <p className="cap">{copy.overview.openTasks}</p>
           <div className="list">
-            {data.tasks.length === 0 && <p className="empty">{copy.overview.noTasks}</p>}
             {data.tasks.slice(0, 8).map((task: TaskRow) => (
               <button
                 type="button"
@@ -116,6 +143,7 @@ export function OverviewView({
             ))}
           </div>
         </section>
+        )}
 
         <section className="tile">
           <p className="cap">{copy.overview.recentlyEdited}</p>
@@ -135,10 +163,10 @@ export function OverviewView({
           </div>
         </section>
 
+        {data.tags.length > 0 && (
         <section className="tile tile-short">
           <p className="cap">{copy.overview.tags}</p>
           <div className="tagcloud">
-            {data.tags.length === 0 && <p className="empty">{copy.overview.noTags}</p>}
             {data.tags.slice(0, 14).map((tag) => (
               <span className="pill p-tag" key={tag.tag}>
                 #{tag.tag} <span style={{ opacity: 0.6 }}>{tag.count}</span>
@@ -146,6 +174,7 @@ export function OverviewView({
             ))}
           </div>
         </section>
+        )}
       </div>
     </div>
   );
