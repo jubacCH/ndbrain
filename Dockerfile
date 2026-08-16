@@ -27,8 +27,13 @@ FROM node:24-bookworm-slim AS runtime
 
 # tini reaps zombies and forwards signals, so SIGTERM from `docker stop` actually
 # reaches the process and the shutdown handler runs instead of being killed.
+#
+# git is here to *read* the history sidecar — the repository `vault-history.sh`
+# maintains beside the application on the host. Reading only: the timer still
+# owns every commit, so a git that is broken or missing in here degrades the
+# history view to "not available" and cannot stop a note from being saved.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tini \
+ && apt-get install -y --no-install-recommends tini git \
  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
