@@ -3666,3 +3666,11 @@ td.n,
   background: rgba(16, 32, 42, 0.9);
   color: #f2fbfc;
 }
+
+/* A setting that only exists while its switch is on sits under it, indented, so
+   the relationship is visible without a label saying so. */
+.setrow-sub {
+  padding-left: var(--s-4);
+  border-left: 2px solid var(--glass-line);
+  margin-left: var(--s-1);
+}

@@ -291,8 +291,10 @@ export const copy = {
     hidePrefixes: 'Hide sort prefixes',
     hidePrefixesHint:
       'Shows 20_Areas as “Areas”. Display only — the folder on disk keeps its digits.',
-    recentCount: 'Recent notes',
-    recentCountHint: 'How many recently opened notes the sidebar keeps.',
+    showRecent: 'Recent notes',
+    showRecentHint: 'A shortcut back to the notes you had open.',
+    recentCount: 'How many',
+    recentCountHint: 'Older ones drop off the end.',
     off: 'off',
 
     writing: 'Writing',

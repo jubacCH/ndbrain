@@ -792,6 +792,12 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   );
 
   const recentRows = useMemo((): NoteRow[] => {
+    // Zero means off, and it has to be checked before the loop rather than
+    // inside it: the limit was tested *after* pushing, so "show 0" still left
+    // exactly one entry — and the heading above it — which is the setting doing
+    // visibly nothing at the one value somebody chooses deliberately.
+    if (prefs.recentCount <= 0) return [];
+
     const byKey = new Map(notes.map((note) => [refKey(note.owner, note.path), note]));
     const out: NoteRow[] = [];
     for (const recent of recents) {

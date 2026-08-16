@@ -31,8 +31,16 @@ export interface Prefs {
   hidePrefixes: boolean;
   /** How long typing pauses before a write, in milliseconds. */
   saveDelayMs: number;
-  /** How many recently opened notes the sidebar lists. */
+  /** How many recently opened notes the sidebar lists; 0 hides the list. */
   recentCount: number;
+  /**
+   * The length chosen before the list was switched off.
+   *
+   * Without it, turning the list back on lands on a default rather than on the
+   * number somebody had already decided they wanted — a small thing that makes a
+   * toggle feel like it forgot.
+   */
+  lastRecentCount: number;
   /** Poll interval for the live pulse in the network views, in milliseconds. */
   pulseMs: number;
 }
@@ -44,6 +52,7 @@ export const DEFAULT_PREFS: Prefs = {
   hidePrefixes: true,
   saveDelayMs: 500,
   recentCount: 5,
+  lastRecentCount: 5,
   pulseMs: 2000,
 };
 
@@ -93,6 +102,9 @@ export function loadPrefs(): Prefs {
       saveDelayMs: clamp(Number(stored.saveDelayMs), LIMITS.saveDelayMs, DEFAULT_PREFS.saveDelayMs),
       recentCount: Math.round(
         clamp(Number(stored.recentCount), LIMITS.recentCount, DEFAULT_PREFS.recentCount),
+      ),
+      lastRecentCount: Math.round(
+        clamp(Number(stored.lastRecentCount), [1, 20], DEFAULT_PREFS.lastRecentCount),
       ),
       pulseMs: clamp(Number(stored.pulseMs), LIMITS.pulseMs, DEFAULT_PREFS.pulseMs),
     };
