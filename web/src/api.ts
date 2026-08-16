@@ -388,6 +388,13 @@ export const api = {
       body: JSON.stringify(patch),
     }),
 
+  /** Only a label — the account id, which names the vault directory, is untouched. */
+  setDisplayName: (displayName: string) =>
+    request('/api/v1/account/profile', S.MeResponse, {
+      method: 'PUT',
+      body: JSON.stringify({ displayName }),
+    }),
+
   /** The current password is required even though a session is already held. */
   changePassword: (currentPassword: string, newPassword: string) =>
     request('/api/v1/account/password', S.OkResponse, {

@@ -341,6 +341,8 @@ export const SettingsResponse = z.object({ settings: UserSettings });
 /** Partial on purpose: two tabs on this page must not undo each other. */
 export const SettingsRequest = UserSettings.partial().strict();
 
+export const ProfileRequest = z.object({ displayName: z.string().min(1).max(64) }).strict();
+
 export const ChangePasswordRequest = z
   .object({
     /** Required even though the caller holds a session — see the route. */

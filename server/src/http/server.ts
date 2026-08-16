@@ -654,6 +654,19 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   /**
+   * Changes the name the interface calls the caller.
+   *
+   * No password confirmation, unlike the one below: this changes a label, and
+   * asking for a credential to edit a label trains people to type their password
+   * at prompts that do not need it.
+   */
+  fastify.put('/api/v1/account/profile', async (request) => {
+    const caller = requireUser(request).id;
+    const { displayName } = body(request, S.ProfileRequest);
+    return { user: publicUser(users.setDisplayName(caller, displayName)) };
+  });
+
+  /**
    * Changes the caller's own password.
    *
    * The current one is required even though the caller is already signed in.

@@ -10,7 +10,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import type { Database } from '../db/database.js';
-import { NdbrainError } from '../errors.js';
+import { InvalidUserError, NdbrainError } from '../errors.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { assertUserId } from '../vault/paths.js';
 import type { Vault } from '../vault/fs.js';
@@ -106,6 +106,37 @@ export class UserService {
     const created = this.get(id);
     if (created === undefined) throw new NdbrainError('user vanished immediately after creation');
     return created;
+  }
+
+  /**
+   * Changes the name the interface calls somebody.
+   *
+   * Only ever a label — the account id stays what it was. That separation is the
+   * point: the id is the vault's directory name and the key every share, session
+   * and API key hangs off, so renaming *it* is a migration. Wanting to be called
+   * "Julian" rather than "julian" is not.
+   */
+  setDisplayName(id: string, displayName: string): User {
+    const name = displayName.trim();
+    if (name === '' || name.length > 64) {
+      throw new InvalidUserError('a display name is between 1 and 64 characters');
+    }
+    // Control characters would let a name break the layout it appears in.
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001F\u007F]/.test(name)) {
+      throw new InvalidUserError('a display name may not contain control characters');
+    }
+
+    // Checked before the write rather than inferred from it: `run` reports
+    // nothing about how many rows it touched, so an update against a missing id
+    // would succeed silently and hand back a user that does not exist.
+    if (this.get(id) === undefined) throw new UnknownUserError(`no such user: ${id}`);
+
+    this.#db.run('UPDATE users SET display_name = ? WHERE id = ?', name, id);
+
+    const user = this.get(id);
+    if (user === undefined) throw new UnknownUserError(`no such user: ${id}`);
+    return user;
   }
 
   async setPassword(id: string, password: string): Promise<void> {

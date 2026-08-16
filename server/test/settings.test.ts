@@ -277,3 +277,73 @@ describe('signing out everywhere', () => {
     expect(response.statusCode).toBe(401);
   });
 });
+
+describe('the display name', () => {
+  it('changes what the interface calls you', async () => {
+    const response = await server.inject({
+      method: 'PUT',
+      url: '/api/v1/account/profile',
+      headers: { cookie },
+      payload: { displayName: 'Julian' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(S.MeResponse.parse(response.json()).user.displayName).toBe('Julian');
+  });
+
+  it('leaves the account id alone', async () => {
+    // The id is the vault's directory name and the key every share, session and
+    // API key hangs off. Renaming that is a migration; this is a label.
+    await server.inject({
+      method: 'PUT',
+      url: '/api/v1/account/profile',
+      headers: { cookie },
+      payload: { displayName: 'Julian' },
+    });
+
+    const me = await server.inject({ url: '/api/v1/auth/me', headers: { cookie } });
+    expect(S.MeResponse.parse(me.json()).user.id).toBe('julian');
+
+    // And signing in still uses the id, not the new label.
+    const wrong = await server.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { user: 'Julian', password: PASSWORD },
+    });
+    expect(wrong.statusCode).toBe(401);
+  });
+
+  it('refuses an empty name', async () => {
+    const response = await server.inject({
+      method: 'PUT',
+      url: '/api/v1/account/profile',
+      headers: { cookie },
+      payload: { displayName: '   ' },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('refuses control characters, which would break the layout it appears in', async () => {
+    const response = await server.inject({
+      method: 'PUT',
+      url: '/api/v1/account/profile',
+      headers: { cookie },
+      payload: { displayName: `Julian` },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('changes nobody else', async () => {
+    await runtime.users.create('ramona', 'ihr gutes passwort');
+    await server.inject({
+      method: 'PUT',
+      url: '/api/v1/account/profile',
+      headers: { cookie },
+      payload: { displayName: 'Julian' },
+    });
+
+    expect(runtime.users.get('ramona')?.displayName).toBe('ramona');
+  });
+});

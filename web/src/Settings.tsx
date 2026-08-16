@@ -32,6 +32,7 @@ export interface SettingsProps {
   onStaleDays: (days: number) => void;
   user: { id: string; displayName: string; role: string };
   onSignedOutEverywhere: () => void;
+  onRenamed: () => void;
 }
 
 const THEMES: Array<{ value: Theme; label: string; hint: string }> = [
@@ -54,6 +55,7 @@ export function SettingsView({
   onStaleDays,
   user,
   onSignedOutEverywhere,
+  onRenamed,
 }: SettingsProps): React.JSX.Element {
   const set = <K extends keyof Prefs>(key: K, value: Prefs[K]): void =>
     onPrefs({ ...prefs, [key]: value });
@@ -228,7 +230,11 @@ export function SettingsView({
         </div>
       </section>
 
-      <AccountSection user={user} onSignedOutEverywhere={onSignedOutEverywhere} />
+      <AccountSection
+        user={user}
+        onSignedOutEverywhere={onSignedOutEverywhere}
+        onRenamed={onRenamed}
+      />
     </div>
   );
 }
@@ -273,15 +279,36 @@ function Toggle({
 function AccountSection({
   user,
   onSignedOutEverywhere,
+  onRenamed,
 }: {
   user: { id: string; displayName: string; role: string };
   onSignedOutEverywhere: () => void;
+  /** Re-reads the account, so the sidebar shows the new name at once. */
+  onRenamed: () => void;
 }): React.JSX.Element {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [repeat, setRepeat] = useState('');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
+  const [name, setName] = useState(user.displayName);
+
+  const rename = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api.setDisplayName(name.trim());
+      setNote({ kind: 'ok', text: copy.settings.nameSaved });
+      onRenamed();
+    } catch (caught) {
+      setNote({
+        kind: 'bad',
+        text: caught instanceof ApiError ? caught.message : copy.settings.nameFailed,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const change = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
@@ -325,9 +352,33 @@ function AccountSection({
     <section className="setgroup">
       <h3 className="cap">{copy.settings.account}</h3>
 
+      {/*
+        The name and the account id are different things and the hint says so.
+        The id is the vault's directory name and the key every share and API key
+        hangs off; this is only ever a label.
+      */}
+      <form className="setrow" onSubmit={(event) => void rename(event)}>
+        <div className="setlabel">
+          <span>{copy.settings.displayName}</span>
+          <small>{copy.settings.displayNameHint}</small>
+        </div>
+        <div className="nameedit">
+          <input
+            type="text"
+            value={name}
+            maxLength={64}
+            aria-label={copy.settings.displayName}
+            onChange={(event) => setName(event.target.value)}
+          />
+          <button type="submit" disabled={busy || name.trim() === '' || name === user.displayName}>
+            {copy.settings.save}
+          </button>
+        </div>
+      </form>
+
       <div className="setrow">
         <div className="setlabel">
-          <span>{user.displayName}</span>
+          <span>{user.id}</span>
           <small>{user.role === 'admin' ? copy.settings.roleAdmin : copy.settings.roleUser}</small>
         </div>
       </div>
