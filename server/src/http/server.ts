@@ -769,6 +769,26 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return { note: result.note, created: result.created };
   });
 
+  /* ---- topics --------------------------------------------------------------
+   *
+   * Offered, never performed unasked. The vault this was written for has 53
+   * notes carrying their metadata as prose and no tags at all, so an entire axis
+   * of the tool is dark for want of a translation — but the notes are the
+   * person's, and a migration that runs on its own is a tool editing writing it
+   * was not asked to edit.
+   */
+
+  fastify.get('/api/v1/topics', async (request) => {
+    const owner = requireUser(request).id;
+    return { proposals: await app.topicProposals(owner) };
+  });
+
+  fastify.post('/api/v1/topics/apply', async (request) => {
+    const caller = requireUser(request).id;
+    const { paths } = body(request, S.ApplyTopicsRequest);
+    return { applied: await app.applyTopics(caller, paths, caller) };
+  });
+
   // ---- bulk tidy-up -------------------------------------------------------
   //
   // The differentiator. Each returns per-note results rather than failing

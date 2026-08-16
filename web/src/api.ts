@@ -40,6 +40,7 @@ export type {
   Share,
   TaskRow,
   Tidy,
+  TopicProposal,
   UploadResult,
   User,
   Version,
@@ -342,6 +343,17 @@ export const api = {
   deleteFile: (owner: string, path: string) =>
     request(`/api/v1/files/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, Empty, {
       method: 'DELETE',
+    }),
+
+  // ---- topics ---------------------------------------------------------------
+
+  topics: () => request('/api/v1/topics', S.TopicsResponse),
+
+  /** Names the notes, never the tags — the server re-derives those. */
+  applyTopics: (paths: string[]) =>
+    request('/api/v1/topics/apply', S.ApplyTopicsResponse, {
+      method: 'POST',
+      body: JSON.stringify({ paths }),
     }),
 
   // ---- history --------------------------------------------------------------

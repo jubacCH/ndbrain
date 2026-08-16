@@ -36,6 +36,7 @@ import { Editor } from './Editor';
 import { copy } from './copy';
 import { applyPrefs, loadPrefs, savePrefs, type Prefs } from './prefs';
 import { SettingsView } from './Settings';
+import { TopicsPanel } from './Topics';
 import { FilesView } from './Files';
 import { Login } from './Login';
 import { Palette } from './Palette';
@@ -45,6 +46,7 @@ import {
   invalidate,
   keys,
   useSettings,
+  useTopics,
   useFiles,
   useGraph,
   useNote,
@@ -144,6 +146,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [topicsDone, setTopicsDone] = useState<number | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const [props, setProps] = useState<Array<{ key: string; count: number }>>([]);
   const [propValues, setPropValues] = useState<Array<{ value: string; count: number }>>([]);
@@ -201,6 +204,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const graphQuery = useGraph(view === 'brain' || view === 'note');
   const filesQuery = useFiles(view === 'files');
   const settingsQuery = useSettings(view === 'settings');
+  const topicsQuery = useTopics(view === 'tidy');
 
   const notes = treeQuery.data?.notes ?? [];
   const tidy = tidyQuery.data ?? null;
@@ -447,6 +451,32 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       }
     },
     [open, client],
+  );
+
+  /**
+   * Adds the proposed tags to the notes that were left ticked.
+   *
+   * Sends paths only. The tags themselves are re-derived on the server, so a
+   * proposal this page has been holding for ten minutes cannot write something
+   * the note no longer says.
+   */
+  const applyTopics = useCallback(
+    async (paths: string[]): Promise<void> => {
+      setBulkBusy(true);
+      try {
+        const { applied } = await api.applyTopics(paths);
+        // Everything that reads tags is now stale: the tree markers, the tag
+        // cloud, the untagged finding and the proposal list itself.
+        invalidate.afterStructure(client);
+        setTopicsDone(applied.length);
+        setError(null);
+      } catch (caught) {
+        setError(caught instanceof ApiError ? caught.message : copy.topics.failed);
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [client],
   );
 
   const createNoteAt = useCallback(
@@ -1139,6 +1169,19 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
                 </div>
               </div>
             ))}
+
+          {view === 'tidy' && (
+            <>
+              {topicsDone !== null && (
+                <p className="warnline" role="status">{copy.topics.done(topicsDone)}</p>
+              )}
+              <TopicsPanel
+                proposals={topicsQuery.data?.proposals ?? []}
+                busy={bulkBusy}
+                onApply={(paths) => void applyTopics(paths)}
+              />
+            </>
+          )}
 
           {view === 'tidy' && tidy !== null && (
             <TidyView

@@ -11,6 +11,7 @@
 import type { Indexer } from './index/indexer.js';
 import { Queries, toView, type NoteRow, type Viewable } from './index/queries.js';
 import { addTag, removeTag } from './markdown/edit.js';
+import { proposeFor, type TopicProposal } from './notes/topics.js';
 import { parseNote } from './markdown/parse.js';
 import type { Note, NoteService, PutOptions, PutResult } from './notes/service.js';
 import type { Database } from './db/database.js';
@@ -127,6 +128,50 @@ export class App {
     this.#recordEdit(owner, result.note.path, result.created ? 'create' : 'update', actor);
     await this.#recordConflictCopy(owner, result, actor);
     return result;
+  }
+
+  /* ---- topics -------------------------------------------------------------
+   *
+   * A one-off migration offered as a tool rather than performed on somebody's
+   * behalf. See notes/topics.ts for why the parsing is deliberately narrow and
+   * why nothing here removes the line it read.
+   */
+
+  /** What the metadata lines in this vault would contribute, if applied. */
+  async topicProposals(owner: string): Promise<TopicProposal[]> {
+    const out: TopicProposal[] = [];
+    for (const entry of await this.notes.listNotes(owner)) {
+      const note = await this.notes.getNote(owner, entry.path);
+      const proposal = proposeFor(entry.path, noteTitle(entry.path), note.content);
+      if (proposal !== null) out.push(proposal);
+    }
+    return out;
+  }
+
+  /**
+   * Adds the proposed tags to the named notes.
+   *
+   * Re-derived rather than taking the tags from the request: a proposal the
+   * client is holding may be minutes old, and writing tags a client sends would
+   * make this endpoint a way to put arbitrary words into a note. The client
+   * chooses *which notes*; the server decides what that means.
+   */
+  async applyTopics(owner: string, paths: string[], actor?: string): Promise<{ path: string; added: string[] }[]> {
+    const wanted = new Set(paths.map((path) => normalizeVaultPath(path)));
+    const done: { path: string; added: string[] }[] = [];
+
+    for (const proposal of await this.topicProposals(owner)) {
+      if (!wanted.has(proposal.path)) continue;
+
+      const note = await this.notes.getNote(owner, proposal.path);
+      let content = note.content;
+      for (const tag of proposal.proposed) content = addTag(content, tag);
+      if (content === note.content) continue;
+
+      await this.putNote(owner, proposal.path, content, actor);
+      done.push({ path: proposal.path, added: proposal.proposed });
+    }
+    return done;
   }
 
   /* ---- files -------------------------------------------------------------

@@ -3331,3 +3331,67 @@ td.n,
   opacity: 0.5;
   cursor: default;
 }
+
+/* ===================== TOPICS AS TAGS =====================
+ *
+ * A one-off migration offered as a preview. The notes belong to the person
+ * using this, so nothing is written until they have seen exactly what would
+ * change — including the line each proposal was read from, so the machine's
+ * reading can be checked rather than trusted. */
+
+.topics {
+  margin: 0.2rem 0 1rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid rgba(90, 190, 205, 0.35);
+  background: rgba(120, 210, 225, 0.09);
+}
+.topicsline {
+  margin: 0 0 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.topicsactions {
+  display: flex;
+  gap: 0.4rem;
+}
+.topicsactions button {
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 0.3rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-soft);
+  color: var(--ink-2);
+}
+.topicsactions button.primary {
+  background: rgba(16, 32, 42, 0.9);
+  border-color: transparent;
+  color: #f2fbfc;
+  font-weight: 600;
+}
+.topicsactions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.topicstbl {
+  margin-top: 0.7rem;
+}
+.topicstbl td,
+.topicstbl th {
+  font-size: 0.76rem;
+}
+/* An unticked row stays legible — it is a choice, not an error. */
+.topicstbl tr[data-skipped='true'] {
+  opacity: 0.45;
+}
+.topicssrc {
+  color: var(--ink-3);
+  font-size: 0.7rem;
+  max-width: 26rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
