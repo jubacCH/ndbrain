@@ -323,6 +323,21 @@ export const copy = {
     restoreFailed: 'Could not restore that version.',
   },
 
+  topics: {
+    found: (n: number) => `${n} notes carry topics in their text.`,
+    explain:
+      'An import wrote them as a line in the note instead of as tags, so nothing can filter by them. This adds them as tags and leaves the text exactly as it is.',
+    showPreview: 'Show what would change',
+    hidePreview: 'Hide',
+    apply: (n: number) => `Add tags to ${n} notes`,
+    note: 'Note',
+    willGet: 'Would get',
+    readFrom: 'Read from',
+    include: (title: string) => `Include ${title}`,
+    done: (n: number) => `${n} notes tagged.`,
+    failed: 'Could not add those tags.',
+  },
+
   crash: {
     title: 'ndBrain stopped drawing this page',
     explain:

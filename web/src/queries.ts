@@ -54,6 +54,7 @@ export const keys = {
   tags: ['tags'] as const,
   files: ['files'] as const,
   settings: ['settings'] as const,
+  topics: ['topics'] as const,
   note: (owner: string, path: string) => ['note', owner, path] as const,
   links: (owner: string, path: string) => ['links', owner, path] as const,
   history: (owner: string, path: string) => ['history', owner, path] as const,
@@ -208,6 +209,21 @@ export function useHistory(
 }
 
 /**
+ * Notes whose metadata is prose rather than tags.
+ *
+ * Only while the tidy view is open. It reads every note in the vault to answer,
+ * which is fine as a deliberate look and wasteful as a background poll.
+ */
+export function useTopics(enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.topics>>> {
+  return useQuery({
+    queryKey: keys.topics,
+    queryFn: () => api.topics(),
+    staleTime: FRESH_MS,
+    enabled,
+  });
+}
+
+/**
  * What a write invalidates.
  *
  * Named rather than spelled out at each call site, because the interesting part
@@ -234,6 +250,7 @@ export const invalidate = {
     void client.invalidateQueries({ queryKey: keys.overview });
     void client.invalidateQueries({ queryKey: keys.files });
     void client.invalidateQueries({ queryKey: keys.tags });
+    void client.invalidateQueries({ queryKey: keys.topics });
   },
 };
 

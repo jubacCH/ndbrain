@@ -284,6 +284,28 @@ export const UploadResult = z.object({
 
 export const UploadResponse = z.object({ results: z.array(UploadResult) });
 
+/* ---- topics -------------------------------------------------------------- */
+
+export const TopicProposal = z.object({
+  path: z.string(),
+  title: z.string(),
+  existing: z.array(z.string()),
+  proposed: z.array(z.string()),
+  /** The line it was read from, so a person can check the machine's reading. */
+  source: z.string(),
+});
+
+export const TopicsResponse = z.object({ proposals: z.array(TopicProposal) });
+
+/** Which notes, never which tags — the server re-derives those. */
+export const ApplyTopicsRequest = z
+  .object({ paths: z.array(VaultPath).min(1).max(5000) })
+  .strict();
+
+export const ApplyTopicsResponse = z.object({
+  applied: z.array(z.object({ path: z.string(), added: z.array(z.string()) })),
+});
+
 /* ---- history ------------------------------------------------------------- */
 
 export const Version = z.object({
@@ -387,5 +409,6 @@ export type PulseEvent = z.infer<typeof PulseEvent>;
 export type FileRow = z.infer<typeof FileRow>;
 export type UserSettings = z.infer<typeof UserSettings>;
 export type Version = z.infer<typeof Version>;
+export type TopicProposal = z.infer<typeof TopicProposal>;
 export type FilesResponse = z.infer<typeof FilesResponse>;
 export type UploadResult = z.infer<typeof UploadResult>;
