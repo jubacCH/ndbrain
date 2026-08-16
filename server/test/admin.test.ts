@@ -72,24 +72,27 @@ afterEach(async () => {
 });
 
 describe('who may reach any of this', () => {
-  const routes: Array<[string, string, unknown?]> = [
-    ['GET', '/api/v1/admin/users'],
-    ['POST', '/api/v1/admin/users', { id: 'neu', password: 'ein gutes passwort' }],
-    ['POST', '/api/v1/admin/users/ramona/password', { password: 'ein gutes passwort' }],
-    ['POST', '/api/v1/admin/users/ramona/disabled', { disabled: true }],
-    ['GET', '/api/v1/admin/keys'],
-    ['POST', '/api/v1/admin/keys', { owner: 'ramona', name: 'agent' }],
-    ['DELETE', '/api/v1/admin/keys/key_x'],
+  /**
+   * Every admin route, with a body where one is needed.
+   *
+   * `payload` is always present rather than spread in conditionally: an optional
+   * property under `exactOptionalPropertyTypes` is not the same type as an
+   * absent one, and Fastify's inject types reject the union that produces. An
+   * empty object is a legal body for a route that ignores it.
+   */
+  const routes: Array<{ method: 'GET' | 'POST' | 'DELETE'; url: string; payload: object }> = [
+    { method: 'GET', url: '/api/v1/admin/users', payload: {} },
+    { method: 'POST', url: '/api/v1/admin/users', payload: { id: 'neu', password: 'ein gutes passwort' } },
+    { method: 'POST', url: '/api/v1/admin/users/ramona/password', payload: { password: 'ein gutes passwort' } },
+    { method: 'POST', url: '/api/v1/admin/users/ramona/disabled', payload: { disabled: true } },
+    { method: 'GET', url: '/api/v1/admin/keys', payload: {} },
+    { method: 'POST', url: '/api/v1/admin/keys', payload: { owner: 'ramona', name: 'agent' } },
+    { method: 'DELETE', url: '/api/v1/admin/keys/key_x', payload: {} },
   ];
 
-  for (const [method, url, payload] of routes) {
+  for (const { method, url, payload } of routes) {
     it(`refuses an ordinary account: ${method} ${url}`, async () => {
-      const response = await server.inject({
-        method: method as 'GET',
-        url,
-        headers: { cookie: plainCookie },
-        ...(payload === undefined ? {} : { payload }),
-      });
+      const response = await server.inject({ method, url, headers: { cookie: plainCookie }, payload });
 
       // 404 rather than 403: confirming that an admin surface exists is
       // information a non-admin has no use for.
@@ -97,11 +100,7 @@ describe('who may reach any of this', () => {
     });
 
     it(`refuses no account at all: ${method} ${url}`, async () => {
-      const response = await server.inject({
-        method: method as 'GET',
-        url,
-        ...(payload === undefined ? {} : { payload }),
-      });
+      const response = await server.inject({ method, url, payload });
 
       expect(response.statusCode).toBe(401);
     });
