@@ -36,6 +36,7 @@ import { Editor } from './Editor';
 import { copy } from './copy';
 import { applyPrefs, loadPrefs, savePrefs, type Prefs } from './prefs';
 import { SettingsView } from './Settings';
+import { AdminView } from './Admin';
 import { TopicsPanel } from './Topics';
 import { FilesView } from './Files';
 import { Login } from './Login';
@@ -46,6 +47,8 @@ import {
   invalidate,
   keys,
   useSettings,
+  useAdminUsers,
+  useAdminKeys,
   useTopics,
   useFiles,
   useGraph,
@@ -66,7 +69,16 @@ export interface Filters {
   propValue?: string;
 }
 
-type View = 'note' | 'overview' | 'brain' | 'tidy' | 'search' | 'shares' | 'files' | 'settings';
+type View =
+  | 'note'
+  | 'overview'
+  | 'brain'
+  | 'tidy'
+  | 'search'
+  | 'shares'
+  | 'files'
+  | 'settings'
+  | 'admin';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
 
 
@@ -220,6 +232,9 @@ function Shell({
    */
   const prefsRef = useRef(prefs);
   const [filesDir, setFilesDir] = useState('');
+  /** Which account's keys the admin view is showing. */
+  const [keyOwner, setKeyOwner] = useState(user.id);
+  const [adminBusy, setAdminBusy] = useState(false);
   const [filesBusy, setFilesBusy] = useState(false);
   const [recents, setRecents] = useState<Recent[]>(loadRecents);
 
@@ -258,6 +273,8 @@ function Shell({
   const filesQuery = useFiles(view === 'files');
   const settingsQuery = useSettings(view === 'settings');
   const topicsQuery = useTopics(view === 'tidy');
+  const adminUsersQuery = useAdminUsers(view === 'admin');
+  const adminKeysQuery = useAdminKeys(keyOwner, view === 'admin');
 
   const notes = treeQuery.data?.notes ?? [];
   const tidy = tidyQuery.data ?? null;
@@ -527,6 +544,28 @@ function Shell({
         setError(caught instanceof ApiError ? caught.message : copy.topics.failed);
       } finally {
         setBulkBusy(false);
+      }
+    },
+    [client],
+  );
+
+  /**
+   * The admin writes.
+   *
+   * Each one invalidates the two admin queries rather than patching state: the
+   * counts in the account table come from the server, and a list that drifts
+   * from what the server thinks is worse on this screen than on any other.
+   */
+  const adminAct = useCallback(
+    async <T,>(run: () => Promise<T>): Promise<T> => {
+      setAdminBusy(true);
+      try {
+        const result = await run();
+        await client.invalidateQueries({ queryKey: keys.adminUsers });
+        await client.invalidateQueries({ queryKey: ['admin', 'keys'] });
+        return result;
+      } finally {
+        setAdminBusy(false);
       }
     },
     [client],
@@ -1166,6 +1205,11 @@ function Shell({
         )}
 
         <div className="nav-foot">
+          {/* Hidden for everybody else, and refused by the server regardless:
+              a menu entry that is not rendered is not a permission. */}
+          {user.role === 'admin' && (
+            <button type="button" onClick={() => void showView('admin')}>{copy.nav.admin}</button>
+          )}
           <button type="button" onClick={() => void showView('settings')}>{copy.nav.settings}</button>
           <button type="button" onClick={() => void showView('shares')}>{copy.nav.sharing}</button>
           <button type="button" onClick={() => void signOut()}>{copy.nav.signOut}</button>
@@ -1346,6 +1390,32 @@ function Shell({
               />
             ))}
 
+          {view === 'admin' && (
+            <AdminView
+              users={adminUsersQuery.data?.users ?? []}
+              keys={adminKeysQuery.data?.keys ?? []}
+              self={user.id}
+              busy={adminBusy}
+              keyOwner={keyOwner}
+              onPickOwner={setKeyOwner}
+              onCreateUser={(id, password, displayName, admin) =>
+                adminAct(() => api.createUser(id, password, displayName, admin ? 'admin' : 'user')).then(
+                  () => undefined,
+                )
+              }
+              onResetPassword={(id, password) =>
+                adminAct(() => api.adminSetPassword(id, password)).then(() => undefined)
+              }
+              onSetDisabled={(id, disabled) =>
+                adminAct(() => api.adminSetDisabled(id, disabled)).then(() => undefined)
+              }
+              onCreateKey={(owner, name, scope, canWrite) =>
+                adminAct(() => api.createKey(owner, name, scope, canWrite))
+              }
+              onRevokeKey={(id) => adminAct(() => api.revokeKey(id)).then(() => undefined)}
+            />
+          )}
+
           {view === 'settings' && (
             <SettingsView
               prefs={prefs}
@@ -1436,6 +1506,7 @@ function titleOfView(view: string): string {
       tidy: copy.nav.tidy,
       files: copy.nav.files,
       settings: copy.nav.settings,
+      admin: copy.nav.admin,
       search: copy.nav.search,
       shares: copy.nav.sharing,
     }[view] ?? ''

@@ -3746,3 +3746,172 @@ td.n,
   opacity: 0.45;
   cursor: default;
 }
+
+/* ===================== ADMINISTRATION =====================
+ *
+ * The one screen where a mistake is expensive, so it is built to be slow in the
+ * right places: no one-click actions on a row, and the destructive ones are
+ * marked as such rather than looking like every other button. */
+
+.admin {
+  max-width: none;
+}
+.admin > * {
+  max-width: 58rem;
+}
+
+.adminname {
+  font-weight: var(--w-strong);
+}
+.adminid {
+  margin-left: var(--s-2);
+  font-size: var(--t-xs);
+  color: var(--ink-3);
+}
+tr[data-disabled='true'] .adminname {
+  text-decoration: line-through;
+  color: var(--ink-3);
+}
+
+.adminrow-actions {
+  display: flex;
+  gap: var(--s-1);
+  justify-content: flex-end;
+  align-items: center;
+}
+.adminrow-actions button,
+.inlineform button {
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-soft);
+  color: var(--ink-2);
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+}
+.adminrow-actions button:hover:not(:disabled) {
+  background: var(--glass-hi);
+  color: var(--ink);
+}
+.adminrow-actions .danger:hover:not(:disabled) {
+  color: var(--crit);
+  border-color: var(--crit);
+}
+.adminrow-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.inlineform {
+  display: flex;
+  gap: var(--s-1);
+  align-items: center;
+}
+.inlineform input {
+  font: inherit;
+  font-size: var(--t-xs);
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--glass-line);
+  background: var(--glass-soft);
+  color: var(--ink);
+  width: 11rem;
+}
+
+.adminform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  max-width: 24rem;
+  margin-top: var(--s-4);
+  padding: var(--s-3);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--r-md);
+  background: var(--glass-soft);
+}
+.adminform h4 {
+  margin: 0;
+  font-size: var(--t-md);
+}
+.adminform label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-0);
+}
+.adminform label span {
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+}
+.adminform input[type='text'],
+.adminform input[type='password'],
+.adminform input:not([type]) {
+  font: inherit;
+  font-size: var(--t-sm);
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--glass-line);
+  background: var(--glass);
+  color: var(--ink);
+}
+.adminform .checkline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s-2);
+}
+.adminform > button[type='submit'] {
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: var(--w-strong);
+  cursor: pointer;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: var(--s-2) var(--s-3);
+  background: rgba(16, 32, 42, 0.9);
+  color: #f2fbfc;
+  align-self: flex-start;
+}
+.adminform > button[type='submit']:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The secret exists once. This panel is the only time it will ever be on a
+   screen, so it is loud on purpose rather than politely inline. */
+.secretbox {
+  margin-top: var(--s-4);
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  border: 2px solid var(--warn);
+  background: var(--warn-bg);
+  max-width: 34rem;
+}
+.secrettitle {
+  margin: 0 0 var(--s-1);
+  font-weight: var(--w-strong);
+  color: var(--warn);
+}
+.secretbox textarea {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  padding: var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--glass-line);
+  background: var(--surface, #fff);
+  color: var(--ink);
+  resize: none;
+  margin: var(--s-2) 0;
+}
+.secretbox button {
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: var(--w-strong);
+  cursor: pointer;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: var(--s-1) var(--s-3);
+  background: rgba(16, 32, 42, 0.9);
+  color: #f2fbfc;
+}
