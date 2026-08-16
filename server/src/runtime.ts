@@ -13,6 +13,7 @@ import { App } from './app.js';
 import { ApiKeyService } from './auth/keys.js';
 import { ShareService } from './auth/shares.js';
 import { SettingsService } from './auth/settings.js';
+import { History } from './vault/history.js';
 import { SessionService, UserService } from './auth/users.js';
 import { indexFile, type Config } from './config.js';
 import { Database } from './db/database.js';
@@ -34,6 +35,7 @@ export interface Runtime {
   keys: ApiKeyService;
   shares: ShareService;
   settings: SettingsService;
+  history: History;
   close(): void;
 }
 
@@ -53,6 +55,7 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   const keys = new ApiKeyService(db);
   const shares = new ShareService(db);
   const settings = new SettingsService(db);
+  const history = new History(config.dataDir);
 
   sessions.purgeExpired();
 
@@ -68,6 +71,7 @@ export async function createRuntime(config: Config): Promise<Runtime> {
     keys,
     shares,
     settings,
+    history,
     close: () => db.close(),
   };
 }

@@ -22,6 +22,7 @@ async function main(): Promise<void> {
     keys: runtime.keys,
     shares: runtime.shares,
     settings: runtime.settings,
+    history: runtime.history,
     config,
   });
 

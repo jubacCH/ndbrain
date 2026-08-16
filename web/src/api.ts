@@ -42,6 +42,7 @@ export type {
   Tidy,
   UploadResult,
   User,
+  Version,
 } from '../../shared/schema';
 
 /** What it takes to name one note: which vault, and where in it. */
@@ -341,6 +342,28 @@ export const api = {
   deleteFile: (owner: string, path: string) =>
     request(`/api/v1/files/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, Empty, {
       method: 'DELETE',
+    }),
+
+  // ---- history --------------------------------------------------------------
+
+  history: (owner: string, path: string) =>
+    request(
+      `/api/v1/history/${encodePath(path)}?owner=${encodeURIComponent(owner)}`,
+      S.HistoryResponse,
+    ),
+
+  versionContent: (owner: string, path: string, version: string) =>
+    request(
+      `/api/v1/history/${encodePath(path)}?owner=${encodeURIComponent(owner)}` +
+        `&version=${encodeURIComponent(version)}`,
+      S.VersionContentResponse,
+    ).then((result) => result.content),
+
+  /** Writes an old version back as a new edit; never rewrites history. */
+  restoreVersion: (owner: string, path: string, version: string) =>
+    request('/api/v1/history/restore', S.RestoreResponse, {
+      method: 'POST',
+      body: JSON.stringify({ owner, path, version }),
     }),
 
   // ---- settings and account -------------------------------------------------

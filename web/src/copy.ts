@@ -227,6 +227,7 @@ export const copy = {
     noLinks: 'No links yet. Type [[ in the editor.',
     pointsNowhere: 'Points nowhere',
     file: 'File',
+    vaultOf: (owner: string) => `${owner}'s vault`,
   },
 
   palette: {
@@ -305,6 +306,21 @@ export const copy = {
     passwordFailed: 'Could not change the password.',
     sessionsRevoked: 'Every other device has been signed out.',
     sessionsFailed: 'Could not sign the other devices out.',
+  },
+
+  history: {
+    title: 'History',
+    none: 'No earlier versions recorded yet.',
+    noSidecar: 'No history is being recorded for this vault.',
+    loading: 'Loading…',
+    loadFailed: 'Could not read that version.',
+    today: 'Today',
+    yesterday: 'Yesterday',
+    restore: 'Restore this version',
+    restoreIsAnEdit:
+      'Restoring writes this text back as a new edit. The current version is kept in the history, so this can be undone.',
+    confirmRestore: (at: string) => `Put the version from ${at} back? The current text is kept in the history.`,
+    restoreFailed: 'Could not restore that version.',
   },
 
   crash: {
