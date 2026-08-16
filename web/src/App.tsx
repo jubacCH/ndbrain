@@ -1101,6 +1101,36 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           />
         </div>
 
+        {/*
+          The create actions, at the foot of the tree rather than above it.
+          Icons because the row is theirs alone and a label on each would make it
+          twice as tall for two words everybody already knows the shape of.
+
+          An icon button still carries its name three ways: aria-label for a
+          screen reader, title on hover, and a conventional shape. Two of those
+          three are invisible, and both of the invisible ones are needed.
+        */}
+        <div className="nav-make">
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label={copy.nav.newNote}
+            title={copy.nav.newNote}
+            onClick={() => void createNote()}
+          >
+            <NewNoteIcon />
+          </button>
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label={copy.nav.newFolder}
+            title={copy.nav.newFolder}
+            onClick={() => void createFolder()}
+          >
+            <NewFolderIcon />
+          </button>
+        </div>
+
         {tidy !== null && (
           <div className="nav-health">
             <button type="button" onClick={() => void showView('tidy')}>
@@ -1126,39 +1156,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           </div>
         )}
 
-        {/*
-          The two create actions live here rather than at the top. Making them
-          icons is what allows it: they sit beside the footer's text items
-          without needing a row of their own, which takes the sidebar from eight
-          stacked zones to seven — and the tree, the thing the sidebar is for,
-          gets the space back.
-
-          An icon button carries its name three ways: aria-label for a screen
-          reader, title for a hover, and a shape that is the convention for the
-          thing. Two of the three are invisible and both are needed.
-        */}
         <div className="nav-foot">
-          <button
-            type="button"
-            className="iconbtn"
-            aria-label={copy.nav.newNote}
-            title={copy.nav.newNote}
-            onClick={() => void createNote()}
-          >
-            <NewNoteIcon />
-          </button>
-          <button
-            type="button"
-            className="iconbtn"
-            aria-label={copy.nav.newFolder}
-            title={copy.nav.newFolder}
-            onClick={() => void createFolder()}
-          >
-            <NewFolderIcon />
-          </button>
-
-          <span className="nav-foot-gap" />
-
           <button type="button" onClick={() => void showView('settings')}>{copy.nav.settings}</button>
           <button type="button" onClick={() => void showView('shares')}>{copy.nav.sharing}</button>
           <button type="button" onClick={() => void signOut()}>{copy.nav.signOut}</button>
