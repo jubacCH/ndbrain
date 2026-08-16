@@ -388,6 +388,26 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     void openNote(last.owner, last.path);
   }, [notes, prefs.startView, openNote]);
 
+  /**
+   * Reloads the open note after a restore.
+   *
+   * The editor holds the old text and rebuilds only when (owner, path, readOnly)
+   * change — which is right while typing and wrong here, since the file on the
+   * server has just been replaced underneath it. Dropping the cached note and
+   * re-opening is what makes the restored text appear rather than sitting one
+   * save away from being overwritten again.
+   */
+  const reopenAfterRestore = useCallback(async (): Promise<void> => {
+    if (openRef === null) return;
+    pending.current = null;
+    window.__ndbrainPending = null;
+
+    await client.invalidateQueries({ queryKey: keys.note(openRef.owner, openRef.path) });
+    setOpenRef(null);
+    await openNote(openRef.owner, openRef.path);
+    invalidate.afterStructure(client);
+  }, [openRef, client, openNote]);
+
   const createNoteAt = useCallback(
     async (owner: string, rawName: string): Promise<void> => {
       const name = rawName.trim();
@@ -1158,6 +1178,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               note={{ owner: open.owner, path: open.note.path }}
               self={user.id}
               canCreate={open.canWrite}
+              onRestored={() => void reopenAfterRestore()}
               onOpen={(owner, path) => void openNote(owner, path)}
               onCreate={(target) => void createFromDeadLink(target)}
             />

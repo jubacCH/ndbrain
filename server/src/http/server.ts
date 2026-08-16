@@ -26,6 +26,7 @@ import type { App, BulkResult } from '../app.js';
 import type { ApiKeyService } from '../auth/keys.js';
 import { InvalidShareError, type Need, type ShareService } from '../auth/shares.js';
 import type { SettingsService } from '../auth/settings.js';
+import type { History } from '../vault/history.js';
 import { SessionService, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
@@ -67,6 +68,7 @@ export interface ServerDeps {
   keys: ApiKeyService;
   shares: ShareService;
   settings: SettingsService;
+  history: History;
   config: Config;
   throttle?: LoginThrottle;
 }
@@ -75,7 +77,7 @@ export interface ServerDeps {
 const PUBLIC_ROUTES = new Set(['/api/v1/auth/login', '/api/v1/health']);
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const { app, users, sessions, keys, shares, settings, config } = deps;
+  const { app, users, sessions, keys, shares, settings, history, config } = deps;
   const throttle = deps.throttle ?? new LoginThrottle();
 
   /**
@@ -724,6 +726,47 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         expires: new Date(expiresAt),
       })
       .send({ ok: true });
+  });
+
+  /* ---- history -------------------------------------------------------------
+   *
+   * The sidecar repository has been recording every vault every two minutes for
+   * weeks, and nothing in the application could see it: a note somebody
+   * overwrote was recoverable only by somebody with a shell on the box. These
+   * three routes are the whole feature — list, read, put back.
+   *
+   * Read-only against git. A restore is an ordinary write of old text, so it
+   * goes through `putNote` like any other edit: it is indexed, it is logged in
+   * `edits`, and the version it replaced is committed by the next tick. Undoing
+   * a restore is therefore just another restore, and no history is ever rewritten.
+   */
+
+  fastify.get('/api/v1/history/*', async (request) => {
+    const { owner, path } = target(request, 'read');
+    const query = (request.query ?? {}) as { version?: unknown };
+
+    // One route, two questions: the list, or one version's text.
+    if (typeof query.version === 'string' && query.version !== '') {
+      return { content: await history.contentAt(owner, path, query.version) };
+    }
+
+    return {
+      available: await history.available(owner),
+      versions: await history.versions(owner, path),
+    };
+  });
+
+  fastify.post('/api/v1/history/restore', async (request) => {
+    const caller = requireUser(request).id;
+    const { owner, path, version } = body(request, S.RestoreRequest);
+
+    // The same gate every write goes through; a share that is read-only cannot
+    // be rolled back by the person it was lent to.
+    shares.check(caller, owner, path, 'write');
+
+    const content = await history.contentAt(owner, path, version);
+    const result = await app.putNote(owner, path, content, caller);
+    return { note: result.note, created: result.created };
   });
 
   // ---- bulk tidy-up -------------------------------------------------------

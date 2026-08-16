@@ -56,6 +56,7 @@ export const keys = {
   settings: ['settings'] as const,
   note: (owner: string, path: string) => ['note', owner, path] as const,
   links: (owner: string, path: string) => ['links', owner, path] as const,
+  history: (owner: string, path: string) => ['history', owner, path] as const,
   search: (q: string, filters: unknown) => ['search', q, filters] as const,
 };
 
@@ -190,6 +191,23 @@ export function useSettings(enabled: boolean): UseQueryResult<Awaited<ReturnType
 }
 
 /**
+ * One note's recorded versions.
+ *
+ * Keyed per note like the note itself, so switching between two notes cannot
+ * leave one's history showing under the other's name.
+ */
+export function useHistory(
+  ref: { owner: string; path: string } | null,
+): UseQueryResult<Awaited<ReturnType<typeof api.history>>> {
+  return useQuery({
+    queryKey: ref === null ? ['history', 'none'] : keys.history(ref.owner, ref.path),
+    queryFn: () => api.history(ref!.owner, ref!.path),
+    enabled: ref !== null,
+    staleTime: FRESH_MS,
+  });
+}
+
+/**
  * What a write invalidates.
  *
  * Named rather than spelled out at each call site, because the interesting part
@@ -202,6 +220,7 @@ export const invalidate = {
   /** Text changed. Links may have moved, so findings and the graph may differ. */
   afterEdit: (client: QueryClient, owner: string, path: string): void => {
     void client.invalidateQueries({ queryKey: keys.links(owner, path) });
+    void client.invalidateQueries({ queryKey: keys.history(owner, path) });
     void client.invalidateQueries({ queryKey: keys.tidy });
     void client.invalidateQueries({ queryKey: keys.graph });
     void client.invalidateQueries({ queryKey: keys.overview });

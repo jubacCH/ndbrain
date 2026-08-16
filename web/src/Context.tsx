@@ -12,12 +12,14 @@
 
 import type { Ref } from './api';
 import { copy } from './copy';
-import { useLinks } from './queries';
+import { useHistory, useLinks } from './queries';
+import { HistoryPanel } from './History';
 
 export function ContextPanel({
   note,
   self,
   canCreate,
+  onRestored,
   onOpen,
   onCreate,
 }: {
@@ -26,6 +28,8 @@ export function ContextPanel({
   self: string;
   /** False on a note shared read-only: filling a gap would be refused anyway. */
   canCreate: boolean;
+  /** Called after a restore, so the editor reloads the text it now shows. */
+  onRestored: () => void;
   onOpen: (owner: string, path: string) => void;
   onCreate: (title: string) => void;
   /** Changes whenever the note was saved, so the panel refreshes with it. */
@@ -42,7 +46,9 @@ export function ContextPanel({
    * Keyed caching does it structurally: an answer for a note nobody is looking at
    * updates that note's entry and never reaches this render.
    */
-  const linksQuery = useLinks(owner === null || notePath === null ? null : { owner, path: notePath });
+  const ref = owner === null || notePath === null ? null : { owner, path: notePath };
+  const linksQuery = useLinks(ref);
+  const historyQuery = useHistory(ref);
   const backlinks = linksQuery.data?.backlinks ?? [];
   const outgoing = linksQuery.data?.outgoing ?? [];
 
@@ -119,10 +125,23 @@ export function ContextPanel({
                   your own vault is never labelled. */}
               {owner !== null && owner !== self && (
                 <span className="ref mono" style={{ fontSize: '.74rem', display: 'block' }}>
-                  Vault von {owner}
+                  {copy.context.vaultOf(owner)}
                 </span>
               )}
             </section>
+
+            {/* Last, and only for a note that has one. Everything above is about
+                what this note *is*; the history is about what it was. */}
+            {ref !== null && (
+              <HistoryPanel
+                owner={ref.owner}
+                path={ref.path}
+                available={historyQuery.data?.available ?? false}
+                versions={historyQuery.data?.versions ?? []}
+                canWrite={canCreate}
+                onRestored={onRestored}
+              />
+            )}
       </>
     </section>
   );

@@ -284,6 +284,29 @@ export const UploadResult = z.object({
 
 export const UploadResponse = z.object({ results: z.array(UploadResult) });
 
+/* ---- history ------------------------------------------------------------- */
+
+export const Version = z.object({
+  id: z.string(),
+  at: Timestamp,
+  subject: z.string(),
+  size: z.number(),
+});
+
+export const HistoryResponse = z.object({
+  /** False where the host has no sidecar repository — a deployment fact. */
+  available: z.boolean(),
+  versions: z.array(Version),
+});
+
+export const VersionContentResponse = z.object({ content: z.string() });
+
+export const RestoreRequest = z
+  .object({ owner: UserId, path: VaultPath, version: z.string().min(4).max(64) })
+  .strict();
+
+export const RestoreResponse = z.object({ note: Note, created: z.boolean() });
+
 /* ---- settings and account ------------------------------------------------ */
 
 export const UserSettings = z.object({
@@ -363,5 +386,6 @@ export type GraphData = z.infer<typeof GraphResponse>;
 export type PulseEvent = z.infer<typeof PulseEvent>;
 export type FileRow = z.infer<typeof FileRow>;
 export type UserSettings = z.infer<typeof UserSettings>;
+export type Version = z.infer<typeof Version>;
 export type FilesResponse = z.infer<typeof FilesResponse>;
 export type UploadResult = z.infer<typeof UploadResult>;

@@ -64,6 +64,7 @@ beforeEach(async () => {
     keys: runtime.keys,
     shares: runtime.shares,
     settings: runtime.settings,
+    history: runtime.history,
     config,
     throttle: new LoginThrottle({ limit: 1000 }),
   });
