@@ -329,6 +329,61 @@ export const RestoreRequest = z
 
 export const RestoreResponse = z.object({ note: Note, created: z.boolean() });
 
+/* ---- administration ------------------------------------------------------ */
+
+export const AdminUser = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  role: z.enum(['admin', 'user']),
+  disabled: z.boolean(),
+  createdAt: Timestamp,
+  notes: z.number(),
+  keys: z.number(),
+});
+
+export const AdminUsersResponse = z.object({ users: z.array(AdminUser) });
+
+export const CreateUserRequest = z
+  .object({
+    id: UserId,
+    // Length beats composition rules, which mostly teach people to put an
+    // exclamation mark at the end.
+    password: z.string().min(10).max(1024),
+    displayName: z.string().min(1).max(64).optional(),
+    role: z.enum(['admin', 'user']).optional(),
+  })
+  .strict();
+
+export const AdminPasswordRequest = z.object({ password: z.string().min(10).max(1024) }).strict();
+
+export const DisableUserRequest = z.object({ disabled: z.boolean() }).strict();
+
+export const ApiKey = z.object({
+  id: z.string(),
+  owner: z.string(),
+  name: z.string(),
+  /** Path prefix the key may read; `''` is the whole vault. */
+  scope: z.string(),
+  canWrite: z.boolean(),
+  createdAt: Timestamp,
+  lastUsedAt: Timestamp.nullable(),
+  revoked: z.boolean(),
+});
+
+export const AdminKeysResponse = z.object({ keys: z.array(ApiKey) });
+
+export const CreateKeyRequest = z
+  .object({
+    owner: UserId,
+    name: z.string().min(1).max(64),
+    scope: z.string().max(1024).optional(),
+    canWrite: z.boolean().optional(),
+  })
+  .strict();
+
+/** The one response that carries a secret; it is never retrievable again. */
+export const CreatedKeyResponse = ApiKey.extend({ secret: z.string() });
+
 /* ---- settings and account ------------------------------------------------ */
 
 export const UserSettings = z.object({
@@ -410,6 +465,8 @@ export type GraphData = z.infer<typeof GraphResponse>;
 export type PulseEvent = z.infer<typeof PulseEvent>;
 export type FileRow = z.infer<typeof FileRow>;
 export type UserSettings = z.infer<typeof UserSettings>;
+export type AdminUser = z.infer<typeof AdminUser>;
+export type ApiKey = z.infer<typeof ApiKey>;
 export type Version = z.infer<typeof Version>;
 export type TopicProposal = z.infer<typeof TopicProposal>;
 export type FilesResponse = z.infer<typeof FilesResponse>;

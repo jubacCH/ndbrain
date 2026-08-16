@@ -34,6 +34,7 @@ export const copy = {
     search: 'Search',
     files: 'Files',
     settings: 'Settings',
+    admin: 'Admin',
     sharing: 'Sharing',
     signOut: 'Sign out',
     closeMenu: 'Close menu',
@@ -361,6 +362,68 @@ export const copy = {
     include: (title: string) => `Include ${title}`,
     done: (n: number) => `${n} notes tagged.`,
     failed: 'Could not add those tags.',
+  },
+
+  admin: {
+    title: 'Administration',
+    subtitle: 'Accounts and the keys your agents connect with. Everything here needed a shell on the server until now.',
+    failed: 'That did not work.',
+
+    accounts: 'Accounts',
+    account: 'Account',
+    notes: 'Notes',
+    keys: 'Keys',
+    since: 'Created',
+    actions: 'Actions',
+    admin: 'admin',
+    disabled: 'disabled',
+    resetPassword: 'Reset password',
+    newPasswordFor: (id: string) => `New password for ${id}`,
+    set: 'Set',
+    cancel: 'Cancel',
+    disable: 'Disable',
+    enable: 'Enable',
+    confirmDisable: (id: string) =>
+      `Disable ${id}? They are signed out everywhere and cannot sign in again until you enable them. Their notes stay where they are.`,
+    disabledNow: (id: string) => `${id} is disabled.`,
+    enabled: (id: string) => `${id} can sign in again.`,
+    passwordReset: (id: string) => `Password changed. ${id} has been signed out everywhere.`,
+
+    newAccount: 'New account',
+    idIsPermanent:
+      'The sign-in name becomes the folder their notes live in, so it cannot be changed later. The display name can.',
+    signInName: 'Sign-in name',
+    displayName: 'Display name',
+    password: 'Password',
+    makeAdmin: 'Can administer accounts and keys',
+    create: 'Create account',
+    created: (id: string) => `${id} created.`,
+
+    agentKeys: 'Agent keys',
+    keysExplain:
+      'How an agent reaches a vault over MCP. A key is scoped to one account and, optionally, to one folder in it.',
+    forAccount: 'For account',
+    noKeys: 'No keys for this account.',
+    keyName: 'Name',
+    scope: 'Folder',
+    wholeVault: 'the whole vault',
+    lastUsed: 'Last used',
+    never: 'never',
+    canWrite: 'can write',
+    mayWrite: 'May write, not only read',
+    revoked: 'revoked',
+    revoke: 'Revoke',
+    confirmRevoke: (name: string) => `Revoke “${name}”? Anything using it stops working immediately.`,
+    keyRevoked: (name: string) => `“${name}” revoked.`,
+    newKey: 'New key',
+    createKey: 'Create key',
+
+    /* The secret exists once. Said loudly, because it is true and because an
+       interface that mentions it quietly will have somebody close the tab. */
+    secretOnce: 'Copy this now — it is shown once',
+    secretWhy:
+      'Only a hash of it is stored, so it cannot be shown again. If you lose it, revoke the key and make another.',
+    gotIt: 'I have copied it',
   },
 
   crash: {

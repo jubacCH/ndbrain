@@ -40,6 +40,8 @@ export type {
   Share,
   TaskRow,
   Tidy,
+  AdminUser,
+  ApiKey,
   TopicProposal,
   UploadResult,
   User,
@@ -344,6 +346,44 @@ export const api = {
     request(`/api/v1/files/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, Empty, {
       method: 'DELETE',
     }),
+
+  // ---- administration -------------------------------------------------------
+  //
+  // Every one of these is admin-only at the server. Nothing here relies on the
+  // menu entry being hidden — a view that is not rendered is not a permission.
+
+  adminUsers: () => request('/api/v1/admin/users', S.AdminUsersResponse),
+
+  createUser: (id: string, password: string, displayName: string, role: 'admin' | 'user') =>
+    request('/api/v1/admin/users', S.MeResponse, {
+      method: 'POST',
+      body: JSON.stringify({ id, password, displayName, role }),
+    }),
+
+  adminSetPassword: (id: string, password: string) =>
+    request(`/api/v1/admin/users/${encodeURIComponent(id)}/password`, S.OkResponse, {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+
+  adminSetDisabled: (id: string, disabled: boolean) =>
+    request(`/api/v1/admin/users/${encodeURIComponent(id)}/disabled`, S.OkResponse, {
+      method: 'POST',
+      body: JSON.stringify({ disabled }),
+    }),
+
+  adminKeys: (owner: string) =>
+    request(`/api/v1/admin/keys?owner=${encodeURIComponent(owner)}`, S.AdminKeysResponse),
+
+  /** The only call that ever returns a key secret. It cannot be asked for again. */
+  createKey: (owner: string, name: string, scope: string, canWrite: boolean) =>
+    request('/api/v1/admin/keys', S.CreatedKeyResponse, {
+      method: 'POST',
+      body: JSON.stringify({ owner, name, ...(scope === '' ? {} : { scope }), canWrite }),
+    }),
+
+  revokeKey: (id: string) =>
+    request(`/api/v1/admin/keys/${encodeURIComponent(id)}`, Empty, { method: 'DELETE' }),
 
   // ---- topics ---------------------------------------------------------------
 

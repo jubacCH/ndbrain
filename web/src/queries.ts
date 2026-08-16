@@ -55,6 +55,8 @@ export const keys = {
   files: ['files'] as const,
   settings: ['settings'] as const,
   topics: ['topics'] as const,
+  adminUsers: ['admin', 'users'] as const,
+  adminKeys: (owner: string) => ['admin', 'keys', owner] as const,
   note: (owner: string, path: string) => ['note', owner, path] as const,
   links: (owner: string, path: string) => ['links', owner, path] as const,
   history: (owner: string, path: string) => ['history', owner, path] as const,
@@ -220,6 +222,19 @@ export function useTopics(enabled: boolean): UseQueryResult<Awaited<ReturnType<t
     queryFn: () => api.topics(),
     staleTime: FRESH_MS,
     enabled,
+  });
+}
+
+export function useAdminUsers(enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.adminUsers>>> {
+  return useQuery({ queryKey: keys.adminUsers, queryFn: () => api.adminUsers(), enabled, staleTime: 5_000 });
+}
+
+export function useAdminKeys(owner: string, enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.adminKeys>>> {
+  return useQuery({
+    queryKey: keys.adminKeys(owner),
+    queryFn: () => api.adminKeys(owner),
+    enabled: enabled && owner !== '',
+    staleTime: 5_000,
   });
 }
 

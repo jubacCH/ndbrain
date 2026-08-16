@@ -31,6 +31,7 @@ import { SessionService, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
 import { toProblem } from './errors.js';
+import { NoteNotFoundError } from '../errors.js';
 import { LoginThrottle } from './throttle.js';
 import { ZipFile } from 'yazl';
 import type { ZodType } from 'zod';
@@ -800,6 +801,132 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const caller = requireUser(request).id;
     const { paths } = body(request, S.ApplyTopicsRequest);
     return { applied: await app.applyTopics(caller, paths, caller) };
+  });
+
+  /* ---- administration ------------------------------------------------------
+   *
+   * Accounts and agent keys, both of which required a shell on the box until
+   * now. See the module header in the CLI for what these replace.
+   *
+   * The guard is applied per route rather than by hiding a menu entry: a
+   * navigation item that is not rendered is not a permission, and this is the
+   * one place in the application where the difference is worth real money.
+   */
+
+  /** Refuses anybody who is not an administrator. */
+  function requireAdmin(request: FastifyRequest): User {
+    const user = requireUser(request);
+    if (user.role !== 'admin') {
+      // Deliberately the same answer an unknown route gives. Confirming that an
+      // admin surface exists is information a non-admin has no use for.
+      throw new NoteNotFoundError('no such endpoint');
+    }
+    return user;
+  }
+
+  fastify.get('/api/v1/admin/users', async (request) => {
+    requireAdmin(request);
+    return {
+      users: users.list().map((user) => ({
+        id: user.id,
+        displayName: user.displayName,
+        role: user.role,
+        disabled: user.disabled,
+        createdAt: user.createdAt,
+        notes: app.queries.countNotes(user.id),
+        keys: keys.list(user.id).filter((key) => !key.revoked).length,
+      })),
+    };
+  });
+
+  fastify.post('/api/v1/admin/users', async (request, reply) => {
+    requireAdmin(request);
+    const { id, password, displayName, role } = body(request, S.CreateUserRequest);
+
+    const created = await users.create(id, password, {
+      ...(displayName === undefined ? {} : { displayName }),
+      ...(role === undefined ? {} : { role }),
+    });
+    return reply.code(201).send({ user: publicUser(created) });
+  });
+
+  fastify.post('/api/v1/admin/users/:id/password', async (request) => {
+    requireAdmin(request);
+    const { id } = request.params as { id: string };
+    const { password } = body(request, S.AdminPasswordRequest);
+
+    await users.setPassword(id, password);
+    // Every session of that account ends: an administrator resetting a password
+    // is usually doing it because the old one is not trusted any more, and
+    // leaving the existing sessions alive would defeat the point.
+    sessions.destroyAllFor(id);
+    return { ok: true };
+  });
+
+  fastify.post('/api/v1/admin/users/:id/disabled', async (request, reply) => {
+    const caller = requireAdmin(request);
+    const { id } = request.params as { id: string };
+    const { disabled } = body(request, S.DisableUserRequest);
+
+    if (disabled) {
+      // Two ways to lock everybody out, both refused. An interface that lets an
+      // administrator remove the only way back in has a hole where a
+      // confirmation dialog was.
+      if (id === caller.id) {
+        return reply
+          .code(400)
+          .send({ code: 'self_disable', message: 'you cannot disable your own account' });
+      }
+      const admins = users.list().filter((u) => u.role === 'admin' && !u.disabled);
+      if (admins.length <= 1 && admins[0]?.id === id) {
+        return reply
+          .code(400)
+          .send({ code: 'last_admin', message: 'this is the only administrator left' });
+      }
+    }
+
+    users.setDisabled(id, disabled);
+    if (disabled) sessions.destroyAllFor(id);
+    return { ok: true };
+  });
+
+  fastify.get('/api/v1/admin/keys', async (request) => {
+    requireAdmin(request);
+    const query = (request.query ?? {}) as { owner?: unknown };
+    const owner = typeof query.owner === 'string' ? query.owner : requireUser(request).id;
+
+    return { keys: keys.list(owner) };
+  });
+
+  /**
+   * Creates an agent key.
+   *
+   * The secret comes back in this response and nowhere else, ever — only its
+   * SHA-256 is stored. That is the whole security model of the thing, so the
+   * response says so and the interface has to make it impossible to miss.
+   */
+  fastify.post('/api/v1/admin/keys', async (request, reply) => {
+    requireAdmin(request);
+    const { owner, name, scope, canWrite } = body(request, S.CreateKeyRequest);
+
+    if (users.get(owner) === undefined) {
+      return reply.code(404).send({ code: 'unknown_user', message: 'no such account' });
+    }
+
+    const created = keys.create(owner, name, {
+      ...(scope === undefined ? {} : { scope }),
+      canWrite: canWrite ?? false,
+    });
+    // Flattened: the service hands back { key, secret }, and the secret belongs
+    // beside the key rather than one level up from it.
+    return reply.code(201).send({ ...created.key, secret: created.secret });
+  });
+
+  fastify.delete('/api/v1/admin/keys/:id', async (request, reply) => {
+    requireAdmin(request);
+    const { id } = request.params as { id: string };
+    keys.revoke(id);
+    return reply.code(204).send();
   });
 
   // ---- bulk tidy-up -------------------------------------------------------
