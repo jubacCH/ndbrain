@@ -180,6 +180,58 @@ export function toMatchQuery(input: string): string | null {
 const UNIT_SEP = '\u001f';
 const FIELD_SEP = '\u001e';
 
+
+/**
+ * The metadata line a Joplin import left at the top of most notes.
+ *
+ * Matched narrowly, and only at the start of the text — the same shape
+ * `notes/topics.ts` reads tags from. A looser test would strip real quotations.
+ */
+const META_LINE = /^\s*>[^\n]*\*\*(?:type|topic|src|updated)s?:\*\*[^\n]*\n?/i;
+
+/**
+ * An excerpt that distinguishes one hit from another.
+ *
+ * FTS5 returns the first match in the body, which for this vault is the same
+ * boilerplate line in every result. When that is what came back, this finds a
+ * match in the prose *after* that line instead and marks it the same way, so the
+ * highlighting stays consistent with the rest of the list.
+ *
+ * Falls back to whatever FTS gave: a metadata excerpt is a poor excerpt, and an
+ * empty one is a worse one.
+ */
+function usefulSnippet(fromFts: string, body: string, terms: string[]): string {
+  const looksLikeMeta = /\*\*(?:type|topic|src|updated):\*\*/i.test(fromFts);
+  if (!looksLikeMeta) return fromFts;
+
+  const prose = body.replace(META_LINE, '').trim();
+  if (prose === '') return fromFts;
+
+  const hay = prose.toLowerCase();
+  let at = -1;
+  let hit = '';
+  for (const term of terms) {
+    const found = hay.indexOf(term.toLowerCase());
+    if (found !== -1 && (at === -1 || found < at)) {
+      at = found;
+      hit = prose.slice(found, found + term.length);
+    }
+  }
+
+  // No term in the prose means the match really was only in the metadata line;
+  // showing the start of the note is still more use than showing that line.
+  if (at === -1) return `${prose.slice(0, 120).replace(/\s+/g, ' ')} …`;
+
+  const from = Math.max(0, at - 60);
+  const to = Math.min(prose.length, at + hit.length + 80);
+  const lead = from > 0 ? '… ' : '';
+  const tail = to < prose.length ? ' …' : '';
+  const before = prose.slice(from, at).replace(/\s+/g, ' ');
+  const after = prose.slice(at + hit.length, to).replace(/\s+/g, ' ');
+
+  return `${lead}${before}[${hit}]${after}${tail}`;
+}
+
 export class Queries {
   readonly #db: Database;
 
@@ -289,10 +341,19 @@ export class Queries {
         .map((row) => ({ ...toNoteRow(row), snippet: '', rank: 0 }));
     }
 
+    // The words the caller actually typed, for rescuing an excerpt that came
+    // back as boilerplate. Taken from the input rather than from the FTS
+    // expression, which has been quoted and wildcarded by then.
+    const terms = query
+      .split(/[^\p{L}\p{N}_]+/u)
+      .filter((token) => token.length > 1)
+      .slice(0, 16);
+
     return this.#db
       .all(
         `SELECT n.owner, n.path, n.title, n.size, n.mtime_ms,
                 snippet(notes_fts, 3, '[', ']', ' … ', 12) AS snippet,
+                notes_fts.body AS body,
                 bm25(notes_fts, 4.0, 1.0) AS rank
            FROM notes_fts
            JOIN notes n ON n.owner = notes_fts.owner AND n.path = notes_fts.path
@@ -306,7 +367,11 @@ export class Queries {
       )
       .map((row) => ({
         ...toNoteRow(row),
-        snippet: String(row['snippet'] ?? ''),
+        snippet: usefulSnippet(
+          String(row['snippet'] ?? ''),
+          String(row['body'] ?? ''),
+          terms,
+        ),
         rank: Number(row['rank'] ?? 0),
       }));
   }

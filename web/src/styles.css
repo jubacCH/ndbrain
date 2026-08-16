@@ -3551,3 +3551,118 @@ td.n,
     scroll-behavior: auto !important;
   }
 }
+
+/* The overview, once it stopped reporting its own emptiness.
+ *
+ * Tiles with nothing in them no longer render, so the grid has to fill whatever
+ * is left rather than hold gaps where a tile used to be. */
+.bento {
+  grid-auto-flow: dense;
+}
+
+/* "Nothing needs attention" is the goal state, not an apology for an empty
+   panel — so it reads as an answer rather than as a missing tile. */
+.allclear {
+  margin: var(--s-2) 0 0;
+  font-size: var(--t-md);
+  color: var(--ink-2);
+}
+.allclear::before {
+  content: '✓';
+  color: var(--ok, #1b7a4b);
+  font-weight: var(--w-strong);
+  margin-right: var(--s-2);
+}
+
+/* The findings that came back empty, said once and quietly. Still worth
+   knowing; not worth a third of the tile at 30px. */
+.clearline {
+  margin: var(--s-3) 0 0;
+  font-size: var(--t-xs);
+  color: var(--ink-3);
+}
+
+/* ===================== ON A PHONE =====================
+ *
+ * Measured at 390px before this: the writing surface got 51% of the screen, the
+ * neighbourhood graph 30%, and all three panels kept their own scrollbars — three
+ * scroll areas competing on one screen, which is a stacked desktop rather than a
+ * phone layout.
+ *
+ * On a phone you are doing one of two things: reading or writing a note, or
+ * finding one. Everything about the note that is not the note itself moves below
+ * it, out of the way, reachable by scrolling the page rather than by fighting a
+ * nested scroller. */
+@media (max-width: 820px) {
+  .app,
+  .app[data-wide='true'] {
+    /* The page scrolls, not each panel. */
+    height: auto;
+    min-height: 100%;
+    overflow-y: auto;
+  }
+
+  .main {
+    /* Nearly the whole screen, minus the bar. Writing is why the app is open. */
+    min-height: calc(100dvh - var(--s-7));
+  }
+
+  .side {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    margin-top: var(--s-2);
+  }
+
+  /* Panels stop being their own scroll containers and simply take the height
+     their content needs — the page carries the scrolling. */
+  .side-info {
+    max-height: none;
+    overflow: visible;
+  }
+
+  /* The graph is the first thing to go. It is the least useful thing on a
+     screen this size and it was taking a third of it. */
+  .side-graph {
+    display: none;
+  }
+
+  /* Wider tap targets throughout: 24px is the accessibility floor, not a
+     comfortable size for a thumb. */
+  .node,
+  .nav-views button,
+  .nav-foot button,
+  .histlist button {
+    min-height: 40px;
+  }
+}
+
+/* The first screen a new account sees. Names the action, says what it gets you,
+ * offers the control — rather than reporting an absence. */
+.firstrun {
+  padding: var(--s-4) var(--s-3);
+  text-align: left;
+}
+.firstrun-title {
+  margin: 0 0 var(--s-1);
+  font-size: var(--t-md);
+  font-weight: var(--w-strong);
+  color: var(--ink);
+}
+.firstrun-why {
+  margin: 0 0 var(--s-3);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.firstrun button {
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: var(--w-strong);
+  cursor: pointer;
+  border: 0;
+  border-radius: var(--r-md);
+  padding: var(--s-2) var(--s-3);
+  background: rgba(16, 32, 42, 0.9);
+  color: #f2fbfc;
+}
