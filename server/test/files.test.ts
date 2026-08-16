@@ -187,6 +187,41 @@ describe('upload and replace', () => {
     expect(back.rawPayload.toString()).toBe('zwei\n');
   });
 
+  it('stores text uploads byte for byte, whatever type the browser announces', async () => {
+    // Found in production. Fastify parses `text/plain` into a string by default,
+    // so the route saw no Buffer and wrote zero bytes — and a browser picking a
+    // .md or .txt file announces exactly those types. Every text file imported
+    // through the file browser would have arrived empty.
+    const body = 'Zeile eins\nZeile zwei mit Grösse\n';
+
+    // The types a browser actually announces for a picked text file. A file with
+    // no type at all never reaches here as one: the client substitutes
+    // application/octet-stream when `File.type` is empty.
+    for (const type of ['text/plain', 'text/markdown', 'text/csv', 'application/octet-stream']) {
+      const name = `typ-${type.replace(/[^a-z]/g, '')}.txt`;
+      const response = await upload(`/api/v1/files/${name}`, Buffer.from(body), cookie, type);
+      expect(response.statusCode).toBe(201);
+      expect(S.UploadResult.parse(response.json()).size).toBe(Buffer.byteLength(body));
+
+      const back = await server.inject({ url: `/api/v1/files/${name}`, headers: { cookie } });
+      expect(back.rawPayload.toString('utf8')).toBe(body);
+    }
+  });
+
+  it('refuses a JSON content type rather than rewriting the file', async () => {
+    // The JSON parser has already discarded key order and whitespace by the time
+    // a route sees the body, so the bytes cannot be reproduced. Better to say so.
+    const response = await upload(
+      '/api/v1/files/config.json',
+      Buffer.from('{ "b": 1, "a": 2 }'),
+      cookie,
+      'application/json',
+    );
+
+    expect(response.statusCode).toBe(415);
+    expect((response.json() as { code: string }).code).toBe('unsupported_media_type');
+  });
+
   it('indexes an uploaded note so search can find it', async () => {
     await upload('/api/v1/files/Importiert.md', Buffer.from('# Importiert\n\nQdevice steht hier.\n'));
 

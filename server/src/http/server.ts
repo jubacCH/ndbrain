@@ -36,6 +36,22 @@ import * as S from '../../../shared/schema.js';
 
 export const SESSION_COOKIE = 'ndbrain_session';
 
+/**
+ * The bytes of an upload, or `null` if this body cannot faithfully become bytes.
+ *
+ * A Buffer is the normal path. A string can still arrive from a parser this
+ * server did not register, and encoding it back as UTF-8 is exact. A parsed
+ * object cannot be turned back into the bytes that produced it — key order and
+ * whitespace are already gone — so it is refused rather than silently written as
+ * something subtly different from what was uploaded.
+ */
+function uploadBytes(body: unknown): Buffer | null {
+  if (Buffer.isBuffer(body)) return body;
+  if (typeof body === 'string') return Buffer.from(body, 'utf8');
+  if (body === undefined || body === null) return Buffer.alloc(0);
+  return null;
+}
+
 declare module 'fastify' {
   interface FastifyRequest {
     /** Set by the authentication hook; absent on public routes. */
@@ -96,11 +112,19 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   /**
    * Raw bytes for file uploads.
    *
-   * Fastify parses JSON and nothing else by default, so without this an upload
-   * of anything that is not JSON is refused before it reaches a route. Registered
-   * as a wildcard *after* JSON, so note writes keep their parser and every other
-   * content type arrives as a Buffer.
+   * Fastify ships parsers for `application/json` *and* `text/plain`. The second
+   * one is the trap: it hands the route a decoded string, so an upload arrived
+   * as `Buffer.isBuffer(body) === false` and was written as zero bytes. That is
+   * exactly the common case — importing `.md` and `.txt`, for which a browser
+   * sets a text content type — so every text file imported through the browser
+   * would have been silently emptied.
+   *
+   * Removing it lets text fall through to the wildcard below and arrive as
+   * bytes. JSON keeps its parser, because the rest of the API is JSON; an upload
+   * announcing that type is refused in the route rather than being re-serialised
+   * into something that is no longer the file the caller sent.
    */
+  fastify.removeContentTypeParser('text/plain');
   fastify.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, payload, done) => {
     done(null, payload);
   });
@@ -554,7 +578,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    */
   fastify.post('/api/v1/files/*', async (request, reply) => {
     const { owner, path: filePath } = target(request, 'write');
-    const bytes = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+    const bytes = uploadBytes(request.body);
+
+    if (bytes === null) {
+      return reply.code(415).send({
+        code: 'unsupported_media_type',
+        message:
+          'send the file as application/octet-stream — a JSON content type is parsed, ' +
+          'and re-serialising it would not give back the bytes you sent',
+      });
+    }
 
     const result = await app.writeFile(owner, filePath, bytes, requireUser(request).id);
     return reply.code(result.replaced ? 200 : 201).send({ ...result, ok: true });
