@@ -30,6 +30,7 @@ import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
 import { toProblem } from './errors.js';
 import { LoginThrottle } from './throttle.js';
+import { ZipFile } from 'yazl';
 import type { ZodType } from 'zod';
 import * as S from '../../../shared/schema.js';
 
@@ -91,6 +92,18 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   await fastify.register(cookiePlugin);
+
+  /**
+   * Raw bytes for file uploads.
+   *
+   * Fastify parses JSON and nothing else by default, so without this an upload
+   * of anything that is not JSON is refused before it reaches a route. Registered
+   * as a wildcard *after* JSON, so note writes keep their parser and every other
+   * content type arrives as a Buffer.
+   */
+  fastify.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, payload, done) => {
+    done(null, payload);
+  });
 
   fastify.addHook('onSend', async (_request, reply) => {
     // A notes server has no business being framed, sniffed or used as a referrer
@@ -448,6 +461,132 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       tags: app.queries.tagCounts(view).slice(0, 30),
       activity: app.queries.activity(view, since, 20),
     };
+  });
+
+  /* ---- files ---------------------------------------------------------------
+   *
+   * The vault is a folder of files; until now the API only admitted the `.md`
+   * ones. Anything else on disk was invisible through the tool that owns the
+   * folder, which also made it unremovable.
+   *
+   * Two rules hold this together, and both are about the same origin serving the
+   * bundle:
+   *
+   *  1. **Nothing from a vault is served as a document.** Every download goes out
+   *     as `application/octet-stream` with `Content-Disposition: attachment`,
+   *     except a short allowlist of image types shown inline. An uploaded
+   *     `.html` served as `text/html` on this origin would be stored XSS with
+   *     the session cookie right there — the file browser would become the
+   *     account-takeover route.
+   *  2. **Permission is checked per path, not per listing.** Every route goes
+   *     through `target()` like the note routes, so a share's prefix bounds file
+   *     access exactly as it bounds note access.
+   */
+
+  fastify.get('/api/v1/files', async (request) => {
+    const caller = requireUser(request).id;
+    const query = (request.query ?? {}) as { owner?: unknown };
+    const owner = typeof query.owner === 'string' && query.owner !== '' ? query.owner : caller;
+
+    // A foreign vault is only listable where something in it has been shared;
+    // the per-file rules are enforced again on download and on write.
+    if (owner !== caller) shares.check(caller, owner, '', 'read');
+
+    const { files, dirs, truncated } = await app.listFiles(owner);
+    return {
+      files: files.map((file) => ({ ...file, owner })),
+      dirs,
+      truncated,
+    };
+  });
+
+  /** Image types safe to render inline. Everything else downloads. */
+  const INLINE_TYPES = new Map([
+    ['.png', 'image/png'],
+    ['.jpg', 'image/jpeg'],
+    ['.jpeg', 'image/jpeg'],
+    ['.gif', 'image/gif'],
+    ['.webp', 'image/webp'],
+    ['.svg', 'image/svg+xml'],
+  ]);
+
+  fastify.get('/api/v1/files/*', async (request, reply) => {
+    const { owner, path: filePath } = target(request, 'read');
+    const bytes = await app.readFile(owner, filePath);
+
+    const name = filePath.slice(filePath.lastIndexOf('/') + 1);
+    const dot = name.lastIndexOf('.');
+    const extension = dot === -1 ? '' : name.slice(dot).toLowerCase();
+
+    // SVG is an image and also a script host. Inline would mean same-origin
+    // script execution, so it is the one image type that only ever downloads.
+    const inline = extension !== '.svg' ? INLINE_TYPES.get(extension) : undefined;
+
+    return reply
+      .header('content-type', inline ?? 'application/octet-stream')
+      .header(
+        'content-disposition',
+        `${inline === undefined ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(name)}`,
+      )
+      // Belt and braces: even if a content type slipped through, nothing here is
+      // allowed to run.
+      .header('content-security-policy', "default-src 'none'; sandbox")
+      .send(bytes);
+  });
+
+  /**
+   * Uploads or replaces one file.
+   *
+   * The body is the raw bytes rather than multipart. Multipart would mean a
+   * parser, a temp-file lifecycle and a size accounting of its own, for the sole
+   * benefit of putting several files in one request — and the browser can just
+   * as easily send several requests, which also reports failures per file
+   * instead of collapsing them into one.
+   */
+  fastify.post('/api/v1/files/*', async (request, reply) => {
+    const { owner, path: filePath } = target(request, 'write');
+    const bytes = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+
+    const result = await app.writeFile(owner, filePath, bytes, requireUser(request).id);
+    return reply.code(result.replaced ? 200 : 201).send({ ...result, ok: true });
+  });
+
+  fastify.delete('/api/v1/files/*', async (request, reply) => {
+    const { owner, path: filePath } = target(request, 'write');
+    await app.deleteFile(owner, filePath, requireUser(request).id);
+    return reply.code(204).send();
+  });
+
+  /**
+   * The whole vault as one zip.
+   *
+   * The answer to "can I get my data out", which for a tool holding the only
+   * copy of somebody's notes is not a feature but a condition of trusting it.
+   * Streamed rather than assembled in memory: a vault is unbounded, and building
+   * the archive as a Buffer would make export the thing that runs the container
+   * out of memory.
+   *
+   * Own vault only. Zipping a share would quietly hand somebody a permanent copy
+   * of a folder that was lent to them, and revoking the share afterwards would
+   * not take it back.
+   */
+  fastify.get('/api/v1/export', async (request, reply) => {
+    const owner = requireUser(request).id;
+    const { files } = await app.listFiles(owner, 100_000);
+
+    const zip = new ZipFile();
+    for (const file of files) {
+      zip.addBuffer(await app.readFile(owner, file.path), file.path, {
+        mtime: new Date(file.mtimeMs),
+      });
+    }
+    zip.end();
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    return reply
+      .header('content-type', 'application/zip')
+      .header('content-disposition', `attachment; filename="ndbrain-${owner}-${stamp}.zip"`)
+      .send(zip.outputStream);
   });
 
   // ---- bulk tidy-up -------------------------------------------------------

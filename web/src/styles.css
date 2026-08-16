@@ -2718,3 +2718,145 @@ td.n,
     color: #06181c;
   }
 }
+
+/* ===================== THE FILE BROWSER =====================
+ *
+ * The one view that shows the vault as the disk has it rather than as the index
+ * sees it, so it is laid out as a table: names, kinds and sizes are things you
+ * compare down a column. */
+
+.files-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 0.4rem 0 0.9rem;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.crumbs button {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: var(--ink-2);
+  padding: 0.2rem 0.35rem;
+  border-radius: 6px;
+}
+.crumbs button:hover:not(:disabled) {
+  background: var(--glass-soft);
+  color: var(--ink);
+}
+/* The last crumb is where you are, so it is a label rather than a control. */
+.crumbs button:disabled {
+  cursor: default;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.files-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+.files-actions button,
+.files-actions .btn {
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 0.32rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-soft);
+  color: var(--ink-2);
+  text-decoration: none;
+  display: inline-block;
+}
+.files-actions button:hover:not(:disabled),
+.files-actions .btn:hover {
+  background: var(--glass-hi);
+  color: var(--ink);
+}
+.files-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.files-tbl .linky {
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  color: var(--ink);
+  padding: 0;
+  text-align: left;
+}
+.files-tbl .linky:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.files-tbl .dim {
+  color: var(--ink-3);
+  font-size: 0.78rem;
+}
+
+.files-row-actions {
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+.files-row-actions a,
+.files-row-actions button {
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  padding: 0.15rem 0.4rem;
+  border-radius: 6px;
+  text-decoration: none;
+}
+.files-row-actions a:hover,
+.files-row-actions button:hover:not(:disabled) {
+  background: var(--glass-soft);
+  color: var(--ink);
+}
+.files-row-actions .danger:hover:not(:disabled) {
+  color: var(--crit);
+}
+.files-row-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Dropping onto the view uploads into the folder currently shown — which is why
+   the overlay names it rather than just saying "drop here". */
+.files[data-dragging='true'] {
+  outline: 2px dashed rgba(90, 190, 205, 0.7);
+  outline-offset: -8px;
+}
+.files-drop {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(120, 210, 225, 0.12);
+  font-weight: 600;
+  color: var(--ink);
+  border-radius: 12px;
+}
+.files {
+  position: relative;
+}
