@@ -408,6 +408,47 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     invalidate.afterStructure(client);
   }, [openRef, client, openNote]);
 
+  /**
+   * Stores a pasted or dropped file beside the open note.
+   *
+   * The name is made unique here rather than left to the server: two screenshots
+   * pasted a minute apart are both called `image.png` by every operating system,
+   * and silently replacing the first one with the second is the worst possible
+   * reading of "upload". A short timestamp is enough — this is a file name, not
+   * an identifier anything else depends on.
+   */
+  const attachFile = useCallback(
+    async (file: File): Promise<string | null> => {
+      if (open === null) return null;
+
+      const dir = open.note.path.slice(0, Math.max(0, open.note.path.lastIndexOf('/')));
+      const dot = file.name.lastIndexOf('.');
+      // The characters a wikilink target cannot contain, plus the separators.
+      // A file whose name breaks `![[…]]` is an embed that silently renders as
+      // plain text — see assertLinkableName on the server for the same rule.
+      const stem = (dot === -1 ? file.name : file.name.slice(0, dot)).replace(
+        /[[\]|#/\\]/g,
+        '-',
+      );
+      const extension = dot === -1 ? '' : file.name.slice(dot).toLowerCase();
+      // Seconds, from the note's own clock; enough to separate two pastes and
+      // short enough to still read as a file name.
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+      const name = `${stem}-${stamp}${extension}`;
+
+      try {
+        await api.uploadFile(open.owner, dir === '' ? name : `${dir}/${name}`, file);
+        void client.invalidateQueries({ queryKey: keys.files });
+        setError(null);
+        return name;
+      } catch (caught) {
+        setError(caught instanceof ApiError ? caught.message : copy.errors.attachFailed);
+        return null;
+      }
+    },
+    [open, client],
+  );
+
   const createNoteAt = useCallback(
     async (owner: string, rawName: string): Promise<void> => {
       const name = rawName.trim();
@@ -1057,6 +1098,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
                 initialContent={open.note.content}
                 readOnly={!open.canWrite}
                 onChange={(content) => scheduleSave(open.owner, open.note.path, content)}
+                onAttach={attachFile}
               />
             ))}
 

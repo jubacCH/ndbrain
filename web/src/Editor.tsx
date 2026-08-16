@@ -21,12 +21,13 @@ import { bracketMatching, indentOnInput } from '@codemirror/language';
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import { drawSelection, EditorView, highlightActiveLine, keymap } from '@codemirror/view';
+import type { Extension } from '@codemirror/state';
 import { GFM } from '@lezer/markdown';
 import { useEffect, useRef } from 'react';
 
 import { completion } from './editor/completion';
 import { formatKeymap } from './editor/format';
-import { livePreview } from './editor/livePreview';
+import { embedContext, livePreview } from './editor/livePreview';
 import { markdownTheme } from './editor/theme';
 
 export interface EditorProps {
@@ -50,9 +51,27 @@ export interface EditorProps {
    */
   readOnly?: boolean;
   onChange: (content: string) => void;
+  /**
+   * Stores a pasted or dropped file beside this note and answers with its name.
+   *
+   * Beside the note rather than in one central folder: that is what makes a bare
+   * `![[rack.png]]` resolvable without an index lookup, and it means moving a
+   * note and its picture together is a folder move rather than a broken link.
+   *
+   * Returns null when the upload failed; the editor then leaves the text alone
+   * rather than inserting a link to something that is not there.
+   */
+  onAttach?: (file: File) => Promise<string | null>;
 }
 
-export function Editor({ owner, path, initialContent, readOnly = false, onChange }: EditorProps): React.JSX.Element {
+export function Editor({
+  owner,
+  path,
+  initialContent,
+  readOnly = false,
+  onChange,
+  onAttach,
+}: EditorProps): React.JSX.Element {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
 
@@ -60,6 +79,8 @@ export function Editor({ owner, path, initialContent, readOnly = false, onChange
   // throw away the cursor position mid-sentence.
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onAttachRef = useRef(onAttach);
+  onAttachRef.current = onAttach;
 
   useEffect(() => {
     if (host.current === null) return;
@@ -97,6 +118,10 @@ export function Editor({ owner, path, initialContent, readOnly = false, onChange
         markdown({ extensions: [GFM], codeLanguages: languages }),
         markdownTheme(),
         livePreview(),
+        // Which note this is, so an embed can be turned into a URL against the
+        // folder the note lives in.
+        embedContext.of({ owner, dir: path.slice(0, Math.max(0, path.lastIndexOf('/'))) }),
+        attachments(() => onAttachRef.current, readOnly),
         completion(),
         EditorView.lineWrapping,
         // `readOnly` refuses the edit; `editable` also stops the caret from
@@ -124,4 +149,66 @@ export function Editor({ owner, path, initialContent, readOnly = false, onChange
   }, [owner, path, readOnly]);
 
   return <div className="pane" data-readonly={readOnly} ref={host} />;
+}
+
+/**
+ * Paste and drop, for anything that is not text.
+ *
+ * The guard matters more than it looks: a paste carrying both an image and its
+ * HTML wrapper — which is what copying from a browser produces — must not become
+ * two insertions, and a paste of plain text must go on behaving exactly as it
+ * always has. So this only claims the event when there is a file *and* no text
+ * alternative, and otherwise lets CodeMirror handle it.
+ *
+ * Insertion happens after the upload, at the position the cursor was in when it
+ * started. A placeholder would read better on a slow connection, but it would
+ * also have to be found again afterwards in a document somebody has gone on
+ * typing into — and getting that wrong edits the wrong part of a note.
+ */
+function attachments(
+  get: () => ((file: File) => Promise<string | null>) | undefined,
+  readOnly: boolean,
+): Extension {
+  const take = (files: FileList | null | undefined, view: EditorView, at: number): boolean => {
+    const attach = get();
+    const list = [...(files ?? [])];
+    if (readOnly || attach === undefined || list.length === 0) return false;
+
+    void (async () => {
+      for (const file of list) {
+        const name = await attach(file);
+        if (name === null) continue;
+
+        const embed = `![[${name}]]`;
+        const pos = Math.min(at, view.state.doc.length);
+        view.dispatch({
+          changes: { from: pos, insert: embed },
+          selection: { anchor: pos + embed.length },
+        });
+        at = pos + embed.length;
+      }
+    })();
+
+    return true;
+  };
+
+  return EditorView.domEventHandlers({
+    paste(event, view) {
+      const data = event.clipboardData;
+      // Text wins whenever there is any: copying from a browser puts the image
+      // *and* its markup on the clipboard, and pasting a link should paste a link.
+      if (data === null || data.getData('text/plain') !== '') return false;
+      if (!take(data.files, view, view.state.selection.main.from)) return false;
+      event.preventDefault();
+      return true;
+    },
+
+    drop(event, view) {
+      const at = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (at === null) return false;
+      if (!take(event.dataTransfer?.files, view, at)) return false;
+      event.preventDefault();
+      return true;
+    },
+  });
 }
