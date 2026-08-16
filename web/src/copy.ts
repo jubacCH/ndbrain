@@ -27,6 +27,7 @@ export const copy = {
   nav: {
     newNote: 'New note',
     folder: 'Folder',
+    newFolder: 'New folder',
     overview: 'Overview',
     network: 'Whole network',
     tidy: 'Tidy up',
@@ -175,6 +176,7 @@ export const copy = {
     fromLastDays: (days: number) => `from the last ${days} days`,
     days: (days: number) => `${days} days`,
     folder: 'Folder',
+    newFolder: 'New folder',
     tag: 'Tag',
     clear: 'clear',
     period: 'Period',
@@ -211,6 +213,7 @@ export const copy = {
     account: 'Account',
     accountLabel: 'Account to share with',
     folder: 'Folder',
+    newFolder: 'New folder',
     folderLabel: 'Folder to share',
     mayWrite: 'may also write',
     wholeVaultWarning: 'With no folder the whole vault is shared — including anything added later.',
