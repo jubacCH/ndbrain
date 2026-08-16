@@ -19,7 +19,10 @@
   --line-2: #d2d6dd;
   --text: #0e1013;
   --text-2: #4a505a;
-  --text-3: #878d97;
+  /* Darkened to clear 4.5:1 on white. Note this and --ink-3 are two tokens
+     for one role, left over from the glass rework; the duplication is why
+     fixing one of them fixed only half the failures. */
+  --text-3: #656b76;
   --invert-bg: #14171c;
   --invert-fg: #ffffff;
 
@@ -1625,8 +1628,8 @@ tbody tr[data-selected='true']:hover td {
   --ink-3: #5d7683;
   --hair: rgba(16, 32, 42, 0.1);
 
-  --crit: #c0392b;
-  --warn: #96690a;
+  --crit: #a32c1f;
+  --warn: #7a5407;
   --info: #0f6d76;
 }
 
