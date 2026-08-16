@@ -147,6 +147,20 @@ describe('download', () => {
     expect(String(svg.headers['content-disposition'])).toContain('attachment');
   });
 
+  it('forbids caching, so a replaced file is never served stale', async () => {
+    // Found in production: replace a file, download it, and the browser handed
+    // back the previous bytes. A 200 with no cache directives is fair game for
+    // heuristic caching, and vault contents are both private and mutable.
+    await upload('/api/v1/files/wechselhaft.txt', Buffer.from('alt'));
+
+    const response = await server.inject({
+      url: '/api/v1/files/wechselhaft.txt',
+      headers: { cookie },
+    });
+
+    expect(String(response.headers['cache-control'])).toContain('no-store');
+  });
+
   it('keeps a unicode name readable in the filename header', async () => {
     await upload('/api/v1/files/Messwerte Grösse.csv', Buffer.from('a;b\n'));
 
