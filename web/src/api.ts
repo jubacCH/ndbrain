@@ -292,6 +292,47 @@ export const api = {
 
   tidy: () => request('/api/v1/tidy', S.TidyResponse),
 
+  // ---- files --------------------------------------------------------------
+  //
+  // The vault as it is on disk, notes and attachments together. Downloads and
+  // the export deliberately do *not* go through `request()`: they are navigations
+  // that hand a file to the browser, not JSON to parse, and routing them through
+  // fetch would mean holding a whole vault in memory to hand it straight back.
+
+  files: (owner?: string) =>
+    request(
+      `/api/v1/files${owner === undefined ? '' : `?owner=${encodeURIComponent(owner)}`}`,
+      S.FilesResponse,
+    ),
+
+  /** The URL to download one file. Given to an anchor, never fetched. */
+  fileUrl: (owner: string, path: string) =>
+    `/api/v1/files/${encodePath(path)}?owner=${encodeURIComponent(owner)}`,
+
+  /** The URL for the whole vault as a zip. Own vault only, by design. */
+  exportUrl: () => '/api/v1/export',
+
+  /**
+   * Uploads one file, replacing whatever was there.
+   *
+   * One request per file rather than one multipart request for all of them: a
+   * failure then names the file it belongs to, instead of collapsing a batch into
+   * a single unhelpful error.
+   */
+  uploadFile: (owner: string, path: string, file: Blob) =>
+    request(`/api/v1/files/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, S.UploadResult, {
+      method: 'POST',
+      body: file,
+      // Left to the browser: an explicit JSON content type here would have the
+      // server parse a PNG as JSON and fail before the route ever ran.
+      headers: { 'content-type': file.type === '' ? 'application/octet-stream' : file.type },
+    }),
+
+  deleteFile: (owner: string, path: string) =>
+    request(`/api/v1/files/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, Empty, {
+      method: 'DELETE',
+    }),
+
   // ---- sharing ------------------------------------------------------------
   shares: () => request('/api/v1/shares', S.SharesResponse),
 

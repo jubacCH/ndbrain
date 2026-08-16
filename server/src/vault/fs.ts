@@ -24,6 +24,11 @@ export interface VaultEntry {
   mtimeMs: number;
 }
 
+/** Any file in the vault, whether or not it is a note. */
+export interface VaultFile extends VaultEntry {
+  isNote: boolean;
+}
+
 /** Entries a vault ignores entirely: dotfiles, `.git`, `.obsidian`, `.trash`. */
 function isHidden(name: string): boolean {
   return name.startsWith('.');
@@ -152,6 +157,106 @@ export class Vault {
     await walk(root, '');
     out.sort((a, b) => a.path.localeCompare(b.path));
     return out;
+  }
+
+  /**
+   * Every file in the vault, notes and everything else, plus the folders.
+   *
+   * `listNotes` deliberately filters to `.md` because the index only means
+   * anything for notes. The file browser is the other half of the same truth: a
+   * vault is a folder of files, and an attachment nobody can see is an
+   * attachment nobody can remove. Folders come back separately so an empty one
+   * does not silently disappear from the browser.
+   *
+   * Capped rather than unbounded — a vault that has grown a `node_modules` by
+   * accident should degrade into "showing the first 5000" rather than into a
+   * request that never finishes.
+   */
+  async listAll(
+    owner: string,
+    limit = 5000,
+  ): Promise<{ files: VaultFile[]; dirs: string[]; truncated: boolean }> {
+    const root = this.rootFor(owner);
+    const files: VaultFile[] = [];
+    const dirs: string[] = [];
+    let truncated = false;
+
+    const walk = async (dir: string, prefix: string): Promise<void> => {
+      if (truncated) return;
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+
+      for (const entry of entries) {
+        if (isHidden(entry.name)) continue;
+        const child = path.join(dir, entry.name);
+        const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+
+        if (entry.isDirectory()) {
+          dirs.push(relative);
+          await walk(child, relative);
+        } else if (entry.isFile()) {
+          if (files.length >= limit) {
+            truncated = true;
+            return;
+          }
+          const stat = await fs.stat(child);
+          files.push({
+            path: relative,
+            size: stat.size,
+            mtimeMs: stat.mtimeMs,
+            isNote: isNotePath(entry.name),
+          });
+        }
+      }
+    };
+
+    await walk(root, '');
+    files.sort((a, b) => a.path.localeCompare(b.path));
+    dirs.sort((a, b) => a.localeCompare(b));
+    return { files, dirs, truncated };
+  }
+
+  /**
+   * Raw bytes of any file in the vault.
+   *
+   * Separate from `readNote` because that one decodes UTF-8, which would corrupt
+   * a PNG on the way through. Nothing here interprets the content at all.
+   */
+  async readFileBytes(owner: string, vaultPath: string): Promise<Buffer> {
+    const absolute = await this.resolve(owner, vaultPath);
+    try {
+      const stat = await fs.stat(absolute);
+      if (!stat.isFile()) throw new NotAFileError('path is not a file');
+      return await fs.readFile(absolute);
+    } catch (error) {
+      if (error instanceof NotAFileError) throw error;
+      throw new NoteNotFoundError('file does not exist');
+    }
+  }
+
+  /**
+   * Writes any file, replacing it if present.
+   *
+   * Same temp-file-then-rename as `writeNote`, for the same reason: an upload
+   * that dies halfway must not leave a half-written attachment where a whole one
+   * used to be.
+   */
+  async writeFileBytes(owner: string, vaultPath: string, bytes: Buffer): Promise<void> {
+    const absolute = await this.resolve(owner, vaultPath);
+    await fs.mkdir(path.dirname(absolute), { recursive: true });
+
+    const temporary = `${absolute}.${randomBytes(6).toString('hex')}.tmp`;
+    try {
+      await fs.writeFile(temporary, bytes);
+      await fs.rename(temporary, absolute);
+    } catch (error) {
+      await fs.rm(temporary, { force: true });
+      throw error;
+    }
   }
 
   /** Directory names directly under `dir`, used to build the tree. */

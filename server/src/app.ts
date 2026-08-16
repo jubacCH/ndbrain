@@ -14,7 +14,15 @@ import { addTag, removeTag } from './markdown/edit.js';
 import { parseNote } from './markdown/parse.js';
 import type { Note, NoteService, PutOptions, PutResult } from './notes/service.js';
 import type { Database } from './db/database.js';
-import { caseKey, isNotePath, NOTE_EXTENSION, normalizeVaultPath, noteTitle } from './vault/paths.js';
+import type { VaultFile } from './vault/fs.js';
+import {
+  assertLinkableName,
+  caseKey,
+  isNotePath,
+  NOTE_EXTENSION,
+  normalizeVaultPath,
+  noteTitle,
+} from './vault/paths.js';
 import { InvalidPathError, NotAFileError, NoteNotFoundError } from './errors.js';
 
 export interface RenameResult {
@@ -119,6 +127,74 @@ export class App {
     this.#recordEdit(owner, result.note.path, result.created ? 'create' : 'update', actor);
     await this.#recordConflictCopy(owner, result, actor);
     return result;
+  }
+
+  /* ---- files -------------------------------------------------------------
+   *
+   * A vault is a folder of files, and until now the tool could only see the
+   * `.md` ones. Everything else — a screenshot pasted next to a note, a PDF, a
+   * config dump — existed on disk and was invisible and unreachable, which also
+   * meant unremovable through the tool that owns the folder.
+   *
+   * These four go through `App` rather than straight to `Vault` for the same
+   * reason note writes do: uploading a `.md` has to reach the index, or the note
+   * would exist on disk and be unfindable by search until the watcher happened
+   * to notice. Everything that is not a note skips the index entirely — there is
+   * nothing in a PNG for full-text search to hold.
+   */
+
+  async listFiles(
+    owner: string,
+    limit?: number,
+  ): Promise<{ files: VaultFile[]; dirs: string[]; truncated: boolean }> {
+    return this.notes.vault.listAll(owner, limit);
+  }
+
+  async readFile(owner: string, filePath: string): Promise<Buffer> {
+    return this.notes.vault.readFileBytes(owner, filePath);
+  }
+
+  /**
+   * Writes any file, and indexes it when it is a note.
+   *
+   * `assertLinkableName` is applied to notes only, and only here where the name
+   * is being *chosen*. An imported vault may legitimately be full of names no
+   * wikilink can reach; refusing those on the way in would lose files rather
+   * than protect anything. But a name typed into this tool today is a name the
+   * tool can still talk somebody out of.
+   */
+  async writeFile(
+    owner: string,
+    filePath: string,
+    bytes: Buffer,
+    actor?: string,
+  ): Promise<{ path: string; size: number; replaced: boolean }> {
+    const canonical = normalizeVaultPath(filePath);
+    const replaced = await this.notes.vault.exists(owner, canonical);
+
+    if (isNotePath(canonical) && !replaced) assertLinkableName(canonical);
+
+    await this.notes.vault.writeFileBytes(owner, canonical, bytes);
+
+    if (isNotePath(canonical)) {
+      await this.indexer.indexNote(owner, canonical);
+      this.indexer.resolveLinks(owner);
+      this.#recordEdit(owner, canonical, replaced ? 'update' : 'create', actor);
+    }
+
+    return { path: canonical, size: bytes.length, replaced };
+  }
+
+  async deleteFile(owner: string, filePath: string, actor?: string): Promise<void> {
+    const canonical = normalizeVaultPath(filePath);
+
+    if (isNotePath(canonical)) {
+      await this.deleteNote(owner, canonical, actor);
+      return;
+    }
+
+    await this.notes.vault.deleteNote(owner, canonical);
+    await this.notes.vault.pruneEmptyDirs(owner, canonical);
   }
 
   async deleteNote(owner: string, notePath: string, actor?: string): Promise<void> {

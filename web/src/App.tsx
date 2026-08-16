@@ -26,6 +26,7 @@ import {
   type SearchHit,
   type GraphData,
   type PulseEvent,
+  type FileRow,
   type Share,
   type Tidy,
   type User,
@@ -33,6 +34,7 @@ import {
 import { Brain } from './Brain';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
+import { FilesView } from './Files';
 import { Login } from './Login';
 import { Palette } from './Palette';
 import { Tree, displayPath, type Finding } from './Tree';
@@ -47,7 +49,7 @@ export interface Filters {
   propValue?: string;
 }
 
-type View = 'note' | 'overview' | 'brain' | 'tidy' | 'search' | 'shares';
+type View = 'note' | 'overview' | 'brain' | 'tidy' | 'search' | 'shares' | 'files';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -133,6 +135,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   /** On a narrow screen the tree overlays the page rather than keeping a column. */
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [treeFilter, setTreeFilter] = useState('');
+  const [files, setFiles] = useState<{ files: FileRow[]; dirs: string[]; truncated: boolean } | null>(null);
+  const [filesDir, setFilesDir] = useState('');
+  const [filesBusy, setFilesBusy] = useState(false);
   const [recents, setRecents] = useState<Recent[]>(loadRecents);
 
   const saveTimer = useRef<number | null>(null);
@@ -503,6 +508,82 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
    * deleted, renamed, or un-shared since it was last opened simply drops out of
    * the list instead of sitting there as a row that errors when clicked.
    */
+  const refreshFiles = useCallback(async (): Promise<void> => {
+    setFiles(await api.files());
+  }, []);
+
+  /**
+   * Uploads a batch, one request per file.
+   *
+   * Sequential rather than parallel: a vault import can be hundreds of files,
+   * and firing them all at once buys nothing on a single-user server while
+   * making the failure of one indistinguishable from the failure of the rest.
+   */
+  const uploadFiles = useCallback(
+    async (picked: File[], intoDir: string): Promise<void> => {
+      setFilesBusy(true);
+      const failed: string[] = [];
+      try {
+        for (const file of picked) {
+          const target = intoDir === '' ? file.name : `${intoDir}/${file.name}`;
+          try {
+            await api.uploadFile(user.id, target, file);
+          } catch (caught) {
+            failed.push(`${file.name}: ${caught instanceof ApiError ? caught.message : 'failed'}`);
+          }
+        }
+        await refreshFiles();
+        // An uploaded note is a note: the tree and the index have to catch up.
+        if (picked.some((file) => file.name.toLowerCase().endsWith('.md'))) await refreshTree();
+        setError(failed.length === 0 ? null : `Could not import ${failed.length}: ${failed[0] ?? ''}`);
+      } finally {
+        setFilesBusy(false);
+      }
+    },
+    [refreshFiles, refreshTree, user.id],
+  );
+
+  const replaceFile = useCallback(
+    async (path: string, file: File): Promise<void> => {
+      setFilesBusy(true);
+      try {
+        await api.uploadFile(user.id, path, file);
+        await refreshFiles();
+        if (path.toLowerCase().endsWith('.md')) await refreshTree();
+        setError(null);
+      } catch (caught) {
+        setError(caught instanceof ApiError ? caught.message : 'Could not replace that file.');
+      } finally {
+        setFilesBusy(false);
+      }
+    },
+    [refreshFiles, refreshTree, user.id],
+  );
+
+  const removeFile = useCallback(
+    async (file: FileRow): Promise<void> => {
+      const name = file.path.slice(file.path.lastIndexOf('/') + 1);
+      if (!window.confirm(`Delete “${name}”? This cannot be undone.`)) return;
+
+      setFilesBusy(true);
+      try {
+        await api.deleteFile(user.id, file.path);
+        await refreshFiles();
+        if (file.isNote) {
+          await refreshTree();
+          // The open note may be the one just deleted.
+          if (open !== null && open.note.path === file.path) setOpen(null);
+        }
+        setError(null);
+      } catch (caught) {
+        setError(caught instanceof ApiError ? caught.message : 'Could not delete that file.');
+      } finally {
+        setFilesBusy(false);
+      }
+    },
+    [refreshFiles, refreshTree, user.id, open],
+  );
+
   const recentRows = useMemo((): NoteRow[] => {
     const byKey = new Map(notes.map((note) => [refKey(note.owner, note.path), note]));
     const out: NoteRow[] = [];
@@ -600,6 +681,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   const showView = async (next: View): Promise<void> => {
     if (pending.current !== null) await flush();
     if (next === 'overview') await refreshOverview();
+    if (next === 'files') await refreshFiles();
     if (next === 'tidy') await refreshTree();
     if (next === 'shares') await refreshShares();
     setView(next);
@@ -683,6 +765,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           </button>
           <button type="button" aria-current={view === 'search'} onClick={() => void showView('search')}>
             Search
+          </button>
+          <button type="button" aria-current={view === 'files'} onClick={() => void showView('files')}>
+            Files
           </button>
         </div>
 
@@ -895,6 +980,25 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             />
           )}
 
+          {view === 'files' &&
+            (files === null ? (
+              <p className="empty" style={{ padding: '2rem' }}>Reading the vault…</p>
+            ) : (
+              <FilesView
+                files={files.files}
+                dirs={files.dirs}
+                truncated={files.truncated}
+                owner={user.id}
+                busy={filesBusy}
+                dir={filesDir}
+                onDir={setFilesDir}
+                onUpload={(picked, intoDir) => void uploadFiles(picked, intoDir)}
+                onReplace={(path, file) => void replaceFile(path, file)}
+                onDelete={(file) => void removeFile(file)}
+                onOpenNote={(path) => void openNote(user.id, path)}
+              />
+            ))}
+
           {view === 'shares' && (
             <SharesView
               granted={granted}
@@ -963,6 +1067,7 @@ function titleOfView(view: string): string {
       overview: 'Overview',
       brain: 'Whole network',
       tidy: 'Tidy up',
+      files: 'Files',
       search: 'Suche',
       shares: 'Freigaben',
     }[view] ?? ''
