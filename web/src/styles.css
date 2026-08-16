@@ -3020,7 +3020,10 @@ td.n,
  * and then wonder which of them took. The password form is the exception, and it
  * is the one action that cannot be undone by changing it back. */
 
-.settings {
+/* The pane itself scrolls, so constraining *it* puts the scrollbar in the middle
+   of the panel with dead space beside it. The content is what has a comfortable
+   reading width; the scroller stays full width. */
+.settings > * {
   max-width: 46rem;
 }
 
