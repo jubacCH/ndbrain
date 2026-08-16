@@ -30,7 +30,7 @@
  *   resolving against the real name.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from './copy';
 
 import { refKey, type NoteRow, type Share } from './api';
@@ -164,6 +164,92 @@ function ancestors(owner: string, path: string): string[] {
   return out;
 }
 
+
+/**
+ * Roving focus across whatever rows are currently on screen.
+ *
+ * Deliberately reads the DOM rather than mirroring the tree in state. The rows
+ * that exist at any moment are the product of folder state, the filter and the
+ * shares; keeping a parallel model of that in JavaScript means two things that
+ * can disagree, and the one that is wrong is always the one steering the
+ * keyboard.
+ *
+ * Keys follow the ARIA tree pattern, which people already know from every file
+ * manager: up and down move, right opens a folder or steps into it, left closes
+ * it or steps out to the parent, Home and End jump to the ends.
+ */
+function useTreeKeys(container: React.RefObject<HTMLDivElement | null>) {
+  const rows = (): HTMLButtonElement[] =>
+    [...(container.current?.querySelectorAll<HTMLButtonElement>('button.node') ?? [])];
+
+  const move = (from: HTMLElement, delta: number): void => {
+    const all = rows();
+    const index = all.indexOf(from as HTMLButtonElement);
+    const next = all[Math.min(all.length - 1, Math.max(0, index + delta))];
+    next?.focus();
+  };
+
+  return (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const target = event.target as HTMLElement;
+    if (!target.classList.contains('node')) return;
+
+    const expanded = target.getAttribute('aria-expanded');
+
+    switch (event.key) {
+      case 'ArrowDown':
+        event.preventDefault();
+        move(target, 1);
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        move(target, -1);
+        break;
+      case 'ArrowRight':
+        event.preventDefault();
+        // A shut folder opens; an open one hands focus to its first child, which
+        // is the row directly below it.
+        if (expanded === 'false') target.click();
+        else if (expanded === 'true') move(target, 1);
+        break;
+      case 'ArrowLeft': {
+        event.preventDefault();
+        if (expanded === 'true') {
+          target.click();
+          break;
+        }
+        // Otherwise walk up to the nearest row that is a shallower list level —
+        // the parent folder, whatever the nesting depth happens to be.
+        const all = rows();
+        const index = all.indexOf(target as HTMLButtonElement);
+        const depth = (el: HTMLElement): number => {
+          let n = 0;
+          for (let p = el.parentElement; p; p = p.parentElement) if (p.tagName === 'UL') n += 1;
+          return n;
+        };
+        const mine = depth(target);
+        for (let i = index - 1; i >= 0; i -= 1) {
+          if (depth(all[i]!) < mine) {
+            all[i]!.focus();
+            break;
+          }
+        }
+        break;
+      }
+      case 'Home':
+        event.preventDefault();
+        rows()[0]?.focus();
+        break;
+      case 'End': {
+        event.preventDefault();
+        const all = rows();
+        all[all.length - 1]?.focus();
+        break;
+      }
+      default:
+    }
+  };
+}
+
 export function Tree({
   notes,
   self,
@@ -175,6 +261,9 @@ export function Tree({
   onSelect,
   onRenameFolder,
 }: TreeProps): React.JSX.Element {
+  const box = useRef<HTMLDivElement>(null);
+  const onKeyDown = useTreeKeys(box);
+
   const vaults = useMemo(() => {
     const byOwner = new Map<string, NoteRow[]>();
     for (const note of notes) {
@@ -240,6 +329,7 @@ export function Tree({
         <button
           type="button"
           className={showPath ? 'node node-hit' : 'node'}
+          tabIndex={seatOf()}
           aria-current={selected !== null && selected.owner === note.owner && selected.path === note.path}
           onClick={() => onSelect(note.owner, note.path)}
         >
@@ -260,7 +350,13 @@ export function Tree({
       return (
         <li key={`d:${key}`}>
           <div className="node-row">
-            <button type="button" className="node" onClick={() => toggle(key)} aria-expanded={isOpen}>
+            <button
+              type="button"
+              className="node"
+              tabIndex={seatOf()}
+              onClick={() => toggle(key)}
+              aria-expanded={isOpen}
+            >
               <span className="tw">{isOpen ? '▾' : '▸'}</span>
               <span className="nm">{displayName(child.name, hidePrefixes)}</span>
               {/* Shown only while shut: once it is open you can see them. */}
@@ -285,8 +381,18 @@ export function Tree({
     ...folder.notes.map((note) => noteRow(note, false)),
   ];
 
+  /**
+   * One tab stop for the whole tree.
+   *
+   * Every row was reachable by Tab before, which is the canonical hobby-tool
+   * failure: sixty presses to get past the sidebar. Only the first row is in the
+   * tab order now; the arrow keys do the rest.
+   */
+  let seat = 0;
+  const seatOf = (): number => (seat++ === 0 ? 0 : -1);
+
   return (
-    <>
+    <div className="treebox" ref={box} onKeyDown={onKeyDown} role="tree" aria-label="Notes">
       {vaults.map(({ owner, rows }) => {
         const isOwn = owner === self;
         const hits =
@@ -326,7 +432,7 @@ export function Tree({
           </section>
         );
       })}
-    </>
+    </div>
   );
 }
 

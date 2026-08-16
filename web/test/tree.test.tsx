@@ -187,3 +187,76 @@ describe('findings', () => {
     expect(document.querySelector('.st-crit')).toBeNull();
   });
 });
+
+describe('keyboard navigation', () => {
+  // Measured before this existed: zero key handlers, so every row was its own
+  // tab stop — sixty presses to cross the sidebar, and no way to open a folder
+  // without a mouse. The ARIA tree pattern fixes both with roving tabindex.
+
+  it('is a single tab stop, however many rows are showing', () => {
+    renderTree();
+
+    const rows = screen.getAllByRole('button').filter((b) => b.className.includes('node'));
+    const reachable = rows.filter((b) => b.getAttribute('tabindex') === '0');
+
+    expect(rows.length).toBeGreaterThan(3);
+    expect(reachable).toHaveLength(1);
+  });
+
+  it('moves down and up with the arrow keys', async () => {
+    const user = userEvent.setup();
+    renderTree();
+
+    // The fixture's top level, in the order buildTree sorts it: 00_Inbox,
+    // 20_Areas, then the loose note.
+    const first = screen.getByText('Inbox').closest('button')!;
+    first.focus();
+
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(screen.getByText('Areas').closest('button'));
+
+    await user.keyboard('{ArrowUp}');
+    expect(document.activeElement).toBe(first);
+  });
+
+  it('opens a folder with the right arrow and closes it with the left', async () => {
+    const user = userEvent.setup();
+    renderTree();
+
+    screen.getByText('Areas').closest('button')!.focus();
+    expect(screen.queryByText('Homelab')).not.toBeInTheDocument();
+
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByText('Homelab')).toBeInTheDocument();
+
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.queryByText('Homelab')).not.toBeInTheDocument();
+  });
+
+  it('steps into an already open folder with the right arrow', async () => {
+    const user = userEvent.setup();
+    renderTree();
+
+    const areas = screen.getByText('Areas').closest('button')!;
+    areas.focus();
+    await user.keyboard('{ArrowRight}'); // opens
+    await user.keyboard('{ArrowRight}'); // steps in
+
+    expect(document.activeElement).toBe(screen.getByText('Homelab').closest('button'));
+  });
+
+  it('jumps to the ends with Home and End', async () => {
+    const user = userEvent.setup();
+    renderTree();
+
+    const rows = () =>
+      screen.getAllByRole('button').filter((b) => b.className.includes('node'));
+
+    rows()[2]!.focus();
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(rows()[rows().length - 1]);
+
+    await user.keyboard('{Home}');
+    expect(document.activeElement).toBe(rows()[0]);
+  });
+});

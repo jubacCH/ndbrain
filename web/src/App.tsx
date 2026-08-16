@@ -1147,8 +1147,27 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               />
             ))}
 
+          {view === 'overview' && overview === null && (
+            /* Shaped like what is coming. A skeleton that does not match the
+               final layout adds to the jank instead of covering it. */
+            <div className="pane padded" aria-busy="true" aria-label={copy.overview.title}>
+              <div className="skel skel-row" style={{ width: '9rem', height: 26 }} />
+              <div className="skel skel-row" style={{ width: '14rem' }} />
+              <div className="bento" style={{ marginTop: 'var(--s-4)' }}>
+                <div className="skel skel-tile tile-wide" />
+                <div className="skel skel-tile" />
+                <div className="skel skel-tile" />
+                <div className="skel skel-tile" />
+              </div>
+            </div>
+          )}
+
           {view === 'overview' && overview !== null && (
-            <OverviewView data={overview} onOpen={(owner, path) => void openNote(owner, path)} />
+            <OverviewView
+              data={overview}
+              onOpen={(owner, path) => void openNote(owner, path)}
+              onFindings={() => void showView('tidy')}
+            />
           )}
 
           {view === 'brain' &&
@@ -1272,7 +1291,11 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         as a picture — not the whole network, which at this size would be a knot.
       */}
       {view === 'note' && open !== null && (
-        <aside className="side" aria-label={copy.note.aboutOpen}>
+        <aside
+          className="side"
+          aria-label={copy.note.aboutOpen}
+          data-graph={local === null || local.nodes.length <= 1 ? 'empty' : 'has'}
+        >
           <div className="side-info">
             <ContextPanel
               note={{ owner: open.owner, path: open.note.path }}

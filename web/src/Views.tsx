@@ -36,9 +36,12 @@ export function ago(mtimeMs: number, now = Date.now()): string {
 export function OverviewView({
   data,
   onOpen,
+  onFindings,
 }: {
   data: Overview;
   onOpen: (owner: string, path: string) => void;
+  /** Opens the tidy view — the place every finding count leads to. */
+  onFindings: () => void;
 }): React.JSX.Element {
   const { counts } = data;
   // Counted by the server as distinct notes. Adding the four findings together
@@ -60,11 +63,11 @@ export function OverviewView({
             <p className="empty">{copy.overview.clean}</p>
           ) : (
             <div className="findings">
-              <Finding label={copy.overview.orphaned} kind="crit" count={counts.orphans} />
-              <Finding label={copy.overview.brokenLinks} kind="crit" count={counts.deadLinks} />
+              <Finding onOpen={onFindings} label={copy.overview.orphaned} kind="crit" count={counts.orphans} />
+              <Finding onOpen={onFindings} label={copy.overview.brokenLinks} kind="crit" count={counts.deadLinks} />
               {/* Withheld where no note is tagged: see Queries.tagsInUse. */}
-              {counts.tagsInUse && <Finding label={copy.overview.untagged} kind="warn" count={counts.untagged} />}
-              <Finding label={copy.overview.untouched} kind="warn" count={counts.stale} />
+              {counts.tagsInUse && <Finding onOpen={onFindings} label={copy.overview.untagged} kind="warn" count={counts.untagged} />}
+              <Finding onOpen={onFindings} label={copy.overview.untouched} kind="warn" count={counts.stale} />
             </div>
           )}
         </section>
@@ -148,20 +151,37 @@ export function OverviewView({
   );
 }
 
+/**
+ * One finding count.
+ *
+ * A button rather than a div: a number on a dashboard that cannot be clicked is
+ * a dead end — you are told forty notes need attention and then left to find
+ * them yourself. Zero is the exception; there is nothing behind it to open.
+ */
 function Finding({
   label,
   kind,
   count,
+  onOpen,
 }: {
   label: string;
   kind: 'crit' | 'warn';
   count: number;
+  onOpen?: () => void;
 }): React.JSX.Element {
+  const empty = count === 0;
   return (
-    <div className="finding" data-empty={count === 0}>
+    <button
+      type="button"
+      className="finding"
+      data-empty={empty}
+      disabled={empty}
+      aria-label={empty ? undefined : `${count} ${label} — open in the tidy view`}
+      onClick={() => !empty && onOpen?.()}
+    >
       <span className="finding-n">{count}</span>
       <span className={`pill p-${kind}`}>{label}</span>
-    </div>
+    </button>
   );
 }
 
