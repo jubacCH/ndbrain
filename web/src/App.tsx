@@ -103,6 +103,50 @@ function pushRecent(owner: string, path: string): void {
   }
 }
 
+
+/*
+ * Two icons, drawn rather than imported.
+ *
+ * `currentColor` and no fill, so they inherit the button's colour in both
+ * themes and need no dark-mode variant. `aria-hidden` because the button beside
+ * them already carries the name — announcing both would read the label twice.
+ */
+function NewNoteIcon(): React.JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M9 1.5H4a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 0 4 14.5h6a1.5 1.5 0 0 0 1.5-1.5V6"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M12.5 1.5v4M10.5 3.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function NewFolderIcon(): React.JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M1.5 12.5v-9A1 1 0 0 1 2.5 2.5h3l1.5 2h4.5a1 1 0 0 1 1 1V7"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M1.5 12.5a1 1 0 0 0 1 1h6"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+      <path d="M12.5 9.5v4M10.5 11.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function App(): React.JSX.Element {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
@@ -968,11 +1012,6 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           </button>
         </div>
 
-        <div className="nav-actions">
-          <button type="button" onClick={() => void createNote()}>{copy.nav.newNote}</button>
-          <button type="button" onClick={() => void createFolder()}>{copy.nav.folder}</button>
-        </div>
-
         {/*
           No "Write" entry. Opening a note from the tree, the recents, the
           palette or a search hit already switches to it, so the button only ever
@@ -1087,7 +1126,39 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
           </div>
         )}
 
+        {/*
+          The two create actions live here rather than at the top. Making them
+          icons is what allows it: they sit beside the footer's text items
+          without needing a row of their own, which takes the sidebar from eight
+          stacked zones to seven — and the tree, the thing the sidebar is for,
+          gets the space back.
+
+          An icon button carries its name three ways: aria-label for a screen
+          reader, title for a hover, and a shape that is the convention for the
+          thing. Two of the three are invisible and both are needed.
+        */}
         <div className="nav-foot">
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label={copy.nav.newNote}
+            title={copy.nav.newNote}
+            onClick={() => void createNote()}
+          >
+            <NewNoteIcon />
+          </button>
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label={copy.nav.newFolder}
+            title={copy.nav.newFolder}
+            onClick={() => void createFolder()}
+          >
+            <NewFolderIcon />
+          </button>
+
+          <span className="nav-foot-gap" />
+
           <button type="button" onClick={() => void showView('settings')}>{copy.nav.settings}</button>
           <button type="button" onClick={() => void showView('shares')}>{copy.nav.sharing}</button>
           <button type="button" onClick={() => void signOut()}>{copy.nav.signOut}</button>

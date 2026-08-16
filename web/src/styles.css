@@ -3674,3 +3674,36 @@ td.n,
   border-left: 2px solid var(--glass-line);
   margin-left: var(--s-1);
 }
+
+/* The footer carries both registers now: two icon actions and three text ones.
+ * A gap between them rather than a divider — the grouping is legible from the
+ * space alone, and one more hairline in a sidebar that already has several
+ * would be decoration. */
+.nav-foot {
+  align-items: center;
+}
+.nav-foot-gap {
+  flex: 1;
+}
+
+.iconbtn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  cursor: pointer;
+  color: var(--ink-2);
+  padding: 0;
+}
+.iconbtn:hover {
+  background: var(--glass-soft);
+  color: var(--ink);
+}
+.iconbtn:active {
+  background: var(--glass-line);
+}
