@@ -107,6 +107,7 @@ export const copy = {
       `Somebody else changed this note in the meantime. Your version is the one in ` +
       `place; theirs was kept alongside it as “${copyName}”.`,
     settingsFailed: 'Could not save that setting.',
+    attachFailed: 'Could not attach that file.',
     closeMessage: 'Dismiss message',
   },
 

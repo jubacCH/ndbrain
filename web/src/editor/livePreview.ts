@@ -16,6 +16,7 @@
  */
 
 import { syntaxTree } from '@codemirror/language';
+import { Facet } from '@codemirror/state';
 import type { EditorState, Extension, Range } from '@codemirror/state';
 import {
   Decoration,
@@ -50,6 +51,34 @@ const MARK_DECORATIONS = {
 
 /** `[[Target]]`, `[[Target|Label]]` and the `![[…]]` embed form. */
 const WIKILINK = /(!?)\[\[([^\]\n]+)]]/g;
+
+/** Extensions an embed will actually be shown for. */
+const EMBEDDABLE = /\.(png|jpe?g|gif|webp)$/i;
+
+/**
+ * Where the open note lives, so an embed can be turned into a URL.
+ *
+ * A facet rather than a closure argument because the plugin outlives any one
+ * note: reconfiguring this is how the editor tells it that a different note is
+ * open, without rebuilding the whole extension stack.
+ */
+export const embedContext = Facet.define<{ owner: string; dir: string }, { owner: string; dir: string }>({
+  combine: (values: ReadonlyArray<{ owner: string; dir: string }>) =>
+    values[0] ?? { owner: '', dir: '' },
+});
+
+/**
+ * The URL an embedded attachment is served from.
+ *
+ * Resolved against the note's own folder. A bare `![[rack.png]]` therefore means
+ * "the file beside this note", which is what the paste handler writes and what
+ * somebody typing the name expects — and it needs no index lookup to resolve.
+ */
+function embedUrl(context: { owner: string; dir: string }, name: string): string {
+  const path = context.dir === '' ? name : `${context.dir}/${name}`;
+  const encoded = path.split('/').map(encodeURIComponent).join('/');
+  return `/api/v1/files/${encoded}?owner=${encodeURIComponent(context.owner)}`;
+}
 
 /** `![alt](url)` — parsed from the node's own text rather than its children. */
 const IMAGE = /^!\[([^\]]*)]\(\s*(\S+?)\s*(?:"[^"]*")?\)$/;
@@ -182,11 +211,23 @@ export function buildDecorations(
         // Claimed either way, so that pass three keeps its hands off.
         wikilinks.push([start, innerTo + 2]);
 
-        // An embed is left exactly as typed. No endpoint serves files out of a
-        // vault yet, so there is nothing to show in its place, and hiding half
-        // its punctuation would make it read as a typo rather than as a thing
-        // deliberately not being rendered.
-        if (bang !== '') continue;
+        // An embed of a picture becomes the picture. Anything else is left
+        // exactly as typed: hiding half the punctuation of something that is not
+        // going to be rendered makes it read as a typo.
+        if (bang !== '') {
+          const target = inner.split('|')[0]?.trim() ?? '';
+          // Same rule the rest of the file uses: notation gives way only while
+          // the cursor is elsewhere, so an embed you are editing stays text.
+          if (!isActive(start) && EMBEDDABLE.test(target)) {
+            const context = state.facet(embedContext);
+            replace(
+              start,
+              innerTo + 2,
+              Decoration.replace({ widget: new ImageWidget(embedUrl(context, target), target) }),
+            );
+          }
+          continue;
+        }
 
         // `[[Target|Label]]` shows the label; the target is addressing.
         const pipe = inner.indexOf('|');
