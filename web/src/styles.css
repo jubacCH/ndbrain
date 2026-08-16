@@ -3709,3 +3709,40 @@ td.n,
 .iconbtn:active {
   background: var(--glass-line);
 }
+
+/* Name and Save on one line: the field is short and the button belongs to it. */
+.nameedit {
+  display: flex;
+  gap: var(--s-2);
+  flex: none;
+}
+.nameedit input {
+  font: inherit;
+  font-size: var(--t-sm);
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--glass-line);
+  background: var(--glass-soft);
+  color: var(--ink);
+  width: 12rem;
+}
+.nameedit input:focus {
+  outline: none;
+  border-color: rgba(90, 190, 205, 0.55);
+  background: var(--glass-hi);
+}
+.nameedit button {
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: var(--w-strong);
+  cursor: pointer;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: var(--s-1) var(--s-3);
+  background: rgba(16, 32, 42, 0.9);
+  color: #f2fbfc;
+}
+.nameedit button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

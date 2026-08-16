@@ -161,10 +161,19 @@ export function App(): React.JSX.Element {
 
   if (!ready) return <div className="login" />;
   if (user === null) return <Login onSignedIn={setUser} />;
-  return <Shell user={user} onSignedOut={() => setUser(null)} />;
+  return <Shell user={user} onUserChanged={setUser} onSignedOut={() => setUser(null)} />;
 }
 
-function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): React.JSX.Element {
+function Shell({
+  user,
+  onUserChanged,
+  onSignedOut,
+}: {
+  user: User;
+  /** Called when the account itself changed — so far, only its display name. */
+  onUserChanged: (user: User) => void;
+  onSignedOut: () => void;
+}): React.JSX.Element {
   /**
    * Where the application opens.
    *
@@ -1345,6 +1354,11 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               onStaleDays={(days) => void saveStaleDays(days)}
               user={user}
               onSignedOutEverywhere={() => setError(null)}
+              onRenamed={() => {
+                // The sidebar greets you by this name, so it changes with it
+                // rather than at the next reload.
+                void api.me().then(({ user: me }) => onUserChanged(me)).catch(() => undefined);
+              }}
             />
           )}
 

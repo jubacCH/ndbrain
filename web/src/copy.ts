@@ -311,6 +311,11 @@ export const copy = {
     days: (n: number) => `${n} days`,
 
     account: 'Account',
+    displayName: 'Display name',
+    displayNameHint: 'What the interface calls you. Your sign-in name stays the same.',
+    save: 'Save',
+    nameSaved: 'Name changed.',
+    nameFailed: 'Could not change that name.',
     roleAdmin: 'Administrator',
     roleUser: 'Account',
     passwordWhy:
