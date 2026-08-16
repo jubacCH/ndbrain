@@ -3474,13 +3474,20 @@ td.n,
 .node-act,
 .files-row-actions button,
 .files-row-actions a,
-.nav-find > button,
-.nav-x {
+.nav-find > button {
   min-width: 24px;
   min-height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* The drawer's close button gets the same floor without being given a `display`.
+ * Setting one here overrode the `display: none` that keeps it off the desktop
+ * layout entirely, and put a stray ✕ beside the account name at every width. */
+.nav-x {
+  min-width: 24px;
+  min-height: 24px;
 }
 
 /* The neighbourhood panel is only worth its 240px when it has something to draw.
