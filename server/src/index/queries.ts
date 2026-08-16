@@ -463,6 +463,19 @@ export class Queries {
   }
 
   /**
+   * Untagged notes, but only where being untagged is a defect.
+   *
+   * The single place the rule lives, so the count and the list cannot disagree.
+   * Applying it at one call site and not the other made the overview declare that
+   * tagging is not a convention in this vault while the tidy table listed every
+   * note as untagged — two views contradicting each other about the same vault,
+   * and a table that is mostly noise for somebody meant to work through it.
+   */
+  untaggedFindings(view: Viewable): NoteRow[] {
+    return this.tagsInUse(view) ? this.untagged(view) : [];
+  }
+
+  /**
    * How many notes need attention — counted as notes, not as findings.
    *
    * Adding the four finding counts together overstates the total, because one
@@ -479,7 +492,7 @@ export class Queries {
     for (const note of this.orphans(view)) paths.add(note.path);
     for (const note of this.stale(view)) paths.add(note.path);
     for (const link of this.deadLinks(view)) paths.add(link.source);
-    if (this.tagsInUse(view)) for (const note of this.untagged(view)) paths.add(note.path);
+    for (const note of this.untaggedFindings(view)) paths.add(note.path);
     return paths.size;
   }
 

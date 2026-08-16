@@ -482,7 +482,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         // clicked, because there was nothing there for this person to do.
         notes: app.queries.countNotes(view),
         orphans: app.queries.orphans(caller).length,
-        untagged: app.queries.untagged(caller).length,
+        // Zero where tagging is not a convention here; see untaggedFindings.
+        untagged: app.queries.untaggedFindings(caller).length,
         deadLinks: app.queries.deadLinks(caller).length,
         stale: app.queries.stale(caller).length,
         // Notes, not findings — the four above overlap heavily. See attentionCount.
@@ -728,9 +729,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const limit = clamp(Number(query.limit) || 500, 1, 5000);
 
     const orphans = app.queries.orphans(owner);
-    const untagged = app.queries.untagged(owner);
     const deadLinks = app.queries.deadLinks(owner);
     const stale = app.queries.stale(owner);
+    // The same rule the overview applies, from the same function — so the count
+    // and the list can never disagree about what counts as a finding.
+    const untagged = app.queries.untaggedFindings(owner);
 
     return {
       orphans: orphans.slice(0, limit),
