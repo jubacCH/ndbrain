@@ -2333,7 +2333,10 @@ body {
   border-top: 1px solid var(--glass-line);
 }
 .nav-foot button {
-  flex: 1;
+  /* Sized to their words, not stretched to equal thirds. The rule was written
+     when this row held three text buttons; with two icons beside them, equal
+     thirds squeezed "Sign out" onto two lines. */
+  flex: none;
   border: 0;
   background: none;
   cursor: pointer;
@@ -2342,6 +2345,7 @@ body {
   color: var(--ink-3);
   padding: var(--s-1);
   border-radius: var(--r-sm);
+  white-space: nowrap;
 }
 .nav-foot button:hover {
   background: var(--glass-soft);
