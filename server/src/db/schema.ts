@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -282,6 +282,33 @@ const MIGRATIONS: Array<(db: Database) => void> = [
   (db) => {
     db.exec('DELETE FROM notes_fts; DELETE FROM props; DELETE FROM notes;');
   },
+  // v7 -> v8: per-account preferences
+  //
+  // Almost every setting a person can change belongs in their browser: a theme,
+  // a text size and which view opens first are properties of the screen they are
+  // sitting at, and syncing those would make two devices fight each other.
+  //
+  // What belongs here instead is anything that changes what the *server*
+  // answers. "Untouched for 42 days" was a number chosen by whoever wrote the
+  // query, and it decides which notes get reported as needing attention — that
+  // is a judgement about somebody's vault, so it has to be theirs to make, and
+  // it has to be the same judgement whichever device asks.
+  //
+  // Key-value rather than a column per setting: settings arrive one at a time
+  // over years, and a table that needs a migration for each one gets them
+  // wedged into an existing column instead.
+  (db) => {
+    db.exec(`
+      CREATE TABLE user_settings (
+        user_id TEXT NOT NULL,
+        key     TEXT NOT NULL,
+        value   TEXT NOT NULL,
+        PRIMARY KEY (user_id, key),
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+      ) STRICT;
+    `);
+  },
+
 ];
 
 /** Applies pending migrations. Safe to call on every start. */

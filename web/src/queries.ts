@@ -53,6 +53,7 @@ export const keys = {
   graph: ['graph'] as const,
   tags: ['tags'] as const,
   files: ['files'] as const,
+  settings: ['settings'] as const,
   note: (owner: string, path: string) => ['note', owner, path] as const,
   links: (owner: string, path: string) => ['links', owner, path] as const,
   search: (q: string, filters: unknown) => ['search', q, filters] as const,
@@ -170,6 +171,21 @@ export function useSearch(
     // does not blink empty on every keystroke.
     placeholderData: (previous) => previous,
     staleTime: 10_000,
+  });
+}
+
+/**
+ * The one preference the server owns.
+ *
+ * Fetched only on the settings page: nothing else on screen depends on it, and
+ * the server already applies it when answering the queries that do.
+ */
+export function useSettings(enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.settings>>> {
+  return useQuery({
+    queryKey: keys.settings,
+    queryFn: () => api.settings(),
+    staleTime: FRESH_MS,
+    enabled,
   });
 }
 

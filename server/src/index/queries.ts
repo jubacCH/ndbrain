@@ -19,6 +19,7 @@
 import type { Database, SqlValue } from '../db/database.js';
 import type { View } from '../auth/shares.js';
 import { caseKey } from '../vault/paths.js';
+import { DEFAULT_SETTINGS } from '../auth/settings.js';
 
 export interface SearchOptions {
   /** Only notes carrying this tag. */
@@ -434,7 +435,7 @@ export class Queries {
   }
 
   /** Notes untouched for longer than `days`. */
-  stale(view: Viewable, days = 42, now = Date.now()): NoteRow[] {
+  stale(view: Viewable, days = DEFAULT_SETTINGS.staleDays, now = Date.now()): NoteRow[] {
     const cutoff = now - days * 24 * 60 * 60 * 1000;
     const scope = scopeSql('n', 'path', view);
     return this.#db
@@ -487,10 +488,10 @@ export class Queries {
    * Dead links are counted at their source: the note holding the broken link is
    * the one that has to be edited.
    */
-  attentionCount(view: Viewable): number {
+  attentionCount(view: Viewable, staleDays?: number): number {
     const paths = new Set<string>();
     for (const note of this.orphans(view)) paths.add(note.path);
-    for (const note of this.stale(view)) paths.add(note.path);
+    for (const note of this.stale(view, staleDays)) paths.add(note.path);
     for (const link of this.deadLinks(view)) paths.add(link.source);
     for (const note of this.untaggedFindings(view)) paths.add(note.path);
     return paths.size;

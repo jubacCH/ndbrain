@@ -34,6 +34,8 @@ import { Brain } from './Brain';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { copy } from './copy';
+import { applyPrefs, loadPrefs, savePrefs, type Prefs } from './prefs';
+import { SettingsView } from './Settings';
 import { FilesView } from './Files';
 import { Login } from './Login';
 import { Palette } from './Palette';
@@ -42,6 +44,7 @@ import { OverviewView, SearchView, SharesView, TidyView } from './Views';
 import {
   invalidate,
   keys,
+  useSettings,
   useFiles,
   useGraph,
   useNote,
@@ -61,10 +64,9 @@ export interface Filters {
   propValue?: string;
 }
 
-type View = 'note' | 'overview' | 'brain' | 'tidy' | 'search' | 'shares' | 'files';
+type View = 'note' | 'overview' | 'brain' | 'tidy' | 'search' | 'shares' | 'files' | 'settings';
 type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
 
-const SAVE_DEBOUNCE_MS = 500;
 
 /**
  * Recently opened notes.
@@ -75,7 +77,6 @@ const SAVE_DEBOUNCE_MS = 500;
  * would make two people sharing a vault steer each other's sidebar.
  */
 const RECENTS_KEY = 'ndbrain.recents';
-const RECENTS_SHOWN = 5;
 
 interface Recent {
   owner: string;
@@ -118,7 +119,14 @@ export function App(): React.JSX.Element {
 }
 
 function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): React.JSX.Element {
-  const [view, setView] = useState<View>('overview');
+  /**
+   * Where the application opens.
+   *
+   * Read from the preferences once, at mount. `note` is special: it means "the
+   * one I had open", which needs the recents list, so the view starts on the
+   * note pane and the effect below opens the note as soon as the tree arrives.
+   */
+  const [view, setView] = useState<View>(() => loadPrefs().startView as View);
   /** Which note is open — the identity, not its content. */
   const [openRef, setOpenRef] = useState<{ owner: string; path: string } | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
@@ -146,6 +154,15 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   /** On a narrow screen the tree overlays the page rather than keeping a column. */
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [treeFilter, setTreeFilter] = useState('');
+  const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
+  /**
+   * The same preferences, reachable from a callback that must not be rebuilt.
+   *
+   * `scheduleSave` runs on every keystroke and is handed to the editor once;
+   * putting `prefs` in its dependency list would tear down and rebuild the
+   * editor's change handler every time a slider moved.
+   */
+  const prefsRef = useRef(prefs);
   const [filesDir, setFilesDir] = useState('');
   const [filesBusy, setFilesBusy] = useState(false);
   const [recents, setRecents] = useState<Recent[]>(loadRecents);
@@ -164,6 +181,12 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
 
   const client = useQueryClient();
 
+  useEffect(() => {
+    prefsRef.current = prefs;
+    applyPrefs(prefs);
+    savePrefs(prefs);
+  }, [prefs]);
+
   const treeQuery = useTree();
   const tidyQuery = useTidy();
   // Only while it is on screen. It is the most expensive answer the server gives
@@ -177,6 +200,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
   // an open note, so it is wanted in exactly those two places and nowhere else.
   const graphQuery = useGraph(view === 'brain' || view === 'note');
   const filesQuery = useFiles(view === 'files');
+  const settingsQuery = useSettings(view === 'settings');
 
   const notes = treeQuery.data?.notes ?? [];
   const tidy = tidyQuery.data ?? null;
@@ -232,6 +256,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       })
       .catch(() => undefined);
   }, []);
+
 
   /** Writes whatever is pending right now. */
   const flush = useCallback(async (): Promise<void> => {
@@ -289,7 +314,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       window.__ndbrainPending = { path, content };
       setSaveState('dirty');
       if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
-      saveTimer.current = window.setTimeout(() => void flush(), SAVE_DEBOUNCE_MS);
+      saveTimer.current = window.setTimeout(() => void flush(), prefsRef.current.saveDelayMs);
     },
     [flush],
   );
@@ -343,6 +368,25 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     },
     [flush, client],
   );
+
+  /**
+   * Reopens the last note, when that is what the preferences ask for.
+   *
+   * Guarded by a ref rather than by the dependency list: this must happen once
+   * on load and never again, or every later change to the note list would drag
+   * somebody back to where they started.
+   */
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || prefs.startView !== 'note' || notes.length === 0) return;
+    restored.current = true;
+
+    const last = loadRecents()[0];
+    if (last === undefined) return;
+    if (!notes.some((note) => note.owner === last.owner && note.path === last.path)) return;
+
+    void openNote(last.owner, last.path);
+  }, [notes, prefs.startView, openNote]);
 
   const createNoteAt = useCallback(
     async (owner: string, rawName: string): Promise<void> => {
@@ -535,12 +579,15 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     };
 
     tick();
-    const timer = window.setInterval(tick, 2000);
+    const timer = window.setInterval(tick, prefs.pulseMs);
     return () => {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [view, user.id]);
+    // The interval is in the dependencies, so changing it on the settings page
+    // restarts the poll at the new rate rather than taking effect on the next
+    // view switch.
+  }, [view, user.id, prefs.pulseMs]);
 
   /**
    * The open note's neighbourhood: itself and whatever links to or from it.
@@ -628,6 +675,31 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
     [refreshFiles, refreshTree, user.id, open],
   );
 
+  /**
+   * Writes the one setting that lives on the server.
+   *
+   * Optimistic: the slider has already moved, and waiting for a round trip to
+   * confirm what somebody just dragged makes the control feel broken. The reply
+   * is authoritative — it comes back clamped — so the cache takes that.
+   */
+  const saveStaleDays = useCallback(
+    async (days: number): Promise<void> => {
+      client.setQueryData(keys.settings, { settings: { staleDays: days } });
+      try {
+        const result = await api.saveSettings({ staleDays: days });
+        client.setQueryData(keys.settings, result);
+        // The threshold decides what counts as a finding, so everything that
+        // reports findings is now out of date.
+        void client.invalidateQueries({ queryKey: keys.tidy });
+        void client.invalidateQueries({ queryKey: keys.overview });
+      } catch {
+        void client.invalidateQueries({ queryKey: keys.settings });
+        setError(copy.errors.settingsFailed);
+      }
+    },
+    [client],
+  );
+
   const recentRows = useMemo((): NoteRow[] => {
     const byKey = new Map(notes.map((note) => [refKey(note.owner, note.path), note]));
     const out: NoteRow[] = [];
@@ -637,10 +709,10 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
       if (note === undefined) continue;
       if (open !== null && open.owner === note.owner && open.note.path === note.path) continue;
       out.push(note);
-      if (out.length === RECENTS_SHOWN) break;
+      if (out.length >= prefs.recentCount) break;
     }
     return out;
-  }, [recents, notes, open]);
+  }, [recents, notes, open, prefs.recentCount]);
 
   const local = useMemo((): GraphData | null => {
     if (graph === null || open === null) return null;
@@ -868,6 +940,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             selected={open === null ? null : { owner: open.owner, path: open.note.path }}
             findings={findings}
             filter={treeFilter.trim().toLowerCase()}
+            hidePrefixes={prefs.hidePrefixes}
             onSelect={(owner, path) => {
               void openNote(owner, path);
               setDrawerOpen(false);
@@ -902,6 +975,7 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
         )}
 
         <div className="nav-foot">
+          <button type="button" onClick={() => void showView('settings')}>{copy.nav.settings}</button>
           <button type="button" onClick={() => void showView('shares')}>{copy.nav.sharing}</button>
           <button type="button" onClick={() => void signOut()}>{copy.nav.signOut}</button>
         </div>
@@ -925,7 +999,9 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
             {view === 'note'
               ? open === null
                 ? copy.note.none
-                : [displayPath(open.note.path), open.note.title].filter((part) => part !== '').join(' › ')
+                : [displayPath(open.note.path, prefs.hidePrefixes), open.note.title]
+                    .filter((part) => part !== '')
+                    .join(' › ')
               : titleOfView(view)}
           </span>
           {view === 'note' && open !== null && open.owner !== user.id && (
@@ -1046,6 +1122,17 @@ function Shell({ user, onSignedOut }: { user: User; onSignedOut: () => void }): 
               />
             ))}
 
+          {view === 'settings' && (
+            <SettingsView
+              prefs={prefs}
+              onPrefs={setPrefs}
+              staleDays={settingsQuery.data?.settings.staleDays ?? null}
+              onStaleDays={(days) => void saveStaleDays(days)}
+              user={user}
+              onSignedOutEverywhere={() => setError(null)}
+            />
+          )}
+
           {view === 'shares' && (
             <SharesView
               granted={granted}
@@ -1114,6 +1201,7 @@ function titleOfView(view: string): string {
       brain: copy.nav.network,
       tidy: copy.nav.tidy,
       files: copy.nav.files,
+      settings: copy.nav.settings,
       search: copy.nav.search,
       shares: copy.nav.sharing,
     }[view] ?? ''

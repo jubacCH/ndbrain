@@ -12,6 +12,7 @@ import path from 'node:path';
 import { App } from './app.js';
 import { ApiKeyService } from './auth/keys.js';
 import { ShareService } from './auth/shares.js';
+import { SettingsService } from './auth/settings.js';
 import { SessionService, UserService } from './auth/users.js';
 import { indexFile, type Config } from './config.js';
 import { Database } from './db/database.js';
@@ -32,6 +33,7 @@ export interface Runtime {
   sessions: SessionService;
   keys: ApiKeyService;
   shares: ShareService;
+  settings: SettingsService;
   close(): void;
 }
 
@@ -50,6 +52,7 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   const sessions = new SessionService(db);
   const keys = new ApiKeyService(db);
   const shares = new ShareService(db);
+  const settings = new SettingsService(db);
 
   sessions.purgeExpired();
 
@@ -64,6 +67,7 @@ export async function createRuntime(config: Config): Promise<Runtime> {
     sessions,
     keys,
     shares,
+    settings,
     close: () => db.close(),
   };
 }

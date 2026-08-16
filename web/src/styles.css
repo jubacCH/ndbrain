@@ -41,7 +41,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --bg: #0b0c0f;
     --surface: #121419;
     --surface-2: #191c22;
@@ -64,6 +64,31 @@
     --info-bg: #151e31;
   }
 }
+
+/* The same declarations again for an explicit choice. CSS cannot say
+   "this media query OR this attribute", so the block is generated twice. */
+  :root[data-theme='dark'] {
+    --bg: #0b0c0f;
+    --surface: #121419;
+    --surface-2: #191c22;
+    --surface-3: #21252c;
+    --line: #24282f;
+    --line-2: #343943;
+    --text: #f1f2f4;
+    --text-2: #a9afb9;
+    --text-3: #6e747f;
+    --invert-bg: #f1f2f4;
+    --invert-fg: #0b0c0f;
+
+    --ok: #52c08a;
+    --ok-bg: #10241a;
+    --warn: #dfaa4e;
+    --warn-bg: #2a2113;
+    --crit: #f08376;
+    --crit-bg: #2e1815;
+    --info: #7fa6f2;
+    --info-bg: #151e31;
+  }
 
 * {
   box-sizing: border-box;
@@ -1866,7 +1891,7 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --glass: rgba(30, 52, 64, 0.55);
     --glass-strong: rgba(24, 44, 55, 0.86);
     --glass-edge: rgba(140, 210, 225, 0.18);
@@ -1900,11 +1925,11 @@ body {
     --invert-fg: #0b1419;
   }
 
-  body {
+  :root:not([data-theme='light']) body {
     background: #0a141a;
   }
 
-  .app::before {
+  :root:not([data-theme='light']) .app::before {
     background:
       radial-gradient(38% 46% at 18% 22%, #12414a 0%, rgba(18, 65, 74, 0) 68%),
       radial-gradient(42% 38% at 82% 12%, #17384f 0%, rgba(23, 56, 79, 0) 70%),
@@ -1913,25 +1938,93 @@ body {
       linear-gradient(160deg, #0d1a21 0%, #0a141a 100%);
   }
 
-  .topbar button[aria-current='true'] {
+  :root:not([data-theme='light']) .topbar button[aria-current='true'] {
     background: rgba(127, 233, 240, 0.9);
     color: #06232a;
   }
 
-  .floaterror {
+  :root:not([data-theme='light']) .floaterror {
     background: rgba(58, 24, 20, 0.92);
     border-color: rgba(232, 112, 92, 0.4);
     color: #f4c9c0;
   }
 
   /* Der Editor bringt eigene Farben mit und muss mitgezogen werden. */
-  .sheet .cm-editor .cm-content {
+  :root:not([data-theme='light']) .sheet .cm-editor .cm-content {
     color: var(--ink);
   }
-  .sheet .cm-editor .cm-cursor {
+  :root:not([data-theme='light']) .sheet .cm-editor .cm-cursor {
     border-left-color: var(--ink);
   }
 }
+
+/* The same declarations again for an explicit choice. CSS cannot say
+   "this media query OR this attribute", so the block is generated twice. */
+  :root[data-theme='dark'] {
+    --glass: rgba(30, 52, 64, 0.55);
+    --glass-strong: rgba(24, 44, 55, 0.86);
+    --glass-edge: rgba(140, 210, 225, 0.18);
+    --glass-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.55);
+    --glass-line: rgba(140, 210, 225, 0.16);
+    --glass-hi: rgba(70, 108, 125, 0.75);
+    --glass-card: rgba(26, 45, 56, 0.8);
+    --glass-soft: rgba(90, 140, 158, 0.22);
+
+    --sheet: rgba(18, 32, 40, 0.92);
+    --ink: #e8f2f5;
+    --ink-2: #9fb6c0;
+    --ink-3: #74909c;
+    --hair: rgba(180, 220, 232, 0.14);
+
+    /* More saturated and lighter than by day: on a dark ground a finding
+       colour otherwise loses exactly the attention it exists for. */
+    --crit: #e8705c;
+    --warn: #d9a441;
+    --info: #5fc9d2;
+
+    --surface: #16232b;
+    --surface-2: #1d2d36;
+    --surface-3: #26363f;
+    --line: rgba(180, 220, 232, 0.12);
+    --line-2: rgba(180, 220, 232, 0.2);
+    --text: #e8f2f5;
+    --text-2: #9fb6c0;
+    --text-3: #74909c;
+    --invert-bg: #e8f2f5;
+    --invert-fg: #0b1419;
+  }
+
+  :root[data-theme='dark'] body {
+    background: #0a141a;
+  }
+
+  :root[data-theme='dark'] .app::before {
+    background:
+      radial-gradient(38% 46% at 18% 22%, #12414a 0%, rgba(18, 65, 74, 0) 68%),
+      radial-gradient(42% 38% at 82% 12%, #17384f 0%, rgba(23, 56, 79, 0) 70%),
+      radial-gradient(46% 52% at 74% 86%, #1b2f52 0%, rgba(27, 47, 82, 0) 72%),
+      radial-gradient(40% 42% at 28% 86%, #124038 0%, rgba(18, 64, 56, 0) 70%),
+      linear-gradient(160deg, #0d1a21 0%, #0a141a 100%);
+  }
+
+  :root[data-theme='dark'] .topbar button[aria-current='true'] {
+    background: rgba(127, 233, 240, 0.9);
+    color: #06232a;
+  }
+
+  :root[data-theme='dark'] .floaterror {
+    background: rgba(58, 24, 20, 0.92);
+    border-color: rgba(232, 112, 92, 0.4);
+    color: #f4c9c0;
+  }
+
+  /* Der Editor bringt eigene Farben mit und muss mitgezogen werden. */
+  :root[data-theme='dark'] .sheet .cm-editor .cm-content {
+    color: var(--ink);
+  }
+  :root[data-theme='dark'] .sheet .cm-editor .cm-cursor {
+    border-left-color: var(--ink);
+  }
 
 /* Die alte Kontext-Spalte setzte `.ref` auf volle Breite. Unter der Notiz sind
    es Chips, die sich auf ihren Inhalt zusammenziehen sollen. */
@@ -1946,14 +2039,29 @@ body {
   .sheet .cm-editor .cm-line span[class*='fm'],
   .sheet .cm-editor .cm-frontmatter,
   .sheet .cm-editor .cm-codeblock,
-  .sheet .cm-editor pre {
+  :root:not([data-theme='light']) .sheet .cm-editor pre {
     background: rgba(140, 210, 225, 0.08) !important;
     color: var(--ink-2) !important;
   }
-  .sheet .cm-editor .cm-activeLine {
+  :root:not([data-theme='light']) .sheet .cm-editor .cm-activeLine {
     background: rgba(140, 210, 225, 0.06);
   }
 }
+
+/* The same declarations again for an explicit choice. CSS cannot say
+   "this media query OR this attribute", so the block is generated twice. */
+  /* The live-preview editor brings its own light surfaces — frontmatter,
+     code blocks, tables. Without these lines they stay white at night. */
+  .sheet .cm-editor .cm-line span[class*='fm'],
+  .sheet .cm-editor .cm-frontmatter,
+  .sheet .cm-editor .cm-codeblock,
+  :root[data-theme='dark'] .sheet .cm-editor pre {
+    background: rgba(140, 210, 225, 0.08) !important;
+    color: var(--ink-2) !important;
+  }
+  :root[data-theme='dark'] .sheet .cm-editor .cm-activeLine {
+    background: rgba(140, 210, 225, 0.06);
+  }
 
 /* ===================== THREE COLUMNS, ALL VISIBLE =====================
  *
@@ -2396,8 +2504,17 @@ body {
  * file path is not code, it is a name.
  */
 
+/* One knob for the whole interface.
+ *
+ * Everything else is sized in rem or em, so scaling this one value scales the
+ * type, the spacing that hangs off it and the controls together — rather than
+ * leaving big text crammed into boxes built for small text. */
+:root {
+  --text-scale: 1;
+}
+
 body {
-  font-size: 15.5px;
+  font-size: calc(15.5px * var(--text-scale));
   line-height: 1.58;
   letter-spacing: -0.005em;
 }
@@ -2698,26 +2815,48 @@ td.n,
 }
 
 @media (prefers-color-scheme: dark) {
-  .crash {
+  :root:not([data-theme='light']) .crash {
     background: #0d1417;
     color: #e6f1f3;
   }
-  .crash-box {
+  :root:not([data-theme='light']) .crash-box {
     background: #141f24;
     border-color: #26363c;
   }
-  .crash textarea {
+  :root:not([data-theme='light']) .crash textarea {
     background: #0f181c;
     border-color: #26363c;
   }
-  .crash-warn {
+  :root:not([data-theme='light']) .crash-warn {
     color: #f0a875;
   }
-  .crash-actions button {
+  :root:not([data-theme='light']) .crash-actions button {
     background: #7fe9f0;
     color: #06181c;
   }
 }
+
+/* The same declarations again for an explicit choice. CSS cannot say
+   "this media query OR this attribute", so the block is generated twice. */
+  :root[data-theme='dark'] .crash {
+    background: #0d1417;
+    color: #e6f1f3;
+  }
+  :root[data-theme='dark'] .crash-box {
+    background: #141f24;
+    border-color: #26363c;
+  }
+  :root[data-theme='dark'] .crash textarea {
+    background: #0f181c;
+    border-color: #26363c;
+  }
+  :root[data-theme='dark'] .crash-warn {
+    color: #f0a875;
+  }
+  :root[data-theme='dark'] .crash-actions button {
+    background: #7fe9f0;
+    color: #06181c;
+  }
 
 /* ===================== THE FILE BROWSER =====================
  *
@@ -2871,4 +3010,229 @@ td.n,
   background: rgba(214, 138, 60, 0.12);
   border: 1px solid rgba(214, 138, 60, 0.3);
   color: var(--ink);
+}
+
+/* ===================== THE SETTINGS PAGE =====================
+ *
+ * A label on the left, the control on the right, one row each. Nothing here
+ * needs a Save button — a theme that switches as you pick it needs no
+ * confirmation, and a page with a Save button invites you to change three things
+ * and then wonder which of them took. The password form is the exception, and it
+ * is the one action that cannot be undone by changing it back. */
+
+.settings {
+  max-width: 46rem;
+}
+
+.setgroup {
+  margin: 1.4rem 0 0;
+  padding: 0.2rem 0 0.9rem;
+  border-top: 1px solid var(--glass-line);
+}
+.setgroup .cap {
+  margin: 0.7rem 0 0.4rem;
+}
+
+.setrow {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  padding: 0.5rem 0;
+  min-height: 2.4rem;
+}
+.setlabel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+.setlabel span {
+  font-size: 0.88rem;
+}
+.setlabel small {
+  font-size: 0.76rem;
+  color: var(--ink-3);
+  line-height: 1.4;
+}
+
+.setnote {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+
+/* ---- segmented choice ---- */
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-soft);
+  flex: none;
+}
+.segmented button {
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  padding: 0.28rem 0.8rem;
+  border-radius: 7px;
+}
+.segmented button:hover {
+  color: var(--ink);
+}
+.segmented button[aria-checked='true'] {
+  background: rgba(16, 32, 42, 0.9);
+  color: #f2fbfc;
+  font-weight: 600;
+}
+
+/* ---- switch ---- */
+
+.switch {
+  flex: none;
+  width: 2.6rem;
+  height: 1.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-soft);
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  transition: background 0.15s ease;
+}
+.switch span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: var(--ink-3);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.switch[aria-checked='true'] {
+  background: rgba(16, 32, 42, 0.9);
+  border-color: transparent;
+}
+.switch[aria-checked='true'] span {
+  transform: translateX(1.15rem);
+  background: #7fe9f0;
+}
+
+/* ---- slider ---- */
+
+.slider {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex: none;
+}
+.slider input[type='range'] {
+  width: 11rem;
+  accent-color: #2b8f9c;
+}
+.sliderval {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  min-width: 4rem;
+  text-align: right;
+}
+
+.setrow select {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-soft);
+  color: var(--ink);
+  flex: none;
+}
+
+/* ---- the password form ---- */
+
+.pwform {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  max-width: 24rem;
+  margin-top: 0.5rem;
+}
+.pwform label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.pwform label span {
+  font-size: 0.78rem;
+  color: var(--ink-2);
+}
+.pwform input {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-soft);
+  color: var(--ink);
+}
+.pwform input:focus {
+  outline: none;
+  border-color: rgba(90, 190, 205, 0.55);
+  background: var(--glass-hi);
+}
+.pwactions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+}
+.pwactions button {
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  border: 0;
+  background: rgba(16, 32, 42, 0.9);
+  color: #f2fbfc;
+}
+.pwactions button.secondary {
+  background: var(--glass-soft);
+  border: 1px solid var(--glass-line);
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.pwactions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.setok,
+.setbad {
+  font-size: 0.78rem;
+  margin: 0.2rem 0 0;
+}
+.setok {
+  color: #1c7a5a;
+}
+.setbad {
+  color: var(--crit);
+}
+
+@media (max-width: 640px) {
+  .setrow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+  .slider input[type='range'] {
+    width: 100%;
+  }
 }

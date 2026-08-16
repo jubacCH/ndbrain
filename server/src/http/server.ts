@@ -25,6 +25,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import type { App, BulkResult } from '../app.js';
 import type { ApiKeyService } from '../auth/keys.js';
 import { InvalidShareError, type Need, type ShareService } from '../auth/shares.js';
+import type { SettingsService } from '../auth/settings.js';
 import { SessionService, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
@@ -65,6 +66,7 @@ export interface ServerDeps {
   sessions: SessionService;
   keys: ApiKeyService;
   shares: ShareService;
+  settings: SettingsService;
   config: Config;
   throttle?: LoginThrottle;
 }
@@ -73,7 +75,7 @@ export interface ServerDeps {
 const PUBLIC_ROUTES = new Set(['/api/v1/auth/login', '/api/v1/health']);
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const { app, users, sessions, keys, shares, config } = deps;
+  const { app, users, sessions, keys, shares, settings, config } = deps;
   const throttle = deps.throttle ?? new LoginThrottle();
 
   /**
@@ -485,9 +487,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         // Zero where tagging is not a convention here; see untaggedFindings.
         untagged: app.queries.untaggedFindings(caller).length,
         deadLinks: app.queries.deadLinks(caller).length,
-        stale: app.queries.stale(caller).length,
+        // The threshold is the caller's, not a number this file picked.
+        stale: app.queries.stale(caller, settings.get(caller).staleDays).length,
         // Notes, not findings — the four above overlap heavily. See attentionCount.
-        attention: app.queries.attentionCount(caller),
+        attention: app.queries.attentionCount(caller, settings.get(caller).staleDays),
         tagsInUse: app.queries.tagsInUse(caller),
       },
       recent: app.queries.recentNotes(view, 12),
@@ -632,6 +635,97 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       .send(zip.outputStream);
   });
 
+  /* ---- account and settings ------------------------------------------------
+   *
+   * Changing a password required shell access on the box until now, which meant
+   * in practice that nobody changed one. A credential that cannot be rotated
+   * without a sysadmin is a credential that stays put after it leaks.
+   */
+
+  fastify.get('/api/v1/settings', async (request) => {
+    return { settings: settings.get(requireUser(request).id) };
+  });
+
+  fastify.put('/api/v1/settings', async (request) => {
+    const patch = body(request, S.SettingsRequest);
+    return { settings: settings.set(requireUser(request).id, patch) };
+  });
+
+  /**
+   * Changes the caller's own password.
+   *
+   * The current one is required even though the caller is already signed in.
+   * A session cookie proves that somebody signed in at some point, not that the
+   * person at the keyboard right now is the account holder — an unattended
+   * laptop is exactly the case this stops from becoming a permanent takeover.
+   *
+   * Throttled on the same limiter as login, since this is a second place to
+   * guess a password at.
+   */
+  fastify.post('/api/v1/account/password', async (request, reply) => {
+    const user = requireUser(request);
+    const { currentPassword, newPassword } = body(request, S.ChangePasswordRequest);
+
+    const key = `${request.ip}|${user.id}`;
+    const wait = throttle.retryAfter(key);
+    if (wait > 0) {
+      return reply
+        .code(429)
+        .header('Retry-After', String(wait))
+        .send({ code: 'too_many_attempts', message: 'too many attempts, try again later' });
+    }
+
+    const confirmed = await users.authenticate(user.id, currentPassword);
+    if (confirmed === null) {
+      throttle.recordFailure(key);
+      return reply.code(403).send({ code: 'wrong_password', message: 'the current password is wrong' });
+    }
+    throttle.recordSuccess(key);
+
+    await users.setPassword(user.id, newPassword);
+
+    // Every other session is ended, including any an attacker may hold — a
+    // password change that leaves old sessions alive changes nothing for the
+    // person it was meant to lock out. The session making the change is replaced
+    // rather than kept, so the cookie in this browser is one the old password
+    // never saw.
+    sessions.destroyAllFor(user.id);
+    const { token, expiresAt } = sessions.create(user.id);
+
+    return reply
+      .setCookie(SESSION_COOKIE, token, {
+        httpOnly: true,
+        secure: config.cookieSecure,
+        sameSite: config.cookieSameSite,
+        path: '/',
+        expires: new Date(expiresAt),
+      })
+      .send({ ok: true });
+  });
+
+  /**
+   * Ends every session but this one.
+   *
+   * The answer to "I signed in on a machine I no longer have". Deliberately
+   * keeps the caller signed in: the alternative is a button that logs you out
+   * for pressing it, which nobody presses when they need it.
+   */
+  fastify.post('/api/v1/account/sessions/revoke', async (request, reply) => {
+    const user = requireUser(request);
+    sessions.destroyAllFor(user.id);
+    const { token, expiresAt } = sessions.create(user.id);
+
+    return reply
+      .setCookie(SESSION_COOKIE, token, {
+        httpOnly: true,
+        secure: config.cookieSecure,
+        sameSite: config.cookieSameSite,
+        path: '/',
+        expires: new Date(expiresAt),
+      })
+      .send({ ok: true });
+  });
+
   // ---- bulk tidy-up -------------------------------------------------------
   //
   // The differentiator. Each returns per-note results rather than failing
@@ -730,7 +824,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     const orphans = app.queries.orphans(owner);
     const deadLinks = app.queries.deadLinks(owner);
-    const stale = app.queries.stale(owner);
+    const stale = app.queries.stale(owner, settings.get(owner).staleDays);
     // The same rule the overview applies, from the same function — so the count
     // and the list can never disagree about what counts as a finding.
     const untagged = app.queries.untaggedFindings(owner);

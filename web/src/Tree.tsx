@@ -44,16 +44,17 @@ export type Finding = 'crit' | 'warn';
  * digit. `21_Homelab` loses its prefix; `2026-07-27` and `100 Ideen` keep every
  * character, because those digits are the name rather than a sorting device.
  */
-export function displayName(name: string): string {
+export function displayName(name: string, hide = true): string {
+  if (!hide) return name;
   const stripped = name.replace(/^\d{1,3}[_\-.]\s*(?=\D)/, '');
   return stripped === '' ? name : stripped;
 }
 
 /** A path with each segment de-prefixed, for the breadcrumb under a hit. */
-export function displayPath(path: string): string {
+export function displayPath(path: string, hide = true): string {
   const segments = path.split('/');
   segments.pop();
-  return segments.map(displayName).join(' › ');
+  return segments.map((segment) => displayName(segment, hide)).join(' › ');
 }
 
 export interface TreeProps {
@@ -66,6 +67,14 @@ export interface TreeProps {
   findings: Map<string, Finding>;
   /** Lower-cased already; empty means show the tree rather than a result list. */
   filter: string;
+  /**
+   * Whether `00_`-style sort prefixes are hidden.
+   *
+   * A preference rather than a rule: right for a vault using Johnny-Decimal
+   * folders, wrong for one where the digits are part of the name. Display only —
+   * `onSelect` always hands back the real path.
+   */
+  hidePrefixes: boolean;
   onSelect: (owner: string, path: string) => void;
   /**
    * Offered on your own folders only. A folder move relocates everything under
@@ -162,6 +171,7 @@ export function Tree({
   selected,
   findings,
   filter,
+  hidePrefixes,
   onSelect,
   onRenameFolder,
 }: TreeProps): React.JSX.Element {
@@ -224,7 +234,7 @@ export function Tree({
   const noteRow = (note: NoteRow, showPath: boolean): React.JSX.Element => {
     const key = refKey(note.owner, note.path);
     const finding = findings.get(key);
-    const where = displayPath(note.path);
+    const where = displayPath(note.path, hidePrefixes);
     return (
       <li key={`f:${key}`}>
         <button
@@ -252,7 +262,7 @@ export function Tree({
           <div className="node-row">
             <button type="button" className="node" onClick={() => toggle(key)} aria-expanded={isOpen}>
               <span className="tw">{isOpen ? '▾' : '▸'}</span>
-              <span className="nm">{displayName(child.name)}</span>
+              <span className="nm">{displayName(child.name, hidePrefixes)}</span>
               {/* Shown only while shut: once it is open you can see them. */}
               {!isOpen && <span className="cnt">{count}</span>}
             </button>
@@ -260,8 +270,8 @@ export function Tree({
               <button
                 type="button"
                 className="node-act"
-                title={copy.tree.renameFolder(displayName(child.name))}
-                aria-label={copy.tree.renameFolderLabel(displayName(child.name))}
+                title={copy.tree.renameFolder(displayName(child.name, hidePrefixes))}
+                aria-label={copy.tree.renameFolderLabel(displayName(child.name, hidePrefixes))}
                 onClick={() => onRenameFolder(child.path)}
               >
                 ✎

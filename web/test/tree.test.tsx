@@ -48,6 +48,7 @@ function renderTree(props: Partial<Parameters<typeof Tree>[0]> = {}) {
       selected={null}
       findings={new Map()}
       filter=""
+      hidePrefixes
       onSelect={onSelect}
       onRenameFolder={vi.fn()}
       {...props}
