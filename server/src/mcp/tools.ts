@@ -253,11 +253,16 @@ export const TOOLS: ToolDefinition[] = [
       const backlinks = context.app.queries
         .backlinks(context.key.owner, context.key.owner, notePath)
         .filter((link) => withinScope(context.key, link.source));
-      const outgoing = context.app.queries.outgoingLinks(
-        context.key.owner,
-        context.key.owner,
-        notePath,
-      );
+      // Both directions are filtered by the same rule. A link whose target lies
+      // outside the scope is dropped entirely rather than reported as missing:
+      // the resolved path is a map of what the key may not read, and the
+      // indexer resolves against the whole vault, not against the scope.
+      // An unresolved link has no target to judge and stays — it points at
+      // nothing anywhere in the vault, so it discloses nothing beyond the note
+      // the key is already reading.
+      const outgoing = context.app.queries
+        .outgoingLinks(context.key.owner, context.key.owner, notePath)
+        .filter((link) => link.targetPath === null || withinScope(context.key, link.targetPath));
 
       context.keys.log(context.key, 'get_links', notePath, true);
 
