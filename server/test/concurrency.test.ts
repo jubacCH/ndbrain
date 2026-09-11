@@ -155,7 +155,7 @@ describe('names nothing could link to', () => {
   });
 
   it('refuses renaming a note into such a name', async () => {
-    await expect(runtime.app.renameNote('julian', 'Plan.md', '[Plan] alt.md')).rejects.toThrow(
+    await expect(runtime.app.renameNote('julian', 'Plan.md', '[Plan] alt.md', { view: 'julian' })).rejects.toThrow(
       UnlinkableNameError,
     );
   });
@@ -177,7 +177,7 @@ describe('names nothing could link to', () => {
     await runtime.app.putNote('julian', '[CT 110] phpIPAM.md', 'Geändert.\n', 'julian');
 
     // …and renaming it out of the problem is allowed.
-    const renamed = await runtime.app.renameNote('julian', '[CT 110] phpIPAM.md', 'CT 110 — phpIPAM.md');
+    const renamed = await runtime.app.renameNote('julian', '[CT 110] phpIPAM.md', 'CT 110 — phpIPAM.md', { view: 'julian' });
     expect(renamed.note.path).toBe('CT 110 — phpIPAM.md');
   });
 

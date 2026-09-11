@@ -73,7 +73,7 @@ describe('the edit log', () => {
 
   it('records a rename under the new name', async () => {
     await runtime.app.createNote('julian', 'Alt.md', 'x');
-    await runtime.app.renameNote('julian', 'Alt.md', 'Neu.md');
+    await runtime.app.renameNote('julian', 'Alt.md', 'Neu.md', { view: 'julian' });
 
     const activity = runtime.app.queries.activity('julian', since());
     expect(activity.map((row) => row.path)).toContain('Neu.md');
