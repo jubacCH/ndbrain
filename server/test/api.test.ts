@@ -267,6 +267,38 @@ describe('notes', () => {
   });
 });
 
+/**
+ * The editor's save path, held to the same rule the MCP tools now are.
+ *
+ * The tools got there the hard way: a save that arrives without its text used
+ * to be read as a save of nothing. Here the Zod schema has always refused it,
+ * and this pins that — an empty note is one keystroke away from a blanked one,
+ * and the difference has to live in the request, not in a default.
+ */
+describe('a malformed save cannot blank a note', () => {
+  beforeEach(async () => {
+    await runtime.app.putNote('julian', 'Homelab/Proxmox.md', '# Proxmox\n\nQdevice.\n');
+  });
+
+  it.each([
+    ['no content at all', {}],
+    ['content of the wrong type', { content: 42 }],
+    ['an argument the schema does not know', { content: 'neu\n', new_string: 'neu\n' }],
+  ])('refuses a save with %s', async (_label, payload) => {
+    const response = await server.inject({
+      method: 'PUT',
+      url: '/api/v1/notes/Homelab/Proxmox.md',
+      headers: as(julianCookie),
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((await runtime.notes.getNote('julian', 'Homelab/Proxmox.md')).content).toBe(
+      '# Proxmox\n\nQdevice.\n',
+    );
+  });
+});
+
 describe('error taxonomy', () => {
   it.each([
     ['a path that is not a note', 'PUT', '/api/v1/notes/bild.png', 400, 'invalid_path'],
