@@ -55,6 +55,7 @@ import {
   useNote,
   useOverview,
   useShares,
+  useTagRegistry,
   useTags,
   useTidy,
   useTree,
@@ -267,6 +268,9 @@ function Shell({
   const sharesQuery = useShares();
   const tagsQuery = useTags();
   const noteQuery = useNote(openRef);
+  // The vocabulary `/tag` is allowed to offer, from the vault the open note
+  // lives in — a shared note follows its owner's registry, not the reader's.
+  const registryQuery = useTagRegistry(view === 'note' ? (openRef?.owner ?? null) : null);
   // The graph feeds both the big network view and the neighbourhood panel beside
   // an open note, so it is wanted in exactly those two places and nowhere else.
   const graphQuery = useGraph(view === 'brain' || view === 'note');
@@ -1271,6 +1275,7 @@ function Shell({
                 path={open.note.path}
                 initialContent={open.note.content}
                 readOnly={!open.canWrite}
+                tags={registryQuery.data ?? null}
                 onChange={(content) => scheduleSave(open.owner, open.note.path, content)}
                 onAttach={attachFile}
               />

@@ -25,9 +25,11 @@ import type { Extension } from '@codemirror/state';
 import { GFM } from '@lezer/markdown';
 import { useEffect, useRef } from 'react';
 
+import { tagContext } from './editor/commands';
 import { completion } from './editor/completion';
 import { formatKeymap } from './editor/format';
 import { embedContext, livePreview } from './editor/livePreview';
+import { tables } from './editor/tableView';
 import { markdownTheme } from './editor/theme';
 
 export interface EditorProps {
@@ -50,6 +52,15 @@ export interface EditorProps {
    * exactly one copy.
    */
   readOnly?: boolean;
+  /**
+   * The tags the vault allows, for `/tag`.
+   *
+   * `null` means the registry could not be read. The menu then says so instead
+   * of falling back to the tags already in use — offering those would let a
+   * typo that is already in the vault spread further, which is the opposite of
+   * what the registry is for.
+   */
+  tags?: readonly string[] | null;
   onChange: (content: string) => void;
   /**
    * Stores a pasted or dropped file beside this note and answers with its name.
@@ -64,11 +75,90 @@ export interface EditorProps {
   onAttach?: (file: File) => Promise<string | null>;
 }
 
+export interface NoteExtensions {
+  owner: string;
+  path: string;
+  readOnly?: boolean;
+  /** Read through a getter, so a later answer reaches an editor already built. */
+  attach?: () => ((file: File) => Promise<string | null>) | undefined;
+  tags?: () => readonly string[] | null;
+  onChange?: (content: string) => void;
+}
+
+/**
+ * Everything the writing surface is made of, as one list.
+ *
+ * Pulled out of the component so that the round-trip tests can open a note
+ * through the very stack the application uses. A test that assembled its own
+ * subset would prove that *some* editor leaves the bytes alone, which is not the
+ * promise being made.
+ */
+export function noteExtensions({
+  owner,
+  path,
+  readOnly = false,
+  attach,
+  tags,
+  onChange,
+}: NoteExtensions): Extension[] {
+  return [
+    history(),
+    drawSelection(),
+    highlightActiveLine(),
+    indentOnInput(),
+    bracketMatching(),
+    closeBrackets(),
+    // Finding something inside a long note should not mean scrolling it.
+    search({ top: true }),
+    highlightSelectionMatches(),
+    keymap.of([
+      // Before the default bindings: both claim Backspace, and the
+      // bracket-aware one has to win when it applies. Formatting comes
+      // early too, since `Mod-i` and `Mod-k` are otherwise unclaimed but
+      // `Mod-e` is not.
+      ...closeBracketsKeymap,
+      ...formatKeymap,
+      ...searchKeymap,
+      ...historyKeymap,
+      ...defaultKeymap,
+    ]),
+    // GFM is needed for task lists, strikethrough and tables, all of which
+    // appear in ordinary notes. `markdown()` also installs its own keymap,
+    // which is what continues a list on Enter.
+    //
+    // `languages` is loaded for fenced blocks; each mode is a dynamic
+    // import, so the bundle grows by a lazy chunk rather than by every
+    // grammar CodeMirror ships.
+    markdown({ extensions: [GFM], codeLanguages: languages }),
+    markdownTheme(),
+    livePreview(),
+    // Tables are the one element that stays drawn while it is being written in,
+    // so this is a state field rather than part of live preview's view plugin.
+    tables(),
+    // Which note this is, so an embed can be turned into a URL against the
+    // folder the note lives in.
+    embedContext.of({ owner, dir: path.slice(0, Math.max(0, path.lastIndexOf('/'))) }),
+    tagContext.of(tags ?? (() => null)),
+    attachments(attach ?? (() => undefined), readOnly),
+    completion(),
+    EditorView.lineWrapping,
+    // `readOnly` refuses the edit; `editable` also stops the caret from
+    // appearing, so the surface looks like what it is instead of looking
+    // broken.
+    EditorState.readOnly.of(readOnly),
+    EditorView.editable.of(!readOnly),
+    EditorView.updateListener.of((update) => {
+      if (update.docChanged) onChange?.(update.state.doc.toString());
+    }),
+  ];
+}
+
 export function Editor({
   owner,
   path,
   initialContent,
   readOnly = false,
+  tags = null,
   onChange,
   onAttach,
 }: EditorProps): React.JSX.Element {
@@ -81,58 +171,25 @@ export function Editor({
   onChangeRef.current = onChange;
   const onAttachRef = useRef(onAttach);
   onAttachRef.current = onAttach;
+  // The tag registry arrives from the server after the editor is built, so the
+  // menu reads it through a ref rather than the editor being rebuilt for it —
+  // rebuilding would throw away the cursor mid-sentence.
+  const tagsRef = useRef(tags);
+  tagsRef.current = tags;
 
   useEffect(() => {
     if (host.current === null) return;
 
     const state = EditorState.create({
       doc: initialContent,
-      extensions: [
-        history(),
-        drawSelection(),
-        highlightActiveLine(),
-        indentOnInput(),
-        bracketMatching(),
-        closeBrackets(),
-        // Finding something inside a long note should not mean scrolling it.
-        search({ top: true }),
-        highlightSelectionMatches(),
-        keymap.of([
-          // Before the default bindings: both claim Backspace, and the
-          // bracket-aware one has to win when it applies. Formatting comes
-          // early too, since `Mod-i` and `Mod-k` are otherwise unclaimed but
-          // `Mod-e` is not.
-          ...closeBracketsKeymap,
-          ...formatKeymap,
-          ...searchKeymap,
-          ...historyKeymap,
-          ...defaultKeymap,
-        ]),
-        // GFM is needed for task lists, strikethrough and tables, all of which
-        // appear in ordinary notes. `markdown()` also installs its own keymap,
-        // which is what continues a list on Enter.
-        //
-        // `languages` is loaded for fenced blocks; each mode is a dynamic
-        // import, so the bundle grows by a lazy chunk rather than by every
-        // grammar CodeMirror ships.
-        markdown({ extensions: [GFM], codeLanguages: languages }),
-        markdownTheme(),
-        livePreview(),
-        // Which note this is, so an embed can be turned into a URL against the
-        // folder the note lives in.
-        embedContext.of({ owner, dir: path.slice(0, Math.max(0, path.lastIndexOf('/'))) }),
-        attachments(() => onAttachRef.current, readOnly),
-        completion(),
-        EditorView.lineWrapping,
-        // `readOnly` refuses the edit; `editable` also stops the caret from
-        // appearing, so the surface looks like what it is instead of looking
-        // broken.
-        EditorState.readOnly.of(readOnly),
-        EditorView.editable.of(!readOnly),
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged) onChangeRef.current(update.state.doc.toString());
-        }),
-      ],
+      extensions: noteExtensions({
+        owner,
+        path,
+        readOnly,
+        attach: () => onAttachRef.current,
+        tags: () => tagsRef.current,
+        onChange: (content) => onChangeRef.current(content),
+      }),
     });
 
     const instance = new EditorView({ state, parent: host.current });

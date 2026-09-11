@@ -37,6 +37,7 @@ import {
 } from '@tanstack/react-query';
 
 import { api, type FileRow, type GraphData, type NoteRow, type OpenNote } from './api';
+import { parseTagRegistry, REGISTRY_PATH } from './editor/tagRegistry';
 
 /**
  * Query keys, built in one place.
@@ -58,6 +59,7 @@ export const keys = {
   adminUsers: ['admin', 'users'] as const,
   adminKeys: (owner: string) => ['admin', 'keys', owner] as const,
   note: (owner: string, path: string) => ['note', owner, path] as const,
+  tagRegistry: (owner: string) => ['tag-registry', owner] as const,
   links: (owner: string, path: string) => ['links', owner, path] as const,
   history: (owner: string, path: string) => ['history', owner, path] as const,
   search: (q: string, filters: unknown) => ['search', q, filters] as const,
@@ -96,6 +98,36 @@ export function useShares(): UseQueryResult<Awaited<ReturnType<typeof api.shares
 
 export function useTags(): UseQueryResult<Awaited<ReturnType<typeof api.tags>>> {
   return useQuery({ queryKey: keys.tags, queryFn: () => api.tags(), staleTime: FRESH_MS });
+}
+
+/**
+ * The tags the vault *allows*, which is not the same list as `useTags`.
+ *
+ * That one reports what is in use, read out of the index — including every typo
+ * ever committed. This one is a note a person maintains, and it is the only
+ * thing `/tag` is allowed to offer, because a menu built from what is in use
+ * would help a typo spread.
+ *
+ * A vault without the note simply has no registry; that is not an error, so the
+ * answer is `null` and the menu says it has nothing to offer.
+ */
+export function useTagRegistry(owner: string | null): UseQueryResult<string[] | null> {
+  return useQuery({
+    queryKey: keys.tagRegistry(owner ?? ''),
+    queryFn: async () => {
+      try {
+        const note = await api.getNote(owner!, REGISTRY_PATH);
+        return parseTagRegistry(note.note.content);
+      } catch {
+        return null;
+      }
+    },
+    enabled: owner !== null,
+    // A vocabulary changes a few times a year, and the cost of a stale one is
+    // an option missing for a minute.
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
 }
 
 /**

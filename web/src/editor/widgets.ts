@@ -8,6 +8,11 @@
  *
  * None of them change the file. The checkbox writes back through the normal
  * edit path, exactly as if the two characters had been typed.
+ *
+ * The table widget is not here but in `./tableView`, with the state field that
+ * places it. It is a different animal: a block that replaces whole lines and is
+ * typed into, and it cannot be understood apart from the field that decides
+ * which lines it owns and the writes that go back into them.
  */
 
 import { EditorView, WidgetType } from '@codemirror/view';
