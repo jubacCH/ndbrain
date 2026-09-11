@@ -208,12 +208,11 @@ describe('scope narrows further, never wider', () => {
     expect(runtime.app.queries.getNote('julian', 'julian', 'Privat/Eingeschleust.md')).toBeUndefined();
   });
 
-  it('does not follow a link out of its scope, in either form', async () => {
+  it('does not resolve a link that leaves its scope', async () => {
     // The link sits in a note the key may read, so the raw `[[…]]` is no secret.
-    // What get_links adds is the *resolution*: the full path of the target, and
-    // whether it exists at all. Both are the map of the hidden that a path scope
-    // is meant to withhold — a resolved path openly, a "does not exist" against a
-    // note that does exist by inverting its own claim.
+    // What get_links adds is the *resolution* — and that is what the scope
+    // withholds: an out-of-scope target is reported exactly as a target that
+    // was never there.
     await runtime.app.createNote(
       'julian',
       'Homelab/Netzplan.md',
@@ -222,13 +221,33 @@ describe('scope narrows further, never wider', () => {
 
     const result = await call(scopedKey, 'get_links', { path: 'Homelab/Netzplan.md' });
 
-    expect(result.text).not.toContain('Privat/Gedanken');
-    expect(result.text).not.toContain('Gedanken');
-    // The scope filter must not blind the tool to what the key may see: a link
-    // inside the scope stays, and so does one that truly points nowhere —
-    // dead links are a finding ndBrain reports on purpose.
+    expect(result.text).not.toContain('Privat/Gedanken.md');
+    expect(result.text).toContain('Privat/Gedanken — does not exist');
+    // The scope must not blind the tool to what the key may see: a link inside
+    // the scope keeps its path, and one that truly points nowhere stays
+    // visible — dead links are a finding ndBrain reports on purpose.
     expect(result.text).toContain('Homelab/UniFi.md');
     expect(result.text).toContain('Homelab/GibtsNicht — does not exist');
+  });
+
+  it('answers the same for a target it may not see as for one that is not there', async () => {
+    // Dropping the line instead of writing "does not exist" would leak the same
+    // fact one step further back: a link that simply vanished says "this exists,
+    // you may not see it". A writing key can ask that about any name it likes by
+    // putting the name into a note of its own, which turns get_links into a free
+    // existence oracle over the whole vault. Both answers must be one answer.
+    await runtime.app.createNote('julian', 'Homelab/Frage A.md', 'Siehe [[Privat/Gedanken]].\n');
+    await runtime.app.createNote('julian', 'Homelab/Frage B.md', 'Siehe [[Privat/Phantom]].\n');
+
+    const existsOutside = await call(scopedKey, 'get_links', { path: 'Homelab/Frage A.md' });
+    const neverExisted = await call(scopedKey, 'get_links', { path: 'Homelab/Frage B.md' });
+
+    // Only the link text differs, and that text is the key's own question, not
+    // an answer about the vault.
+    expect(existsOutside.text.replace('Privat/Gedanken', 'X')).toBe(
+      neverExisted.text.replace('Privat/Phantom', 'X'),
+    );
+    expect(existsOutside.text).not.toContain('Privat/Gedanken.md');
   });
 
   it('does not match a folder that merely starts the same', async () => {
