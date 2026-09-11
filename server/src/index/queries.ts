@@ -352,6 +352,18 @@ export class Queries {
         `SELECT n.owner, n.path, n.title, n.size, n.mtime_ms,
                 snippet(notes_fts, 3, '[', ']', ' … ', 12) AS snippet,
                 notes_fts.body AS body,
+                -- One weight per column of notes_fts, in its declared order:
+                -- owner, path, title, body. The boost belongs on the title, and
+                -- it has to be written out in full — a short weight list does
+                -- not skip to the interesting columns, it fills from the left
+                -- and leaves the rest at 1.0. Written as (4.0, 1.0) it put the
+                -- 4.0 on the owner column, which is UNINDEXED and matches
+                -- nothing, and left title and body equal: a note merely
+                -- mentioning the word three times outranked the note actually
+                -- called that. (No backticks in here, either — this comment
+                -- lives inside a template literal, and one would end the SQL
+                -- mid-sentence.)
+                --
                 -- Ordering only. The score is never returned: bm25 is computed
                 -- from FTS5 statistics kept over the whole table, so the number
                 -- moves when a note in a part of the vault the caller may not
@@ -359,7 +371,7 @@ export class Queries {
                 -- path in it, but a side channel across the tenant boundary all
                 -- the same — and the interface sorts server-side and never had
                 -- a use for it.
-                bm25(notes_fts, 4.0, 1.0) AS rank
+                bm25(notes_fts, 1.0, 1.0, 4.0, 1.0) AS rank
            FROM notes_fts
            JOIN notes n ON n.owner = notes_fts.owner AND n.path = notes_fts.path
           WHERE notes_fts MATCH ?
