@@ -289,6 +289,62 @@ describe('the tenant boundary', () => {
     expect(response.statusCode).toBe(404);
   });
 
+  /**
+   * Listing a foreign vault does not work, at all, under any share.
+   *
+   * Pinned because the code reads as though it did: the guard is
+   * `shares.check(caller, owner, '', 'read')`, and `normalizeVaultPath('')`
+   * throws before any share is consulted — so this answers 400 rather than
+   * either listing or a 404. It fails closed, and it is left that way on
+   * purpose: `listFiles(owner)` behind it takes no prefix, so a guard that
+   * started passing for a prefix share would hand a grantee of one folder the
+   * whole vault. What a prefix share means for files is a design question of
+   * its own.
+   *
+   * These cases exist so that whoever takes that question on gets a red light
+   * instead of a silent widening, and so the answer is written down where
+   * somebody reading the route will find it.
+   */
+  describe('listing somebody else\'s vault', () => {
+    it('refuses with a prefix share', async () => {
+      runtime.shares.grant('julian', 'Homelab/', 'ramona', true);
+
+      const response = await server.inject({
+        url: '/api/v1/files?owner=julian',
+        headers: { cookie: ramonaCookie },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().code).toBe('invalid_path');
+      // Whatever else changes here, nothing from the foreign vault comes back.
+      expect(response.body).not.toContain('Homelab/');
+    });
+
+    it('refuses with a whole-vault share too', async () => {
+      runtime.shares.grant('julian', '', 'ramona', true);
+
+      const response = await server.inject({
+        url: '/api/v1/files?owner=julian',
+        headers: { cookie: ramonaCookie },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.body).not.toContain('Homelab/');
+    });
+
+    it('still lists your own vault', async () => {
+      const response = await server.inject({
+        url: '/api/v1/files',
+        headers: { cookie: ramonaCookie },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(S.FilesResponse.parse(response.json()).files.map((f) => f.path)).not.toContain(
+        'Homelab/Proxmox.md',
+      );
+    });
+  });
+
   it('refuses a write into a share that is read-only', async () => {
     runtime.shares.grant('julian', 'Homelab/', 'ramona', false);
 
