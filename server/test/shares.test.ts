@@ -372,6 +372,100 @@ describe('links stop at the sharing boundary', () => {
     const outgoing = runtime.app.queries.outgoingLinks('julian', 'julian', 'Projekt/Neu.md');
     expect(outgoing[0]?.targetPath).toBeNull();
   });
+
+  /**
+   * A link written inside a share may point out of it. The grantee is allowed
+   * to read the note, so she sees the `[[…]]` text either way — what she must
+   * not learn is where it lands, or that it lands anywhere at all.
+   */
+  describe('a link pointing out of the share', () => {
+    /** `Projekt/Notiz.md` links out to `Privat/Tagebuch.md` and to nothing. */
+    async function linkOutOfTheShare(): Promise<void> {
+      await runtime.app.createNote(
+        'julian',
+        'Projekt/Notiz.md',
+        'Siehe [[Tagebuch]] und [[Nirgendwo]].\n',
+      );
+      await share('Projekt', false);
+    }
+
+    it('does not hand the grantee a path out of the private half of the vault', async () => {
+      await linkOutOfTheShare();
+
+      const { body } = await as('ramona', {
+        url: '/api/v1/backlinks/Projekt/Notiz.md?owner=julian',
+      });
+
+      const link = body.outgoing.find((l: any) => l.targetRaw === 'Tagebuch');
+      expect(link?.targetPath).toBeNull();
+      expect(JSON.stringify(body)).not.toContain('Privat');
+    });
+
+    it('makes "not yours" and "not there" the same answer', async () => {
+      await linkOutOfTheShare();
+
+      const { body } = await as('ramona', {
+        url: '/api/v1/backlinks/Projekt/Notiz.md?owner=julian',
+      });
+
+      // Dropping the line instead would say it: the grantee reads the note, so
+      // a `[[…]]` that appears in the text but not in this list could only mean
+      // "exists, not yours" — an existence oracle over the whole foreign vault.
+      const hidden = body.outgoing.find((l: any) => l.targetRaw === 'Tagebuch');
+      const missing = body.outgoing.find((l: any) => l.targetRaw === 'Nirgendwo');
+      expect({ ...hidden, targetRaw: null, offset: null }).toEqual({
+        ...missing,
+        targetRaw: null,
+        offset: null,
+      });
+    });
+
+    it('still shows a dead link inside the share as dead', async () => {
+      await runtime.app.createNote('julian', 'Projekt/Notiz.md', 'Siehe [[Nirgendwo]].\n');
+      await share('Projekt', false);
+
+      const { body } = await as('ramona', {
+        url: '/api/v1/backlinks/Projekt/Notiz.md?owner=julian',
+      });
+
+      expect(body.outgoing).toHaveLength(1);
+      expect(body.outgoing[0].targetRaw).toBe('Nirgendwo');
+      expect(body.outgoing[0].targetPath).toBeNull();
+    });
+
+    it('draws no graph edge out of the share, and counts no invisible neighbour', async () => {
+      await linkOutOfTheShare();
+      // A private note pointing *into* the share: the edge is invisible to her,
+      // so the degree of the shared note must not count it either.
+      await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
+
+      const { body } = await as('ramona', { url: '/api/v1/graph' });
+
+      expect(body.edges.every((e: any) => e.to.startsWith('Projekt/'))).toBe(true);
+      expect(JSON.stringify(body)).not.toContain('Privat');
+
+      const technik = body.nodes.find((n: any) => n.path === 'Projekt/Technik.md');
+      // Linked from `Projekt/Plan.md` only, as far as she may know.
+      expect(technik?.links).toBe(1);
+    });
+
+    it('leaves the owner his own vault whole', async () => {
+      await linkOutOfTheShare();
+      await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
+
+      const { body } = await as('julian', { url: '/api/v1/backlinks/Projekt/Notiz.md' });
+      const link = body.outgoing.find((l: any) => l.targetRaw === 'Tagebuch');
+      expect(link?.targetPath).toBe('Privat/Tagebuch.md');
+
+      const graph = (await as('julian', { url: '/api/v1/graph' })).body;
+      expect(
+        graph.edges.some(
+          (e: any) => e.from === 'Projekt/Notiz.md' && e.to === 'Privat/Tagebuch.md',
+        ),
+      ).toBe(true);
+      expect(graph.nodes.find((n: any) => n.path === 'Projekt/Technik.md')?.links).toBe(2);
+    });
+  });
 });
 
 describe('withdrawing a share', () => {

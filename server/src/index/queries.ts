@@ -436,14 +436,39 @@ export class Queries {
       .map(toLinkRow);
   }
 
+  /**
+   * The links written in `path`, with every target the caller may not read
+   * reported as unresolved.
+   *
+   * The indexer resolves a link against the whole vault, not against the
+   * caller's view, so a resolved target can sit outside it — that is how a
+   * grantee of one folder was handed paths out of the private half of somebody
+   * else's vault. The view therefore has to be applied here.
+   *
+   * It is applied as a **projection, not a `WHERE`**. Dropping the row would
+   * leak the same fact one step further back: the caller may read the source
+   * note, so she knows which `[[…]]` are written in it, and a link present in
+   * the text but missing from this list could only mean "exists, not yours".
+   * With write access that is a free existence oracle over the foreign vault —
+   * write `[[Kandidat]]` into a note of your own and read off whether the line
+   * comes back. Nulling the target instead makes refusal look like absence: a
+   * hidden target and a target that was never there are the same record.
+   *
+   * The raw link text is safe to echo — it stands in a note the caller is
+   * already reading.
+   */
   outgoingLinks(view: Viewable, owner: string, path: string): LinkRow[] {
     const scope = scopeSql('l', 'source', view);
+    const targetScope = scopeSql('l', 'target_path', view);
     return this.#db
       .all(
-        `SELECT l.owner, l.source, l.target_raw, l.target_path, l.heading, l.alias, l.offset
+        `SELECT l.owner, l.source, l.target_raw,
+                CASE WHEN ${targetScope.sql} THEN l.target_path END AS target_path,
+                l.heading, l.alias, l.offset
            FROM links l
           WHERE l.owner = ? AND l.source = ? AND ${scope.sql}
           ORDER BY l.offset`,
+        ...targetScope.params,
         owner,
         path,
         ...scope.params,
@@ -737,16 +762,28 @@ export class Queries {
     nodes: Array<{ owner: string; path: string; title: string; folder: string; links: number }>;
     edges: Array<{ owner: string; from: string; to: string }>;
   } {
+    // The degree counts the same links the edges below draw, and it has to be
+    // filtered by the same rule. A count is a smaller leak than a path but it
+    // is still one: an unfiltered degree on a shared note says how many notes
+    // link to it from the parts of the vault the caller was not given, and it
+    // moves whenever the owner writes one. Both ends must be in view — one of
+    // them is `n` itself and already is, so in practice this asks about the
+    // other one.
+    const degSourceScope = scopeSql('l', 'source', view);
+    const degTargetScope = scopeSql('l', 'target_path', view);
     const nodeScope = scopeSql('n', 'path', view);
     const nodes = this.#db
       .all(
         `SELECT n.owner, n.path, n.title,
                 (SELECT COUNT(*) FROM links l
                   WHERE l.owner = n.owner AND l.target_path IS NOT NULL
+                    AND ${degSourceScope.sql} AND ${degTargetScope.sql}
                     AND (l.source = n.path OR l.target_path = n.path)) AS deg
            FROM notes n
           WHERE ${nodeScope.sql}
           ORDER BY n.path`,
+        ...degSourceScope.params,
+        ...degTargetScope.params,
         ...nodeScope.params,
       )
       .map((row) => {
@@ -761,13 +798,25 @@ export class Queries {
         };
       });
 
+    // Both ends, not just the source. An edge whose target lies outside the
+    // view would otherwise draw a line to a path the caller may not read — the
+    // same leak as in `outgoingLinks`, one representation further along.
+    //
+    // Here it is a `WHERE` rather than the projection used there, and for a
+    // reason particular to this shape: the graph already leaves out every
+    // unresolved link (`target_path IS NOT NULL`), so absence is what a target
+    // that does not exist looks like as well. Dropping the edge says nothing
+    // the dead-link case does not say too — and there is no half-edge to draw.
     const edgeScope = scopeSql('l', 'source', view);
+    const edgeTargetScope = scopeSql('l', 'target_path', view);
     const edges = this.#db
       .all(
         `SELECT DISTINCT l.owner, l.source, l.target_path
            FROM links l
-          WHERE ${edgeScope.sql} AND l.target_path IS NOT NULL AND l.target_path <> l.source`,
+          WHERE ${edgeScope.sql} AND ${edgeTargetScope.sql}
+            AND l.target_path IS NOT NULL AND l.target_path <> l.source`,
         ...edgeScope.params,
+        ...edgeTargetScope.params,
       )
       .map((row) => ({
         owner: String(row['owner']),
