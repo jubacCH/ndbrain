@@ -494,9 +494,23 @@ export class Queries {
       .map(toLinkRow);
   }
 
-  /** Notes nothing links to. */
+  /**
+   * Notes nothing links to.
+   *
+   * "Nothing" means nothing the caller may see, so the subquery carries the view
+   * as well. Without it the answer is computed from links the caller was never
+   * given: a note in a shared folder that only a private note points at would
+   * drop off the list, and its absence would say that an invisible note links to
+   * it — the shape the node degree in `graph()` had, where it proved real.
+   *
+   * Every caller today passes a bare owner, which makes the condition the
+   * identity and changes nothing. It is here so that the next one does not have
+   * to know. The target side needs no condition of its own: `l.target_path` is
+   * `n.path`, and `n` is already inside the view.
+   */
   orphans(view: Viewable): NoteRow[] {
     const scope = scopeSql('n', 'path', view);
+    const linkScope = scopeSql('l', 'source', view);
     return this.#db
       .all(
         `SELECT n.owner, n.path, n.title, n.size, n.mtime_ms
@@ -505,13 +519,23 @@ export class Queries {
             AND NOT EXISTS (
                   SELECT 1 FROM links l
                    WHERE l.owner = n.owner AND l.target_path = n.path
+                     AND ${linkScope.sql}
                 )
           ORDER BY n.mtime_ms DESC`,
         ...scope.params,
+        ...linkScope.params,
       )
       .map(toNoteRow);
   }
 
+  /**
+   * Notes carrying no tag.
+   *
+   * The subquery looks like the one in `orphans` and is not the same shape: it
+   * is bound to `n` on both columns, so it can only ever ask about the note in
+   * front of it. There is no row it could find that belongs to somebody else,
+   * and therefore nothing a view would restrict.
+   */
   untagged(view: Viewable): NoteRow[] {
     const scope = scopeSql('n', 'path', view);
     return this.#db

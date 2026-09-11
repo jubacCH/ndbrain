@@ -664,6 +664,50 @@ describe('the search result says nothing about the rest of the vault', () => {
   });
 });
 
+/**
+ * `orphans()` carries the same class as the graph degree, dormantly.
+ *
+ * "Nothing links to this note" is a statement about links, so it has to be
+ * answered from the links the caller may see. Every caller today hands it a
+ * bare owner, which makes the question own-vault only and the answer correct —
+ * but the query is written against a view like every other one here, and the
+ * next caller to pass one would get the leak for free.
+ */
+describe('what counts as orphaned stops at the sharing boundary', () => {
+  /** `Projekt/Allein.md` is linked to from the private half and nowhere else. */
+  async function orphanedAsFarAsSheKnows(): Promise<void> {
+    await runtime.app.createNote('julian', 'Projekt/Allein.md', '# Allein\n');
+    await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Allein]].\n');
+    await share('Projekt', false);
+  }
+
+  it('calls a note orphaned when the only link to it is one the caller cannot see', async () => {
+    await orphanedAsFarAsSheKnows();
+
+    const paths = runtime.app.queries
+      .orphans(runtime.shares.view('ramona'))
+      .map((note) => note.path);
+
+    expect(paths).toContain('Projekt/Allein.md');
+  });
+
+  it('gives the same answer as a vault that never had the private note', async () => {
+    await orphanedAsFarAsSheKnows();
+    const withPrivate = runtime.app.queries.orphans(runtime.shares.view('ramona'));
+
+    await runtime.app.deleteNote('julian', 'Privat/Heimlich.md');
+
+    expect(runtime.app.queries.orphans(runtime.shares.view('ramona'))).toEqual(withPrivate);
+  });
+
+  it('leaves the owner his own answer, which counts the private link', async () => {
+    await orphanedAsFarAsSheKnows();
+
+    const paths = runtime.app.queries.orphans('julian').map((note) => note.path);
+    expect(paths).not.toContain('Projekt/Allein.md');
+  });
+});
+
 describe('withdrawing a share', () => {
   it('ends access immediately, with no cached decision', async () => {
     const id = await share('Projekt', true);
