@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { loadConfig } from '../src/config.js';
 import { buildServer } from '../src/http/server.js';
+import { TOOLS } from '../src/mcp/tools.js';
 import { createRuntime, type Runtime } from '../src/runtime.js';
 
 let dataDir: string;
@@ -101,6 +102,42 @@ describe('protocol', () => {
       expect(tool.description.length).toBeGreaterThan(40);
       expect(typeof tool.annotations.readOnlyHint).toBe('boolean');
     }
+  });
+
+  it('publishes readOnlyHint and destructiveHint that match what each tool declares, not a blanket value', async () => {
+    const { body } = await rpc(fullKey, 'tools/list');
+    const published = new Map(
+      body.result.tools.map((tool: { name: string; annotations: Record<string, unknown> }) => [
+        tool.name,
+        tool.annotations,
+      ]),
+    );
+
+    // Checked against TOOLS itself, not a copy of the list kept here: a future
+    // tool that forgets to think about `destructive` fails to compile (the
+    // field is required), and this test then fails too if the endpoint ever
+    // stops forwarding what the tool actually declared.
+    expect(published.size).toBe(TOOLS.length);
+    for (const tool of TOOLS) {
+      const annotations = published.get(tool.name) as Record<string, unknown>;
+      expect(annotations, `${tool.name} is missing from tools/list`).toBeDefined();
+      expect(annotations['readOnlyHint'], `${tool.name}.readOnlyHint`).toBe(tool.readOnly);
+      expect(annotations['destructiveHint'], `${tool.name}.destructiveHint`).toBe(tool.destructive);
+    }
+  });
+
+  it('marks only edit_note as destructive, since it is the one tool that can remove content in a single call', async () => {
+    // The incident this guards against: `edit_note` deleted a span of a note
+    // (frontmatter included) three times over, and a blanket `destructiveHint:
+    // false` on all eight tools meant no MCP client had reason to ask first.
+    // create_note refuses to touch an existing note and append_note is purely
+    // additive, so neither belongs in this list.
+    const { body } = await rpc(fullKey, 'tools/list');
+    const destructive = body.result.tools
+      .filter((tool: { annotations: { destructiveHint: boolean } }) => tool.annotations.destructiveHint)
+      .map((tool: { name: string }) => tool.name);
+
+    expect(destructive).toEqual(['edit_note']);
   });
 
   it('answers ping and rejects unknown methods', async () => {
@@ -563,6 +600,21 @@ describe('the access log', () => {
     await call(ramonaKey, 'list_notes');
     expect(runtime.keys.recentAccess('julian')).toHaveLength(0);
     expect(runtime.keys.recentAccess('ramona')).toHaveLength(1);
+  });
+
+  it('records a call the schema check refuses, not just ones a handler refuses', async () => {
+    // A call rejected before the handler ever runs (a wrong argument name,
+    // here) used to leave no trace: an agent that misused a tool this way was
+    // invisible in the very log meant to catch misuse.
+    const result = await call(fullKey, 'edit_note', {
+      path: 'Homelab/Proxmox.md',
+      find: 'Qdevice',
+      new_string: 'x',
+    });
+    expect(result.isError).toBe(true);
+
+    const entries = runtime.keys.recentAccess('julian');
+    expect(entries.some((entry) => entry.tool === 'edit_note' && !entry.allowed)).toBe(true);
   });
 });
 

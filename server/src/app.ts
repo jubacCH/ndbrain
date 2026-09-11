@@ -583,13 +583,10 @@ export class App {
     const updatedLinks = new Set<string>();
 
     for (const notePath of notes) {
-      // `owner` as the view, spelled out: this operation is the owner's own
-      // vault by construction (see the docstring), so the whole vault is what
-      // may be reported. Nothing here is allowed to inherit that silently.
       const result = await this.renameNote(owner, notePath, rebase(notePath), {
-        // Spelled out: this operation is the owner's own vault by construction
-        // (see the docstring), so the whole vault is what may be reported.
-        // Nothing here is allowed to inherit that silently.
+        // `owner` as the view, spelled out: this operation is the owner's own
+        // vault by construction (see the docstring), so the whole vault is what
+        // may be reported. Nothing here is allowed to inherit that silently.
         view: owner,
         ...(actor === undefined ? {} : { actor }),
       });

@@ -66,6 +66,13 @@ export interface ToolDefinition {
   description: string;
   inputSchema: JsonSchema;
   readOnly: boolean;
+  /**
+   * Whether one call can remove content that was there before, the way `rm`
+   * or a destructive migration would. Required rather than defaulted so that
+   * adding a ninth tool means deciding this, not inheriting whatever the
+   * eighth tool happened to have.
+   */
+  destructive: boolean;
   /** Receives arguments that have already been through `checkArguments`. */
   handler: (context: ToolContext, input: Record<string, unknown>) => Promise<string>;
 }
@@ -97,12 +104,28 @@ function schema(
  *
  * Refusals, not protocol errors: the model is supposed to read them and correct
  * itself, so they name the argument and say what the tool actually takes.
+ *
+ * Also the point where a rejected call is recorded to the access log. Before
+ * this logged, a call an agent got wrong at the schema level — the exact kind
+ * of mistake that caused the incident above — left no trace: the log only
+ * heard from calls that made it into a handler. The path is logged as `null`
+ * rather than read out of `raw`, since at this point it has not been checked
+ * against anything and is not safe to treat as a real vault path.
  */
-export function checkArguments(tool: ToolDefinition, raw: unknown): Record<string, unknown> {
+export function checkArguments(
+  tool: ToolDefinition,
+  raw: unknown,
+  context: ToolContext,
+): Record<string, unknown> {
+  const refuse = (message: string): never => {
+    context.keys.log(context.key, tool.name, null, false);
+    throw new ToolRefusal(message);
+  };
+
   if (raw === undefined || raw === null) raw = {};
 
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new ToolRefusal(`${tool.name} expects its arguments as an object`);
+    refuse(`${tool.name} expects its arguments as an object`);
   }
 
   const input = raw as Record<string, unknown>;
@@ -110,7 +133,7 @@ export function checkArguments(tool: ToolDefinition, raw: unknown): Record<strin
 
   for (const name of Object.keys(input)) {
     if (declared.includes(name)) continue;
-    throw new ToolRefusal(
+    refuse(
       `${tool.name} has no argument "${name}" — it takes ${declared.join(', ')}. ` +
         'Nothing was changed.',
     );
@@ -123,13 +146,13 @@ export function checkArguments(tool: ToolDefinition, raw: unknown): Record<strin
     // serialise "I have nothing for this" both ways.
     if (value === undefined || value === null) {
       if (tool.inputSchema.required.includes(name)) {
-        throw new ToolRefusal(`${tool.name} needs "${name}". Nothing was changed.`);
+        refuse(`${tool.name} needs "${name}". Nothing was changed.`);
       }
       continue;
     }
 
     if (typeof value !== property.type) {
-      throw new ToolRefusal(
+      refuse(
         `${tool.name} wants "${name}" as a ${property.type}, not a ${typeof value}. ` +
           'Nothing was changed.',
       );
@@ -172,6 +195,7 @@ export const TOOLS: ToolDefinition[] = [
       'written down but you do not know which note holds it. Returns matching notes with a short ' +
       'excerpt each. Optional filters: a tag, a folder, and a number of days to look back.',
     readOnly: true,
+    destructive: false,
     inputSchema: schema(
       {
         query: { type: 'string', description: 'Words to search for. May be empty when using only filters.' },
@@ -214,6 +238,7 @@ export const TOOLS: ToolDefinition[] = [
       'Read one note in full, by its path (for example "Homelab/Proxmox.md"). Use search_notes ' +
       'first if you do not already know the exact path.',
     readOnly: true,
+    destructive: false,
     inputSchema: schema(
       { path: { type: 'string', description: 'Vault-relative path, ending in .md' } },
       ['path'],
@@ -233,6 +258,7 @@ export const TOOLS: ToolDefinition[] = [
       'List note paths, optionally under one folder. Use this to get an overview of how the vault ' +
       'is organised before reading or writing.',
     readOnly: true,
+    destructive: false,
     inputSchema: schema(
       {
         folder: { type: 'string', description: 'Only list below this folder.' },
@@ -264,6 +290,7 @@ export const TOOLS: ToolDefinition[] = [
       'back to find out what is in the vault costs far more and still misses whatever you did ' +
       'not think to search for.',
     readOnly: true,
+    destructive: false,
     inputSchema: schema(
       {
         folder: { type: 'string', description: 'Only map notes below this folder.' },
@@ -312,6 +339,7 @@ export const TOOLS: ToolDefinition[] = [
       'Show which notes link to this one and which notes it links to. Use it to find related ' +
       'context before answering, or to check whether a note is isolated.',
     readOnly: true,
+    destructive: false,
     inputSchema: schema(
       { path: { type: 'string', description: 'Vault-relative path, ending in .md' } },
       ['path'],
@@ -367,6 +395,9 @@ export const TOOLS: ToolDefinition[] = [
       'Create a new note. Fails if one already exists at that path — use append_note or edit_note ' +
       'to change an existing note rather than overwriting it. Link to other notes with [[Wikilinks]].',
     readOnly: false,
+    // Refuses when the target already exists, so it cannot overwrite content
+    // that was there before — the case destructiveHint is meant to flag.
+    destructive: false,
     inputSchema: schema(
       {
         path: { type: 'string', description: 'Vault-relative path, ending in .md' },
@@ -396,6 +427,9 @@ export const TOOLS: ToolDefinition[] = [
       'Add text to the end of an existing note. This is the safe way to add something without ' +
       'risking the rest of the note — prefer it over rewriting.',
     readOnly: false,
+    // Purely additive: it only ever grows the note, so nothing existing can
+    // be lost through it.
+    destructive: false,
     inputSchema: schema(
       {
         path: { type: 'string', description: 'Vault-relative path, ending in .md' },
@@ -439,6 +473,11 @@ export const TOOLS: ToolDefinition[] = [
       'Replace an exact piece of text in a note. The text to replace must appear exactly once — ' +
       'if it appears zero times or several times the edit is refused rather than guessing.',
     readOnly: false,
+    // The one tool of the eight that can actually destroy content: `replace`
+    // is unconstrained, so a single call can remove the whole matched span —
+    // this is what deleted a note's frontmatter three times over before
+    // checkArguments existed to catch a misnamed argument.
+    destructive: true,
     inputSchema: schema(
       {
         path: { type: 'string', description: 'Vault-relative path, ending in .md' },
