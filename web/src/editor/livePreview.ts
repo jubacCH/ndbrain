@@ -26,6 +26,7 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 
+import { tableBlocks } from './tableView';
 import { BulletWidget, CheckboxWidget, ImageWidget, RuleWidget } from './widgets';
 
 /** Syntactic markers that simply vanish while the line is at rest. */
@@ -151,6 +152,19 @@ export function buildDecorations(
 
   const isActive = (pos: number): boolean => active.has(state.doc.lineAt(pos).number);
 
+  /**
+   * Lines a drawn table has taken over.
+   *
+   * Those lines are replaced wholesale by a block widget (see `./tableView`), so
+   * anything decorated inside them would be decoration nobody can see, laid over
+   * text nobody can reach.
+   */
+  const drawn = state.field(tableBlocks, false) ?? [];
+  const isDrawn = (pos: number): boolean => {
+    const line = state.doc.lineAt(pos).number;
+    return drawn.some((table) => table.firstLine <= line && line <= table.lastLine);
+  };
+
   const hide = (from: number, to: number): void => {
     if (to <= from) return;
     all.push(HIDDEN.range(from, to));
@@ -194,7 +208,7 @@ export function buildDecorations(
 
     for (let n = firstLine; n <= lastLine; n++) {
       const line = state.doc.line(n);
-      if (!line.text.includes('[[')) continue;
+      if (!line.text.includes('[[') || isDrawn(line.from)) continue;
 
       WIKILINK.lastIndex = 0;
       let match: RegExpExecArray | null;
@@ -255,6 +269,9 @@ export function buildDecorations(
         const name = node.name;
         const parent = node.node.parent?.name ?? '';
         const rest = !isActive(node.from);
+
+        // Nothing inside a drawn table: the widget replaces those lines whole.
+        if (isDrawn(node.from)) return false;
 
         switch (name) {
           case 'InlineCode':

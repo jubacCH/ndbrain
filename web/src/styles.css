@@ -515,10 +515,119 @@ input {
 .cm-editor .cm-block-table {
   font-family: var(--mono);
   font-size: 0.9em;
-  /* Columns line up only as far as the source does. Real alignment would mean
-     replacing the block with a rendered table, which takes editing away. */
+  /* An ordinary table is drawn as a table and written in as one — see
+     `.cm-table` below and `editor/tableView`. The file goes on holding Markdown
+     with its `|`; the source is simply not what is on screen any more. This rule
+     is what is left for the tables a widget must not take over, such as one
+     inside a blockquote, where the `>` of every line is part of the file. */
   white-space: pre;
   overflow-x: auto;
+}
+
+/* ---- editor: the drawn table -------------------------------------------
+ *
+ * The one element that stays drawn while it is being written in. Everything
+ * else here gives its notation back the moment the cursor lands on the line;
+ * a row of pipes has nothing to give back, because unaligned source is no more
+ * readable than the table it replaced.
+ *
+ * Each cell is an ordinary text input lying transparently over the drawn text,
+ * so typing, selecting, copying and pasting are the browser's own rather than
+ * an imitation of them. What is typed goes straight back into the table's own
+ * lines in the file.
+ *
+ * No colour of its own: a table is not a finding, and the semantic four stay
+ * reserved for those. It borrows `.tablewrap` and `.tablescroll` from the rest
+ * of the application, so this product has one table rather than two. */
+
+.cm-editor .cm-table {
+  margin: var(--s-2) auto var(--s-3);
+  /* Wide because it is wide — the same allowance a code block gets, and the
+     scrolling happens inside the frame rather than moving the pane. */
+  max-width: min(100%, 140ch);
+}
+
+.cm-editor .cm-table table {
+  /* The application's data tables set a floor of 520px, because a table of
+     paths and numbers below that is unreadable. Two columns of prose in a note
+     are not that, and the floor would put a scrollbar under something that
+     already fits. */
+  min-width: 0;
+  font-family: var(--font);
+  font-size: 0.95em;
+}
+
+.cm-editor .cm-table th,
+.cm-editor .cm-table td {
+  position: relative;
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  /* One row, one line. A cell that wrapped would leave the input lying over it
+     a different shape from the text it covers; the width goes to the scroller
+     instead, which is where a wide table belongs anyway. */
+  white-space: nowrap;
+  min-width: 4ch;
+  vertical-align: top;
+  color: var(--text);
+}
+
+/* Prose in a cell stays prose. Monospace, uppercase and letter-spacing are the
+   data tables' way of marking a column of paths; a heading in a note is a
+   sentence and is told apart by weight alone. */
+.cm-editor .cm-table thead th {
+  font-family: var(--font);
+  font-size: 1em;
+  font-weight: var(--w-strong);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+
+.cm-editor .cm-table tr > :last-child {
+  border-right: none;
+}
+
+.cm-editor .cm-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* A row here is text, not a link: no hover surface and no pointer. */
+.cm-editor .cm-table tbody tr:hover td {
+  background: none;
+  cursor: text;
+}
+
+.cm-editor .cm-cellinput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  padding: var(--s-2) var(--s-3);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--text);
+  /* An input does not take the cell's alignment on its own, and a centred
+     column that jumps left the moment it is entered reads as a fault. */
+  text-align: inherit;
+  /* There, but not seen: the drawn cell is what is read, and this is what the
+     caret lands in when the cell is clicked. */
+  opacity: 0;
+}
+
+.cm-editor .cm-cellinput:focus {
+  opacity: 1;
+  outline: 2px solid var(--line-2);
+  outline-offset: -2px;
+}
+
+/* Hidden rather than removed, so that entering a cell does not make the column
+   jump to a different width. */
+.cm-editor .cm-cell:focus-within .cm-cellview {
+  visibility: hidden;
 }
 
 .cm-editor .cm-table-delimiter {
