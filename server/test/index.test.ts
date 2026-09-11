@@ -268,6 +268,35 @@ describe('librarian queries', () => {
     expect(hits[0]?.snippet.length).toBeGreaterThan(0);
   });
 
+  /**
+   * The title boost, isolated from everything that could stand in for it.
+   *
+   * The case above passes whether the boost is applied or not — the note it
+   * expects also carries the word in its body and in its path, so it would come
+   * first on ordinary term frequency alone. This one takes those away: the term
+   * appears in one note's *title only* and in the other note's *body only*, and
+   * the body note says it three times in a shorter document, so without the
+   * weight it wins. Measured: -0.0000015 against -0.0000011, body note first.
+   *
+   * That is what `bm25(notes_fts, 4.0, 1.0)` actually did. The weight list fills
+   * from the leftmost column, so the 4.0 landed on `owner` — UNINDEXED, never a
+   * match — and title and body stayed equal.
+   */
+  it('puts a title match above a note that merely mentions the word', async () => {
+    await notes.createNote('julian', 'Xylophon.md', 'Ein Instrument aus Holz und Metall.\n');
+    await notes.createNote(
+      'julian',
+      'Erwaehnungen.md',
+      'Xylophon hier, Xylophon dort, und noch ein Xylophon dazu.\n',
+    );
+    await indexer.rebuild('julian');
+
+    expect(q.search('julian', 'Xylophon').map((hit) => hit.path)).toEqual([
+      'Xylophon.md',
+      'Erwaehnungen.md',
+    ]);
+  });
+
   it('matches a prefix while typing', () => {
     expect(q.search('julian', 'Qdev').length).toBeGreaterThan(0);
   });
