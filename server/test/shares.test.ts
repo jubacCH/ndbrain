@@ -628,6 +628,12 @@ describe('the private half is indistinguishable from an empty one', () => {
 
     const withPrivate = await linkViews();
 
+    // Identity is only worth asserting about an answer that has something in
+    // it: two empty graphs are equal as well, and would pass this silently.
+    const graph = (await as('ramona', { url: '/api/v1/graph' })).body;
+    expect(graph.edges.length).toBeGreaterThan(0);
+    expect(graph.nodes.length).toBeGreaterThan(0);
+
     await runtime.app.deleteNote('julian', 'Privat/Heimlich.md');
     await runtime.app.deleteNote('julian', 'Privat/Tagebuch.md');
     await runtime.app.deleteNote('julian', 'Verweis.md');
