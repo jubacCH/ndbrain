@@ -572,14 +572,17 @@ describe('renaming inside a share', () => {
   it('refuses a folder rename in somebody else\'s vault outright', async () => {
     await linkedFromBothHalves();
 
-    const { body } = await as('ramona', {
+    const { status, body } = await as('ramona', {
       method: 'POST',
       url: '/api/v1/folders/rename',
       payload: { owner: 'julian', from: 'Projekt', to: 'Projekt-neu' },
     });
 
-    // Ramona has no `Projekt` of her own, so this is a 404 about her own vault
-    // and never touches Julian's.
+    // `movedNotes` and `updatedLinks` would carry the same class, so the route
+    // never lets a request name a vault: the owner comes from the session, and
+    // the body schema is strict, so the attempt is rejected before it is read.
+    expect(status).toBe(400);
+    expect(body.code).toBe('invalid_body');
     expect(JSON.stringify(body)).not.toContain('Privat');
     expect(runtime.app.queries.getNote('julian', 'julian', 'Projekt/Plan.md')).toBeDefined();
   });
