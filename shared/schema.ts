@@ -67,7 +67,6 @@ export const OpenNote = z.object({
 
 export const SearchHit = NoteRow.extend({
   snippet: z.string(),
-  rank: z.number(),
 });
 
 export const LinkRow = z.object({

@@ -50,8 +50,6 @@ export interface NoteRow {
 export interface SearchHit extends NoteRow {
   /** Excerpt with the matched terms wrapped in the configured markers. */
   snippet: string;
-  /** FTS5 rank; lower is a better match. */
-  rank: number;
 }
 
 export interface LinkRow {
@@ -338,7 +336,7 @@ export class Queries {
           ...params,
           limit,
         )
-        .map((row) => ({ ...toNoteRow(row), snippet: '', rank: 0 }));
+        .map((row) => ({ ...toNoteRow(row), snippet: '' }));
     }
 
     // The words the caller actually typed, for rescuing an excerpt that came
@@ -354,6 +352,13 @@ export class Queries {
         `SELECT n.owner, n.path, n.title, n.size, n.mtime_ms,
                 snippet(notes_fts, 3, '[', ']', ' … ', 12) AS snippet,
                 notes_fts.body AS body,
+                -- Ordering only. The score is never returned: bm25 is computed
+                -- from FTS5 statistics kept over the whole table, so the number
+                -- moves when a note in a part of the vault the caller may not
+                -- read is written or deleted. Quantitative, noisy and without a
+                -- path in it, but a side channel across the tenant boundary all
+                -- the same — and the interface sorts server-side and never had
+                -- a use for it.
                 bm25(notes_fts, 4.0, 1.0) AS rank
            FROM notes_fts
            JOIN notes n ON n.owner = notes_fts.owner AND n.path = notes_fts.path
@@ -372,7 +377,6 @@ export class Queries {
           String(row['body'] ?? ''),
           terms,
         ),
-        rank: Number(row['rank'] ?? 0),
       }));
   }
 
