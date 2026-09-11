@@ -532,8 +532,24 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const query = (request.query ?? {}) as { owner?: unknown };
     const owner = typeof query.owner === 'string' && query.owner !== '' ? query.owner : caller;
 
-    // A foreign vault is only listable where something in it has been shared;
-    // the per-file rules are enforced again on download and on write.
+    // **A foreign vault is not listable at all.** The line below reads as "only
+    // where something has been shared", and that is not what it does:
+    // `shares.check` normalises its path first, and `normalizeVaultPath('')`
+    // throws `path is empty` before any share is ever consulted. So every
+    // `?owner=` for somebody else answers 400 — with a prefix share, with a
+    // whole-vault share, with no share at all. It fails closed, which is why
+    // this is written down rather than hurried.
+    //
+    // It is left alone on purpose, because "repairing" the guard would open a
+    // hole rather than close one: `listFiles(owner)` below takes no prefix, so
+    // the moment this check starts passing for a prefix share, a grantee of one
+    // folder is handed a listing of the whole vault, `Privat/` included. What a
+    // prefix share should mean for files is a design question — a file listing
+    // is not a note listing and the vault layer has no per-prefix walk — and it
+    // belongs in a task of its own.
+    //
+    // Until then the behaviour is pinned by tests (`files.test.ts`), so whoever
+    // does take it on gets a red light rather than a silent widening.
     if (owner !== caller) shares.check(caller, owner, '', 'read');
 
     const { files, dirs, truncated } = await app.listFiles(owner);
