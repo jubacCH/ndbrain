@@ -366,6 +366,171 @@ describe('writing tools', () => {
   });
 });
 
+/**
+ * A note in the shape the vault migration produced: YAML frontmatter, the
+ * blockquote header the importer writes, a title, then prose. Every part of the
+ * head is something an edit in the body must not be able to reach.
+ */
+const MIGRATED_NOTE = [
+  '---',
+  'created: 2026-09-11',
+  'updated: 2026-09-11',
+  '---',
+  '> **type:** project · **topic:** apps · **updated:** 2026-09-11',
+  '',
+  '# Slimvid',
+  '',
+  '## Stand',
+  '',
+  'Die App ist seit Juli im Store.',
+  '',
+  '## Fallen',
+  '',
+  'Der Build braucht einen EULA-Link.',
+  '',
+].join('\n');
+
+/**
+ * The note as it has to look after a targeted edit: the span replaced, every
+ * other byte exactly where it was.
+ *
+ * Built from `indexOf` and `slice` rather than `String.replace`, so the
+ * expectation cannot inherit the behaviour it is meant to check — `replace`
+ * expands `$&` and friends in the replacement, and an expectation written with
+ * it would agree with that corruption instead of catching it.
+ */
+function spliced(source: string, find: string, replace: string): string {
+  const at = source.indexOf(find);
+  return source.slice(0, at) + replace + source.slice(at + find.length);
+}
+
+describe('edit_note changes the span it was given and nothing else', () => {
+  beforeEach(async () => {
+    await runtime.app.createNote('julian', 'Projekte/Slimvid.md', MIGRATED_NOTE);
+  });
+
+  const read = async (): Promise<string> =>
+    (await runtime.notes.getNote('julian', 'Projekte/Slimvid.md')).content;
+
+  it('keeps the whole note byte-identical across two edits in a row', async () => {
+    const first = {
+      find: 'Die App ist seit Juli im Store.',
+      replace: 'Die App ist seit Juli live.',
+    };
+    const firstResult = await call(fullKey, 'edit_note', { path: 'Projekte/Slimvid.md', ...first });
+    expect(firstResult.isError).toBe(false);
+
+    const afterFirst = spliced(MIGRATED_NOTE, first.find, first.replace);
+    expect(await read()).toBe(afterFirst);
+
+    const second = {
+      find: 'Der Build braucht einen EULA-Link.',
+      replace: 'Der Build braucht einen EULA-Link im Store-Eintrag.',
+    };
+    const secondResult = await call(fullKey, 'edit_note', { path: 'Projekte/Slimvid.md', ...second });
+    expect(secondResult.isError).toBe(false);
+
+    expect(await read()).toBe(spliced(afterFirst, second.find, second.replace));
+  });
+
+  it('writes a replacement containing $ verbatim', async () => {
+    // `$&`, '$`', `$'` and `$$` are replacement patterns to String.replace, and
+    // a vault full of shell snippets contains all of them. Expanded, they splice
+    // the rest of the file into the note.
+    const find = 'Der Build braucht einen EULA-Link.';
+    const replace = "Der Build braucht `set -- $'\\n'`, `$$`, `$&` und '$`'.";
+
+    const result = await call(fullKey, 'edit_note', { path: 'Projekte/Slimvid.md', find, replace });
+    expect(result.isError).toBe(false);
+    expect(await read()).toBe(spliced(MIGRATED_NOTE, find, replace));
+  });
+});
+
+describe('tool arguments are held to the schema the server publishes', () => {
+  beforeEach(async () => {
+    await runtime.app.createNote('julian', 'Projekte/Slimvid.md', MIGRATED_NOTE);
+  });
+
+  const read = async (path: string): Promise<string> =>
+    (await runtime.notes.getNote('julian', path)).content;
+
+  it('refuses an argument the tool does not have, and names it', async () => {
+    // What actually happened: an agent sent `new_string`, the name the editor
+    // tool uses. `replace` was therefore absent, defaulted to the empty string,
+    // and the found span — frontmatter and all — was deleted without a word.
+    const result = await call(fullKey, 'edit_note', {
+      path: 'Projekte/Slimvid.md',
+      find: 'created: 2026-09-11\nupdated: 2026-09-11\n---',
+      new_string: 'created: 2026-09-11\nupdated: 2026-09-11\ntags: [apps]\n---',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('new_string');
+    expect(await read('Projekte/Slimvid.md')).toBe(MIGRATED_NOTE);
+  });
+
+  it('refuses a missing required argument rather than defaulting it', async () => {
+    const result = await call(fullKey, 'edit_note', {
+      path: 'Projekte/Slimvid.md',
+      find: 'Die App ist seit Juli im Store.',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('replace');
+    expect(await read('Projekte/Slimvid.md')).toBe(MIGRATED_NOTE);
+  });
+
+  it('refuses an argument of the wrong type rather than stringifying it', async () => {
+    const result = await call(fullKey, 'edit_note', {
+      path: 'Projekte/Slimvid.md',
+      find: 'Die App ist seit Juli im Store.',
+      replace: 42,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('replace');
+    expect(await read('Projekte/Slimvid.md')).toBe(MIGRATED_NOTE);
+  });
+
+  it('deletes a span only when an empty replacement was actually asked for', async () => {
+    const find = '\n## Fallen\n\nDer Build braucht einen EULA-Link.\n';
+    const result = await call(fullKey, 'edit_note', {
+      path: 'Projekte/Slimvid.md',
+      find,
+      replace: '',
+    });
+
+    expect(result.isError).toBe(false);
+    expect(await read('Projekte/Slimvid.md')).toBe(spliced(MIGRATED_NOTE, find, ''));
+  });
+
+  it('does not create an empty note when create_note has no content', async () => {
+    const result = await call(fullKey, 'create_note', { path: 'Projekte/Leer.md' });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('content');
+    await expect(runtime.notes.getNote('julian', 'Projekte/Leer.md')).rejects.toThrow();
+  });
+
+  it('does not touch a note when append_note has no content', async () => {
+    const result = await call(fullKey, 'append_note', { path: 'Projekte/Slimvid.md' });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('content');
+    expect(await read('Projekte/Slimvid.md')).toBe(MIGRATED_NOTE);
+  });
+
+  it('still accepts every optional argument the schema declares', async () => {
+    const result = await call(fullKey, 'search_notes', {
+      query: 'Store',
+      folder: 'Projekte',
+      days: 1,
+      limit: 5,
+    });
+    expect(result.isError).toBe(false);
+  });
+});
+
 describe('reading tools', () => {
   it('searches with filters', async () => {
     expect((await call(fullKey, 'search_notes', { query: 'Zonen' })).text).toContain('UniFi');

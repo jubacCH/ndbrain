@@ -17,7 +17,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { App } from '../app.js';
 import type { ApiKeyService } from '../auth/keys.js';
 import { toProblem } from '../http/errors.js';
-import { TOOLS, ToolRefusal, type ToolContext } from './tools.js';
+import { checkArguments, TOOLS, ToolRefusal, type ToolContext } from './tools.js';
 
 /** The protocol version this server implements. */
 const PROTOCOL_VERSION = '2025-06-18';
@@ -111,10 +111,10 @@ export function registerMcpEndpoint(
         }
 
         try {
-          const text = await tool.handler(
-            context,
-            (params.arguments ?? {}) as Record<string, unknown>,
-          );
+          // Before the handler, never inside it: a tool that reads its own
+          // arguments defensively ends up inventing a default for one that was
+          // never sent, and a default is indistinguishable from an instruction.
+          const text = await tool.handler(context, checkArguments(tool, params.arguments));
           return reply.send(result(body.id, { content: [{ type: 'text', text }] }));
         } catch (caught) {
           // A tool failure is a *result* in MCP, not a protocol error — the model

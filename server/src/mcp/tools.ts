@@ -66,6 +66,7 @@ export interface ToolDefinition {
   description: string;
   inputSchema: JsonSchema;
   readOnly: boolean;
+  /** Receives arguments that have already been through `checkArguments`. */
   handler: (context: ToolContext, input: Record<string, unknown>) => Promise<string>;
 }
 
@@ -74,6 +75,68 @@ function schema(
   required: string[],
 ): JsonSchema {
   return { type: 'object', properties, required, additionalProperties: false };
+}
+
+/**
+ * Holds a call to the schema the tool publishes.
+ *
+ * `tools/list` hands every client a schema with a `required` list and
+ * `additionalProperties: false`, and nothing used to check that a call obeyed
+ * it. The handlers coerced instead — `String(input['replace'] ?? '')` — which
+ * turns a wrong argument *name* into a plausible value rather than an error.
+ * That is not hypothetical: an agent sent `new_string` (the name the editor
+ * tool uses), `replace` was therefore absent, `edit_note` read it as the empty
+ * string, deleted the span it had found — frontmatter and all — and reported
+ * "Edited". Seventeen notes in one run.
+ *
+ * Checked against the very object the client was handed, rather than against a
+ * second declaration beside it: two descriptions of one contract drift, and the
+ * half nobody enforces is the half that lies. The REST layer reached the same
+ * conclusion with Zod (`body()` in http/server.ts); this is that rule for the
+ * other door.
+ *
+ * Refusals, not protocol errors: the model is supposed to read them and correct
+ * itself, so they name the argument and say what the tool actually takes.
+ */
+export function checkArguments(tool: ToolDefinition, raw: unknown): Record<string, unknown> {
+  if (raw === undefined || raw === null) raw = {};
+
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ToolRefusal(`${tool.name} expects its arguments as an object`);
+  }
+
+  const input = raw as Record<string, unknown>;
+  const declared = Object.keys(tool.inputSchema.properties);
+
+  for (const name of Object.keys(input)) {
+    if (declared.includes(name)) continue;
+    throw new ToolRefusal(
+      `${tool.name} has no argument "${name}" — it takes ${declared.join(', ')}. ` +
+        'Nothing was changed.',
+    );
+  }
+
+  for (const [name, property] of Object.entries(tool.inputSchema.properties)) {
+    const value = input[name];
+
+    // A null is an absent argument, not a value of the wrong type: clients
+    // serialise "I have nothing for this" both ways.
+    if (value === undefined || value === null) {
+      if (tool.inputSchema.required.includes(name)) {
+        throw new ToolRefusal(`${tool.name} needs "${name}". Nothing was changed.`);
+      }
+      continue;
+    }
+
+    if (typeof value !== property.type) {
+      throw new ToolRefusal(
+        `${tool.name} wants "${name}" as a ${property.type}, not a ${typeof value}. ` +
+          'Nothing was changed.',
+      );
+    }
+  }
+
+  return input;
 }
 
 /** Denials are indistinguishable from a missing note — see the file header. */
@@ -132,8 +195,8 @@ export const TOOLS: ToolDefinition[] = [
       // key would otherwise see fewer results than it asked for.
       options.limit = Math.min(200, (options.limit ?? 20) * 3);
 
-      const hits = inScope(context, context.app.queries.search(context.key.owner, String(input['query'] ?? ''), options))
-        .slice(0, clampLimit(input['limit'], 20));
+      const found = context.app.queries.search(context.key.owner, input['query'] as string, options);
+      const hits = inScope(context, found).slice(0, clampLimit(input['limit'], 20));
 
       context.keys.log(context.key, 'search_notes', null, true);
 
@@ -156,7 +219,7 @@ export const TOOLS: ToolDefinition[] = [
       ['path'],
     ),
     handler: async (context, input) => {
-      const notePath = assertInScope(context, 'get_note', String(input['path'] ?? ''));
+      const notePath = assertInScope(context, 'get_note', input['path'] as string);
       const note = await context.app.notes.getNote(context.key.owner, notePath);
       context.keys.log(context.key, 'get_note', notePath, true);
       return note.content;
@@ -254,7 +317,7 @@ export const TOOLS: ToolDefinition[] = [
       ['path'],
     ),
     handler: async (context, input) => {
-      const notePath = assertInScope(context, 'get_links', String(input['path'] ?? ''));
+      const notePath = assertInScope(context, 'get_links', input['path'] as string);
 
       const backlinks = context.app.queries
         .backlinks(context.key.owner, context.key.owner, notePath)
@@ -312,13 +375,13 @@ export const TOOLS: ToolDefinition[] = [
       ['path', 'content'],
     ),
     handler: async (context, input) => {
-      const notePath = assertInScope(context, 'create_note', String(input['path'] ?? ''));
+      const notePath = assertInScope(context, 'create_note', input['path'] as string);
       assertWritable(context, 'create_note', notePath);
 
       const note = await context.app.createNote(
         context.key.owner,
         notePath,
-        String(input['content'] ?? ''),
+        input['content'] as string,
         context.key.name,
       );
       context.keys.log(context.key, 'create_note', note.path, true);
@@ -341,11 +404,11 @@ export const TOOLS: ToolDefinition[] = [
       ['path', 'content'],
     ),
     handler: async (context, input) => {
-      const notePath = assertInScope(context, 'append_note', String(input['path'] ?? ''));
+      const notePath = assertInScope(context, 'append_note', input['path'] as string);
       assertWritable(context, 'append_note', notePath);
 
       const note = await context.app.notes.getNote(context.key.owner, notePath);
-      const addition = String(input['content'] ?? '');
+      const addition = input['content'] as string;
       // Guarantee a blank line between what was there and what is added, without
       // adding one to a note that already ends in one.
       const separator = note.content.endsWith('\n\n') ? '' : note.content.endsWith('\n') ? '\n' : '\n\n';
@@ -385,10 +448,10 @@ export const TOOLS: ToolDefinition[] = [
       ['path', 'find', 'replace'],
     ),
     handler: async (context, input) => {
-      const notePath = assertInScope(context, 'edit_note', String(input['path'] ?? ''));
+      const notePath = assertInScope(context, 'edit_note', input['path'] as string);
       assertWritable(context, 'edit_note', notePath);
 
-      const find = String(input['find'] ?? '');
+      const find = input['find'] as string;
       if (find === '') throw new ToolRefusal('nothing to find');
 
       const note = await context.app.notes.getNote(context.key.owner, notePath);
@@ -403,10 +466,23 @@ export const TOOLS: ToolDefinition[] = [
         );
       }
 
+      // Spliced by offset rather than with `String.replace`. That method reads
+      // `$&`, '$`', `$'` and `$$` in the replacement as patterns even when the
+      // thing being searched for is a plain string — so replacing a line with
+      // one that mentions `$'` (bash quoting, and ordinary in a homelab note)
+      // would paste the rest of the file into the middle of the note. Nothing
+      // outside the found span may change, and the only way to mean that is to
+      // keep the two ends of the note untouched.
+      const at = note.content.indexOf(find);
+      const edited =
+        note.content.slice(0, at) +
+        (input['replace'] as string) +
+        note.content.slice(at + find.length);
+
       const result = await context.app.updateNote(
         context.key.owner,
         notePath,
-        note.content.replace(find, String(input['replace'] ?? '')),
+        edited,
         context.key.name,
         { baseMtimeMs: note.mtimeMs },
       );
