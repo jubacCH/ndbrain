@@ -94,9 +94,15 @@ export function registerMcpEndpoint(
               inputSchema: tool.inputSchema,
               annotations: {
                 readOnlyHint: tool.readOnly,
-                // Nothing here destroys data: delete is deliberately not exposed
-                // over MCP, so an agent cannot lose a note in one call.
-                destructiveHint: false,
+                // Per tool, not blanket: delete is deliberately not exposed over
+                // MCP, but that alone does not make every writing tool safe.
+                // `edit_note` can still remove arbitrary content from a note in
+                // a single call — see its `destructive` comment — while
+                // `create_note` refuses an existing target and `append_note`
+                // only ever adds. A flat `false` here hid exactly that
+                // difference and, with it, the prompt an MCP client would
+                // otherwise have shown before an `edit_note` call.
+                destructiveHint: tool.destructive,
               },
             })),
           }),
@@ -114,7 +120,7 @@ export function registerMcpEndpoint(
           // Before the handler, never inside it: a tool that reads its own
           // arguments defensively ends up inventing a default for one that was
           // never sent, and a default is indistinguishable from an instruction.
-          const text = await tool.handler(context, checkArguments(tool, params.arguments));
+          const text = await tool.handler(context, checkArguments(tool, params.arguments, context));
           return reply.send(result(body.id, { content: [{ type: 'text', text }] }));
         } catch (caught) {
           // A tool failure is a *result* in MCP, not a protocol error — the model
