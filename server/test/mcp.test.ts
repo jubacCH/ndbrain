@@ -208,6 +208,29 @@ describe('scope narrows further, never wider', () => {
     expect(runtime.app.queries.getNote('julian', 'julian', 'Privat/Eingeschleust.md')).toBeUndefined();
   });
 
+  it('does not follow a link out of its scope, in either form', async () => {
+    // The link sits in a note the key may read, so the raw `[[…]]` is no secret.
+    // What get_links adds is the *resolution*: the full path of the target, and
+    // whether it exists at all. Both are the map of the hidden that a path scope
+    // is meant to withhold — a resolved path openly, a "does not exist" against a
+    // note that does exist by inverting its own claim.
+    await runtime.app.createNote(
+      'julian',
+      'Homelab/Netzplan.md',
+      'Siehe [[Privat/Gedanken]], [[Homelab/UniFi]] und [[Homelab/GibtsNicht]].\n',
+    );
+
+    const result = await call(scopedKey, 'get_links', { path: 'Homelab/Netzplan.md' });
+
+    expect(result.text).not.toContain('Privat/Gedanken');
+    expect(result.text).not.toContain('Gedanken');
+    // The scope filter must not blind the tool to what the key may see: a link
+    // inside the scope stays, and so does one that truly points nowhere —
+    // dead links are a finding ndBrain reports on purpose.
+    expect(result.text).toContain('Homelab/UniFi.md');
+    expect(result.text).toContain('Homelab/GibtsNicht — does not exist');
+  });
+
   it('does not match a folder that merely starts the same', async () => {
     await runtime.app.createNote('julian', 'Homelab2/Fremd.md', 'nicht im scope\n');
     expect((await call(scopedKey, 'list_notes')).text).not.toContain('Homelab2/');
