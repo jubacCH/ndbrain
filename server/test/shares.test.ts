@@ -441,6 +441,9 @@ describe('links stop at the sharing boundary', () => {
 
       const { body } = await as('ramona', { url: '/api/v1/graph' });
 
+      // Asserted first, because `every` on an empty array is true: without this
+      // the check below would stay green on a graph that drew no edge at all.
+      expect(body.edges.length).toBeGreaterThan(0);
       expect(body.edges.every((e: any) => e.to.startsWith('Projekt/'))).toBe(true);
       expect(JSON.stringify(body)).not.toContain('Privat');
 
@@ -579,6 +582,54 @@ describe('renaming inside a share', () => {
     // and never touches Julian's.
     expect(JSON.stringify(body)).not.toContain('Privat');
     expect(runtime.app.queries.getNote('julian', 'julian', 'Projekt/Plan.md')).toBeDefined();
+  });
+});
+
+/**
+ * Two worlds, one answer.
+ *
+ * The read paths resolve links with a `WHERE` rather than a projection, on the
+ * argument that "outside the share" and "does not exist" are already the same
+ * thing in a graph that omits unresolved links. That argument is only worth
+ * anything if it is enforced: a test that checks the private paths are absent
+ * would still pass on an empty answer, and would not notice a later rewrite
+ * that made the two cases distinguishable again.
+ *
+ * So the vault is asked the same question twice — once holding the private
+ * notes, once without them — and the two answers have to be identical.
+ */
+describe('the private half is indistinguishable from an empty one', () => {
+  /** Everything Ramona can ask that is derived from links. */
+  async function linkViews(): Promise<string> {
+    const graph = (await as('ramona', { url: '/api/v1/graph' })).body;
+    const notiz = (
+      await as('ramona', { url: '/api/v1/backlinks/Projekt/Notiz.md?owner=julian' })
+    ).body;
+    const technik = (
+      await as('ramona', { url: '/api/v1/backlinks/Projekt/Technik.md?owner=julian' })
+    ).body;
+
+    return JSON.stringify({ graph, notiz, technik });
+  }
+
+  it('answers the graph and the backlinks identically either way', async () => {
+    // `Projekt/Notiz.md` links out of the share and into the void;
+    // `Privat/Heimlich.md` links back into the share from outside it.
+    await runtime.app.createNote(
+      'julian',
+      'Projekt/Notiz.md',
+      'Siehe [[Tagebuch]] und [[Nirgendwo]].\n',
+    );
+    await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
+    await share('Projekt', false);
+
+    const withPrivate = await linkViews();
+
+    await runtime.app.deleteNote('julian', 'Privat/Heimlich.md');
+    await runtime.app.deleteNote('julian', 'Privat/Tagebuch.md');
+    await runtime.app.deleteNote('julian', 'Verweis.md');
+
+    expect(await linkViews()).toBe(withPrivate);
   });
 });
 
