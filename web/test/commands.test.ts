@@ -44,6 +44,49 @@ const REGISTRY = [
   '```',
 ].join('\n');
 
+/**
+ * The registry as it actually stands in the vault, on 2026-09-11.
+ *
+ * Worth having verbatim, because it disagrees with the brief in the one place
+ * that matters: the "Abgleich noch offen" box spells its unapproved candidates
+ * *in backticks*. A parser that only took backticks would offer every one of
+ * them. What keeps them out is the second rule — a value counts only under a
+ * `## prefix/` heading and only if it carries that prefix — and the box sits
+ * inside the `topic/` section, where `observability` is not a `topic/` anything.
+ */
+const REAL_REGISTRY = [
+  '---',
+  'created: 2026-06-06',
+  'updated: 2026-06-06',
+  '',
+  'tags: [governance]',
+  '---',
+  '> **type:** reference',
+  '> **topic:** governance',
+  '> **updated:** 2026-09-11',
+  '',
+  '**Regel:** Notizbuch = Wohnort (Lebenszyklus). Tag = jede Querschnitt-Dimension. Pflicht je Notiz: **1× `type/` + ≥1× `topic/`**.',
+  '',
+  '## type/  (Form der Notiz)',
+  '`type/howto` · `type/reference` · `type/gotcha` · `type/idea` · `type/meeting` · `type/clipping` · `type/log` · `type/moc` · `type/project`',
+  '',
+  '## status/  (nur in 00_Inbox & 10_Projects)',
+  '`status/inbox` · `status/triaged` · `status/active` · `status/wip` · `status/done` · `status/stale`',
+  '',
+  '## topic/  (Sachgebiet — kuratiert erweiterbar)',
+  '`topic/proxmox` · `topic/docker` · `topic/networking` · `topic/unifi` · `topic/paperless` · `topic/n8n` · `topic/ai` · `topic/finanzen` · `topic/homelab` · `topic/infrastruktur` · `topic/backup` · `topic/governance` · `topic/monitoring` · `topic/tooling`',
+  '',
+  '> **2026-08-17 — Abgleich noch offen.** Die fünf hinteren sind nachgetragen, weil',
+  '> sie im Vault längst verwendet wurden. Weitere im Umlauf, aber ungeprüft:',
+  '> `observability`, `myai`, `secondbrain`, `joplin`, `runbook`, `navigation`,',
+  '> `todo`. Vor dem Aufräumen entscheiden, welche davon echte Sachgebiete sind und',
+  '> welche nur Zustand oder Form beschreiben — Letzteres gehört zu `type/` oder',
+  '> `status/`, nicht hierher.',
+  '',
+  '## src/  (Herkunft — nur vom Ingest-Layer gesetzt)',
+  '`src/manual` · `src/email` · `src/calendar` · `src/web` · `src/chat` · `src/paperless` · `src/n8n`',
+].join('\n');
+
 const ALLOWED = [
   'type/howto',
   'type/reference',
@@ -184,6 +227,25 @@ describe('tags come from the registry', () => {
     expect(parsed).not.toContain('observability');
     // And an example in a fenced block is an example.
     expect(parsed).not.toContain('topic/beispiel');
+  });
+
+  it('reads the vault\'s own registry without picking up what it only discusses', () => {
+    const parsed = parseTagRegistry(REAL_REGISTRY);
+
+    expect(parsed).toHaveLength(36);
+    expect(parsed.slice(0, 2)).toEqual(['type/howto', 'type/reference']);
+    expect(parsed).toContain('status/stale');
+    expect(parsed).toContain('topic/tooling');
+    expect(parsed).toContain('src/n8n');
+
+    // In backticks, inside the `topic/` section, and still not offered: they
+    // are not `topic/` anything, which is the whole test.
+    for (const loose of ['observability', 'myai', 'secondbrain', 'joplin', 'runbook', 'navigation', 'todo']) {
+      expect(parsed).not.toContain(loose);
+    }
+    // Nor the bare prefixes the prose mentions.
+    expect(parsed).not.toContain('type/');
+    expect(parsed).not.toContain('status/');
   });
 
   it('offers the allowed tags and inserts the one picked', () => {

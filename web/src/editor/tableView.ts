@@ -102,7 +102,11 @@ function writeTable(view: EditorView, from: TableBlock, to: TableBlock): void {
       to: view.state.doc.line(from.lastLine).to,
       insert: serializeTable(to).join('\n'),
     },
-    userEvent: 'input',
+    // `input.type` rather than `input`: the history only joins transactions
+    // whose user event matches `input.type` or `delete`, so a plain `input`
+    // made every keystroke its own undo step — five letters, five undos, where
+    // typing the same five letters as text is one.
+    userEvent: 'input.type',
   });
 }
 
@@ -236,7 +240,9 @@ class TableWidget extends WidgetType {
       writeTable(view, table, withCell(table, row, column, input.value));
     });
 
-    input.addEventListener('keydown', (event) => this.keydown(event, view, holder, row, column));
+    input.addEventListener('keydown', (event) =>
+      this.keydown(event, view, holder, input, row, column),
+    );
 
     holder.append(shown, input);
     return holder;
@@ -262,29 +268,37 @@ class TableWidget extends WidgetType {
     event: KeyboardEvent,
     view: EditorView,
     holder: HTMLElement,
+    input: HTMLInputElement,
     row: number,
     column: number,
   ): void {
     const table = this.live(view, holder);
     if (table === null) return;
 
-    const last = { row: table.rows.length - 1, column: table.columns - 1 };
-    const step = (to: { row: number; column: number }): void => {
-      event.preventDefault();
-      focusCell(view, table.firstLine, to.row, to.column);
-    };
+    const lastRow = table.rows.length - 1;
 
     if (event.key === 'Tab') {
-      const forward = !event.shiftKey;
-      const at = row * table.columns + column + (forward ? 1 : -1);
-      if (at < 0 || at > last.row * table.columns + last.column) return;
-      step({ row: Math.floor(at / table.columns), column: at % table.columns });
+      // Walked over the cells as they are drawn rather than counted out of the
+      // column count: a row may carry one cell more than the header declares,
+      // and arithmetic over a width that row does not have skips or repeats a
+      // cell. At either end the key is left alone, so Tab still leaves the
+      // table the way it leaves any other control.
+      const cells = [
+        ...(holder.closest('.cm-table')?.querySelectorAll<HTMLInputElement>('input.cm-cellinput') ??
+          []),
+      ];
+      const next = cells[cells.indexOf(input) + (event.shiftKey ? -1 : 1)];
+      if (next === undefined) return;
+
+      event.preventDefault();
+      next.focus();
+      next.setSelectionRange(next.value.length, next.value.length);
       return;
     }
 
     if (event.key === 'Enter') {
       event.preventDefault();
-      if (row === last.row) {
+      if (row === lastRow) {
         writeTable(view, table, withRowAfter(table, row));
         focusCell(view, table.firstLine, row + 1, 0);
         return;

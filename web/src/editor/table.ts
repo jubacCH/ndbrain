@@ -28,8 +28,14 @@ export interface TableBlock {
   rows: string[][];
 }
 
-/** A delimiter row: `| --- | :---: |`. Blockquoted tables are deliberately not matched. */
-const DELIMITER = /^\s*\|?(\s*:?-+:?\s*\|)+(\s*:?-+:?\s*)?$/;
+/**
+ * A delimiter row: `| --- | :---: |`, starting on column zero.
+ *
+ * The column matters as much as the pipes. In Markdown leading whitespace is
+ * meaning: two spaces put a table inside a list item, four put it inside a code
+ * block where it is not a table at all. See `findTables`.
+ */
+const DELIMITER = /^\|?(\s*:?-+:?\s*\|)+(\s*:?-+:?\s*)?$/;
 
 /** Opens or closes a fenced code block. */
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
@@ -88,7 +94,13 @@ function hasPipe(line: string): boolean {
  * cell edit could rewrite.
  */
 function isBody(line: string): boolean {
-  return line.trim() !== '' && !line.trimStart().startsWith('>') && !FENCE.test(line) && hasPipe(line);
+  return (
+    line.trim() !== '' &&
+    !/^[ \t]/.test(line) &&
+    !line.startsWith('>') &&
+    !FENCE.test(line) &&
+    hasPipe(line)
+  );
 }
 
 /**
@@ -102,6 +114,15 @@ function isBody(line: string): boolean {
  *
  * Fenced code and frontmatter are skipped: a pipe table in a fence is an example
  * of a table, not a table.
+ *
+ * Only tables on column zero are offered, for the same reason a blockquoted one
+ * is left alone: the whitespace in front of the line is part of what the line
+ * means. A drawn table has to be written back as whole lines, and whole lines
+ * put back on column zero would lift a table out of the list item it belongs to
+ * — or, at four spaces, turn somebody's *example* of a table into a real one by
+ * ending the code block it was written in. Telling those two apart needs the
+ * block context a line scanner deliberately does not have, so neither is taken.
+ * They keep the source presentation they have always had.
  */
 export function findTables(source: string): TableBlock[] {
   const lines = source.split('\n');
@@ -142,10 +163,12 @@ export function findTables(source: string): TableBlock[] {
       last = n;
     }
 
-    // A row may carry more cells than the header. GFM drops them; this keeps
-    // them, because dropping text that is in the file is exactly the failure
-    // this whole approach is supposed to make impossible.
-    const columns = rows.reduce((widest, row) => Math.max(widest, row.length), 0);
+    // The table has as many columns as its header declares. A row may still
+    // carry more cells than that: GFM drops them, and this keeps them, because
+    // dropping text that is in the file is the failure this whole approach is
+    // supposed to make impossible. They stay in the row that has them — see
+    // `serializeTable`.
+    const columns = header.length;
 
     tables.push({
       firstLine: index + 1,
@@ -161,8 +184,9 @@ export function findTables(source: string): TableBlock[] {
   return tables;
 }
 
+/** Short rows are filled up to the header; a long one keeps what it has. */
 function padRow(row: string[], columns: number): string[] {
-  return Array.from({ length: columns }, (_, column) => row[column] ?? '');
+  return Array.from({ length: Math.max(columns, row.length) }, (_, column) => row[column] ?? '');
 }
 
 /** Counted in characters, which is what padding with spaces lines up. */
@@ -198,7 +222,8 @@ function row(cells: string[], widths: number[]): string {
  * edited; merely looking at a note writes nothing at all.
  */
 export function serializeTable(table: TableBlock): string[] {
-  const widths = Array.from({ length: table.columns }, (_, column) =>
+  const across = table.rows.reduce((most, cells) => Math.max(most, cells.length), table.columns);
+  const widths = Array.from({ length: across }, (_, column) =>
     table.rows.reduce(
       (widest, cells) => Math.max(widest, width(cells[column] ?? '')),
       minimumWidth(table.align[column] ?? null),
@@ -207,7 +232,10 @@ export function serializeTable(table: TableBlock): string[] {
 
   const [header = [], ...body] = table.rows;
   return [
-    row(header, widths),
+    // Header and delimiter keep the table's own width. Widening them to cover a
+    // stray cell somewhere below would answer one loose pipe by changing the
+    // shape of the whole table.
+    row(header.slice(0, table.columns), widths),
     row(
       table.align.map((align, column) => delimiterCell(align, widths[column] ?? 3)),
       widths,
