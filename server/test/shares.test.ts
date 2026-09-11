@@ -633,6 +633,37 @@ describe('the private half is indistinguishable from an empty one', () => {
   });
 });
 
+/**
+ * A search hit carries no score.
+ *
+ * bm25 is computed from FTS5 statistics that span the whole table, so the rank
+ * of a hit in a shared folder moves when a note somewhere in the private half
+ * is written or deleted — measured, on this vault, as -0.0000016 becoming
+ * -0.000001375. No path, nothing but a number, and far too noisy to read a
+ * vault out of; but it is a quantity on one side of the tenant boundary that
+ * changes with what happens on the other, which is the definition of a side
+ * channel. The list is ordered on the server and no client ever read the value.
+ */
+describe('the search result says nothing about the rest of the vault', () => {
+  it('returns no relevance score', async () => {
+    await share('Projekt', false);
+
+    const { body } = await as('ramona', { url: '/api/v1/search?q=Qdevice' });
+
+    expect(body.hits).toHaveLength(1);
+    expect(body.hits[0]).not.toHaveProperty('rank');
+  });
+
+  it('still orders the hits itself', async () => {
+    const { body } = await as('julian', { url: '/api/v1/search?q=Technik' });
+
+    // Ordering is the whole reason the score is computed; it just stays inside
+    // the server now. The note called Technik comes before the one that merely
+    // links to it.
+    expect(body.hits.map((h: any) => h.path)).toEqual(['Projekt/Technik.md', 'Projekt/Plan.md']);
+  });
+});
+
 describe('withdrawing a share', () => {
   it('ends access immediately, with no cached decision', async () => {
     const id = await share('Projekt', true);
