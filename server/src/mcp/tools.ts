@@ -253,16 +253,27 @@ export const TOOLS: ToolDefinition[] = [
       const backlinks = context.app.queries
         .backlinks(context.key.owner, context.key.owner, notePath)
         .filter((link) => withinScope(context.key, link.source));
-      // Both directions are filtered by the same rule. A link whose target lies
-      // outside the scope is dropped entirely rather than reported as missing:
-      // the resolved path is a map of what the key may not read, and the
-      // indexer resolves against the whole vault, not against the scope.
-      // An unresolved link has no target to judge and stays — it points at
-      // nothing anywhere in the vault, so it discloses nothing beyond the note
-      // the key is already reading.
+      // Both directions obey the same rule, and the outgoing side obeys it by
+      // *unresolving* rather than dropping. The indexer resolves links against
+      // the whole vault, not against the key's scope, so a resolved target
+      // outside it would be a path the key may not read. Reporting it as "does
+      // not exist" is the file header's rule applied to a link: refusal looks
+      // like absence.
+      //
+      // Dropping the line instead would leak the same fact one step further
+      // back. The key can read the note, so it knows which `[[…]]` are written
+      // in it; a link present in the text but missing from this list could only
+      // mean "exists, not yours". A writing key could then ask that about any
+      // name it likes by putting the name into a note of its own — a free
+      // existence oracle over the whole vault. The raw link text is safe to
+      // echo: it stands in a note the key is already reading.
       const outgoing = context.app.queries
         .outgoingLinks(context.key.owner, context.key.owner, notePath)
-        .filter((link) => link.targetPath === null || withinScope(context.key, link.targetPath));
+        .map((link) =>
+          link.targetPath !== null && !withinScope(context.key, link.targetPath)
+            ? { ...link, targetPath: null }
+            : link,
+        );
 
       context.keys.log(context.key, 'get_links', notePath, true);
 
