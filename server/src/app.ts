@@ -10,6 +10,7 @@
 
 import type { Indexer } from './index/indexer.js';
 import { Queries, toView, type NoteRow, type Viewable } from './index/queries.js';
+import { withinPrefix } from './auth/shares.js';
 import { addTag, removeTag } from './markdown/edit.js';
 import { proposeFor, type TopicProposal } from './notes/topics.js';
 import { parseNote } from './markdown/parse.js';
@@ -28,7 +29,11 @@ import { InvalidPathError, NotAFileError, NoteNotFoundError } from './errors.js'
 
 export interface RenameResult {
   note: Note;
-  /** Notes whose links were rewritten to follow the move. */
+  /**
+   * Notes whose links were rewritten to follow the move — restricted to the
+   * ones the caller may read. See `renameNote` for why the list is reported
+   * narrower than the rewrite it describes.
+   */
   updatedLinks: string[];
 }
 
@@ -266,8 +271,35 @@ export class App {
    * recorded offset, back to front so earlier offsets stay valid. Replacing by
    * search-and-replace would also hit occurrences inside code blocks, which the
    * parser deliberately does not treat as links.
+   *
+   * **`view` bounds what is reported, never what is rewritten.** The rewrite has
+   * to cover the whole vault or the owner is left with dead links, but the list
+   * of notes it touched is a set of paths derived from links — the same thing a
+   * backlink list is, and it obeys the same boundary. A grantee of one folder
+   * renaming a note in it was handed `Privat/Heimlich.md` in this field: a full
+   * path out of the private half of somebody else's vault, for free, on a write
+   * she was entitled to make.
+   *
+   * The **count** is filtered rather than dropped, because it is derived from
+   * the filtered list and not computed separately. "Links updated in 2 notes"
+   * where only one is nameable would say the second exists — the leak the node
+   * degree in `graph()` had. Reported as the length of what is named, the number
+   * says exactly as much as the list, which is what the caller could already
+   * count for herself from `/api/v1/backlinks`. Suppressing it entirely would
+   * take a real piece of feedback away from the owner — whose view is the whole
+   * vault, and who is nearly always the person renaming — to protect nothing.
+   *
+   * Absence carries no information here either: the notes left out are precisely
+   * the ones `backlinks` would already have left out, so a rename tells the
+   * caller nothing a read did not.
    */
-  async renameNote(owner: string, from: string, to: string, actor?: string): Promise<RenameResult> {
+  async renameNote(
+    owner: string,
+    from: string,
+    to: string,
+    actor?: string,
+    view: Viewable = owner,
+  ): Promise<RenameResult> {
     const source = normalizeVaultPath(from);
     const target = normalizeVaultPath(to);
 
@@ -313,7 +345,10 @@ export class App {
     this.indexer.resolveLinks(owner);
     this.#recordEdit(owner, target, 'rename', actor);
 
-    return { note: await this.notes.getNote(owner, target), updatedLinks: updated };
+    return {
+      note: await this.notes.getNote(owner, target),
+      updatedLinks: visibleIn(view, owner, updated),
+    };
   }
 
   /** Rewrites links in one note. Returns whether anything changed. */
@@ -463,6 +498,15 @@ export class App {
    * Empty subfolders are carried over separately afterwards: no note move would
    * have taken them, and losing them would quietly flatten a structure somebody
    * built on purpose.
+   *
+   * **Own vault only, and it takes no view for that reason.** `movedNotes` and
+   * `updatedLinks` are both lists of paths, so a caller acting for somebody else
+   * would leak the same way `renameNote` did — but filtering the report would be
+   * the smaller half of the problem here. A folder may straddle the edge of a
+   * share, and this moves everything under it: the damage would be notes written
+   * outside the grantee's region, not merely named. The route therefore takes
+   * the owner from the session and never from the request, and this stays a
+   * whole-vault operation. Anything else needs the boundary decided first.
    */
   async renameFolder(
     owner: string,
@@ -573,6 +617,22 @@ export class App {
 
     return { notes: this.queries.recentNotes(view, 100_000), dirs };
   }
+}
+
+/**
+ * The paths in `owner`'s vault that `view` is allowed to read.
+ *
+ * The counterpart, for a list a write path has already built in memory, of the
+ * `scopeSql` fragment every read query carries. A write is entitled to reach
+ * across the whole vault — that is what keeps the owner's links working — but
+ * what it *reports* is answerable to the same boundary as a read, or the write
+ * becomes the way around it.
+ */
+function visibleIn(viewable: Viewable, owner: string, paths: string[]): string[] {
+  const view = toView(viewable);
+  return paths.filter((notePath) =>
+    view.some((scope) => scope.owner === owner && withinPrefix(scope.prefix, notePath)),
+  );
 }
 
 /** True if a link target, as written, refers to `notePath`. */

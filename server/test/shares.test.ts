@@ -468,6 +468,120 @@ describe('links stop at the sharing boundary', () => {
   });
 });
 
+/**
+ * The same boundary, on a path that writes.
+ *
+ * A rename rewrites every `[[wikilink]]` that pointed at the note, across the
+ * whole of the owner's vault — that part is correct and has to stay. What the
+ * caller is told about it is a different question: the list of rewritten notes
+ * is a set of paths derived from links, and handing it back unfiltered names
+ * notes the caller was never given.
+ */
+describe('renaming inside a share', () => {
+  /**
+   * `Projekt/Technik.md` is linked to from both halves of the vault: from
+   * `Projekt/Plan.md`, which Ramona may read, and from `Privat/Heimlich.md`,
+   * which she may not.
+   */
+  async function linkedFromBothHalves(): Promise<void> {
+    await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
+    await share('Projekt', true);
+  }
+
+  async function renameTechnik(): Promise<{ status: number; body: any }> {
+    return as('ramona', {
+      method: 'POST',
+      url: '/api/v1/rename',
+      payload: { owner: 'julian', from: 'Projekt/Technik.md', to: 'Projekt/Technik-neu.md' },
+    });
+  }
+
+  it('does not name the notes outside the share whose links it rewrote', async () => {
+    await linkedFromBothHalves();
+
+    const { status, body } = await renameTechnik();
+
+    expect(status).toBe(200);
+    expect(body.updatedLinks).toEqual(['Projekt/Plan.md']);
+    expect(JSON.stringify(body)).not.toContain('Privat');
+  });
+
+  it('rewrites the hidden link all the same, so the owner keeps a working vault', async () => {
+    await linkedFromBothHalves();
+    await renameTechnik();
+
+    const hidden = await runtime.notes.getNote('julian', 'Privat/Heimlich.md');
+    expect(hidden.content).toContain('[[Technik-neu]]');
+  });
+
+  /**
+   * The count is derived from the list, so it has to be filtered with it.
+   * "Links updated in 2 notes" where the caller can only see one of them says
+   * the second exists — the same leak as the node degree in the graph, in a
+   * response nobody was looking at.
+   */
+  it('counts only what it names', async () => {
+    await linkedFromBothHalves();
+
+    const { body } = await renameTechnik();
+    expect(body.updatedLinks).toHaveLength(1);
+  });
+
+  it('makes the private half no different from an empty one', async () => {
+    await linkedFromBothHalves();
+
+    // The same rename in a vault that never had the private notes at all. If
+    // the two answers differ in any byte, the difference is the leak.
+    const withPrivate = (await renameTechnik()).body;
+
+    await runtime.app.deleteNote('julian', 'Privat/Heimlich.md');
+    await runtime.app.deleteNote('julian', 'Privat/Tagebuch.md');
+    await runtime.app.deleteNote('julian', 'Verweis.md');
+
+    const without = (
+      await as('ramona', {
+        method: 'POST',
+        url: '/api/v1/rename',
+        payload: { owner: 'julian', from: 'Projekt/Technik-neu.md', to: 'Projekt/Technik.md' },
+      })
+    ).body;
+
+    expect(without.updatedLinks).toEqual(withPrivate.updatedLinks);
+  });
+
+  it('leaves the owner the whole list, because all of it is his', async () => {
+    await linkedFromBothHalves();
+
+    const { body } = await as('julian', {
+      method: 'POST',
+      url: '/api/v1/rename',
+      payload: { from: 'Projekt/Technik.md', to: 'Projekt/Technik-neu.md' },
+    });
+
+    expect(body.updatedLinks.sort()).toEqual(['Privat/Heimlich.md', 'Projekt/Plan.md']);
+  });
+
+  /**
+   * A folder rename is the caller's own vault by construction — the route takes
+   * the owner from the session and never from the request. Asserted rather than
+   * assumed, because the note rename above looked the same way until it did not.
+   */
+  it('refuses a folder rename in somebody else\'s vault outright', async () => {
+    await linkedFromBothHalves();
+
+    const { body } = await as('ramona', {
+      method: 'POST',
+      url: '/api/v1/folders/rename',
+      payload: { owner: 'julian', from: 'Projekt', to: 'Projekt-neu' },
+    });
+
+    // Ramona has no `Projekt` of her own, so this is a 404 about her own vault
+    // and never touches Julian's.
+    expect(JSON.stringify(body)).not.toContain('Privat');
+    expect(runtime.app.queries.getNote('julian', 'julian', 'Projekt/Plan.md')).toBeDefined();
+  });
+});
+
 describe('withdrawing a share', () => {
   it('ends access immediately, with no cached decision', async () => {
     const id = await share('Projekt', true);
