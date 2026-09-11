@@ -8,6 +8,7 @@
  * note, look at it, and demand the bytes back unchanged.
  */
 
+import { undo } from '@codemirror/commands';
 import { EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { describe, expect, it } from 'vitest';
@@ -89,6 +90,11 @@ function type(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+/** The whitespace a line starts with — in Markdown, that is meaning, not layout. */
+function prefix(line: string): string {
+  return /^[ \t]*/.exec(line)?.[0] ?? '';
+}
+
 function press(input: HTMLInputElement, key: string, shift = false): void {
   input.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey: shift, bubbles: true, cancelable: true }));
 }
@@ -131,6 +137,23 @@ describe('the file is the truth', () => {
     expect(after.slice(0, TABLE_AT)).toEqual(before.slice(0, TABLE_AT));
     expect(after.slice(TABLE_AT + TABLE_LINES)).toEqual(before.slice(TABLE_AT + TABLE_LINES));
     expect(after.slice(TABLE_AT, TABLE_AT + TABLE_LINES).join('\n')).toContain('pausiert');
+    // "Only the table's lines changed" is weaker than it sounds: it is also true
+    // of a rewrite that puts those lines back on a different column. What has to
+    // hold is that each of them keeps the prefix it had.
+    expect(after.slice(TABLE_AT, TABLE_AT + TABLE_LINES).map(prefix)).toEqual(
+      before.slice(TABLE_AT, TABLE_AT + TABLE_LINES).map(prefix),
+    );
+    view.destroy();
+  });
+
+  it('takes a run of typing back in one go, not letter by letter', () => {
+    const view = open(NOTE);
+    const input = cell(view, 1, 1);
+    for (const value of ['aktiv2', 'aktiv20', 'aktiv202', 'aktiv2026']) type(input, value);
+    expect(view.state.doc.toString()).not.toBe(NOTE);
+
+    undo(view);
+    expect(view.state.doc.toString()).toBe(NOTE);
     view.destroy();
   });
 
@@ -181,6 +204,37 @@ describe('the file is the truth', () => {
     type(cell(view, 1, 1), 'geht nicht');
     expect(view.state.doc.toString()).toBe(NOTE);
     view.destroy();
+  });
+});
+
+/**
+ * Indentation is not layout in Markdown. Two spaces put a table inside a list
+ * item; four put it inside a code block, where it is not a table at all. A
+ * drawn table that came back on column zero would quietly take a row out of its
+ * list — or turn somebody's example of a table into a real one.
+ */
+describe('what is not offered as a table', () => {
+  const SHAPES: Array<[string, string]> = [
+    ['a table under a bullet', '- Punkt:\n  | a | b |\n  | --- | --- |\n  | 1 | 2 |\n'],
+    ['a table under a numbered item', '1. Punkt:\n   | a | b |\n   | --- | --- |\n   | 1 | 2 |\n'],
+    ['a table two levels in', '- A\n  - B:\n    | a | b |\n    | --- | --- |\n    | 1 | 2 |\n'],
+    ['an indented code block', 'Beispiel:\n\n    | a | b |\n    | --- | --- |\n    | 1 | 2 |\n'],
+    ['a quoted table', '> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n'],
+  ];
+
+  for (const [what, source] of SHAPES) {
+    it(`leaves ${what} as the text it is`, () => {
+      const view = open(source);
+
+      // Nothing drawn, so there is no cell an edit could start from.
+      expect(view.dom.querySelector('.cm-table')).toBeNull();
+      expect(view.state.doc.toString()).toBe(source);
+      view.destroy();
+    });
+  }
+
+  it('finds none of them', () => {
+    for (const [, source] of SHAPES) expect(findTables(source)).toEqual([]);
   });
 });
 
@@ -253,10 +307,17 @@ describe('writing a table', () => {
     expect(serializeTable(edited)[2]).toContain('`x\\|y`');
   });
 
-  it('never drops a cell a row has beyond the header', () => {
+  it('never drops a cell a row has beyond the header, and never spreads it', () => {
     const table = findTables('| a | b |\n| --- | --- |\n| 1 | 2 | 3 |')[0];
     expect(table?.rows[1]).toEqual(['1', '2', '3']);
-    expect(serializeTable(table!)[2]).toContain('3');
+
+    const lines = serializeTable(table!);
+    expect(lines[2]).toContain('3');
+    // The odd cell stays in the row that has it. Growing the header and the
+    // delimiter to match would answer one person's stray pipe by changing the
+    // shape of their table.
+    expect(splitCells(lines[0] ?? '')).toHaveLength(2);
+    expect(splitCells(lines[1] ?? '')).toHaveLength(2);
   });
 
   it('spells a pipe out of and back into a cell unchanged', () => {
@@ -291,6 +352,28 @@ describe('filling a table in', () => {
     last.focus();
     press(last, 'Tab');
     expect(document.activeElement).toBe(cell(view, 2, 0));
+    view.destroy();
+  });
+
+  it('walks a row that carries one cell more than the header', () => {
+    const view = open('| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n');
+    const second = cell(view, 1, 1);
+    second.focus();
+    press(second, 'Tab');
+
+    expect(document.activeElement).toBe(cell(view, 1, 2));
+    view.destroy();
+  });
+
+  it('lets Tab out of the table at the last cell', () => {
+    const view = open('| a | b |\n| --- | --- |\n| 1 | 2 |\n');
+    const last = cell(view, 1, 1);
+    last.focus();
+    const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    last.dispatchEvent(event);
+
+    // Not claimed: Tab goes on meaning what it means everywhere else.
+    expect(event.defaultPrevented).toBe(false);
     view.destroy();
   });
 
