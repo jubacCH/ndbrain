@@ -334,7 +334,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // rewrite itself still covers the whole of the owner's vault — see
     // App.renameNote — because links the grantee cannot see still have to keep
     // working for the person whose notes they are.
-    return app.renameNote(owner, from, to, caller, shares.view(caller));
+    return app.renameNote(owner, from, to, { view: shares.view(caller), actor: caller });
   });
 
   // ---- folders ------------------------------------------------------------
@@ -987,7 +987,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         if (!shares.allows(caller, owner, `${dir}/x.md`.replace(/^\/+/, ''), 'write')) {
           return reply.code(404).send({ code: 'not_found', message: 'no such note' });
         }
-        return merge(app.bulkMove(owner, allowed, dir, caller));
+        // The caller's view, not the owner's: this route takes an `owner` from
+        // the body, so a bulk move is routinely made by somebody else. A move
+        // renames, and a rename reports which notes its links were rewritten in.
+        return merge(app.bulkMove(owner, allowed, dir, { view: shares.view(caller), actor: caller }));
       case 'tag':
         if (tag === '') {
           return reply.code(400).send({ code: 'no_tag', message: 'no tag given' });

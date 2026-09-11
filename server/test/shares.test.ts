@@ -711,6 +711,71 @@ describe('what counts as orphaned stops at the sharing boundary', () => {
   });
 });
 
+/**
+ * A bulk move is a rename, and it renames for somebody else.
+ *
+ * `POST /api/v1/bulk` takes an `owner` from the body, so the caller and the
+ * vault are routinely different people — which makes it the one caller of
+ * `renameNote` that must hand over the *caller's* view. It was passing none at
+ * all, and the harm was hidden only because `BulkResult` does not carry the
+ * list of rewritten notes.
+ */
+describe('a bulk move renames on the caller\'s behalf', () => {
+  beforeEach(async () => {
+    await share('Projekt', true);
+    await runtime.app.createNote('julian', 'Projekt/Unter/Technik2.md', '# Technik2\n');
+    await runtime.app.createNote('julian', 'Projekt/Plan2.md', 'Siehe [[Technik2]].\n');
+    await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Technik2]].\n');
+  });
+
+  async function move(): Promise<{ status: number; body: any }> {
+    return as('ramona', {
+      method: 'POST',
+      url: '/api/v1/bulk',
+      payload: {
+        owner: 'julian',
+        action: 'move',
+        paths: ['Projekt/Unter/Technik2.md'],
+        dir: 'Projekt',
+      },
+    });
+  }
+
+  it('moves the note and says nothing about the private half', async () => {
+    const { status, body } = await move();
+
+    expect(status).toBe(200);
+    expect(body.ok).toEqual(['Projekt/Technik2.md']);
+    expect(JSON.stringify(body)).not.toContain('Privat');
+  });
+
+  it('rewrites the hidden link all the same', async () => {
+    await move();
+
+    const hidden = await runtime.notes.getNote('julian', 'Privat/Heimlich.md');
+    expect(hidden.content).toContain('[[Technik2]]');
+    expect((await runtime.notes.getNote('julian', 'Projekt/Plan2.md')).content).toContain(
+      '[[Technik2]]',
+    );
+  });
+
+  /**
+   * The audit entry names the person, not the vault.
+   *
+   * Worth its own case because of how the view reached this call. `Viewable` is
+   * `string | View` and `actor` is a string, so a view handed over positionally
+   * next to the actor can be bound to the wrong parameter and still compile —
+   * which happened once while this was being written, and cost the attribution
+   * silently. Here that failure is loud.
+   */
+  it('still records who made the move', async () => {
+    await move();
+
+    const activity = runtime.app.queries.activity('julian', 0);
+    expect(activity.find((row) => row.path === 'Projekt/Technik2.md')?.actor).toBe('ramona');
+  });
+});
+
 describe('withdrawing a share', () => {
   it('ends access immediately, with no cached decision', async () => {
     const id = await share('Projekt', true);

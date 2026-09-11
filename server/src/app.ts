@@ -292,14 +292,31 @@ export class App {
    * Absence carries no information here either: the notes left out are precisely
    * the ones `backlinks` would already have left out, so a rename tells the
    * caller nothing a read did not.
+   *
+   * **`view` is required, and named rather than positional.** It began as an
+   * optional parameter defaulting to the owner's own vault, on the argument that
+   * every internal caller renames inside one — which was simply wrong.
+   * `bulkMove` renames on behalf of whoever sent the request, `owner` included
+   * in the body, and it took the default silently: the filter was off for every
+   * bulk move a grantee made. Nothing leaked, because `BulkResult` happens not
+   * to carry the list — which is safety by throwing the answer away, and lasts
+   * exactly until somebody adds a field.
+   *
+   * Making it a required *positional* parameter was not enough, and that is why
+   * it is an object. `Viewable` is `string | View`, and `actor` is a string, so
+   * the existing `bulkMove(owner, paths, dir, caller)` went on compiling with
+   * the caller's name silently rebound as the view and the actor lost — a wrong
+   * answer and a wrong audit entry, from a call nobody had to touch. Two
+   * interchangeable string parameters next to each other are a trap whoever
+   * reorders them next falls into; named ones cannot be swapped by accident.
    */
   async renameNote(
     owner: string,
     from: string,
     to: string,
-    actor?: string,
-    view: Viewable = owner,
+    options: { view: Viewable; actor?: string },
   ): Promise<RenameResult> {
+    const { view, actor } = options;
     const source = normalizeVaultPath(from);
     const target = normalizeVaultPath(to);
 
@@ -416,12 +433,21 @@ export class App {
     return result;
   }
 
-  /** Moves a selection into a folder, rewriting the links that follow them. */
+  /**
+   * Moves a selection into a folder, rewriting the links that follow them.
+   *
+   * The only one of the four bulk actions that takes a view, because it is the
+   * only one that rewrites links: it renames, and a rename reports which notes
+   * it touched. The others return the caller's own selection back to her and
+   * have nothing to bound. The view is the *caller's*, never the owner's — this
+   * route accepts an `owner` in the body, so the two are routinely different
+   * people.
+   */
   async bulkMove(
     owner: string,
     paths: string[],
     targetDir: string,
-    actor?: string,
+    options: { view: Viewable; actor?: string },
   ): Promise<BulkResult> {
     const folder = targetDir.replace(/^\/+|\/+$/g, '');
 
@@ -430,7 +456,7 @@ export class App {
       const target = folder === '' ? name : `${folder}/${name}`;
       if (target === notePath) return notePath;
 
-      const { note } = await this.renameNote(owner, notePath, target, actor);
+      const { note } = await this.renameNote(owner, notePath, target, options);
       return note.path;
     });
   }
@@ -557,7 +583,16 @@ export class App {
     const updatedLinks = new Set<string>();
 
     for (const notePath of notes) {
-      const result = await this.renameNote(owner, notePath, rebase(notePath), actor);
+      // `owner` as the view, spelled out: this operation is the owner's own
+      // vault by construction (see the docstring), so the whole vault is what
+      // may be reported. Nothing here is allowed to inherit that silently.
+      const result = await this.renameNote(owner, notePath, rebase(notePath), {
+        // Spelled out: this operation is the owner's own vault by construction
+        // (see the docstring), so the whole vault is what may be reported.
+        // Nothing here is allowed to inherit that silently.
+        view: owner,
+        ...(actor === undefined ? {} : { actor }),
+      });
       movedNotes.push(result.note.path);
       for (const link of result.updatedLinks) updatedLinks.add(link);
     }
