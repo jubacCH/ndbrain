@@ -255,6 +255,29 @@ describe('scope narrows further, never wider', () => {
     expect((await call(scopedKey, 'list_notes')).text).not.toContain('Homelab2/');
     expect((await call(scopedKey, 'get_note', { path: 'Homelab2/Fremd.md' })).isError).toBe(true);
   });
+
+  /**
+   * The map obeys the scope like every other tool.
+   *
+   * It was the one that wrote the rule out by hand instead of asking for it,
+   * and it was also the one with no test behind it — so the copy could have
+   * drifted from the original without a single case going red.
+   */
+  it('maps only what the scope covers', async () => {
+    await runtime.app.createNote('julian', 'Homelab2/Fremd.md', 'nicht im scope\n');
+
+    const { text } = await call(scopedKey, 'vault_map');
+
+    expect(text).toContain('Homelab/Proxmox.md');
+    expect(text).not.toContain('Privat/');
+    expect(text).not.toContain('Homelab2/');
+  });
+
+  it('maps the whole vault for a key with no scope at all', async () => {
+    const { text } = await call(fullKey, 'vault_map');
+    expect(text).toContain('Homelab/Proxmox.md');
+    expect(text).toContain('Privat/Gedanken.md');
+  });
 });
 
 describe('read-only keys', () => {

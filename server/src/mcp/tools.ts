@@ -216,7 +216,13 @@ export const TOOLS: ToolDefinition[] = [
         .vaultMap(context.key.owner, 5000)
         // The key's own scope on top of the owner's vault, exactly as everywhere
         // else: a key always sees less than its owner, never more.
-        .filter((row) => row.path.startsWith(context.key.scope))
+        //
+        // Through `withinScope` and not by comparing the prefix here. The two
+        // agree today and that is the whole danger: the moment the shared rule
+        // changes — how an empty scope reads, how a trailing slash is handled,
+        // whether case matters — the copy would keep answering the old question
+        // and nothing would say so. One rule, one place, for every tool.
+        .filter((row) => withinScope(context.key, row.path))
         .filter((row) => row.path.startsWith(prefix))
         .slice(0, clampLimit(input['limit'], 500));
 
