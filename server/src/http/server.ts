@@ -330,7 +330,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     shares.check(caller, owner, from, 'write');
     shares.check(caller, owner, to, 'write');
 
-    return app.renameNote(owner, from, to, caller);
+    // The caller's view goes along, and only the report is bounded by it. The
+    // rewrite itself still covers the whole of the owner's vault — see
+    // App.renameNote — because links the grantee cannot see still have to keep
+    // working for the person whose notes they are.
+    return app.renameNote(owner, from, to, caller, shares.view(caller));
   });
 
   // ---- folders ------------------------------------------------------------
