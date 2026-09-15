@@ -85,6 +85,18 @@ export interface Scene {
   height: number;
 }
 
+/**
+ * How large a cell body is drawn: its layout radius, leaning on depth.
+ *
+ * Exported because the hit test has to use the same outline. It once used the
+ * layout radius instead, which is up to a tenth smaller for the nodes drawn
+ * furthest forward — invisible at the starting zoom, and a ring around every
+ * magnified node where a press panned the camera instead of grabbing the node.
+ */
+export function bodyRadius(layoutRadius: number, depth: number): number {
+  return layoutRadius * (0.8 + depth * 0.3);
+}
+
 /** How many labels may be on screen at once. More text crowds exactly where the
  *  nodes are densest anyway. */
 const MAX_LABELS = 4;
@@ -133,7 +145,7 @@ export class SceneBuilder {
       const out = scene.nodes[i]!;
       out.x = layout.x[i]!;
       out.y = layout.y[i]!;
-      out.r = layout.r[i]! * (0.8 + depth * 0.3);
+      out.r = bodyRadius(layout.r[i]!, depth);
       out.colour = heat > 0 ? PULSE_COLOUR[activity.kind[i]!] : base;
       out.alpha = (node.degree === 0 ? 0.24 : 0.72) * (0.55 + depth * 0.45) + heat * 0.5;
       out.heat = heat;
