@@ -15,6 +15,8 @@
 
 import type { GraphData } from '../api';
 import { refKey } from '../refkey';
+import type { Clustering, TagsByKey } from './clusters';
+import { detectClusters } from './clusters';
 import { unit } from './seed';
 
 /**
@@ -73,6 +75,21 @@ export interface BrainGraph {
   order: number[];
   /** The most connected node, or -1 for an empty graph. The one always-on label. */
   hub: number;
+  /**
+   * Which notes belong together, from links, folders and tags.
+   *
+   * Part of the model because it is a property of the vault's structure, like
+   * the edges: it changes when a link does and not when anything moves.
+   */
+  clusters: Clustering;
+}
+
+export interface BuildOptions {
+  /**
+   * Tags per node key, when the caller has them. The graph endpoint does not
+   * send tags, so without this the clusters come from links and folders alone.
+   */
+  tags?: TagsByKey;
 }
 
 /**
@@ -83,7 +100,7 @@ export interface BrainGraph {
  * neighbourhood panel hands over a subgraph, and half an edge has nowhere to go.
  * A self-edge is dropped too, because a bezier from a point to itself is a dot.
  */
-export function buildGraph(data: GraphData): BrainGraph {
+export function buildGraph(data: GraphData, options: BuildOptions = {}): BrainGraph {
   const folders = new Map<string, number>();
   for (const n of data.nodes) {
     if (!folders.has(n.folder)) folders.set(n.folder, folders.size);
@@ -128,5 +145,6 @@ export function buildGraph(data: GraphData): BrainGraph {
     if (hub === -1 || nodes[i]!.degree > nodes[hub]!.degree) hub = i;
   }
 
-  return { nodes, edges, index, touching, order, hub };
+  const clusters = detectClusters({ nodes, edges }, options.tags);
+  return { nodes, edges, index, touching, order, hub, clusters };
 }
