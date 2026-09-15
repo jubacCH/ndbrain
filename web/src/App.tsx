@@ -1309,7 +1309,12 @@ function Shell({
               <p className="empty" style={{ padding: '2rem' }}>{copy.overview.loadingGraph}</p>
             ) : (
               <div className="brainwrap">
-                <Brain data={graph} events={pulse} onOpen={(owner, path) => void openNote(owner, path)} />
+                <Brain
+                  data={graph}
+                  events={pulse}
+                  onOpen={(owner, path) => void openNote(owner, path)}
+                  remember="network"
+                />
                 <div className="brainlegend">
                   <span><i style={{ background: '#7fe9f0' }} />{copy.network.read}</span>
                   <span><i style={{ background: '#ffb86b' }} />{copy.network.written}</span>

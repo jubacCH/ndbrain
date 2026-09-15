@@ -271,8 +271,11 @@ export const copy = {
   },
 
   network: {
+    /** Named for a screen reader; the canvas itself says nothing out loud. */
+    canvas: 'Relationships between your notes',
     read: 'read',
     written: 'written',
+    resetView: 'Reset view',
     stats: (notes: number, links: number, loose: number) =>
       `${notes} notes · ${links} links · ${loose} without a connection`,
     doubleClick: 'Double-click opens the note',
