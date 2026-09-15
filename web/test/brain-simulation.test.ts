@@ -10,7 +10,9 @@
  * placement and containment, a temperature that brings it to rest. None of the
  * old numbers could survive that, and keeping them would have meant keeping the
  * old loop. They were replaced in the same commit that changed the simulation,
- * after the new picture had been looked at.
+ * after the new picture had been looked at. They were replaced again when a
+ * held note stopped freeing the whole brain and started freeing only its
+ * neighbours: the scenario holds a note, so the numbers after step 120 changed.
  *
  * Why still frozen numbers, when `brain-form.test.ts` measures the behaviour?
  * Because behaviour tests have tolerances wide enough for the next person to
@@ -60,25 +62,25 @@ const REFERENCE: Record<number, Fingerprint> = {
     ],
   },
   160: {
-    sumX: 4831.9755563206745,
-    sumY: 2980.631143228091,
+    sumX: 4675.430871597464,
+    sumY: 2840.8153904264555,
     probes: [
-      [-90.1387537510175, -223.50404136724896],
-      [-464.16409097901385, -95.7345654357586],
-      [146.69097619524885, -111.21923788795532],
-      [389.2137801673563, 313.38122142398936],
-      [289.68374745445647, -312.8187949457619],
+      [-91.66017917705969, -231.48136724906294],
+      [-463.59473243391164, -102.64178727100577],
+      [151.7074206320368, -111.06000744197063],
+      [382.9567888455868, 320.7874846237015],
+      [285.84125133940915, -313.2058368949751],
     ],
   },
   400: {
-    sumX: 4901.3819851542485,
-    sumY: 3209.7427664660686,
+    sumX: 4684.426436840193,
+    sumY: 2826.9312351714552,
     probes: [
-      [-88.99506502556792, -222.0992096388492],
-      [-462.4753864432969, -86.86084566054316],
-      [136.3595716044445, -113.41328310140861],
-      [399.9871392859241, 298.60078386597644],
-      [296.3248355548215, -312.50159039698946],
+      [-91.66017917705969, -231.48136724906294],
+      [-463.59473243391164, -102.64178727100577],
+      [151.7074206320368, -111.06000744197063],
+      [382.9567888455868, 320.7874846237015],
+      [285.84125133940915, -313.2058368949751],
     ],
   },
 };

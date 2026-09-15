@@ -109,6 +109,13 @@ const GLIDE_MS = 320;
  */
 const SAVE_MS = 5000;
 
+/**
+ * How far, in screen pixels, a press on a note has to travel before it counts as
+ * a drag. Below it, it is a click: a hand never holds a mouse perfectly still,
+ * and a click that nudged the layout would, over a day of clicking, move it.
+ */
+const DRAG_SLOP = 4;
+
 /** Breathing room around the fitted world when the caller asks for none. */
 const EDGE: Inset = { top: 12, right: 12, bottom: 12, left: 12 };
 
@@ -133,6 +140,13 @@ interface Engine {
   picked: number;
   /** The node being dragged, or -1. */
   drag: number;
+  /** A press on a node that has not yet moved far enough to be a drag. */
+  press: { node: number; x: number; y: number } | null;
+  /**
+   * Whether the positions changed since they were last stored. A brain that
+   * has come to rest is not written back every few seconds for nothing.
+   */
+  dirty: boolean;
   /** Where the pointer was when panning, in screen pixels, or null. */
   pan: { x: number; y: number } | null;
   /** Which node is under a point. Rebuilt on demand, not per frame. */
@@ -180,8 +194,12 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     const rect = canvas.getBoundingClientRect();
     const graph = buildGraph(data);
     const store = remember ?? null;
-    // The same view refetched, as opposed to a first mount or another note.
-    const same = engine.current !== null && engine.current.view === view ? engine.current : null;
+    // The same view refetched, as opposed to a first mount or another note — or
+    // the same view of another account after signing in again.
+    const same =
+      engine.current !== null && engine.current.view === view && engine.current.store?.account === remember?.account
+        ? engine.current
+        : null;
 
     // A refetch starts from where the nodes are *now*, not from storage, which
     // can be up to one save interval behind — reading it back would make every
@@ -195,7 +213,10 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     // it assemble is a few seconds of motion that says nothing, on a view whose
     // resting state is meant to be calm; a remembered one only has to absorb
     // what changed, and does that on screen, briefly.
-    if (layout.rememberedShare < 0.5) layout.settle();
+    // Under reduced motion the frame loop never steps, so whatever has to move —
+    // a note captured since, its neighbours — is settled here or never.
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (layout.rememberedShare < 0.5 || reduce) layout.settle();
 
     // The camera and the selection survive a refetch of the same view. Yanking
     // the view back to the overview mid-read would punish the user for somebody
@@ -215,6 +236,9 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       glide: null,
       picked,
       drag: -1,
+      press: null,
+      // Nothing to write if every note came from storage and none has to move.
+      dirty: !(same === null && layout.rememberedShare === 1 && layout.settled),
       pan: null,
       hits: new HitIndex(layout),
       width: rect.width,
@@ -262,9 +286,10 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     window.addEventListener('resize', measure);
 
     const persist = (e: Engine, now: number, force: boolean): void => {
-      if (e.store === null) return;
+      if (e.store === null || !e.dirty) return;
       if (!force && now - e.savedAt < SAVE_MS) return;
       e.savedAt = now;
+      e.dirty = false;
       savePositions(e.store, e.layout.positions());
     };
 
@@ -295,7 +320,10 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         if (!reduce) {
           // Nothing to compute once it has come to rest; the frame still draws,
           // because pulses still fire.
-          if (e.layout.step()) e.hits.invalidate();
+          if (e.layout.step()) {
+            e.hits.invalidate();
+            e.dirty = true;
+          }
           e.activity.advance();
         }
         persist(e, now, false);
@@ -362,6 +390,11 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
      * move the camera. Deciding it once at `pointerdown` is what keeps it
      * predictable — a drag that changed its mind partway, because the pointer
      * happened to cross a node, would be unusable.
+     *
+     * A press on a note is only a candidate, though. It becomes a drag — and
+     * the layout is only touched — once the pointer has travelled `DRAG_SLOP`
+     * pixels. A click, a double click, a press that trembles: none of them
+     * moves anything.
      */
     const onDown = (event: PointerEvent): void => {
       const e = engine.current;
@@ -370,9 +403,8 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       e.glide = null;
       canvas.setPointerCapture(event.pointerId);
       if (hit >= 0) {
-        e.drag = hit;
+        e.press = { node: hit, x: event.clientX, y: event.clientY };
         e.picked = hit;
-        e.layout.hold(hit);
       } else {
         e.pan = { x: event.clientX, y: event.clientY };
       }
@@ -381,11 +413,17 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     const onMove = (event: PointerEvent): void => {
       const e = engine.current;
       if (e === null) return;
+      if (e.press !== null && e.drag < 0) {
+        if (Math.hypot(event.clientX - e.press.x, event.clientY - e.press.y) <= DRAG_SLOP) return;
+        e.drag = e.press.node;
+        e.layout.hold(e.drag);
+      }
       if (e.drag >= 0) {
         const rect = canvas.getBoundingClientRect();
         const at = toWorld(e.camera, event.clientX - rect.left, event.clientY - rect.top);
         e.layout.place(e.drag, at.x, at.y);
         e.hits.invalidate();
+        e.dirty = true;
         return;
       }
       if (e.pan !== null) {
@@ -399,8 +437,17 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     const onUp = (): void => {
       const e = engine.current;
       if (e === null) return;
-      if (e.drag >= 0) e.layout.release();
+      if (e.drag >= 0) {
+        e.layout.release();
+        // The frame loop does not step under reduced motion: the neighbours
+        // settle around the dropped note at once instead of never.
+        if (reduce) {
+          e.layout.settle();
+          e.hits.invalidate();
+        }
+      }
       e.drag = -1;
+      e.press = null;
       e.pan = null;
     };
 
