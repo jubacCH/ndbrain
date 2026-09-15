@@ -658,7 +658,7 @@ export class Queries {
    *
    * Recognition is not a second, hand-written pattern: `parseConflictPath` in that
    * same module is the one place that reads the name back, so this and the write
-   * path cannot drift apart — `conflict.test.ts` checks both against each other.
+   * path cannot drift apart — `conflicts.test.ts` checks both against each other.
    *
    * `n.path LIKE` is only a coarse prefilter to keep the scan cheap; an ordinary
    * note whose title happens to contain "(Konflikt" is ruled back out by the exact
@@ -682,10 +682,21 @@ export class Queries {
     );
 
     const originalScope = scopeSql('o', 'path', view);
+    // `LOWER(...)`, not `=`: `conflictPath` strips the original's extension
+    // case-insensitively but always writes the copy's own extension in
+    // lowercase, so a original named e.g. "Plan.MD" (a legal note — `isNotePath`
+    // accepts any case) is indistinguishable, from the copy's name alone, from
+    // one named "Plan.md". `parseConflictPath` has to guess, and always guesses
+    // lowercase. A case-sensitive lookup on that guess would then call an
+    // existing original "gone" for no reason but a letter's case. This is safe
+    // to widen only here: the case-collision guard in `notes/service.ts`
+    // already refuses two sibling notes that differ solely by case, so at most
+    // one note can ever match, and it is still pinned to this exact owner and
+    // to the caller's view.
     const findOriginal = (owner: string, path: string): { title: string } | undefined =>
       this.#db.get<{ title: string }>(
         `SELECT o.title AS title FROM notes o
-          WHERE o.owner = ? AND o.path = ? AND ${originalScope.sql}`,
+          WHERE o.owner = ? AND LOWER(o.path) = LOWER(?) AND ${originalScope.sql}`,
         owner,
         path,
         ...originalScope.params,
