@@ -9,7 +9,7 @@
 import { Fragment, useState } from 'react';
 import { copy } from './copy';
 
-import { refKey, type LinkRow, type NoteRow, type Overview, type SearchHit, type Share, type TaskRow, type Tasks, type Tidy } from './api';
+import { refKey, type ConflictRow, type LinkRow, type NoteRow, type Overview, type SearchHit, type Share, type TaskRow, type Tasks, type Tidy } from './api';
 
 const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
 
@@ -68,6 +68,7 @@ export function OverviewView({
       ? [{ label: copy.overview.untagged, kind: 'warn' as const, count: counts.untagged }]
       : []),
     { label: copy.overview.untouched, kind: 'warn' as const, count: counts.stale },
+    { label: copy.overview.conflictCopies, kind: 'warn' as const, count: counts.conflicts },
   ];
   const active = findings.filter((f) => f.count > 0);
   const clear = findings.filter((f) => f.count === 0);
@@ -293,6 +294,12 @@ export function TidyView({
     })),
   ];
 
+  // Conflict copies are listed as their own section below — a copy and its
+  // original are two paths, and the shared `rows` shape above only carries one.
+  // They still count toward "how many findings", so the header and the empty
+  // state stay honest about them.
+  const total = rows.length + data.conflicts.length;
+
   return (
     <div className="pane padded">
       <h2 className="h-big">{copy.tidy.title}</h2>
@@ -304,9 +311,9 @@ export function TidyView({
         </p>
       )}
       <p className="h-sub">
-        {rows.length === 0
+        {total === 0
           ? copy.tidy.clean
-          : copy.tidy.found(rows.length)}
+          : copy.tidy.found(total)}
       </p>
 
       {rows.length > 0 && (
@@ -383,6 +390,10 @@ export function TidyView({
             </div>
           </div>
         </>
+      )}
+
+      {data.conflicts.length > 0 && (
+        <ConflictSection conflicts={data.conflicts} selected={selected} onToggle={onToggle} onOpen={onOpen} />
       )}
     </div>
   );
@@ -529,6 +540,80 @@ export function TasksView({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * One row per conflict copy, copy and original side by side.
+ *
+ * Its own table rather than more rows in the one above: a finding there is one
+ * path with one action, and a conflict is two — the note that needs a decision
+ * and the note it was measured against. Deleting the copy goes through the same
+ * selection and the same bulk-delete action as everything else; there is no
+ * merge tool and no second write path here, only a way to see these and get to
+ * both notes in one click.
+ */
+function ConflictSection({
+  conflicts,
+  selected,
+  onToggle,
+  onOpen,
+}: {
+  conflicts: ConflictRow[];
+  selected: Set<string>;
+  onToggle: (path: string) => void;
+  onOpen: (path: string) => void;
+}): React.JSX.Element {
+  const linkStyle = { textDecoration: 'underline', textUnderlineOffset: 2 } as const;
+
+  return (
+    <section style={{ marginTop: 'var(--s-6)' }}>
+      <h3 className="h-big" style={{ fontSize: 'var(--t-md)' }}>{copy.tidy.conflicts}</h3>
+      <p className="h-sub">{copy.tidy.conflictHint}</p>
+      <div className="tablewrap">
+        <div className="tablescroll">
+          <table>
+            <thead>
+              <tr>
+                <th className="pick" />
+                <th>{copy.tidy.conflictCopy}</th>
+                <th>{copy.tidy.conflictOriginal}</th>
+                <th className="n">{copy.tidy.lastTouched}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conflicts.map((c) => (
+                <tr key={c.path} data-selected={selected.has(c.path)}>
+                  <td className="pick">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(c.path)}
+                      onChange={() => onToggle(c.path)}
+                      aria-label={copy.tidy.select(c.title)}
+                    />
+                  </td>
+                  <td>
+                    <button type="button" style={linkStyle} onClick={() => onOpen(c.path)}>
+                      {c.title}
+                    </button>
+                  </td>
+                  <td>
+                    {c.originalExists ? (
+                      <button type="button" style={linkStyle} onClick={() => onOpen(c.originalPath)}>
+                        {c.originalTitle ?? c.originalPath}
+                      </button>
+                    ) : (
+                      <span className="pill p-crit">{copy.tidy.conflictNoOriginal}</span>
+                    )}
+                  </td>
+                  <td className="n">{ago(c.mtimeMs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   );
 }
 

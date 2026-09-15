@@ -28,6 +28,7 @@ export type BulkResult = z.infer<typeof S.BulkResponse>;
 
 export type {
   ActivityRow,
+  ConflictRow,
   FileRow,
   GraphData,
   LinkRow,

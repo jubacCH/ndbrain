@@ -134,6 +134,7 @@ export const copy = {
     brokenLinks: 'broken links',
     untagged: 'untagged',
     untouched: 'untouched',
+    conflictCopies: 'conflict copies',
     sinceYesterday: 'Since yesterday',
     nothingHappened: 'Nothing happened.',
     openTasks: 'Open tasks',
@@ -170,6 +171,13 @@ export const copy = {
     findingUntagged: 'untagged',
     findingUntouched: 'untouched',
     finding: 'Finding',
+    conflicts: 'Conflict copies',
+    conflictHint:
+      'ndBrain kept these instead of losing a version overwritten by a concurrent write. ' +
+      'Nothing merges automatically — open both, take what you need, then delete the copy.',
+    conflictCopy: 'Copy',
+    conflictOriginal: 'Original',
+    conflictNoOriginal: 'Original is gone',
   },
 
   tasks: {
