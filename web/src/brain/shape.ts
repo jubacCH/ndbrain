@@ -51,8 +51,8 @@ interface Hemisphere {
  * nobody sees a mirror.
  */
 const HEMISPHERES: Record<Side, Hemisphere> = {
-  [-1]: { cx: -0.57, cy: -0.012, rx: 0.45, ry: 0.75, scale: 1.02, phase2: 0.4, phase3: 1.1 },
-  [1]: { cx: 0.57, cy: 0.01, rx: 0.455, ry: 0.74, scale: 1, phase2: 2.2, phase3: 4.0 },
+  [-1]: { cx: -0.63, cy: -0.012, rx: 0.45, ry: 0.75, scale: 1.02, phase2: 0.4, phase3: 1.1 },
+  [1]: { cx: 0.63, cy: 0.01, rx: 0.455, ry: 0.74, scale: 1, phase2: 2.2, phase3: 4.0 },
 };
 
 /** How much flatter the inner side is than the outer: a superellipse exponent. */

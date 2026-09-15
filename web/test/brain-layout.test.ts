@@ -19,6 +19,7 @@ import type { Arrangement } from '../src/brain/layout';
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph, nodeKey } from '../src/brain/model';
 import { loadPositions, positionsKey, savePositions } from '../src/brain/positions';
+import { paraVault } from './fixtures/para-vault';
 
 function vault(count: number): GraphData {
   const nodes = Array.from({ length: count }, (_, i) => ({
@@ -81,9 +82,21 @@ describe('a start that does not move', () => {
     const fresh = after.graph.index.get(nodeKey('jb', '00_Inbox/captured.md'))!;
     const anchor = after.graph.index.get(nodeKey('jb', '20_Areas/note-7.md'))!;
     const gap = Math.hypot(after.x[fresh]! - after.x[anchor]!, after.y[fresh]! - after.y[anchor]!);
-    // Close enough that the spring has nothing to haul across the picture, far
-    // enough that the repulsion has a direction to work with.
-    expect(gap).toBeCloseTo(18, 6);
+    // About where the spring between them would hold it: close enough that
+    // nothing is hauled across the picture, far enough that the repulsion does
+    // not throw either of them.
+    expect(gap).toBeCloseTo(40, 6);
+  });
+
+  it('pulls a stored position that is finite but absurd back near the brain', () => {
+    const absurd = new Map([[nodeKey('jb', '10_Projects/note-0.md'), { x: 1e308, y: -1e308 }]]);
+    const layout = laid(vault(8), absurd);
+    const { minX, minY, maxX, maxY } = layout.bounds;
+    const i = layout.graph.index.get(nodeKey('jb', '10_Projects/note-0.md'))!;
+    expect(layout.x[i]!).toBeLessThanOrEqual(maxX + (maxX - minX));
+    expect(layout.y[i]!).toBeGreaterThanOrEqual(minY - (maxY - minY));
+    layout.settle();
+    expect(Number.isFinite(layout.x[i]!)).toBe(true);
   });
 
   it('ignores a stored position that is not a position', () => {
@@ -292,6 +305,65 @@ describe('remembering across sessions', () => {
     expect(back.size).toBe(2);
     // A position without a usable link hash still counts, as a changed note.
     expect(back.get('c')!.links).toBeUndefined();
+  });
+
+  it('holds still through the rounded store, and after a capture moves only the note linked to', () => {
+    // The app never sees full precision: positions come back rounded to a
+    // tenth. The claims of the layout have to hold on that path too — reloaded,
+    // nothing moves; a capture onto the busiest note moves that note a little
+    // and nothing else.
+    const { data } = paraVault();
+    const first = new BrainLayout(buildGraph(data), { arrangement: 'brain' });
+    first.settle();
+    savePositions(mine, first.positions());
+    const stored = loadPositions(mine);
+
+    const reloaded = new BrainLayout(buildGraph(data), { arrangement: 'brain', remembered: stored });
+    expect(reloaded.settled).toBe(true);
+
+    const hub = first.graph.nodes[first.graph.hub]!;
+    for (const target of [hub, data.nodes[7]!]) {
+      const path = `${target.folder}/zz captured.md`;
+      const grown: GraphData = {
+        nodes: [...data.nodes, { owner: 'jb', path, title: 'captured', folder: target.folder, links: 1 }],
+        edges: [...data.edges, { owner: 'jb', from: path, to: target.path }],
+      };
+      const after = new BrainLayout(buildGraph(grown), { arrangement: 'brain', remembered: stored });
+      after.settle();
+      for (const [key, at] of stored) {
+        const i = after.graph.index.get(key)!;
+        const moved = Math.hypot(after.x[i]! - at.x, after.y[i]! - at.y);
+        if (key === nodeKey('jb', target.path)) expect(moved).toBeLessThan(40);
+        else expect(moved, key).toBe(0);
+      }
+    }
+  });
+
+  it('lets a note be dragged after a reload without moving anything but its neighbours', () => {
+    const { data } = paraVault();
+    const first = new BrainLayout(buildGraph(data), { arrangement: 'brain' });
+    first.settle();
+    savePositions(mine, first.positions());
+    const stored = loadPositions(mine);
+    const layout = new BrainLayout(buildGraph(data), { arrangement: 'brain', remembered: stored });
+
+    const held = layout.graph.hub;
+    const near = new Set(layout.graph.touching[held]!.flatMap((e) => [layout.graph.edges[e]!.a, layout.graph.edges[e]!.b]));
+    layout.hold(held);
+    layout.place(held, layout.x[held]! + 50, layout.y[held]! - 30);
+    const dropped = { x: layout.x[held]!, y: layout.y[held]! };
+    for (let t = 0; t < 20; t += 1) layout.step();
+    layout.release();
+    layout.settle();
+
+    expect(layout.x[held]).toBe(dropped.x);
+    expect(layout.y[held]).toBe(dropped.y);
+    for (let i = 0; i < layout.x.length; i += 1) {
+      if (near.has(i)) continue;
+      const at = stored.get(layout.graph.nodes[i]!.key)!;
+      expect(layout.x[i], layout.graph.nodes[i]!.key).toBe(at.x);
+      expect(layout.y[i], layout.graph.nodes[i]!.key).toBe(at.y);
+    }
   });
 
   it('declines to store a vault far past what this view is built for', () => {

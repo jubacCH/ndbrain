@@ -50,6 +50,14 @@ export interface Cluster {
    * member in hash order only changes when that member leaves the cluster.
    */
   id: string;
+  /**
+   * The note the cluster's choices lead to: of the two notes that chose each
+   * other, the one first in hash order, or the note that stayed put. The most
+   * settled part of a cluster — a new note joining changes its members and
+   * often its `id`, rarely its core — which is why the layout places a region
+   * by it.
+   */
+  core: string;
   /** Node indices, in hash order. */
   members: number[];
   /** The folder most members were filed in, as the server spells it. */
@@ -237,22 +245,34 @@ export function detectClusters(graph: Pick<BrainGraph, 'nodes' | 'edges'>, tags?
   // A note nothing links to has no tie at all. It still belongs somewhere, and
   // the nearest thing it has in common with other notes is its folder — or,
   // if nothing in that folder is linked either, the folder above.
+  //
+  // Counted once up front, per folder and every folder above it, rather than
+  // by scanning the vault for each such note: with many unlinked notes that
+  // scan was quadratic. The labels counted are those of linked notes, which
+  // this pass does not change.
+  const byFolder = new Map<string, Map<number, number>>();
+  const tally = (key: string, l: number): void => {
+    let counts = byFolder.get(key);
+    if (counts === undefined) byFolder.set(key, (counts = new Map()));
+    counts.set(l, (counts.get(l) ?? 0) + 1);
+  };
+  for (let j = 0; j < n; j += 1) {
+    if (links[j]!.size === 0) continue;
+    const { owner, folder } = nodes[j]!;
+    tally(`${owner}\u0000${folder}`, label[j]!);
+    for (let cut = folder.lastIndexOf('/'); cut > 0; cut = folder.lastIndexOf('/', cut - 1)) {
+      tally(`${owner}\u0000${folder.slice(0, cut)}`, label[j]!);
+    }
+  }
   for (const i of order) {
     if (links[i]!.size > 0) continue;
     const node = nodes[i]!;
     let folder = node.folder;
     for (;;) {
-      const counts = new Map<number, number>();
-      for (let j = 0; j < n; j += 1) {
-        if (links[j]!.size === 0 || nodes[j]!.owner !== node.owner) continue;
-        const f = nodes[j]!.folder;
-        if (f === folder || (folder !== '' && f.startsWith(`${folder}/`))) {
-          counts.set(label[j]!, (counts.get(label[j]!) ?? 0) + 1);
-        }
-      }
+      const counts = byFolder.get(`${node.owner}\u0000${folder}`);
       let pick = -1;
-      for (const [l, c] of counts) {
-        if (pick === -1 || c > counts.get(pick)! || (c === counts.get(pick)! && rank[l]! < rank[pick]!)) pick = l;
+      for (const [l, c] of counts ?? []) {
+        if (pick === -1 || c > counts!.get(pick)! || (c === counts!.get(pick)! && rank[l]! < rank[pick]!)) pick = l;
       }
       if (pick !== -1) {
         label[i] = pick;
@@ -282,13 +302,19 @@ function assemble(
     else list.push(i);
   }
   // Members are in hash order already, so the first one is the identity.
-  const groups = [...byLabel.values()].sort((a, b) => rank[a[0]!]! - rank[b[0]!]!);
+  const groups = [...byLabel.entries()].sort((a, b) => rank[a[1][0]!]! - rank[b[1][0]!]!);
 
   const of = new Int32Array(nodes.length);
-  const clusters: Cluster[] = groups.map((members, c) => {
+  const clusters: Cluster[] = groups.map(([root, members], c) => {
     for (const i of members) of[i] = c;
     const folder = dominant(members.map((i) => nodes[i]!.folder));
-    return { id: nodes[members[0]!]!.key, members, folder: folder.value, name: baseName(members, folder, nodes, tags) };
+    return {
+      id: nodes[members[0]!]!.key,
+      core: nodes[root]!.key,
+      members,
+      folder: folder.value,
+      name: baseName(members, folder, nodes, tags),
+    };
   });
 
   // Two clusters from the same folder would otherwise share a name — the flat

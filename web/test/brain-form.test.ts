@@ -134,8 +134,9 @@ describe('the shape', () => {
   const form = measure(settled(data));
 
   it('keeps the notes inside the outline', () => {
-    // Nine in ten (this vault: 96 %). Soft means soft: a note pulled hard by its links may lean
-    // past the rim, and that is the notes shaping the outline, not a leak.
+    // Nine in ten (this vault: 94 %). Soft means soft: a note pulled hard by
+    // its links may lean past the rim, and that is the notes shaping the
+    // outline, not a leak.
     expect(form.inside).toBeGreaterThanOrEqual(0.9);
   });
 
@@ -146,14 +147,14 @@ describe('the shape', () => {
   });
 
   it('uses both hemispheres', () => {
-    // The anchors split the vault in half by path; clusters shift that (this
-    // vault: 41 % left), but neither side may hold less than a third.
+    // Folders are shared between the hemispheres by weight, and clusters shift
+    // that (this vault: 59 % left), but neither side may hold less than a third.
     expect(form.leftShare).toBeGreaterThan(1 / 3);
     expect(form.leftShare).toBeLessThan(2 / 3);
   });
 
   it('is wider than tall, in about the proportion of the outline', () => {
-    // The outline is 1.31 : 1; this vault's notes span 1.38 : 1.
+    // The outline is 1.42 : 1; this vault's notes span 1.42 : 1.
     const outline = (OUTLINE.maxX - OUTLINE.minX) / (OUTLINE.maxY - OUTLINE.minY);
     expect(form.aspect).toBeGreaterThan(outline * 0.85);
     expect(form.aspect).toBeLessThan(outline * 1.2);
@@ -161,7 +162,7 @@ describe('the shape', () => {
 
   it('reaches out to the outline instead of huddling in the middle', () => {
     // The notes span at least four fifths of the outline in both directions
-    // (this vault: all of it across, 98 % top to bottom).
+    // (this vault: all of it in both directions).
     expect(form.reachX).toBeGreaterThan(0.8);
     expect(form.reachY).toBeGreaterThan(0.8);
   });
@@ -171,12 +172,14 @@ describe('the shape', () => {
     // above one (about 8 on this vault): every cluster's centre lands near the
     // middle of the brain, next to every other cluster's, while its notes are
     // spread over the whole outline. Grown from regions, a cluster's notes sit
-    // closer to their own centre than that centre is to the next region (0.4 on
-    // this vault). Below 0.6 is unmistakably regions; the scatter must stay
-    // above 2 for the comparison to mean anything.
+    // about as far from their centre as that centre is from the next region's
+    // (1.2 on this vault): regions that touch, not a scatter. The first version
+    // measured 0.4 because a relaxation pushed regions apart — and that
+    // relaxation was what made one capture move regions across the brain. The
+    // bound of 1.6 keeps a clear distance to a scatter.
     const mask = measure(scattered(settled(data)));
-    expect(mask.cohesion).toBeGreaterThan(2);
-    expect(form.cohesion).toBeLessThan(0.6);
+    expect(mask.cohesion).toBeGreaterThan(4);
+    expect(form.cohesion).toBeLessThan(1.6);
   });
 });
 
@@ -190,7 +193,7 @@ describe('the loose arrangement', () => {
     layout.settle();
     const hub = layout.graph.index.get(nodeKey('jb', 'hub.md'))!;
     // The hub in the middle, the leaves around it at about a spring's length.
-    expect(Math.hypot(layout.x[hub]!, layout.y[hub]!)).toBeLessThan(25);
+    expect(Math.hypot(layout.x[hub]!, layout.y[hub]!)).toBeLessThan(40);
     for (let i = 0; i < layout.x.length; i += 1) {
       if (i === hub) continue;
       const d = Math.hypot(layout.x[i]! - layout.x[hub]!, layout.y[i]! - layout.y[hub]!);
@@ -199,6 +202,21 @@ describe('the loose arrangement', () => {
     }
   });
 });
+
+/** The vault plus a note captured into the folder of `target`, linked to it. */
+function capturedInto(data: GraphData, target: GraphData['nodes'][number]): GraphData {
+  const folder = target.folder;
+  const path = `${folder === '' ? '' : `${folder}/`}zz captured.md`;
+  return {
+    nodes: [...data.nodes, { owner: target.owner, path, title: 'captured', folder, links: 1 }],
+    edges: [...data.edges, { owner: target.owner, from: path, to: target.path }],
+  };
+}
+
+const quantile = (values: number[], q: number): number => {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!;
+};
 
 describe('holding still', () => {
   it('does not move a single note when the same vault is laid out again from memory', () => {
@@ -212,58 +230,109 @@ describe('holding still', () => {
     }
   });
 
-  it('moves the existing notes only minimally when a note is captured and linked', { timeout: 30_000 }, () => {
-    // Briefing 47, across every fifth possible link target. What counts is
-    // the mean displacement of the 109 notes that were already there.
+  it('moves only the note a capture links to, and that only a little, for every possible target', { timeout: 60_000 }, () => {
+    // Briefing 47, from memory, over all 109 possible targets — the hub
+    // included, which is where a warm restart used to set forty neighbours
+    // moving. Every note but the target stays exactly where it was. The target
+    // makes room for the newcomer, held back by its tether.
     //
-    // Threshold: 8 world units — less than the radius of a note with one link,
-    // so on the overview an average note moves by less than its own size. The
-    // real vault's copy measures at most 4 to 6; most captures under 1, because
-    // only the new note, the note it links to and that note's neighbours may move
-    // at all.
+    // Bounds: 90 % of targets move less than 20 units and none more than 40 —
+    // a third and two thirds of a spring's rest length, so the target never
+    // leaves the place its links define. Measured on this vault: at most ~11.
     const { data } = paraVault();
     const before = settled(data);
     const remembered = before.positions();
-    const means: number[] = [];
-    data.nodes.forEach((target, k) => {
-      if (k % 5 !== 0) return;
-      const grown: GraphData = {
-        nodes: [...data.nodes, { owner: 'jb', path: '00_Inbox/captured.md', title: 'captured', folder: '00_Inbox', links: 1 }],
-        edges: [...data.edges, { owner: 'jb', from: '00_Inbox/captured.md', to: target.path }],
-      };
-      const after = settled(grown, remembered);
-      let sum = 0;
-      for (const [key, at] of remembered) {
-        const i = after.graph.index.get(key)!;
+    const moves: number[] = [];
+    const hub = data.nodes.find((n) => nodeKey(n.owner, n.path) === before.graph.nodes[before.graph.hub]!.key)!;
+    const targets = [hub, ...data.nodes];
+    for (const target of targets) {
+      const after = settled(capturedInto(data, target), remembered);
+      const key = nodeKey(target.owner, target.path);
+      for (const [other, at] of remembered) {
+        const i = after.graph.index.get(other)!;
         const moved = Math.hypot(after.x[i]! - at.x, after.y[i]! - at.y);
-        sum += moved;
-        // Nothing that is neither the target nor next to it moves at all.
-        const nearTarget =
-          key === nodeKey('jb', target.path) ||
-          after.graph.touching[i]!.some((e) => {
-            const edge = after.graph.edges[e]!;
-            return after.graph.nodes[edge.a === i ? edge.b : edge.a]!.path === target.path;
-          });
-        if (!nearTarget) expect(moved, key).toBe(0);
+        if (other === key) moves.push(moved);
+        else expect(moved, `${other} after a capture onto ${target.path}`).toBe(0);
       }
-      means.push(sum / remembered.size);
-    });
-    means.sort((a, b) => a - b);
-    expect(means[means.length - 1]!).toBeLessThan(8);
-    expect(means[Math.floor(means.length / 2)]!).toBeLessThan(1.5);
+    }
+    expect(moves[0]!, 'the hub').toBeLessThan(40);
+    expect(quantile(moves, 0.9)).toBeLessThan(20);
+    expect(Math.max(...moves)).toBeLessThan(40);
   });
 
   it('starts the captured note beside what it links to', () => {
     const { data } = paraVault();
     const before = settled(data);
-    const grown: GraphData = {
-      nodes: [...data.nodes, { owner: 'jb', path: '00_Inbox/captured.md', title: 'captured', folder: '00_Inbox', links: 1 }],
-      edges: [...data.edges, { owner: 'jb', from: '00_Inbox/captured.md', to: '20_Areas/21_Homelab/Firewall.md' }],
-    };
-    const after = new Layout(buildGraph(grown), { arrangement: 'brain', remembered: before.positions() });
-    const fresh = after.graph.index.get(nodeKey('jb', '00_Inbox/captured.md'))!;
-    const anchor = after.graph.index.get(nodeKey('jb', '20_Areas/21_Homelab/Firewall.md'))!;
-    expect(Math.hypot(after.x[fresh]! - after.x[anchor]!, after.y[fresh]! - after.y[anchor]!)).toBeCloseTo(18, 6);
+    const target = data.nodes.find((n) => n.path === '20_Areas/21_Homelab/Firewall.md')!;
+    const after = new Layout(buildGraph(capturedInto(data, target)), { arrangement: 'brain', remembered: before.positions() });
+    const fresh = after.graph.index.get(nodeKey('jb', '20_Areas/21_Homelab/zz captured.md'))!;
+    const anchor = after.graph.index.get(nodeKey('jb', target.path))!;
+    // About where the spring between them would hold it, so neither has to
+    // travel to make room.
+    expect(Math.hypot(after.x[fresh]! - after.x[anchor]!, after.y[fresh]! - after.y[anchor]!)).toBeCloseTo(40, 6);
+  });
+});
+
+describe('a capture on a device that remembers nothing', () => {
+  // A new browser, the iPhone app, a cleared cache: the brain is laid out from
+  // scratch, and it should still be the brain its owner knows.
+  const { data } = paraVault();
+  const before = settled(data);
+  const membersOf = (layout: BrainLayout): Map<string, number> =>
+    new Map(layout.graph.clusters.clusters.map((c, k) => [c.members.map((i) => layout.graph.nodes[i]!.key).sort().join('|'), k]));
+  const clustersBefore = membersOf(before);
+  const notesIn = (folder: string): number => data.nodes.filter((n) => n.folder.split('/').slice(0, 2).join('/') === folder.split('/').slice(0, 2).join('/')).length;
+
+  it('keeps the anchor of every cluster the capture did not touch', { timeout: 60_000 }, () => {
+    // Compared in brain units: one more note grows the whole brain by half a
+    // percent, the same for everything, and that is not a move. The one
+    // exception is designed in and counted: a capture that doubles its folder's
+    // notes gives that folder a wider arc (`folderArcs`), and the arcs beside it
+    // shift.
+    let checked = 0;
+    let doubling = 0;
+    for (const target of data.nodes) {
+      const n = notesIn(target.folder);
+      if (Math.floor(Math.log2(n + 1)) !== Math.floor(Math.log2(n))) {
+        doubling += 1;
+        continue;
+      }
+      const after = new Layout(buildGraph(capturedInto(data, target)), { arrangement: 'brain' });
+      for (const [members, k] of membersOf(after)) {
+        const was = clustersBefore.get(members);
+        if (was === undefined) continue;
+        checked += 1;
+        expect(after.anchorX[k]! / after.unitLength, members).toBeCloseTo(before.anchorX[was]! / before.unitLength, 9);
+        expect(after.anchorY[k]! / after.unitLength, members).toBeCloseTo(before.anchorY[was]! / before.unitLength, 9);
+      }
+    }
+    expect(checked).toBeGreaterThan(1500);
+    expect(doubling).toBeGreaterThan(0);
+  });
+
+  it('moves the notes of untouched clusters only a little', { timeout: 60_000 }, () => {
+    // Without memory the whole brain is simulated again, and the notes of a
+    // region pushed by a changed neighbour do move. Bounds, over all captures
+    // and all notes in clusters the capture did not change: half move less than
+    // 5 units (under a cell body), nine in ten less than 25 (a third of a
+    // spring), and none more than 250 — a quarter of the brain's width, where
+    // the old layout moved notes by up to 570. Measured: 2 / 18 / 190.
+    const moved: number[] = [];
+    for (const target of data.nodes) {
+      const after = settled(capturedInto(data, target));
+      const unchanged = membersOf(after);
+      for (let i = 0; i < before.graph.nodes.length; i += 1) {
+        const key = before.graph.nodes[i]!.key;
+        const j = after.graph.index.get(key)!;
+        const cluster = after.graph.clusters.clusters[after.graph.clusters.of[j]!]!;
+        const members = cluster.members.map((m) => after.graph.nodes[m]!.key).sort().join('|');
+        if (!clustersBefore.has(members) || !unchanged.has(members)) continue;
+        moved.push(Math.hypot(after.x[j]! - before.x[i]!, after.y[j]! - before.y[i]!));
+      }
+    }
+    expect(quantile(moved, 0.5)).toBeLessThan(5);
+    expect(quantile(moved, 0.9)).toBeLessThan(25);
+    expect(Math.max(...moved)).toBeLessThan(250);
   });
 });
 
