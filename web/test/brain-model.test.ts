@@ -7,6 +7,9 @@
  * ones the old single-file version computed for itself, node for node.
  */
 
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import type { GraphData } from '../src/api';
@@ -91,6 +94,20 @@ describe('the graph model', () => {
       expect(after.nodes[after.index.get(node.key)!]!.depth).toBe(node.depth);
     }
     expect(after.edges.map((e) => e.curve)).toEqual(before.edges.map((e) => e.curve));
+  });
+
+  it('reaches the api module for types only, so the schemas stay out of the brain', () => {
+    // The simulation is meant to move into a worker. A runtime import of the api
+    // module would carry zod and every server schema into it for the sake of
+    // one key function; `import type` is erased and costs nothing. (The path
+    // comes from the working directory because jsdom's `import.meta.url` is not
+    // a file URL.)
+    const dir = join(process.cwd(), 'src', 'brain');
+    for (const file of readdirSync(dir)) {
+      const source = readFileSync(join(dir, file), 'utf8');
+      const runtime = source.match(/^import\s+(?!type\b)[^;]*from\s+'\.\.\/api';/gm) ?? [];
+      expect(runtime, file).toEqual([]);
+    }
   });
 
   it('keeps two vaults apart even when the paths are the same', () => {

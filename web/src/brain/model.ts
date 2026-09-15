@@ -14,7 +14,7 @@
  */
 
 import type { GraphData } from '../api';
-import { refKey } from '../api';
+import { refKey } from '../refkey';
 import { unit } from './seed';
 
 /**

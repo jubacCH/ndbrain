@@ -55,15 +55,11 @@ export interface Ref {
 }
 
 /**
- * A stable identity for a note, for React keys and selection sets.
- *
- * NUL cannot occur in a vault path, so no owner/path pair can be spelled two
- * ways — which matters, because a collision here would mean the wrong note
- * highlighted, or worse, deleted.
+ * A stable identity for a note. Defined without dependencies in `./refkey`, so
+ * the brain's graph model can use it without pulling in this module's schemas;
+ * re-exported here because this is still the door the rest of the app uses.
  */
-export function refKey(owner: string, path: string): string {
-  return `${owner}\u0000${path}`;
-}
+export { refKey } from './refkey';
 
 
 
