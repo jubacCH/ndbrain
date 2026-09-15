@@ -248,6 +248,16 @@ export class BrainLayout {
   readonly placeY: Float64Array;
   readonly radius: Float64Array;
   readonly side: Int8Array;
+  /**
+   * Hemisphere per node, -1 or 1: its cluster's, or for a remembered note the
+   * one it is in. Settled when the layout is built and fixed after that. Zero
+   * throughout in the loose arrangement, which has no hemispheres.
+   *
+   * Public because a note can sit on the other side from its cluster — it was
+   * remembered there before a link changed its cluster — and whatever is
+   * drawn across the fissure has to go by where the notes are.
+   */
+  readonly nodeSide: Int8Array;
 
   /** The node being dragged, or -1. It follows the pointer; only its neighbours simulate. */
   pinned = -1;
@@ -306,8 +316,6 @@ export class BrainLayout {
   /** Live centroid per cluster, recomputed each step. */
   readonly #cx: Float64Array;
   readonly #cy: Float64Array;
-  /** Hemisphere per node: its cluster's, or for a remembered note the one it is in. */
-  readonly #nodeSide: Int8Array;
   /** Force accumulators, reused: a fresh array per frame is garbage per frame. */
   readonly #ax: Float64Array;
   readonly #ay: Float64Array;
@@ -340,7 +348,7 @@ export class BrainLayout {
     this.side = new Int8Array(k);
     this.#cx = new Float64Array(k);
     this.#cy = new Float64Array(k);
-    this.#nodeSide = new Int8Array(n);
+    this.nodeSide = new Int8Array(n);
     this.#ax = new Float64Array(n);
     this.#ay = new Float64Array(n);
     this.#moving = new Int32Array(n);
@@ -430,7 +438,7 @@ export class BrainLayout {
     this.#springK = Float64Array.from(edges.map(({ e }) => {
       if (this.arrangement !== 'brain') return SPRING;
       const of = graph.clusters.of;
-      if (this.#nodeSide[e.a] !== this.#nodeSide[e.b]) return SPRING * ACROSS_FISSURE;
+      if (this.nodeSide[e.a] !== this.nodeSide[e.b]) return SPRING * ACROSS_FISSURE;
       return of[e.a] === of[e.b] ? SPRING : SPRING * ACROSS_CLUSTERS;
     }));
 
@@ -508,7 +516,7 @@ export class BrainLayout {
       // A remembered note keeps the hemisphere it is in, even when its cluster
       // is on the other side now: the fissure is not something a note should be
       // pushed across because a link somewhere else changed its cluster.
-      for (const i of members) this.#nodeSide[i] = remembered[i] === 1 ? (this.x[i]! < 0 ? -1 : 1) : side;
+      for (const i of members) this.nodeSide[i] = remembered[i] === 1 ? (this.x[i]! < 0 ? -1 : 1) : side;
     });
   }
 
@@ -834,7 +842,7 @@ export class BrainLayout {
     }
 
     // Containment, measured in normalised units against the node's hemisphere.
-    const side = this.#nodeSide[i] as Side;
+    const side = this.nodeSide[i] as Side;
     const h = centre(side);
     const px = x[i]! / u - h.x;
     const py = y[i]! / u - h.y;

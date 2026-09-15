@@ -141,7 +141,7 @@ export class SceneBuilder {
   /**
    * The edge plan for this layout.
    *
-   * Per layout rather than per graph because the hemisphere of each cluster is
+   * Per layout rather than per graph because the hemisphere of each note is
    * the layout's decision. A new layout is a new engine in practice; the check
    * is identity, so it costs nothing per frame.
    */
@@ -153,7 +153,7 @@ export class SceneBuilder {
       edges,
       keys: nodes.map((n) => n.key),
       clusterOf: regions ? clusters.of : null,
-      sideOf: regions ? layout.side : null,
+      nodeSide: regions ? layout.nodeSide : null,
     });
     this.#planned = layout;
     return this.#plan;

@@ -54,11 +54,11 @@ export const WITHIN = 0;
 export const BRIDGE = 1;
 /** Any other link between two clusters on the same side. */
 export const FURROW = 2;
-/** A link between clusters on opposite hemispheres. */
+/** A link between notes on opposite hemispheres. */
 export const FISSURE = 3;
 /** The second edge of a link that exists in both directions. */
 export const TWIN = 4;
-/** The strongest link between two clusters on opposite hemispheres that share several links. */
+/** The strongest link between two clusters across the fissure, where several links cross it. */
 export const SPAN = 5;
 
 export type EdgeKind = typeof WITHIN | typeof BRIDGE | typeof FURROW | typeof FISSURE | typeof TWIN | typeof SPAN;
@@ -89,7 +89,8 @@ export const SPAN_THREAD = 0.06;
  * the deliberate ones — a project pointing at the service it runs on, a note
  * pointing at its map. One such link can be a passing reference; two or more
  * between the same two regions are a relationship worth a line. On the real
- * vault's structure that is 7 of 16 linked region pairs across the fissure.
+ * vault's structure, laid out with regions anchored to their folders, that is
+ * 10 of 20 linked region pairs across the fissure.
  */
 export const SPAN_LINKS = 2;
 /**
@@ -160,8 +161,13 @@ export interface EdgeInput {
   keys: readonly string[];
   /** Cluster per node, or null for an arrangement without regions (the neighbourhood). */
   clusterOf: ArrayLike<number> | null;
-  /** Hemisphere per cluster (-1 or 1), or null. */
-  sideOf: ArrayLike<number> | null;
+  /**
+   * Hemisphere per node (-1 or 1), or null. Per node, not per cluster: a
+   * remembered note can stay on its side after a changed link moved it into a
+   * cluster on the other one, and its link to that cluster still crosses the
+   * fissure on screen.
+   */
+  nodeSide: ArrayLike<number> | null;
 }
 
 export interface EdgePlan {
@@ -205,7 +211,7 @@ function strongerThread(
  * Runs once per graph and layout, not per frame: it is a walk over the edges
  * and a set of neighbours per note.
  */
-export function planEdges({ edges, keys, clusterOf, sideOf }: EdgeInput): EdgePlan {
+export function planEdges({ edges, keys, clusterOf, nodeSide }: EdgeInput): EdgePlan {
   const n = keys.length;
   const m = edges.length;
   const kind = new Uint8Array(m);
@@ -246,19 +252,22 @@ export function planEdges({ edges, keys, clusterOf, sideOf }: EdgeInput): EdgePl
 
   // One thread per pair of linked regions: on the same side for any link
   // between them, across the fissure only where at least `SPAN_LINKS` links
-  // connect them. Which link carries the thread is decided without the
+  // connect them. Same side and across are told apart by the notes at both
+  // ends, so a region with a member left on the far side gets its thread
+  // there counted separately. Which link carries the thread is decided without the
   // degree of either end (see `THREAD_ORDER`), so a note gaining a leaf
   // somewhere does not move a thread.
   const thread = new Map<
     string,
     { edge: number; hubby: number; shared: number; tie: string; links: number; across: boolean }
   >();
-  if (clusterOf !== null && sideOf !== null) {
+  if (clusterOf !== null && nodeSide !== null) {
     for (const [, i] of carrier) {
       const e = edges[i]!;
       const ca = clusterOf[e.a]!;
       const cb = clusterOf[e.b]!;
       if (ca === cb) continue;
+      const across = nodeSide[e.a] !== nodeSide[e.b];
       const na = neighbours[e.a]!;
       const nb = neighbours[e.b]!;
       let shared = 0;
@@ -266,10 +275,10 @@ export function planEdges({ edges, keys, clusterOf, sideOf }: EdgeInput): EdgePl
       for (const x of small) if (large.has(x)) shared += 1;
       const hubby = na.size >= HUB_DEGREE || nb.size >= HUB_DEGREE ? 1 : 0;
       const tie = keys[e.a]! < keys[e.b]! ? `${keys[e.a]}\u0000${keys[e.b]}` : `${keys[e.b]}\u0000${keys[e.a]}`;
-      const regions = ca < cb ? `${ca}:${cb}` : `${cb}:${ca}`;
+      const regions = `${ca < cb ? `${ca}:${cb}` : `${cb}:${ca}`}:${across ? 'across' : 'beside'}`;
       const best = thread.get(regions);
       if (best === undefined) {
-        thread.set(regions, { edge: i, hubby, shared, tie, links: 1, across: sideOf[ca] !== sideOf[cb] });
+        thread.set(regions, { edge: i, hubby, shared, tie, links: 1, across });
         continue;
       }
       best.links += 1;
@@ -296,7 +305,7 @@ export function planEdges({ edges, keys, clusterOf, sideOf }: EdgeInput): EdgePl
     }
     const damp = hub(e.a, e.b);
 
-    if (clusterOf === null || sideOf === null) {
+    if (clusterOf === null || nodeSide === null) {
       kind[i] = WITHIN;
       rest[i] = near[i] = NEIGHBOURHOOD * damp;
       continue;
@@ -304,17 +313,20 @@ export function planEdges({ edges, keys, clusterOf, sideOf }: EdgeInput): EdgePl
 
     const ca = clusterOf[e.a]!;
     const cb = clusterOf[e.b]!;
-    if (ca === cb) {
-      kind[i] = WITHIN;
-      rest[i] = near[i] = TRACT * damp;
-    } else if (sideOf[ca] !== sideOf[cb] && threads.has(i)) {
+    const across = nodeSide[e.a] !== nodeSide[e.b];
+    if (across && threads.has(i)) {
       kind[i] = SPAN;
       rest[i] = SPAN_THREAD;
       near[i] = Math.max(THREAD, TRACT * NEAR_FISSURE * damp);
-    } else if (sideOf[ca] !== sideOf[cb]) {
+    } else if (across) {
+      // Also a link inside one cluster whose note was left on the other side:
+      // drawn as a tract it would be a bright line straight over the fissure.
       kind[i] = FISSURE;
       rest[i] = GHOST;
       near[i] = Math.max(THREAD, TRACT * NEAR_FISSURE * damp);
+    } else if (ca === cb) {
+      kind[i] = WITHIN;
+      rest[i] = near[i] = TRACT * damp;
     } else if (threads.has(i)) {
       kind[i] = BRIDGE;
       rest[i] = THREAD;
