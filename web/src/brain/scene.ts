@@ -9,9 +9,8 @@
  * The colour rules live here rather than in the renderer, because they are
  * decisions about meaning — an unlinked note is dim, a hub is bright, an access
  * is warm — and those must survive a change of drawing technology. The renderer
- * gets numbers it only has to obey. The rules themselves are unchanged from the
- * version that drew straight onto the canvas; this step moves them, it does not
- * revise them.
+ * gets numbers it only has to obey. How loudly each link is drawn, and how
+ * strongly a cell body glows, is decided in `edges.ts` and only applied here.
  *
  * Arrays are allocated once per graph and refilled in place. At 109 notes that
  * is housekeeping; at the few thousand this is being built for, a fresh object
@@ -19,6 +18,9 @@
  */
 
 import type { Camera } from './camera';
+import { FIT_MAX_SCALE } from './camera';
+import type { EdgePlan } from './edges';
+import { edgeAlpha, glow, opening, planEdges, tractBase, tractMid } from './edges';
 import type { BrainGraph } from './model';
 import type { Activity, PulseKind } from './activity';
 import type { BrainLayout } from './layout';
@@ -40,6 +42,8 @@ export interface SceneNode {
   alpha: number;
   /** 0 to 1. Widens the halo and whitens the core. */
   heat: number;
+  /** 0 to 1. Strength of the halo, as a share of the full one (see `edges.ts`). */
+  glow: number;
 }
 
 export interface SceneEdge {
@@ -50,9 +54,13 @@ export interface SceneEdge {
   /** Control point of the quadratic curve — also where a spark travels. */
   cx: number;
   cy: number;
-  /** Half-width where the tract leaves each cell body. */
+  /** Half-width where the tract leaves each cell body, on top of `mw`. */
   aw: number;
   bw: number;
+  /** Half-width everywhere along the tract, the whole width in its middle. */
+  mw: number;
+  /** Opacity. Zero means there is nothing to draw. */
+  alpha: number;
 }
 
 export interface SceneSpark {
@@ -106,19 +114,46 @@ const LABEL_FIRE = 0.35;
 export class SceneBuilder {
   #graph: BrainGraph;
   #scene: Scene;
+  /** How loudly each edge is drawn, settled once per layout (see `edges.ts`). */
+  #plan: EdgePlan | null = null;
+  #planned: BrainLayout | null = null;
+  /** Spark strength per edge this frame, refilled in place. */
+  #lit: Float64Array;
 
   constructor(graph: BrainGraph) {
     this.#graph = graph;
     this.#scene = {
-      nodes: graph.nodes.map(() => ({ x: 0, y: 0, r: 0, colour: [0, 0, 0], alpha: 0, heat: 0 })),
+      nodes: graph.nodes.map(() => ({ x: 0, y: 0, r: 0, colour: [0, 0, 0], alpha: 0, heat: 0, glow: 0 })),
       order: graph.order,
-      edges: graph.edges.map(() => ({ ax: 0, ay: 0, bx: 0, by: 0, cx: 0, cy: 0, aw: 0, bw: 0 })),
+      edges: graph.edges.map(() => ({ ax: 0, ay: 0, bx: 0, by: 0, cx: 0, cy: 0, aw: 0, bw: 0, mw: 0, alpha: 0 })),
       sparks: [],
       labels: [],
       camera: { scale: 1, x: 0, y: 0 },
       width: 0,
       height: 0,
     };
+    this.#lit = new Float64Array(graph.edges.length);
+  }
+
+  /**
+   * The edge plan for this layout.
+   *
+   * Per layout rather than per graph because the hemisphere of each cluster is
+   * the layout's decision. A new layout is a new engine in practice; the check
+   * is identity, so it costs nothing per frame.
+   */
+  #planFor(layout: BrainLayout): EdgePlan {
+    if (this.#plan !== null && this.#planned === layout) return this.#plan;
+    const { nodes, edges, clusters } = this.#graph;
+    const regions = layout.arrangement === 'brain';
+    this.#plan = planEdges({
+      edges,
+      keys: nodes.map((n) => n.key),
+      clusterOf: regions ? clusters.of : null,
+      sideOf: regions ? layout.side : null,
+    });
+    this.#planned = layout;
+    return this.#plan;
   }
 
   build(
@@ -149,6 +184,31 @@ export class SceneBuilder {
       out.colour = heat > 0 ? PULSE_COLOUR[activity.kind[i]!] : base;
       out.alpha = (node.degree === 0 ? 0.24 : 0.72) * (0.55 + depth * 0.45) + heat * 0.5;
       out.heat = heat;
+      out.glow = glow(heat);
+    }
+
+    // How far in the camera is, as a multiple of the overview. Measured against
+    // a fit without the caller's inset, which the scene cannot see; the inset
+    // makes the real resting view a few percent smaller, still well below where
+    // held-back links start to return.
+    const plan = this.#planFor(layout);
+    const { bounds } = layout;
+    const overview = Math.min(
+      FIT_MAX_SCALE,
+      width / Math.max(1, bounds.maxX - bounds.minX),
+      height / Math.max(1, bounds.maxY - bounds.minY),
+    );
+    const zoom = overview > 0 && Number.isFinite(overview) ? camera.scale / overview : 1;
+    const open = opening(zoom);
+    const mid = tractMid(zoom, camera.scale);
+
+    // Spark strength per edge, onto the edge that draws the link.
+    const lit = this.#lit;
+    lit.fill(0);
+    for (const spark of activity.sparks) {
+      if (spark.edge < 0 || spark.t < 0) continue;
+      const at = plan.primary[spark.edge]!;
+      lit[at] = Math.max(lit[at]!, 1 - spark.t);
     }
 
     // The control point is settled here, before anything is drawn. It used to be
@@ -168,8 +228,11 @@ export class SceneBuilder {
       out.by = by;
       out.cx = (ax + bx) / 2 - (by - ay) * e.curve;
       out.cy = (ay + by) / 2 + (bx - ax) * e.curve;
-      out.aw = Math.max(1.6, layout.r[e.a]! * 0.42);
-      out.bw = Math.max(1.6, layout.r[e.b]! * 0.42);
+      const focused = picked >= 0 && (e.a === picked || e.b === picked);
+      out.aw = tractBase(layout.r[e.a]!, zoom, focused);
+      out.bw = tractBase(layout.r[e.b]!, zoom, focused);
+      out.mw = mid;
+      out.alpha = edgeAlpha(plan, i, open, focused, lit[i]!);
     }
 
     scene.sparks = [];
@@ -190,8 +253,11 @@ export class SceneBuilder {
         continue;
       }
 
-      const e = scene.edges[spark.edge]!;
-      const fromA = edges[spark.edge]!.a === spark.from;
+      // Along the edge that is drawn: for a link in both directions, the spark
+      // on the undrawn twin would otherwise run beside the visible line.
+      const along = plan.primary[spark.edge]!;
+      const e = scene.edges[along]!;
+      const fromA = edges[along]!.a === spark.from;
       const fx = fromA ? e.ax : e.bx;
       const fy = fromA ? e.ay : e.by;
       const tx = fromA ? e.bx : e.ax;
