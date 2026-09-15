@@ -79,6 +79,17 @@ export const LinkRow = z.object({
   offset: z.number(),
 });
 
+export const ConflictRow = NoteRow.extend({
+  /** Path of the note the copy displaced, read back from the copy's own name. */
+  originalPath: z.string(),
+  /** Title of the original, when it can still be read. Null when gone or hidden. */
+  originalTitle: z.string().nullable(),
+  /** Whether that note still exists, in the caller's view. */
+  originalExists: z.boolean(),
+  /** The moment named in the copy's filename. */
+  at: Timestamp,
+});
+
 export const TaskRow = z.object({
   owner: z.string(),
   path: z.string(),
@@ -112,7 +123,8 @@ export const OverviewResponse = z.object({
     untagged: z.number(),
     deadLinks: z.number(),
     stale: z.number(),
-    /** Distinct notes affected — not the sum of the four above, which overlap. */
+    conflicts: z.number(),
+    /** Distinct notes affected — not the sum of the five above, which overlap. */
     attention: z.number(),
     /** False where no note carries a tag, which makes "untagged" meaningless. */
     tagsInUse: z.boolean(),
@@ -128,6 +140,7 @@ export const TidyResponse = z.object({
   untagged: z.array(NoteRow),
   deadLinks: z.array(LinkRow),
   stale: z.array(NoteRow),
+  conflicts: z.array(ConflictRow),
   /** True when any list was capped. Shown, never swallowed. */
   truncated: z.boolean(),
   /** The real counts, so a capped list still reports what it stands for. */
@@ -136,6 +149,7 @@ export const TidyResponse = z.object({
     untagged: z.number(),
     deadLinks: z.number(),
     stale: z.number(),
+    conflicts: z.number(),
   }),
 });
 
@@ -476,6 +490,7 @@ export type Note = z.infer<typeof Note>;
 export type OpenNote = z.infer<typeof OpenNote>;
 export type SearchHit = z.infer<typeof SearchHit>;
 export type LinkRow = z.infer<typeof LinkRow>;
+export type ConflictRow = z.infer<typeof ConflictRow>;
 export type TaskRow = z.infer<typeof TaskRow>;
 export type ActivityRow = z.infer<typeof ActivityRow>;
 export type Overview = z.infer<typeof OverviewResponse>;
