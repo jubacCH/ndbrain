@@ -33,11 +33,11 @@ import { copy } from './copy';
 import { Activity } from './brain/activity';
 import type { Camera } from './brain/camera';
 import { HOME, between, ease, isHome, panBy, toWorld, zoomAt } from './brain/camera';
+import { HitIndex } from './brain/hit';
 import { BrainLayout } from './brain/layout';
 import type { BrainGraph } from './brain/model';
 import { buildGraph } from './brain/model';
 import { loadPositions, savePositions } from './brain/positions';
-import { Quadtree } from './brain/quadtree';
 import { createCanvasRenderer } from './brain/renderer';
 import { SceneBuilder } from './brain/scene';
 
@@ -56,15 +56,6 @@ export interface BrainProps {
    */
   remember?: string;
 }
-
-/**
- * How far from a cell body a click still counts, in screen pixels.
- *
- * Divided by the zoom before it reaches the layout, so the target stays the same
- * size under the finger however far in or out the camera is. The number is the
- * old hit test's threshold (`distance² < 500`) unchanged.
- */
-const GRAB = Math.sqrt(500);
 
 /** A camera move takes this long. Long enough to follow, short enough not to wait. */
 const GLIDE_MS = 320;
@@ -94,10 +85,8 @@ interface Engine {
   drag: number;
   /** Where the pointer was when panning, in screen pixels, or null. */
   pan: { x: number; y: number } | null;
-  /** The hit index, or null while it is stale. Rebuilt on demand, not per frame. */
-  tree: Quadtree | null;
-  /** The largest cell body, which sets how wide the hit query has to look. */
-  reach: number;
+  /** Which node is under a point. Rebuilt on demand, not per frame. */
+  hits: HitIndex;
   width: number;
   height: number;
   savedAt: number;
@@ -148,9 +137,6 @@ export function Brain({ data, events, onOpen, remember }: BrainProps): React.JSX
           : loadPositions(store);
     const layout = new BrainLayout(graph, rect.width, rect.height, remembered);
 
-    let reach = 0;
-    for (let i = 0; i < layout.r.length; i += 1) reach = Math.max(reach, layout.r[i]!);
-
     // The camera survives a rebuild. A note saved elsewhere refetches the graph,
     // and yanking the view back to the overview mid-read would punish the user
     // for somebody else's edit.
@@ -169,8 +155,7 @@ export function Brain({ data, events, onOpen, remember }: BrainProps): React.JSX
       picked,
       drag: -1,
       pan: null,
-      tree: null,
-      reach,
+      hits: new HitIndex(layout),
       width: rect.width,
       height: rect.height,
       savedAt: performance.now(),
@@ -243,10 +228,7 @@ export function Brain({ data, events, onOpen, remember }: BrainProps): React.JSX
         if (!reduce) {
           e.layout.step();
           e.activity.advance();
-          // Everything moved, so the hit index is wrong. It is not rebuilt here
-          // — a pointer event asks for it a few dozen times a second at most,
-          // and a frame runs sixty times a second whether or not anyone points.
-          e.tree = null;
+          e.hits.invalidate();
         }
         persist(e, now, false);
 
@@ -268,24 +250,7 @@ export function Brain({ data, events, onOpen, remember }: BrainProps): React.JSX
       const rect = canvas.getBoundingClientRect();
       const at = toWorld(e.camera, event.clientX - rect.left, event.clientY - rect.top);
 
-      if (e.tree === null) {
-        const tree = new Quadtree(0, 0, e.width, e.height);
-        for (let i = 0; i < e.layout.x.length; i += 1) tree.insert(i, e.layout.x[i]!, e.layout.y[i]!);
-        e.tree = tree;
-      }
-
-      // The forgiving radius shrinks as the camera zooms in, so that it stays a
-      // constant distance on screen; a large cell body stays grabbable across
-      // its whole width even when that is less. Still "nearest centre wins", as
-      // before: on the rim of a big, magnified node a small neighbour whose
-      // centre is closer can claim the point and then be too far to count.
-      const slack = GRAB / e.camera.scale;
-      const hit = e.tree.nearest(at.x, at.y, Math.max(slack, e.reach));
-      if (hit === -1) return -1;
-      const dx = e.layout.x[hit]! - at.x;
-      const dy = e.layout.y[hit]! - at.y;
-      const allowed = Math.max(slack, e.layout.r[hit]!);
-      return dx * dx + dy * dy <= allowed * allowed ? hit : -1;
+      return e.hits.at(at.x, at.y, e.camera.scale);
     };
 
     const goHome = (): void => {
@@ -349,7 +314,7 @@ export function Brain({ data, events, onOpen, remember }: BrainProps): React.JSX
         const rect = canvas.getBoundingClientRect();
         const at = toWorld(e.camera, event.clientX - rect.left, event.clientY - rect.top);
         e.layout.place(e.drag, at.x, at.y);
-        e.tree = null;
+        e.hits.invalidate();
         return;
       }
       if (e.pan !== null) {
