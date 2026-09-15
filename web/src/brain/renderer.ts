@@ -25,10 +25,15 @@ export interface BrainRenderer {
 
 /** Segments per tract. Fourteen is where the taper stops looking faceted. */
 const SEG = 14;
+/** Below this opacity a tract is not worth a path: nothing on screen would change. */
+const INVISIBLE = 0.004;
 
 export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
   const ctx = canvas.getContext('2d');
   let dpr = 1;
+  // One outline buffer for every tract, x and y interleaved, left side then
+  // right. Filled per edge instead of two fresh arrays of pairs per edge per frame.
+  const outline = new Float64Array((SEG + 1) * 4);
 
   const resize = (width: number, height: number): void => {
     // Capped at 2. A phone claiming 3 or 4 asks for nine to sixteen times the
@@ -61,11 +66,11 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     ctx.setTransform(dpr * camera.scale, 0, 0, dpr * camera.scale, dpr * camera.x, dpr * camera.y);
 
     // Tracts: wide at the cell body, narrow in the middle, so the link visibly
-    // grows out of the neuron instead of lying beside it as a stroke.
-    ctx.fillStyle = 'rgba(96,206,222,0.3)';
+    // grows out of the neuron instead of lying beside it as a stroke. One colour
+    // for all of them; how loud each one is arrives as its opacity.
+    ctx.fillStyle = 'rgb(96,206,222)';
     for (const e of scene.edges) {
-      const left: Array<[number, number]> = [];
-      const right: Array<[number, number]> = [];
+      if (e.alpha < INVISIBLE) continue;
 
       for (let i = 0; i <= SEG; i += 1) {
         const t = i / SEG;
@@ -76,18 +81,24 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
         const ty = 2 * it * (e.cy - e.ay) + 2 * t * (e.by - e.cy);
         const tl = Math.sqrt(tx * tx + ty * ty) || 1;
         const taper = 1 - 4 * t * (1 - t);
-        const wid = 0.55 + (e.aw * it + e.bw * t) * taper * 0.9;
-        left.push([px + (-ty / tl) * wid, py + (tx / tl) * wid]);
-        right.push([px - (-ty / tl) * wid, py - (tx / tl) * wid]);
+        const wid = e.mw + (e.aw * it + e.bw * t) * taper;
+        const nx = (-ty / tl) * wid;
+        const ny = (tx / tl) * wid;
+        outline[i * 4] = px + nx;
+        outline[i * 4 + 1] = py + ny;
+        outline[i * 4 + 2] = px - nx;
+        outline[i * 4 + 3] = py - ny;
       }
 
+      ctx.globalAlpha = Math.min(1, e.alpha);
       ctx.beginPath();
-      ctx.moveTo(left[0]![0], left[0]![1]);
-      for (let i = 1; i < left.length; i += 1) ctx.lineTo(left[i]![0], left[i]![1]);
-      for (let i = right.length - 1; i >= 0; i -= 1) ctx.lineTo(right[i]![0], right[i]![1]);
+      ctx.moveTo(outline[0]!, outline[1]!);
+      for (let i = 1; i <= SEG; i += 1) ctx.lineTo(outline[i * 4]!, outline[i * 4 + 1]!);
+      for (let i = SEG; i >= 0; i -= 1) ctx.lineTo(outline[i * 4 + 2]!, outline[i * 4 + 3]!);
       ctx.closePath();
       ctx.fill();
     }
+    ctx.globalAlpha = 1;
 
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -95,11 +106,12 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       const n = scene.nodes[i]!;
       const [cr, cg, cb] = n.colour;
       const a = n.alpha;
+      const g = n.glow;
       const reach = n.r * (3.4 + n.heat * 3);
 
       const halo = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, reach);
-      halo.addColorStop(0, `rgba(${cr},${cg},${cb},${0.5 * a})`);
-      halo.addColorStop(0.4, `rgba(${cr},${cg},${cb},${0.14 * a})`);
+      halo.addColorStop(0, `rgba(${cr},${cg},${cb},${0.5 * g * a})`);
+      halo.addColorStop(0.4, `rgba(${cr},${cg},${cb},${0.14 * g * a})`);
       halo.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
       ctx.fillStyle = halo;
       ctx.beginPath();
