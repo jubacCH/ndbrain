@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Database } from '../src/db/database.js';
 import { migrate } from '../src/db/schema.js';
@@ -36,6 +36,11 @@ async function externalDelete(owner: string, notePath: string): Promise<void> {
   await fs.rm(path.join(dataDir, 'vaults', owner, notePath), { force: true });
 }
 
+// How many of this file's `waitUntil` calls the watcher settled on its own
+// vs. how many needed the `reconcile()` fallback — see the guard below.
+let waitAttempts = 0;
+let reconcileFallbacks = 0;
+
 /**
  * Waits until `check()` reports the state a test actually cares about, not
  * until the watcher happens to have emitted some number of batches.
@@ -61,6 +66,8 @@ async function externalDelete(owner: string, notePath: string): Promise<void> {
  * error names the state that never arrived.
  */
 async function waitUntil(description: string, check: () => boolean): Promise<void> {
+  waitAttempts += 1;
+
   const watcherDeadline = Date.now() + 4_000;
   while (Date.now() < watcherDeadline) {
     await watcher.flushNow();
@@ -68,11 +75,46 @@ async function waitUntil(description: string, check: () => boolean): Promise<voi
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
+  reconcileFallbacks += 1;
   await watcher.reconcile();
   if (check()) return;
 
   throw new Error(`timed out waiting for: ${description}`);
 }
+
+/**
+ * Guards against exactly the gap a reviewer found in an earlier round: with
+ * the watcher's `add`/`change`/`unlink` handlers turned into no-ops, every
+ * `waitUntil` call in this file still went green, just slower — because
+ * `reconcile()` alone was enough to satisfy every assertion. A watcher file
+ * that cannot tell "the watcher worked" from "the watcher is completely dead"
+ * is not testing the watcher.
+ *
+ * The threshold sits between the two measured extremes, with margin on both
+ * sides:
+ * - A working watcher rarely needs the fallback at all. A standalone script
+ *   (bare chokidar, no app code, 20 fresh watch-then-write cycles) lost 1 of
+ *   20 `add` events outright — roughly 5%. Measured directly against this
+ *   file, 20 isolated runs (13 `waitUntil` calls each, 260 total) needed the
+ *   fallback 0, 1 or 2 times per run, never more.
+ * - A fully dead watcher (verified against a local, temporary no-op build of
+ *   `watcher.ts` — never committed) forces the fallback on every single call,
+ *   deterministically: 13 of 13, every run.
+ *
+ * 4 leaves double the observed worst case as headroom before it trips, yet
+ * sits nowhere near 13 — a broken watcher cannot sneak under it by chance the
+ * way a working one could occasionally brush a too-tight limit.
+ */
+const MAX_RECONCILE_FALLBACKS = 4;
+
+afterAll(() => {
+  if (reconcileFallbacks > MAX_RECONCILE_FALLBACKS) {
+    throw new Error(
+      `the watcher failed to deliver ${reconcileFallbacks} of ${waitAttempts} states on its own ` +
+        `(allowed: ${MAX_RECONCILE_FALLBACKS}) — check event handling in watcher.ts`,
+    );
+  }
+});
 
 beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-watch-'));
