@@ -1314,6 +1314,7 @@ function Shell({
                   events={pulse}
                   onOpen={(owner, path) => void openNote(owner, path)}
                   remember="network"
+                  view="network"
                 />
                 <div className="brainlegend">
                   <span><i style={{ background: '#7fe9f0' }} />{copy.network.read}</span>
@@ -1494,7 +1495,12 @@ function Shell({
                 No links yet. Type <code>[[</code> in the text to connect this note.
               </p>
             ) : (
-              <Brain data={local} events={pulse} onOpen={(owner, path) => void openNote(owner, path)} />
+              <Brain
+                data={local}
+                events={pulse}
+                onOpen={(owner, path) => void openNote(owner, path)}
+                view={refKey(open.owner, open.note.path)}
+              />
             )}
           </div>
         </aside>

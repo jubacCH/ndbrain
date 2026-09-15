@@ -55,6 +55,20 @@ export interface BrainProps {
    * hash already answers: it opens the same way every time regardless.
    */
   remember?: string;
+  /**
+   * What this canvas is showing, as an identity: the whole network, or the
+   * neighbourhood of one particular note.
+   *
+   * A new graph arrives for two reasons that want opposite things. A refetch of
+   * the same view — an edit somewhere, an agent's write — keeps the camera, the
+   * selection and the live positions, because the picture is the same picture.
+   * Switching the panel to another note is a different picture, and it starts
+   * from the overview. The data alone cannot say which happened: two
+   * neighbouring notes share most of their neighbourhood. The caller knows, so
+   * the caller says — and it is required, so that a third use of this component
+   * cannot quietly inherit the wrong answer.
+   */
+  view: string;
 }
 
 /** A camera move takes this long. Long enough to follow, short enough not to wait. */
@@ -92,9 +106,11 @@ interface Engine {
   savedAt: number;
   /** Name of the position store, or null when this instance does not remember. */
   store: string | null;
+  /** The `view` this engine was built for. */
+  view: string;
 }
 
-export function Brain({ data, events, onOpen, remember }: BrainProps): React.JSX.Element {
+export function Brain({ data, events, onOpen, remember, view }: BrainProps): React.JSX.Element {
   const host = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
   /** Set by the frame effect, called by the reset control. */
@@ -123,34 +139,32 @@ export function Brain({ data, events, onOpen, remember }: BrainProps): React.JSX
     const rect = canvas.getBoundingClientRect();
     const graph = buildGraph(data);
     const store = remember ?? null;
-    const before = engine.current;
+    // The same view refetched, as opposed to a first mount or another note.
+    const same = engine.current !== null && engine.current.view === view ? engine.current : null;
 
-    // A refetch while the view is open starts from where the nodes are *now*,
-    // not from storage, which can be up to one save interval behind — reading it
-    // back would make every edit elsewhere twitch the picture. Storage is for
-    // arriving; the running layout is for staying.
+    // A refetch starts from where the nodes are *now*, not from storage, which
+    // can be up to one save interval behind — reading it back would make every
+    // edit elsewhere twitch the picture. Storage is for arriving; the running
+    // layout is for staying. That holds for the neighbourhood too, which has no
+    // storage: without this, each refetch threw it back to its hash start.
     const remembered =
-      store === null
-        ? undefined
-        : before !== null && before.store === store
-          ? before.layout.positions()
-          : loadPositions(store);
+      same !== null ? same.layout.positions() : store === null ? undefined : loadPositions(store);
     const layout = new BrainLayout(graph, rect.width, rect.height, remembered);
 
-    // The camera survives a rebuild. A note saved elsewhere refetches the graph,
-    // and yanking the view back to the overview mid-read would punish the user
-    // for somebody else's edit.
+    // The camera and the selection survive a refetch of the same view. Yanking
+    // the view back to the overview mid-read would punish the user for somebody
+    // else's edit. Another view starts at home.
     const picked =
-      before === null || before.picked < 0
+      same === null || same.picked < 0
         ? -1
-        : (graph.index.get(before.graph.nodes[before.picked]!.key) ?? -1);
+        : (graph.index.get(same.graph.nodes[same.picked]!.key) ?? -1);
 
     engine.current = {
       graph,
       layout,
       activity: new Activity(graph),
       builder: new SceneBuilder(graph),
-      camera: before?.camera ?? HOME,
+      camera: same?.camera ?? HOME,
       glide: null,
       picked,
       drag: -1,
@@ -160,8 +174,9 @@ export function Brain({ data, events, onOpen, remember }: BrainProps): React.JSX
       height: rect.height,
       savedAt: performance.now(),
       store,
+      view,
     };
-  }, [data, remember]);
+  }, [data, remember, view]);
 
   /** Fire new events — a flash at the place, sparks along its tracts. */
   useEffect(() => {
@@ -249,7 +264,6 @@ export function Brain({ data, events, onOpen, remember }: BrainProps): React.JSX
       if (e === null) return -1;
       const rect = canvas.getBoundingClientRect();
       const at = toWorld(e.camera, event.clientX - rect.left, event.clientY - rect.top);
-
       return e.hits.at(at.x, at.y, e.camera.scale);
     };
 
