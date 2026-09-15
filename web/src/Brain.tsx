@@ -147,8 +147,11 @@ interface Engine {
    * has come to rest is not written back every few seconds for nothing.
    */
   dirty: boolean;
-  /** Where the pointer was when panning, in screen pixels, or null. */
-  pan: { x: number; y: number } | null;
+  /**
+   * Where the pointer was when panning, in screen pixels, and where the press
+   * began — a press on the dark that never travels is a click, not a pan.
+   */
+  pan: { x: number; y: number; fromX: number; fromY: number } | null;
   /** Which node is under a point. Rebuilt on demand, not per frame. */
   hits: HitIndex;
   width: number;
@@ -406,7 +409,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         e.press = { node: hit, x: event.clientX, y: event.clientY };
         e.picked = hit;
       } else {
-        e.pan = { x: event.clientX, y: event.clientY };
+        e.pan = { x: event.clientX, y: event.clientY, fromX: event.clientX, fromY: event.clientY };
       }
     };
 
@@ -430,13 +433,18 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         if (event.clientX === e.pan.x && event.clientY === e.pan.y) return;
         e.homed = false;
         e.camera = panBy(e.camera, event.clientX - e.pan.x, event.clientY - e.pan.y);
-        e.pan = { x: event.clientX, y: event.clientY };
+        e.pan = { ...e.pan, x: event.clientX, y: event.clientY };
       }
     };
 
-    const onUp = (): void => {
+    const onUp = (event: PointerEvent): void => {
       const e = engine.current;
       if (e === null) return;
+      // A click on the dark lets go of the selected note. Only a click: a pan
+      // that happens to start and end on the dark keeps it.
+      if (e.pan !== null && Math.hypot(event.clientX - e.pan.fromX, event.clientY - e.pan.fromY) <= DRAG_SLOP) {
+        e.picked = -1;
+      }
       if (e.drag >= 0) {
         e.layout.release();
         // The frame loop does not step under reduced motion: the neighbours
@@ -458,6 +466,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     };
 
     const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && engine.current !== null) engine.current.picked = -1;
       if (event.key === '0' || event.key === 'Escape') goHome();
     };
 

@@ -7,13 +7,15 @@
  * else. So these tests go through the component, with pointer events, and read
  * the result where it would do the damage — the stored positions.
  *
- * Two promises:
+ * Three promises:
  *
  *  - **A click moves nothing.** Not the note clicked, not anything else, not
  *    after five clicks, not after a double click.
  *  - **A drag moves the note to where it was dropped, and only its neighbours
  *    make room.** Every other note stays exactly where it was, however often
  *    notes are dragged.
+ *  - **A click on the dark lets go of the selection**, as does Escape; a pan
+ *    does not. The selection is read from what each frame is built with.
  *
  * Positions are compared with `toBe`: a tolerance is exactly what would hide a
  * small drift that adds up.
@@ -29,6 +31,7 @@ import { BrainLayout } from '../src/brain/layout';
 import { buildGraph } from '../src/brain/model';
 import type { Place } from '../src/brain/layout';
 import { loadPositions } from '../src/brain/positions';
+import { SceneBuilder } from '../src/brain/scene';
 import { paraVault } from './fixtures/para-vault';
 
 const W = 1200;
@@ -188,5 +191,45 @@ describe('a drag', () => {
       before = after;
     }
     expect(untouched.size).toBeGreaterThan(60);
+  });
+});
+
+describe('the selection', () => {
+  /** The note the last frame was built with as selected, or -1. */
+  const selected = (spy: { mock: { calls: unknown[][] } }): number => spy.mock.calls.at(-1)![3] as number;
+
+  it('is let go by a click on the dark and by Escape, but kept through a pan', async () => {
+    const before = await firstVisit();
+    const build = vi.spyOn(SceneBuilder.prototype, 'build');
+    const { canvas, unmount } = await mount();
+    const key = targets[2]!;
+    const note = graph.index.get(key)!;
+    const p = at(before, key);
+    const select = async (): Promise<void> => {
+      fireEvent.pointerDown(canvas, { clientX: p.x, clientY: p.y, pointerId: 1 });
+      fireEvent.pointerUp(window, { clientX: p.x, clientY: p.y, pointerId: 1 });
+      await run(100);
+      expect(selected(build)).toBe(note);
+    };
+    // A corner of the canvas, well away from the brain.
+    const dark = { clientX: 4, clientY: 4, pointerId: 1 };
+
+    await select();
+    fireEvent.pointerDown(canvas, dark);
+    fireEvent.pointerUp(window, dark);
+    await run(100);
+    expect(selected(build)).toBe(-1);
+
+    await select();
+    fireEvent.pointerDown(canvas, dark);
+    fireEvent.pointerMove(canvas, { clientX: 60, clientY: 40, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 60, clientY: 40, pointerId: 1 });
+    await run(100);
+    expect(selected(build)).toBe(note);
+
+    fireEvent.keyDown(canvas, { key: 'Escape' });
+    await run(100);
+    expect(selected(build)).toBe(-1);
+    unmount();
   });
 });
