@@ -24,25 +24,81 @@ export interface Camera {
 }
 
 /**
- * The view the graph was laid out for.
+ * One world unit to one CSS pixel, world origin at the canvas's top-left.
  *
- * Not an arbitrary starting point: the simulation is bounded by a rectangle the
- * size of the viewport, so at scale 1 with no offset the entire graph is on
- * screen by construction. That makes "reset" mean "return to identity", with no
- * bounding box to measure, and it makes the first frame after this rewrite the
- * same picture as the last frame before it.
+ * No longer where the view starts — the world has its own size now, and the
+ * resting view is computed by `fit` — but still the neutral camera for a
+ * canvas that has not been measured yet.
  */
-export const HOME: Camera = { scale: 1, x: 0, y: 0 };
+export const IDENTITY: Camera = { scale: 1, x: 0, y: 0 };
+
+/** A world rectangle. */
+export interface Box {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/** Screen space to keep free around the fitted world, for controls laid over the canvas. */
+export interface Inset {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
 
 /**
- * How far out and in the wheel may go.
+ * The resting view never magnifies beyond one world unit per pixel.
  *
- * Below 1 there is nothing new to see — the world ends at the viewport — but a
- * little margin helps when a node has been dragged to the rim, so the floor sits
- * just under it rather than at it.
+ * The world's lengths were chosen for that scale: cell bodies, tract widths and
+ * label sizes are the ones the design direction settled on. A small vault in a
+ * large window is shown at its natural size in the middle, not blown up until
+ * six notes fill a monitor.
  */
-export const MIN_SCALE = 0.4;
-export const MAX_SCALE = 8;
+export const FIT_MAX_SCALE = 1;
+
+/**
+ * The resting view: the whole of `box`, centred in the viewport.
+ *
+ * The world used to be the viewport, which made the resting view the identity
+ * and let the simulation know where the legend and the footer were. Now the
+ * brain has its own size, fixed by the vault, and "the view that holds
+ * everything" is computed here. This is also where the one piece of screen
+ * knowledge that used to leak into the simulation lives now: the room the
+ * controls over the canvas take up. It is an inset on the screen, which is
+ * what it always was.
+ */
+export function fit(box: Box, width: number, height: number, inset: Inset): Camera {
+  const w = Math.max(1, box.maxX - box.minX);
+  const h = Math.max(1, box.maxY - box.minY);
+  const roomW = Math.max(1, width - inset.left - inset.right);
+  const roomH = Math.max(1, height - inset.top - inset.bottom);
+  const scale = Math.min(FIT_MAX_SCALE, roomW / w, roomH / h);
+  return {
+    scale,
+    x: inset.left + roomW / 2 - (box.minX + w / 2) * scale,
+    y: inset.top + roomH / 2 - (box.minY + h / 2) * scale,
+  };
+}
+
+/** How far the wheel may zoom out and in. */
+export interface ZoomLimits {
+  min: number;
+  max: number;
+}
+
+/**
+ * The limits for a resting view.
+ *
+ * Out: to 40 % of the fitted size, which leaves a little margin when a node has
+ * been dragged to the rim, and nothing more to see beyond it. In: to eight times
+ * the design scale, absolute rather than relative, because what runs out when
+ * zooming in is detail, and detail is drawn in world units.
+ */
+export function limitsFor(home: Camera): ZoomLimits {
+  return { min: home.scale * 0.4, max: Math.max(8, home.scale * 8) };
+}
 
 export function toScreen(cam: Camera, wx: number, wy: number): { x: number; y: number } {
   return { x: wx * cam.scale + cam.x, y: wy * cam.scale + cam.y };
@@ -50,11 +106,6 @@ export function toScreen(cam: Camera, wx: number, wy: number): { x: number; y: n
 
 export function toWorld(cam: Camera, sx: number, sy: number): { x: number; y: number } {
   return { x: (sx - cam.x) / cam.scale, y: (sy - cam.y) / cam.scale };
-}
-
-/** True when the camera is where it started, give or take a rounding error. */
-export function isHome(cam: Camera): boolean {
-  return Math.abs(cam.scale - 1) < 1e-4 && Math.abs(cam.x) < 0.5 && Math.abs(cam.y) < 0.5;
 }
 
 /**
@@ -66,8 +117,8 @@ export function isHome(cam: Camera): boolean {
  * the cursor. Which is the entire rule — find the world point below the pointer,
  * change the scale, then move the camera so that point lands on the same pixel.
  */
-export function zoomAt(cam: Camera, sx: number, sy: number, factor: number): Camera {
-  const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, cam.scale * factor));
+export function zoomAt(cam: Camera, sx: number, sy: number, factor: number, limits: ZoomLimits): Camera {
+  const scale = Math.min(limits.max, Math.max(limits.min, cam.scale * factor));
   if (scale === cam.scale) return cam;
   const before = toWorld(cam, sx, sy);
   return { scale, x: sx - before.x * scale, y: sy - before.y * scale };

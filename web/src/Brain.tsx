@@ -11,8 +11,17 @@
  *  - **Every shape comes from the data.** An early draft gave each cell body
  *    decorative tendrils; they looked like connections and were not. What grows
  *    out of a neuron here is a link that actually exists.
- *  - **The arrangement emerges, it is not drawn.** The lobes come from the
- *    vault's folders, not from a brain silhouette.
+ *  - **The arrangement emerges, it is not drawn.** An earlier version of this
+ *    rule said the lobes came from the folders "and not from a brain
+ *    silhouette". The redesign briefing reverses the second half on purpose
+ *    (points 9, 12, 52): the full network *is* shaped like a brain — two
+ *    hemispheres and a fissure — but the shape must still come out of the
+ *    nodes, never from a background image, a mask or dots scattered inside an
+ *    outline. So clusters get regions and a soft force keeps the regions within
+ *    two hemispheres (`brain/layout.ts`, `brain/shape.ts`); what is drawn is only
+ *    ever the notes and their links. The shape is the large scale only: zoomed
+ *    in, it dissolves into ordinary clusters, and the small neighbourhood panel
+ *    is never pressed into it.
  *
  * This file used to be all of it — model, physics, painting and pointer
  * handling in one `useEffect`. Those now live in `./brain`, in the order the
@@ -31,12 +40,14 @@ import { useEffect, useRef, useState } from 'react';
 import type { GraphData, PulseEvent } from './api';
 import { copy } from './copy';
 import { Activity } from './brain/activity';
-import type { Camera } from './brain/camera';
-import { HOME, between, ease, isHome, panBy, toWorld, zoomAt } from './brain/camera';
+import type { Camera, Inset } from './brain/camera';
+import { between, ease, fit, limitsFor, panBy, toWorld, zoomAt } from './brain/camera';
 import { HitIndex } from './brain/hit';
+import type { Arrangement } from './brain/layout';
 import { BrainLayout } from './brain/layout';
 import type { BrainGraph } from './brain/model';
 import { buildGraph } from './brain/model';
+import type { PositionStore } from './brain/positions';
 import { loadPositions, savePositions } from './brain/positions';
 import { createCanvasRenderer } from './brain/renderer';
 import { SceneBuilder } from './brain/scene';
@@ -47,14 +58,27 @@ export interface BrainProps {
   events: PulseEvent[];
   onOpen: (owner: string, path: string) => void;
   /**
-   * Name of the store that remembers where the nodes settled.
+   * Where to remember the settled arrangement: whose account, which view.
    *
    * Only the full network passes one. The neighbourhood panel is a different
-   * subgraph in a different-sized box for every note opened, so remembering it
-   * would mean storing one arrangement per note to answer a question the path
-   * hash already answers: it opens the same way every time regardless.
+   * subgraph for every note opened, so remembering it would mean storing one
+   * arrangement per note to answer a question the path hash already answers:
+   * it opens the same way every time regardless.
    */
-  remember?: string;
+  remember?: PositionStore;
+  /**
+   * The brain shape, or a loose cluster.
+   *
+   * Required for the same reason as `view`: the full network and the
+   * neighbourhood panel want different things, and a third use should have to
+   * say which it is rather than inherit one.
+   */
+  arrangement: Arrangement;
+  /**
+   * Screen space the resting view keeps clear, for controls laid over the
+   * canvas. The component cannot see them; the caller placed them.
+   */
+  inset?: Inset;
   /**
    * What this canvas is showing, as an identity: the whole network, or the
    * neighbourhood of one particular note.
@@ -85,14 +109,26 @@ const GLIDE_MS = 320;
  */
 const SAVE_MS = 5000;
 
+/** Breathing room around the fitted world when the caller asks for none. */
+const EDGE: Inset = { top: 12, right: 12, bottom: 12, left: 12 };
+
 interface Engine {
   graph: BrainGraph;
   layout: BrainLayout;
   activity: Activity;
   builder: SceneBuilder;
   camera: Camera;
+  /**
+   * Whether the camera is at rest in the fitted view.
+   *
+   * A state, not a comparison. While it holds, the camera follows the fit
+   * every frame — so resizing the window, or the panel changing width, only
+   * changes the mapping and the whole brain stays in view. Any zoom or pan
+   * clears it; arriving back home sets it again.
+   */
+  homed: boolean;
   /** An animated camera move in progress, or null. */
-  glide: { from: Camera; to: Camera; at: number } | null;
+  glide: { from: Camera; at: number } | null;
   /** The node whose name is shown because it was clicked, or -1. */
   picked: number;
   /** The node being dragged, or -1. */
@@ -104,13 +140,13 @@ interface Engine {
   width: number;
   height: number;
   savedAt: number;
-  /** Name of the position store, or null when this instance does not remember. */
-  store: string | null;
+  /** Where positions are remembered, or null when this instance does not. */
+  store: PositionStore | null;
   /** The `view` this engine was built for. */
   view: string;
 }
 
-export function Brain({ data, events, onOpen, remember, view }: BrainProps): React.JSX.Element {
+export function Brain({ data, events, onOpen, remember, view, arrangement, inset }: BrainProps): React.JSX.Element {
   const host = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
   /** Set by the frame effect, called by the reset control. */
@@ -130,6 +166,11 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
 
   /** Drives the reset control, which stays hidden until there is somewhere to return from. */
   const [adrift, setAdrift] = useState(false);
+  /** Read by the frame loop; a ref so a new object literal per render restarts nothing. */
+  const margin = useRef<Inset>(inset ?? EDGE);
+  useEffect(() => {
+    margin.current = inset ?? EDGE;
+  });
 
   // Rebuilt only when the graph really changes — not on every pulse.
   useEffect(() => {
@@ -149,7 +190,12 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
     // storage: without this, each refetch threw it back to its hash start.
     const remembered =
       same !== null ? same.layout.positions() : store === null ? undefined : loadPositions(store);
-    const layout = new BrainLayout(graph, rect.width, rect.height, remembered);
+    const layout = new BrainLayout(graph, { arrangement, remembered });
+    // A brain nobody has seen yet is laid out before its first frame. Watching
+    // it assemble is a few seconds of motion that says nothing, on a view whose
+    // resting state is meant to be calm; a remembered one only has to absorb
+    // what changed, and does that on screen, briefly.
+    if (layout.rememberedShare < 0.5) layout.settle();
 
     // The camera and the selection survive a refetch of the same view. Yanking
     // the view back to the overview mid-read would punish the user for somebody
@@ -164,7 +210,8 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
       layout,
       activity: new Activity(graph),
       builder: new SceneBuilder(graph),
-      camera: same?.camera ?? HOME,
+      camera: same?.camera ?? fit(layout.bounds, rect.width, rect.height, margin.current),
+      homed: same?.homed ?? true,
       glide: null,
       picked,
       drag: -1,
@@ -176,7 +223,8 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
       store,
       view,
     };
-  }, [data, remember, view]);
+  // `remember` is an object from the caller; its contents are what matter.
+  }, [data, remember?.account, remember?.store, view, arrangement]);
 
   /** Fire new events — a flash at the place, sparks along its tracts. */
   useEffect(() => {
@@ -197,9 +245,9 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
       const rect = canvas.getBoundingClientRect();
       paint.resize(rect.width, rect.height);
       if (e === null) return;
+      // Only the mapping changes. The layout has no idea how big the window is.
       e.width = rect.width;
       e.height = rect.height;
-      e.layout.resize(rect.width, rect.height);
     };
     measure();
 
@@ -230,25 +278,30 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
       if (e !== null) {
         const now = performance.now();
 
+        const home = fit(e.layout.bounds, e.width, e.height, margin.current);
         if (e.glide !== null) {
           const t = reduce ? 1 : (now - e.glide.at) / GLIDE_MS;
           if (t >= 1) {
-            e.camera = e.glide.to;
             e.glide = null;
+            e.homed = true;
           } else {
-            e.camera = between(e.glide.from, e.glide.to, ease(t));
+            // Towards where home is now, not where it was when the glide began:
+            // the panel may be changing width at the same moment.
+            e.camera = between(e.glide.from, home, ease(t));
           }
         }
+        if (e.homed) e.camera = home;
 
         if (!reduce) {
-          e.layout.step();
+          // Nothing to compute once it has come to rest; the frame still draws,
+          // because pulses still fire.
+          if (e.layout.step()) e.hits.invalidate();
           e.activity.advance();
-          e.hits.invalidate();
         }
         persist(e, now, false);
 
         paint.draw(e.builder.build(e.layout, e.activity, e.camera, e.picked, e.width, e.height));
-        const away = !isHome(e.camera);
+        const away = !e.homed;
         if (away !== shown) {
           shown = away;
           setAdrift(away);
@@ -269,8 +322,8 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
 
     const goHome = (): void => {
       const e = engine.current;
-      if (e === null || isHome(e.camera)) return;
-      e.glide = { from: e.camera, to: HOME, at: performance.now() };
+      if (e === null || e.homed || e.glide !== null) return;
+      e.glide = { from: e.camera, at: performance.now() };
     };
     home.current = goHome;
 
@@ -289,13 +342,17 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? e.height : 1;
       const delta = event.deltaY * unit;
       const rect = canvas.getBoundingClientRect();
+      const home = fit(e.layout.bounds, e.width, e.height, margin.current);
       e.glide = null;
-      e.camera = zoomAt(
+      const next = zoomAt(
         e.camera,
         event.clientX - rect.left,
         event.clientY - rect.top,
         Math.exp(-delta * (event.ctrlKey ? 0.01 : 0.0022)),
+        limitsFor(home),
       );
+      if (next !== e.camera) e.homed = false;
+      e.camera = next;
     };
 
     /**
@@ -315,7 +372,7 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
       if (hit >= 0) {
         e.drag = hit;
         e.picked = hit;
-        e.layout.pinned = hit;
+        e.layout.hold(hit);
       } else {
         e.pan = { x: event.clientX, y: event.clientY };
       }
@@ -332,6 +389,8 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
         return;
       }
       if (e.pan !== null) {
+        if (event.clientX === e.pan.x && event.clientY === e.pan.y) return;
+        e.homed = false;
         e.camera = panBy(e.camera, event.clientX - e.pan.x, event.clientY - e.pan.y);
         e.pan = { x: event.clientX, y: event.clientY };
       }
@@ -340,9 +399,9 @@ export function Brain({ data, events, onOpen, remember, view }: BrainProps): Rea
     const onUp = (): void => {
       const e = engine.current;
       if (e === null) return;
+      if (e.drag >= 0) e.layout.release();
       e.drag = -1;
       e.pan = null;
-      e.layout.pinned = -1;
     };
 
     const onDouble = (event: MouseEvent): void => {

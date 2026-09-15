@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { GraphData } from '../src/api';
 import { Activity } from '../src/brain/activity';
-import { HOME } from '../src/brain/camera';
+import { IDENTITY } from '../src/brain/camera';
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph, nodeKey } from '../src/brain/model';
 import { PULSE_COLOUR, SceneBuilder } from '../src/brain/scene';
@@ -72,12 +72,6 @@ describe('the graph model', () => {
     expect(buildGraph({ nodes: [], edges: [] }).hub).toBe(-1);
   });
 
-  it('gives a folder a place, and neighbouring folders neighbouring places', () => {
-    const g = buildGraph(VAULT);
-    expect(g.nodes[0]!.lobe).toBe(g.nodes[1]!.lobe);
-    expect(g.nodes[0]!.lobe).not.toBe(g.nodes[2]!.lobe);
-  });
-
   it('derives depth and bend from the note, not from where it sits in the reply', () => {
     // The vault gains a note at the top of the list: with the old index-derived
     // seed every note after it changed depth, and the whole picture with it.
@@ -126,9 +120,9 @@ describe('the graph model', () => {
 describe('the render model', () => {
   const build = (picked = -1): ReturnType<SceneBuilder['build']> => {
     const g = buildGraph(VAULT);
-    const layout = new BrainLayout(g, 800, 500);
+    const layout = new BrainLayout(g, { arrangement: 'loose' });
     const activity = new Activity(g);
-    return new SceneBuilder(g).build(layout, activity, HOME, picked, 800, 500);
+    return new SceneBuilder(g).build(layout, activity, IDENTITY, picked, 800, 500);
   };
 
   it('draws from the back forwards', () => {
@@ -148,7 +142,7 @@ describe('the render model', () => {
 
   it('turns an access into the colour of what happened, then lets it cool', () => {
     const g = buildGraph(VAULT);
-    const layout = new BrainLayout(g, 800, 500);
+    const layout = new BrainLayout(g, { arrangement: 'loose' });
     const activity = new Activity(g);
     const builder = new SceneBuilder(g);
     const at = g.index.get(nodeKey('jb', '20_Areas/homelab.md'))!;
@@ -164,14 +158,14 @@ describe('the render model', () => {
         owner: 'jb',
       },
     ]);
-    const hot = builder.build(layout, activity, HOME, -1, 800, 500);
+    const hot = builder.build(layout, activity, IDENTITY, -1, 800, 500);
     expect(hot.nodes[at]!.colour).toEqual(PULSE_COLOUR.write);
     expect(hot.sparks.length).toBe(2);
 
     // Ten seconds of frames. The flash is gone in under one; the warmth behind
     // it takes more than ten, which is the difference the two are there to make.
     for (let i = 0; i < 640; i += 1) activity.advance();
-    const cool = builder.build(layout, activity, HOME, -1, 800, 500);
+    const cool = builder.build(layout, activity, IDENTITY, -1, 800, 500);
     expect(cool.nodes[at]!.colour).not.toEqual(PULSE_COLOUR.write);
     expect(cool.sparks).toHaveLength(0);
   });
@@ -192,9 +186,9 @@ describe('the render model', () => {
     ]);
     activity.advance();
     const scene = new SceneBuilder(g).build(
-      new BrainLayout(g, 800, 500),
+      new BrainLayout(g, { arrangement: 'loose' }),
       activity,
-      HOME,
+      IDENTITY,
       -1,
       800,
       500,
@@ -223,7 +217,7 @@ describe('the render model', () => {
 
   it('starts a travelling spark on the note it came from', () => {
     const g = buildGraph(VAULT);
-    const layout = new BrainLayout(g, 800, 500);
+    const layout = new BrainLayout(g, { arrangement: 'loose' });
     const activity = new Activity(g);
     const at = g.index.get(nodeKey('jb', '10_Projects/ndbrain.md'))!;
     activity.record([
@@ -237,7 +231,7 @@ describe('the render model', () => {
         owner: 'jb',
       },
     ]);
-    const scene = new SceneBuilder(g).build(layout, activity, HOME, -1, 800, 500);
+    const scene = new SceneBuilder(g).build(layout, activity, IDENTITY, -1, 800, 500);
     expect(scene.sparks).toHaveLength(1);
     expect(scene.sparks[0]!.x).toBeCloseTo(layout.x[at]!, 6);
     expect(scene.sparks[0]!.y).toBeCloseTo(layout.y[at]!, 6);
@@ -276,9 +270,9 @@ describe('the render model', () => {
       })),
     );
     const scene = new SceneBuilder(g).build(
-      new BrainLayout(g, 800, 500),
+      new BrainLayout(g, { arrangement: 'loose' }),
       activity,
-      HOME,
+      IDENTITY,
       -1,
       800,
       500,
@@ -300,9 +294,9 @@ describe('the render model', () => {
       edges: [],
     });
     const scene = new SceneBuilder(g).build(
-      new BrainLayout(g, 800, 500),
+      new BrainLayout(g, { arrangement: 'loose' }),
       new Activity(g),
-      HOME,
+      IDENTITY,
       -1,
       800,
       500,

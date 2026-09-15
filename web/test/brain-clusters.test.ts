@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Clusters from the vault's structure.
  *

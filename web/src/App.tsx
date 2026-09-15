@@ -1313,8 +1313,10 @@ function Shell({
                   data={graph}
                   events={pulse}
                   onOpen={(owner, path) => void openNote(owner, path)}
-                  remember="network"
+                  remember={{ account: user.id, store: 'network' }}
                   view="network"
+                  arrangement="brain"
+                  inset={NETWORK_INSET}
                 />
                 <div className="brainlegend">
                   <span><i style={{ background: '#7fe9f0' }} />{copy.network.read}</span>
@@ -1500,6 +1502,7 @@ function Shell({
                 events={pulse}
                 onOpen={(owner, path) => void openNote(owner, path)}
                 view={refKey(open.owner, open.note.path)}
+                arrangement="loose"
               />
             )}
           </div>
@@ -1515,6 +1518,13 @@ function Shell({
     </div>
   );
 }
+
+/**
+ * Room the brain's resting view leaves for the controls laid over it: the
+ * legend at the top right, the footer along the bottom. Screen pixels, and
+ * nowhere near the simulation, which does not know either exists.
+ */
+const NETWORK_INSET = { top: 20, right: 20, bottom: 56, left: 20 };
 
 /** Was in der Kopfzeile steht, wenn keine Notiz offen ist. */
 function titleOfView(view: string): string {

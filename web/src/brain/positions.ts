@@ -9,19 +9,34 @@
  * lets a note stay where its owner left it even after ten more notes arrived.
  *
  * In the browser, not on the server, for the same reason as `prefs.ts`: this is
- * a property of the screen somebody is sitting at. The arrangement depends on
- * the size of the window it settled in, so syncing a phone's version onto a
- * desktop would replace a good picture with a squeezed one.
+ * a property of the screen somebody is sitting at. Positions are world
+ * coordinates, independent of the window, so a phone and a desktop would in
+ * principle agree — but a node dragged somewhere on one of them is a gesture on
+ * that screen, not a statement about the vault.
  *
- * Stored under the node key, owner and path together, which is what keeps two
- * vaults apart in the same browser: a self-hoster's own notes and a folder
- * shared to them never collide, and signing in as somebody else reads none of
- * the previous account's places.
+ * **Keyed by account and by format version.** The account, because two people
+ * signing in on the same browser each have their own brain; the first version
+ * of this store kept one entry per view, and whoever was signed in last
+ * overwrote the other's arrangement. The version, because the meaning of a
+ * number changed once already: the first stored positions were CSS pixels of
+ * the window they settled in, and read into the world coordinates that
+ * replaced them they would put every note somewhere arbitrary. A stale format
+ * is thrown away rather than converted — there is no faithful conversion from
+ * pixels of an unknown window, and the brain lays itself out again from the
+ * path hash in the same place every time anyway.
+ *
+ * Each entry also carries a hash of the note's links at the time. That is how
+ * the next visit knows which notes changed in between and may move, and which
+ * stay exactly where they were (`BrainLayout.mobile`).
  */
 
-import type { Point } from './layout';
+import type { Place } from './layout';
 
-const PREFIX = 'ndbrain.brain.';
+/** Bumped whenever a stored number stops meaning what it meant. */
+const VERSION = 2;
+
+/** The first format: `ndbrain.brain.<store>`, CSS pixels, no account. */
+const LEGACY = 'ndbrain.brain.';
 
 /**
  * A ceiling on what gets written back.
@@ -34,11 +49,49 @@ const PREFIX = 'ndbrain.brain.';
  */
 const MAX_ENTRIES = 20_000;
 
+/** Which arrangement: whose, and of which view. */
+export interface PositionStore {
+  /** The signed-in account's id. */
+  account: string;
+  /** The view within that account, e.g. `network`. */
+  store: string;
+}
+
+/**
+ * The storage key.
+ *
+ * Both parts are encoded and joined with a slash, which the encoding always
+ * escapes, so no account id can name another account's store: `a/b` + `c` and
+ * `a` + `b/c` must not meet. (A dot would not do: `encodeURIComponent` leaves
+ * dots alone.)
+ */
+export function positionsKey({ account, store }: PositionStore): string {
+  return `${LEGACY}v${VERSION}/${encodeURIComponent(account)}/${encodeURIComponent(store)}`;
+}
+
+/**
+ * Removes entries in a format this build no longer reads.
+ *
+ * Only the legacy shape — `ndbrain.brain.` followed by a store name with no
+ * version — so that a newer build's entries are left for that build.
+ */
+function discardLegacy(): void {
+  const doomed: string[] = [];
+  for (let i = 0; i < window.localStorage.length; i += 1) {
+    const key = window.localStorage.key(i);
+    if (key === null || !key.startsWith(LEGACY)) continue;
+    if (/^v\d+\//.test(key.slice(LEGACY.length))) continue;
+    doomed.push(key);
+  }
+  for (const key of doomed) window.localStorage.removeItem(key);
+}
+
 /** Reads the remembered arrangement for one store. Never throws. */
-export function loadPositions(store: string): Map<string, Point> {
-  const out = new Map<string, Point>();
+export function loadPositions(where: PositionStore): Map<string, Place> {
+  const out = new Map<string, Place>();
   try {
-    const raw = window.localStorage.getItem(PREFIX + store);
+    discardLegacy();
+    const raw = window.localStorage.getItem(positionsKey(where));
     if (raw === null) return out;
     const parsed: unknown = JSON.parse(raw);
     if (parsed === null || typeof parsed !== 'object') return out;
@@ -47,11 +100,13 @@ export function loadPositions(store: string): Map<string, Point> {
       // Months-old input written by an older build. Anything not a finite pair
       // is dropped rather than fed to the simulation, where a NaN spreads to
       // every node it repels within a frame or two and the picture disappears.
-      if (!Array.isArray(value) || value.length !== 2) continue;
+      if (!Array.isArray(value) || value.length < 2 || value.length > 3) continue;
       const x = Number(value[0]);
       const y = Number(value[1]);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      out.set(key, { x, y });
+      const links = Number(value[2]);
+      // Without a usable hash the note simply counts as changed and may move.
+      out.set(key, Number.isInteger(links) && links >= 0 ? { x, y, links } : { x, y });
     }
   } catch {
     // Private browsing, or a half-written value. An empty map means "lay it out
@@ -61,17 +116,19 @@ export function loadPositions(store: string): Map<string, Point> {
 }
 
 /** Replaces the remembered arrangement. Notes that are gone go with it. */
-export function savePositions(store: string, positions: ReadonlyMap<string, Point>): void {
+export function savePositions(where: PositionStore, positions: ReadonlyMap<string, Place>): void {
   if (positions.size > MAX_ENTRIES) return;
   try {
-    const flat: Record<string, [number, number]> = {};
+    const flat: Record<string, number[]> = {};
     for (const [key, at] of positions) {
       if (!Number.isFinite(at.x) || !Number.isFinite(at.y)) continue;
       // One decimal. The simulation's precision is far below a pixel and the
       // extra digits would be a third of the stored size.
-      flat[key] = [Math.round(at.x * 10) / 10, Math.round(at.y * 10) / 10];
+      const x = Math.round(at.x * 10) / 10;
+      const y = Math.round(at.y * 10) / 10;
+      flat[key] = at.links === undefined ? [x, y] : [x, y, at.links];
     }
-    window.localStorage.setItem(PREFIX + store, JSON.stringify(flat));
+    window.localStorage.setItem(positionsKey(where), JSON.stringify(flat));
   } catch {
     // A full quota. A view that cannot remember where it was is still a view.
   }
