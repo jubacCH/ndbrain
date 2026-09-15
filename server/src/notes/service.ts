@@ -58,14 +58,62 @@ export interface PutResult {
  * Local time and minute precision, because the name is read by a person deciding
  * which of two files to keep. Seconds would be noise, and UTC would make the
  * timestamp disagree with the one shown everywhere else in the UI.
+ *
+ * Exported so `parseConflictPath` below, and the tidy-up finding that uses it,
+ * can be checked against exactly what this writes rather than a second,
+ * hand-copied pattern that could drift from it.
  */
-function conflictPath(notePath: string, when: Date): string {
+export function conflictPath(notePath: string, when: Date): string {
   const pad = (value: number): string => String(value).padStart(2, '0');
   const stamp =
     `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ` +
     `${pad(when.getHours())}.${pad(when.getMinutes())}`;
 
   return `${notePath.replace(/\.md$/i, '')} (Konflikt ${stamp})${NOTE_EXTENSION}`;
+}
+
+/** What a conflict copy's name says about the version it displaced. */
+export interface ConflictInfo {
+  /** Path of the note the copy was made from, reconstructed from its own name. */
+  originalPath: string;
+  /** The moment named in the copy's filename, read as local time — see `conflictPath`. */
+  at: number;
+}
+
+/**
+ * The exact shape `conflictPath` writes, read back.
+ *
+ * Kept next to `conflictPath` rather than as a second pattern somewhere else in
+ * the codebase: a query that finds these copies has to recognise precisely what
+ * this function produces, and the two drifting apart would mean either missed
+ * copies or false positives on an ordinary note that happens to have "(Konflikt"
+ * in its title. `null` for anything that is not that exact shape, including a
+ * note whose name merely contains the word.
+ */
+export function parseConflictPath(notePath: string): ConflictInfo | null {
+  const match = /^(.+) \(Konflikt (\d{4})-(\d{2})-(\d{2}) (\d{2})\.(\d{2})\)\.md$/.exec(notePath);
+  if (match === null) return null;
+
+  const base = match[1] ?? '';
+  const year = Number(match[2] ?? '');
+  const month = Number(match[3] ?? '');
+  const day = Number(match[4] ?? '');
+  const hour = Number(match[5] ?? '');
+  const minute = Number(match[6] ?? '');
+
+  const at = new Date(year, month - 1, day, hour, minute);
+  if (Number.isNaN(at.getTime())) return null;
+
+  const originalPath = `${base}${NOTE_EXTENSION}`;
+
+  // `new Date` does not reject an impossible calendar value, it rolls it over —
+  // "2026-13-45 99.99" quietly becomes some date the following year rather than
+  // NaN. Regenerating the name from what was just parsed and comparing it back
+  // to the input catches that: a rolled-over `at` renders a different stamp, so
+  // the two will not match, and this is not a conflict copy after all.
+  if (conflictPath(originalPath, at) !== notePath) return null;
+
+  return { originalPath, at: at.getTime() };
 }
 
 export class NoteService {

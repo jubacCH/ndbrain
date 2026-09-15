@@ -49,6 +49,7 @@ import { parseTagRegistry, REGISTRY_PATH } from './editor/tagRegistry';
 export const keys = {
   tree: ['tree'] as const,
   tidy: ['tidy'] as const,
+  tasks: (filters: { dir?: string; includeDone?: boolean }) => ['tasks', filters] as const,
   overview: ['overview'] as const,
   shares: ['shares'] as const,
   graph: ['graph'] as const,
@@ -81,6 +82,18 @@ export function useTree(): UseQueryResult<{ notes: NoteRow[] }> {
 
 export function useTidy(): UseQueryResult<Awaited<ReturnType<typeof api.tidy>>> {
   return useQuery({ queryKey: keys.tidy, queryFn: () => api.tidy(), staleTime: FRESH_MS });
+}
+
+export function useTasks(
+  filters: { dir?: string; includeDone?: boolean },
+  enabled: boolean,
+): UseQueryResult<Awaited<ReturnType<typeof api.tasks>>> {
+  return useQuery({
+    queryKey: keys.tasks(filters),
+    queryFn: () => api.tasks(filters),
+    staleTime: FRESH_MS,
+    enabled,
+  });
 }
 
 export function useOverview(enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.overview>>> {
@@ -287,6 +300,9 @@ export const invalidate = {
     void client.invalidateQueries({ queryKey: keys.tidy });
     void client.invalidateQueries({ queryKey: keys.graph });
     void client.invalidateQueries({ queryKey: keys.overview });
+    // Every `keys.tasks(filters)` entry, whatever filters it was fetched with —
+    // a checkbox anywhere in the text can appear, move or disappear.
+    void client.invalidateQueries({ queryKey: ['tasks'] });
   },
 
   /** A note appeared, moved or went away: everything that lists notes is stale. */
@@ -316,6 +332,28 @@ export function useSaveNote() {
       );
       invalidate.afterEdit(client, vars.owner, vars.path);
       if (result.created || result.conflictCopy !== undefined) invalidate.afterStructure(client);
+    },
+  });
+}
+
+/**
+ * Flips one task's checkbox from the task list.
+ *
+ * The note's own cache entry is invalidated too, not just refreshed lists: if
+ * the same note happens to be open in the editor, its stale in-memory text
+ * would otherwise overwrite this toggle the next time that tab autosaves.
+ */
+export function useToggleTask() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      owner: string;
+      task: { path: string; line: number; text: string; done: boolean };
+      done: boolean;
+    }) => api.toggleTask(vars.owner, vars.task, vars.done),
+    onSuccess: (_result, vars) => {
+      invalidate.afterEdit(client, vars.owner, vars.task.path);
+      void client.invalidateQueries({ queryKey: keys.note(vars.owner, vars.task.path) });
     },
   });
 }

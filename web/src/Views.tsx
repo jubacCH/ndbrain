@@ -6,10 +6,10 @@
  * rather than by colour.
  */
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { copy } from './copy';
 
-import { refKey, type LinkRow, type NoteRow, type Overview, type SearchHit, type Share, type TaskRow, type Tidy } from './api';
+import { refKey, type ConflictRow, type LinkRow, type NoteRow, type Overview, type SearchHit, type Share, type TaskRow, type Tasks, type Tidy } from './api';
 
 const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
 
@@ -37,11 +37,14 @@ export function OverviewView({
   data,
   onOpen,
   onFindings,
+  onTasks,
 }: {
   data: Overview;
   onOpen: (owner: string, path: string) => void;
   /** Opens the tidy view — the place every finding count leads to. */
   onFindings: () => void;
+  /** Opens the full task list — this tile only ever shows eight. */
+  onTasks: () => void;
 }): React.JSX.Element {
   const { counts } = data;
   // Counted by the server as distinct notes. Adding the four findings together
@@ -65,6 +68,7 @@ export function OverviewView({
       ? [{ label: copy.overview.untagged, kind: 'warn' as const, count: counts.untagged }]
       : []),
     { label: copy.overview.untouched, kind: 'warn' as const, count: counts.stale },
+    { label: copy.overview.conflictCopies, kind: 'warn' as const, count: counts.conflicts },
   ];
   const active = findings.filter((f) => f.count > 0);
   const clear = findings.filter((f) => f.count === 0);
@@ -142,6 +146,11 @@ export function OverviewView({
               </button>
             ))}
           </div>
+          {/* Never the whole truth — the overview caps at eight and the server
+              at fifty. The full, filterable list lives one click away. */}
+          <button type="button" className="tile-more" onClick={onTasks}>
+            {copy.overview.seeAllTasks}
+          </button>
         </section>
         )}
 
@@ -285,98 +294,352 @@ export function TidyView({
     })),
   ];
 
+  // Conflict copies are listed as their own section below — a copy and its
+  // original are two paths, and the shared `rows` shape above only carries one.
+  // They still count toward "how many findings", "select all" and the bulk
+  // bar, so every one of those stays honest about them rather than only about
+  // the four findings that happen to fit the shared row shape.
+  const total = rows.length + data.conflicts.length;
+  const allPaths = [...new Set([...rows.map((r) => r.path), ...data.conflicts.map((c) => c.path)])];
+  const allSelected = allPaths.length > 0 && selected.size === allPaths.length;
+  const selectAll = (): void => onToggleAll(allPaths);
+
   return (
     <div className="pane padded">
       <h2 className="h-big">{copy.tidy.title}</h2>
       {data.truncated && (
         <p className="warnline" role="status">
           More findings than fit in one answer — showing the first {data.orphans.length} of{' '}
-          {data.totals.orphans} orphaned, {data.untagged.length} of {data.totals.untagged} untagged.
-          Work through these and the rest will appear.
+          {data.totals.orphans} orphaned, {data.untagged.length} of {data.totals.untagged} untagged,{' '}
+          {data.conflicts.length} of {data.totals.conflicts} conflict copies. Work through these and
+          the rest will appear.
         </p>
       )}
       <p className="h-sub">
-        {rows.length === 0
+        {total === 0
           ? copy.tidy.clean
-          : copy.tidy.found(rows.length)}
+          : copy.tidy.found(total)}
       </p>
 
-      {rows.length > 0 && (
-        <>
-          {/*
-            The action bar sits above the table and stays visible, so the number
-            of selected notes is in view while choosing what to do to them.
-          */}
-          <div className="bulkbar" data-active={selected.size > 0}>
-            <span className="bulkcount">
-              {selected.size === 0 ? copy.tidy.nothingSelected : copy.tidy.selected(selected.size)}
-            </span>
-            <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('move')}>
-              {copy.tidy.move}
-            </button>
-            <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('tag')}>
-              {copy.tidy.tag}
-            </button>
-            <button
-              type="button"
-              className="btn btn-solid"
-              disabled={selected.size === 0 || busy}
-              onClick={() => onBulk('delete')}
-            >
-              {copy.tidy.delete}
-            </button>
-            <span className="bulkhint">{copy.tidy.linksFollow}</span>
-          </div>
+      {/*
+        The action bar sits above both tables and stays visible whenever there
+        is anything to select — a conflict copy is deleted through this same
+        bar, not a second one, so it must not depend on the four findings
+        below it having found anything.
+      */}
+      {total > 0 && (
+        <div className="bulkbar" data-active={selected.size > 0}>
+          <span className="bulkcount">
+            {selected.size === 0 ? copy.tidy.nothingSelected : copy.tidy.selected(selected.size)}
+          </span>
+          <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('move')}>
+            {copy.tidy.move}
+          </button>
+          <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('tag')}>
+            {copy.tidy.tag}
+          </button>
+          <button
+            type="button"
+            className="btn btn-solid"
+            disabled={selected.size === 0 || busy}
+            onClick={() => onBulk('delete')}
+          >
+            {copy.tidy.delete}
+          </button>
+          <span className="bulkhint">{copy.tidy.linksFollow}</span>
+        </div>
+      )}
 
-          <div className="tablewrap">
-            <div className="tablescroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th className="pick">
+      {rows.length > 0 && (
+        <div className="tablewrap">
+          <div className="tablescroll">
+            <table>
+              <thead>
+                <tr>
+                  <th className="pick">
+                    <input
+                      type="checkbox"
+                      aria-label={copy.tidy.selectAll}
+                      checked={allSelected}
+                      onChange={selectAll}
+                    />
+                  </th>
+                  <th>{copy.tidy.note}</th>
+                  <th>{copy.tidy.path}</th>
+                  <th>{copy.tidy.finding}</th>
+                  <th className="n">{copy.tidy.lastTouched}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr
+                    key={`${row.finding}:${row.path}:${index}`}
+                    data-selected={selected.has(row.path)}
+                    onClick={() => onOpen(row.path)}
+                  >
+                    <td className="pick" onClick={(event) => event.stopPropagation()}>
                       <input
                         type="checkbox"
-                        aria-label={copy.tidy.selectAll}
-                        checked={selected.size > 0 && selected.size === new Set(rows.map((r) => r.path)).size}
-                        onChange={() => onToggleAll([...new Set(rows.map((r) => r.path))])}
+                        checked={selected.has(row.path)}
+                        onChange={() => onToggle(row.path)}
+                        aria-label={copy.tidy.select(row.title)}
                       />
-                    </th>
-                    <th>{copy.tidy.note}</th>
-                    <th>{copy.tidy.path}</th>
-                    <th>{copy.tidy.finding}</th>
-                    <th className="n">{copy.tidy.lastTouched}</th>
+                    </td>
+                    <td className="nm">{row.title}</td>
+                    <td className="pth">{row.path.split('/').slice(0, -1).join('/') || '/'}</td>
+                    <td>
+                      <span className={`pill p-${row.kind}`}>{row.finding}</span>
+                    </td>
+                    <td className="n">{row.when}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, index) => (
-                    <tr
-                      key={`${row.finding}:${row.path}:${index}`}
-                      data-selected={selected.has(row.path)}
-                      onClick={() => onOpen(row.path)}
-                    >
-                      <td className="pick" onClick={(event) => event.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={selected.has(row.path)}
-                          onChange={() => onToggle(row.path)}
-                          aria-label={copy.tidy.select(row.title)}
-                        />
-                      </td>
-                      <td className="nm">{row.title}</td>
-                      <td className="pth">{row.path.split('/').slice(0, -1).join('/') || '/'}</td>
-                      <td>
-                        <span className={`pill p-${row.kind}`}>{row.finding}</span>
-                      </td>
-                      <td className="n">{row.when}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </>
+        </div>
+      )}
+
+      {data.conflicts.length > 0 && (
+        <ConflictSection
+          conflicts={data.conflicts}
+          selected={selected}
+          allSelected={allSelected}
+          onToggle={onToggle}
+          onSelectAll={selectAll}
+          onOpen={onOpen}
+        />
       )}
     </div>
+  );
+}
+
+/**
+ * The full task list: every `- [ ]` the caller may read, grouped by the note
+ * it lives in.
+ *
+ * Grouped by note rather than shown as a flat list, on the same reasoning the
+ * search hits and the tidy findings already follow — a task read on its own is
+ * routinely meaningless ("Schritt 3 ausführen"), and the note it sits in is
+ * the cheapest context that fixes that. The list arrives from the server
+ * already ordered by owner, then path, then line, so grouping is one pass over
+ * it rather than a second request per note.
+ *
+ * A table with aligned columns, like the tidy view — not another bento tile.
+ * The overview tile is the teaser; this is the whole list, with the folder
+ * filter `search` already has and the same "capped, and says so" honesty
+ * `tidy` uses for a truncated answer.
+ */
+export function TasksView({
+  data,
+  dirs,
+  dir,
+  includeDone,
+  self,
+  busy,
+  onDir,
+  onIncludeDone,
+  onToggle,
+  onOpen,
+}: {
+  data: Tasks;
+  /** Top-level folders, for the folder filter — the same pattern `search` uses. */
+  dirs: string[];
+  dir: string | undefined;
+  includeDone: boolean;
+  /** The signed-in account; a task from elsewhere is marked with its vault. */
+  self: string;
+  /** A toggle is in flight — checkboxes are inert until it lands. */
+  busy: boolean;
+  onDir: (dir?: string) => void;
+  onIncludeDone: (value: boolean) => void;
+  onToggle: (task: TaskRow) => void;
+  onOpen: (owner: string, path: string, line: number) => void;
+}): React.JSX.Element {
+  const groups: Array<{ owner: string; path: string; tasks: TaskRow[] }> = [];
+  for (const task of data.tasks) {
+    const last = groups[groups.length - 1];
+    if (last !== undefined && last.owner === task.owner && last.path === task.path) {
+      last.tasks.push(task);
+    } else {
+      groups.push({ owner: task.owner, path: task.path, tasks: [task] });
+    }
+  }
+
+  return (
+    <div className="pane padded">
+      <h2 className="h-big">{copy.tasks.title}</h2>
+
+      {data.truncated && (
+        <p className="warnline" role="status">
+          {copy.tasks.truncated(data.tasks.length, data.total)}
+        </p>
+      )}
+
+      <p className="h-sub">
+        {data.tasks.length === 0
+          ? dir !== undefined || includeDone
+            ? copy.tasks.emptyFiltered
+            : copy.tasks.empty
+          : includeDone
+            ? copy.tasks.foundIncludingDone(data.tasks.length)
+            : copy.tasks.found(data.tasks.length)}
+      </p>
+
+      <div className="filters">
+        <button type="button" className="filter" aria-pressed={includeDone} onClick={() => onIncludeDone(!includeDone)}>
+          {copy.tasks.includeDone}
+        </button>
+
+        {dirs.length > 0 && <span className="filter-label">{copy.tasks.folder}</span>}
+        {dirs.slice(0, 12).map((d) => (
+          <button
+            type="button"
+            key={d}
+            className="filter"
+            aria-pressed={dir === d}
+            onClick={() => onDir(dir === d ? undefined : d)}
+          >
+            {d}
+          </button>
+        ))}
+
+        {dir !== undefined && (
+          <button type="button" className="filter" onClick={() => onDir(undefined)}>
+            {copy.tasks.clear}
+          </button>
+        )}
+      </div>
+
+      {groups.length > 0 && (
+        <div className="tablewrap">
+          <div className="tablescroll">
+            <table>
+              <tbody>
+                {groups.map((group) => (
+                  <Fragment key={refKey(group.owner, group.path)}>
+                    <tr
+                      className="task-group"
+                      onClick={() => onOpen(group.owner, group.path, group.tasks[0]?.line ?? 1)}
+                    >
+                      <td className="nm" colSpan={2}>
+                        {group.owner !== self && <span className="pill p-info">{group.owner}</span>}
+                        {group.path.split('/').slice(0, -1).join('/') || '/'}
+                        <span className="pth"> · {group.path.split('/').pop()}</span>
+                      </td>
+                    </tr>
+                    {group.tasks.map((task) => (
+                      <tr key={`${refKey(task.owner, task.path)}:${task.line}`}>
+                        <td className="pick" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={task.done}
+                            disabled={busy}
+                            onChange={() => onToggle(task)}
+                            aria-label={task.done ? copy.tasks.uncheck(task.text) : copy.tasks.check(task.text)}
+                          />
+                        </td>
+                        <td
+                          onClick={() => onOpen(task.owner, task.path, task.line)}
+                          style={task.done ? { textDecoration: 'line-through', opacity: 0.65 } : undefined}
+                        >
+                          {task.text}
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One row per conflict copy, copy and original side by side.
+ *
+ * Its own table rather than more rows in the one above: a finding there is one
+ * path with one action, and a conflict is two — the note that needs a decision
+ * and the note it was measured against. Deleting the copy goes through the same
+ * selection and the same bulk-delete action as everything else; there is no
+ * merge tool and no second write path here, only a way to see these and get to
+ * both notes in one click.
+ */
+function ConflictSection({
+  conflicts,
+  selected,
+  allSelected,
+  onToggle,
+  onSelectAll,
+  onOpen,
+}: {
+  conflicts: ConflictRow[];
+  selected: Set<string>;
+  /** Mirrors the main table's own "select all" — one selection, two tables. */
+  allSelected: boolean;
+  onToggle: (path: string) => void;
+  onSelectAll: () => void;
+  onOpen: (path: string) => void;
+}): React.JSX.Element {
+  const linkStyle = { textDecoration: 'underline', textUnderlineOffset: 2 } as const;
+
+  return (
+    <section style={{ marginTop: 'var(--s-6)' }}>
+      <h3 className="h-big" style={{ fontSize: 'var(--t-md)' }}>{copy.tidy.conflicts}</h3>
+      <p className="h-sub">{copy.tidy.conflictHint}</p>
+      <div className="tablewrap">
+        <div className="tablescroll">
+          <table>
+            <thead>
+              <tr>
+                <th className="pick">
+                  <input
+                    type="checkbox"
+                    aria-label={copy.tidy.selectAll}
+                    checked={allSelected}
+                    onChange={onSelectAll}
+                  />
+                </th>
+                <th>{copy.tidy.conflictCopy}</th>
+                <th>{copy.tidy.conflictOriginal}</th>
+                <th className="n">{copy.tidy.lastTouched}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conflicts.map((c) => (
+                <tr key={c.path} data-selected={selected.has(c.path)}>
+                  <td className="pick">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(c.path)}
+                      onChange={() => onToggle(c.path)}
+                      aria-label={copy.tidy.select(c.title)}
+                    />
+                  </td>
+                  <td>
+                    <button type="button" style={linkStyle} onClick={() => onOpen(c.path)}>
+                      {c.title}
+                    </button>
+                  </td>
+                  <td>
+                    {c.originalExists ? (
+                      <button type="button" style={linkStyle} onClick={() => onOpen(c.originalPath)}>
+                        {c.originalTitle ?? c.originalPath}
+                      </button>
+                    ) : (
+                      <span className="pill p-warn">{copy.tidy.conflictNoOriginal}</span>
+                    )}
+                  </td>
+                  <td className="n">{ago(c.mtimeMs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   );
 }
 

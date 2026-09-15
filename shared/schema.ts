@@ -79,6 +79,17 @@ export const LinkRow = z.object({
   offset: z.number(),
 });
 
+export const ConflictRow = NoteRow.extend({
+  /** Path of the note the copy displaced, read back from the copy's own name. */
+  originalPath: z.string(),
+  /** Title of the original, when it can still be read. Null when gone or hidden. */
+  originalTitle: z.string().nullable(),
+  /** Whether that note still exists, in the caller's view. */
+  originalExists: z.boolean(),
+  /** The moment named in the copy's filename. */
+  at: Timestamp,
+});
+
 export const TaskRow = z.object({
   owner: z.string(),
   path: z.string(),
@@ -112,7 +123,8 @@ export const OverviewResponse = z.object({
     untagged: z.number(),
     deadLinks: z.number(),
     stale: z.number(),
-    /** Distinct notes affected — not the sum of the four above, which overlap. */
+    conflicts: z.number(),
+    /** Distinct notes affected — not the sum of the five above, which overlap. */
     attention: z.number(),
     /** False where no note carries a tag, which makes "untagged" meaningless. */
     tagsInUse: z.boolean(),
@@ -128,6 +140,7 @@ export const TidyResponse = z.object({
   untagged: z.array(NoteRow),
   deadLinks: z.array(LinkRow),
   stale: z.array(NoteRow),
+  conflicts: z.array(ConflictRow),
   /** True when any list was capped. Shown, never swallowed. */
   truncated: z.boolean(),
   /** The real counts, so a capped list still reports what it stands for. */
@@ -136,7 +149,16 @@ export const TidyResponse = z.object({
     untagged: z.number(),
     deadLinks: z.number(),
     stale: z.number(),
+    conflicts: z.number(),
   }),
+});
+
+export const TasksResponse = z.object({
+  tasks: z.array(TaskRow),
+  /** The real count behind the (possibly capped) list — see `TidyResponse.totals`. */
+  total: z.number(),
+  /** True when `tasks` is fewer than `total`: shown, never swallowed. */
+  truncated: z.boolean(),
 });
 
 export const SearchResponse = z.object({ hits: z.array(SearchHit) });
@@ -447,6 +469,20 @@ export const GrantShareRequest = z
   .object({ grantee: UserId, prefix: z.string(), canWrite: z.boolean() })
   .strict();
 
+export const ToggleTaskRequest = z
+  .object({
+    owner: UserId.optional(),
+    path: VaultPath,
+    /** 1-based, file-relative — exactly what `TaskRow.line` reports. */
+    line: z.number().int().positive(),
+    /** The task text and done state the client last saw at that line. */
+    expectedText: z.string(),
+    expectedDone: z.boolean(),
+    /** The state to set it to. */
+    done: z.boolean(),
+  })
+  .strict();
+
 /* ---- inferred types ------------------------------------------------------ */
 
 export type NoteRow = z.infer<typeof NoteRow>;
@@ -454,10 +490,12 @@ export type Note = z.infer<typeof Note>;
 export type OpenNote = z.infer<typeof OpenNote>;
 export type SearchHit = z.infer<typeof SearchHit>;
 export type LinkRow = z.infer<typeof LinkRow>;
+export type ConflictRow = z.infer<typeof ConflictRow>;
 export type TaskRow = z.infer<typeof TaskRow>;
 export type ActivityRow = z.infer<typeof ActivityRow>;
 export type Overview = z.infer<typeof OverviewResponse>;
 export type Tidy = z.infer<typeof TidyResponse>;
+export type Tasks = z.infer<typeof TasksResponse>;
 export type User = z.infer<typeof User>;
 export type Share = z.infer<typeof Share>;
 export type GraphData = z.infer<typeof GraphResponse>;
