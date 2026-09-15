@@ -507,6 +507,42 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     };
   });
 
+  /**
+   * The full task list behind the overview tile: every `- [ ]` the caller may
+   * read, with the folder filter and "include done" toggle the overview's
+   * `slice(0, 50)` has no room for.
+   */
+  fastify.get('/api/v1/tasks', async (request) => {
+    const view = shares.view(requireUser(request).id);
+    const query = (request.query ?? {}) as Record<string, unknown>;
+
+    const filter: Parameters<typeof app.queries.tasks>[1] = {
+      limit: clamp(Number(query['limit']) || 1000, 1, 5000),
+    };
+    if (typeof query['dir'] === 'string' && query['dir'] !== '') filter.dir = query['dir'];
+    if (query['includeDone'] === 'true' || query['includeDone'] === '1') filter.includeDone = true;
+
+    const tasks = app.queries.tasks(view, filter);
+    const total = app.queries.taskCount(view, filter);
+
+    return { tasks, total, truncated: total > tasks.length };
+  });
+
+  /**
+   * Ticks or unticks one task, verified against the line it is expected to
+   * still be — see `App.toggleTask` for why. A mismatch answers 409, not a
+   * silent no-op or a guess at the right line.
+   */
+  fastify.post('/api/v1/tasks/toggle', async (request) => {
+    const caller = requireUser(request).id;
+    const { path, line, expectedText, expectedDone, done } = body(request, S.ToggleTaskRequest);
+    const owner = ownerOf(request, caller);
+
+    shares.check(caller, owner, path, 'write');
+
+    return app.toggleTask(owner, path, line, { text: expectedText, done: expectedDone }, done, caller);
+  });
+
   /* ---- files ---------------------------------------------------------------
    *
    * The vault is a folder of files; until now the API only admitted the `.md`

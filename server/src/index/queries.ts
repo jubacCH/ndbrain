@@ -70,6 +70,14 @@ export interface TaskRow {
   text: string;
 }
 
+export interface TaskFilter {
+  /** Only tasks in notes below this folder. */
+  dir?: string;
+  /** Include finished tasks too. Unset or false means open tasks only. */
+  includeDone?: boolean;
+  limit?: number;
+}
+
 export interface ActivityRow {
   owner: string;
   path: string;
@@ -142,6 +150,32 @@ function scopeSql(
   if (parts.length === 0) return { sql: '(1 = 0)', params: [] };
 
   return { sql: `(${parts.join(' OR ')})`, params };
+}
+
+/**
+ * The `dir` and `includeDone` conditions the task list and its count share.
+ *
+ * Kept separate from `scopeSql`, which the caller still adds on top: this part
+ * is a plain filter, not the sharing boundary, and the two must not be
+ * conflated the way `queries.ts`'s file comment warns against.
+ */
+function taskFilterSql(filter: TaskFilter): { sql: string; params: SqlValue[] } {
+  const conditions: string[] = [];
+  const params: SqlValue[] = [];
+
+  if (filter.includeDone !== true) {
+    conditions.push('t.done = 0');
+  }
+
+  if (filter.dir !== undefined && filter.dir !== '') {
+    // Prefix match on the folder, `substr` rather than `LIKE` — see the
+    // identical comment on `search`'s `dir` option, which this mirrors.
+    const prefix = filter.dir.endsWith('/') ? filter.dir : `${filter.dir}/`;
+    conditions.push('substr(t.path, 1, ?) = ?');
+    params.push(prefix.length, prefix);
+  }
+
+  return { sql: conditions.length === 0 ? '' : ` AND ${conditions.join(' AND ')}`, params };
 }
 
 /**
@@ -635,13 +669,47 @@ export class Queries {
           WHERE ${scope.sql} AND t.done = 0 ORDER BY t.owner, t.path, t.line`,
         ...scope.params,
       )
-      .map((row) => ({
-        owner: String(row['owner']),
-        path: String(row['path']),
-        line: Number(row['line']),
-        done: Number(row['done']) === 1,
-        text: String(row['text']),
-      }));
+      .map(toTaskRow);
+  }
+
+  /**
+   * The full task list behind `openTasks`, with the folder filter and the
+   * "include done" toggle the task view needs.
+   *
+   * Ordered by owner, then path, then line — the same order the task view
+   * groups by note in, so the client can do that grouping in one pass over
+   * this list rather than a second request per note.
+   */
+  tasks(view: Viewable, filter: TaskFilter = {}): TaskRow[] {
+    const scope = scopeSql('t', 'path', view);
+    const extra = taskFilterSql(filter);
+    const limit = Math.trunc(filter.limit ?? 1000);
+
+    return this.#db
+      .all(
+        `SELECT t.owner, t.path, t.line, t.done, t.text FROM tasks t
+          WHERE ${scope.sql}${extra.sql} ORDER BY t.owner, t.path, t.line LIMIT ?`,
+        ...scope.params,
+        ...extra.params,
+        limit,
+      )
+      .map(toTaskRow);
+  }
+
+  /**
+   * How many tasks match `filter`, ignoring its `limit` — the real total behind
+   * a capped `tasks()` answer, so the task view can say what it left out rather
+   * than let a `slice` look like the whole list.
+   */
+  taskCount(view: Viewable, filter: TaskFilter = {}): number {
+    const scope = scopeSql('t', 'path', view);
+    const extra = taskFilterSql(filter);
+    const row = this.#db.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM tasks t WHERE ${scope.sql}${extra.sql}`,
+      ...scope.params,
+      ...extra.params,
+    );
+    return Number(row?.n ?? 0);
   }
 
   /**
@@ -980,6 +1048,16 @@ function toNoteRow(row: Record<string, unknown>): NoteRow {
     title: String(row['title']),
     size: Number(row['size']),
     mtimeMs: Number(row['mtime_ms']),
+  };
+}
+
+function toTaskRow(row: Record<string, unknown>): TaskRow {
+  return {
+    owner: String(row['owner']),
+    path: String(row['path']),
+    line: Number(row['line']),
+    done: Number(row['done']) === 1,
+    text: String(row['text']),
   };
 }
 

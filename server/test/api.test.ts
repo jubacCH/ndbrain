@@ -72,6 +72,8 @@ describe('the authentication gate', () => {
     ['GET', '/api/v1/search?q=test'],
     ['GET', '/api/v1/overview'],
     ['GET', '/api/v1/tidy'],
+    ['GET', '/api/v1/tasks'],
+    ['POST', '/api/v1/tasks/toggle'],
     ['GET', '/api/v1/backlinks/Irgendwas.md'],
     ['GET', '/api/v1/auth/me'],
   ])('refuses %s %s without a session', async (method, url) => {
@@ -264,6 +266,95 @@ describe('notes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json().updatedLinks).toEqual(['A.md']);
+  });
+});
+
+describe('task list', () => {
+  beforeEach(async () => {
+    await runtime.app.createNote(
+      'julian',
+      'Homelab/Proxmox.md',
+      '- [ ] RAM prüfen\n- [x] Quorum ok\n',
+    );
+  });
+
+  it('lists open tasks and reports the true total', async () => {
+    const response = await server.inject({ url: '/api/v1/tasks', headers: as(julianCookie) });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      tasks: [{ path: 'Homelab/Proxmox.md', line: 1, done: false, text: 'RAM prüfen' }],
+      total: 1,
+      truncated: false,
+    });
+  });
+
+  it('includes finished tasks on request', async () => {
+    const response = await server.inject({
+      url: '/api/v1/tasks?includeDone=true',
+      headers: as(julianCookie),
+    });
+    expect(response.json().tasks.map((t: { text: string }) => t.text).sort()).toEqual([
+      'Quorum ok',
+      'RAM prüfen',
+    ]);
+  });
+
+  it('ticks a task off, verified against the line the client saw', async () => {
+    const toggled = await server.inject({
+      method: 'POST',
+      url: '/api/v1/tasks/toggle',
+      headers: as(julianCookie),
+      payload: {
+        path: 'Homelab/Proxmox.md',
+        line: 1,
+        expectedText: 'RAM prüfen',
+        expectedDone: false,
+        done: true,
+      },
+    });
+    expect(toggled.statusCode).toBe(200);
+
+    const after = await server.inject({ url: '/api/v1/tasks', headers: as(julianCookie) });
+    expect(after.json().tasks).toEqual([]);
+  });
+
+  it('refuses a toggle whose expected text no longer matches, and writes nothing', async () => {
+    const before = await runtime.notes.getNote('julian', 'Homelab/Proxmox.md');
+
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/v1/tasks/toggle',
+      headers: as(julianCookie),
+      payload: {
+        path: 'Homelab/Proxmox.md',
+        line: 1,
+        expectedText: 'eine andere Aufgabe',
+        expectedDone: false,
+        done: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().code).toBe('task_changed');
+    expect((await runtime.notes.getNote('julian', 'Homelab/Proxmox.md')).content).toBe(before.content);
+  });
+
+  it('refuses a toggle in a vault the caller has no write access to', async () => {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/v1/tasks/toggle',
+      headers: as(ramonaCookie),
+      payload: {
+        owner: 'julian',
+        path: 'Homelab/Proxmox.md',
+        line: 1,
+        expectedText: 'RAM prüfen',
+        expectedDone: false,
+        done: true,
+      },
+    });
+    // Not-shared reads as not-found, same rule every other note route follows.
+    expect(response.statusCode).toBe(404);
   });
 });
 
