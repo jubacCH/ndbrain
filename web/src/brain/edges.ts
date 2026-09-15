@@ -14,20 +14,22 @@
  *
  *  - every link *inside* a cluster: fine and quiet, it is what makes a region
  *    read as a region;
- *  - for every two clusters on the same side that link to each other, the one
- *    link that binds them most strongly: quieter still, a single thread that
- *    says "these two regions talk" without filling the furrow between them.
+ *  - for every two clusters on the same side that link to each other, one
+ *    link as a thread: quieter still, it says "these two regions talk" without
+ *    filling the furrow between them;
+ *  - for every two clusters on opposite hemispheres linked at least twice, one
+ *    thread too, a little quieter again. The hemispheres follow the folders,
+ *    so these are the links the owner set on purpose — a project and the
+ *    service it runs on — and hiding all of them would hide exactly those.
  *
- * Every other link — the rest of the links between clusters, and every link
- * across the fissure — is drawn so faintly that it does not read as a line. It
- * is not removed: zooming in brings it back, and so does picking one of its
- * notes, and a pulse travelling along it lights it for as long as the spark
- * runs.
+ * Every other link between clusters is drawn so faintly that it does not
+ * read as a line. It is not removed: zooming in on one of its ends brings it
+ * back, and so does picking one of its notes, and a pulse travelling along it
+ * lights it for as long as the spark runs.
  *
- * On the real vault's structure this shows 163 of 270 linked pairs (60 %) in
- * the overview; on the test fixture 150 of 231 (65 %). The share is not tuned
- * towards a number: it is what the rule gives, and it happens to sit where the
- * briefing asked.
+ * The share of lines this gives on the real vault's structure and on the test
+ * fixture is recorded in the test. It is not tuned towards a number: it is
+ * what the rule gives, and it sits where the briefing asked.
  *
  * **Hubs.** A map of content with forty links used to be forty wide tracts
  * meeting in one point. Its links now fade with the geometric mean of the
@@ -39,8 +41,8 @@
  * **Twins.** A link in both directions arrives as two edges with slightly
  * different curves. Drawn both, the closest pairs in the vault were painted at
  * double opacity. One of them — chosen by key, not by server order — carries
- * the pair and is drawn; the other is not, and a spark sent along it runs on
- * the carrier instead.
+ * the pair and is drawn; the other is not, and its spark is dropped, since the
+ * carrier touches the same note and runs a spark of its own.
  *
  * Only opacity, width and glow strength change here. The colours stay the
  * ones the scene already uses: colour is for meaning, not for clusters.
@@ -56,8 +58,10 @@ export const FURROW = 2;
 export const FISSURE = 3;
 /** The second edge of a link that exists in both directions. */
 export const TWIN = 4;
+/** The strongest link between two clusters on opposite hemispheres that share several links. */
+export const SPAN = 5;
 
-export type EdgeKind = typeof WITHIN | typeof BRIDGE | typeof FURROW | typeof FISSURE | typeof TWIN;
+export type EdgeKind = typeof WITHIN | typeof BRIDGE | typeof FURROW | typeof FISSURE | typeof TWIN | typeof SPAN;
 
 /**
  * Below this opacity a fine line on the dark ground is not seen as a line.
@@ -73,6 +77,27 @@ export const VISIBLE = 0.05;
 export const TRACT = 0.16;
 /** Opacity of the one thread between two regions. Above `VISIBLE`, well below `TRACT`. */
 export const THREAD = 0.075;
+/**
+ * Opacity of a thread across the fissure: a little quieter than one on the
+ * same side, so the fissure still reads as the largest gap.
+ */
+export const SPAN_THREAD = 0.06;
+/**
+ * Links two regions on opposite hemispheres need before they get a thread.
+ *
+ * The hemispheres follow the vault's folders, so links across the fissure are
+ * the deliberate ones — a project pointing at the service it runs on, a note
+ * pointing at its map. One such link can be a passing reference; two or more
+ * between the same two regions are a relationship worth a line. On the real
+ * vault's structure that is 7 of 16 linked region pairs across the fissure.
+ */
+export const SPAN_LINKS = 2;
+/**
+ * A note with this many distinct neighbours counts as a hub when choosing a
+ * thread. Absolute rather than relative to the vault: a dozen links is a map
+ * or a hub project in a vault of a hundred notes and in one of thousands.
+ */
+export const HUB_DEGREE = 12;
 /** Opacity of a link held back in the overview. Below `VISIBLE` on purpose. */
 export const GHOST = 0.012;
 /**
@@ -150,6 +175,31 @@ export interface EdgePlan {
 }
 
 /**
+ * `THREAD_ORDER`: which of the links between two regions carries their thread.
+ *
+ * First, a link between two ordinary notes beats one that touches a hub: a map
+ * of content links into every region, so its link says little about how two
+ * particular regions belong together. A hub's link is the thread only when
+ * every link between the two regions touches a hub — then it is honestly the
+ * only connection there is. Then more shared neighbours win: a link that closes
+ * triangles is a relation, not a passing reference. Last, the pair of keys.
+ *
+ * No degree beyond the hub threshold enters it. The first version ranked by
+ * shared neighbours over the degrees at both ends, and a single new leaf on
+ * one note shifted a thread elsewhere in six of 87 captures.
+ */
+function strongerThread(
+  hubby: number,
+  shared: number,
+  tie: string,
+  best: { hubby: number; shared: number; tie: string },
+): boolean {
+  if (hubby !== best.hubby) return hubby < best.hubby;
+  if (shared !== best.shared) return shared > best.shared;
+  return tie < best.tie;
+}
+
+/**
  * Classifies every edge and settles its two resting opacities.
  *
  * Runs once per graph and layout, not per frame: it is a walk over the edges
@@ -194,38 +244,47 @@ export function planEdges({ edges, keys, clusterOf, sideOf }: EdgeInput): EdgePl
     return Math.min(1, Math.max(HUB_FLOOR, Math.sqrt(HUB_FREE / spread)));
   };
 
-  // The strongest link between each two clusters on the same side. Bond as the
-  // clustering measures it, without folders and tags: shared neighbours over
-  // the degrees at both ends, so a map of content linking everything is never
-  // the thread between two regions.
-  const thread = new Map<string, { edge: number; bond: number; tie: string }>();
+  // One thread per pair of linked regions: on the same side for any link
+  // between them, across the fissure only where at least `SPAN_LINKS` links
+  // connect them. Which link carries the thread is decided without the
+  // degree of either end (see `THREAD_ORDER`), so a note gaining a leaf
+  // somewhere does not move a thread.
+  const thread = new Map<
+    string,
+    { edge: number; hubby: number; shared: number; tie: string; links: number; across: boolean }
+  >();
   if (clusterOf !== null && sideOf !== null) {
     for (const [, i] of carrier) {
       const e = edges[i]!;
       const ca = clusterOf[e.a]!;
       const cb = clusterOf[e.b]!;
-      if (ca === cb || sideOf[ca] !== sideOf[cb]) continue;
+      if (ca === cb) continue;
+      const na = neighbours[e.a]!;
+      const nb = neighbours[e.b]!;
       let shared = 0;
-      const [small, large] =
-        neighbours[e.a]!.size < neighbours[e.b]!.size
-          ? [neighbours[e.a]!, neighbours[e.b]!]
-          : [neighbours[e.b]!, neighbours[e.a]!];
+      const [small, large] = na.size < nb.size ? [na, nb] : [nb, na];
       for (const x of small) if (large.has(x)) shared += 1;
-      const bond = (1 + shared) / Math.sqrt(Math.max(1, neighbours[e.a]!.size * neighbours[e.b]!.size));
-      const tie = keys[e.a]! < keys[e.b]! ? `${keys[e.a]} ${keys[e.b]}` : `${keys[e.b]} ${keys[e.a]}`;
+      const hubby = na.size >= HUB_DEGREE || nb.size >= HUB_DEGREE ? 1 : 0;
+      const tie = keys[e.a]! < keys[e.b]! ? `${keys[e.a]}\u0000${keys[e.b]}` : `${keys[e.b]}\u0000${keys[e.a]}`;
       const regions = ca < cb ? `${ca}:${cb}` : `${cb}:${ca}`;
       const best = thread.get(regions);
-      if (
-        best === undefined ||
-        bond > best.bond + 1e-9 ||
-        (Math.abs(bond - best.bond) <= 1e-9 && tie < best.tie)
-      ) {
-        thread.set(regions, { edge: i, bond, tie });
+      if (best === undefined) {
+        thread.set(regions, { edge: i, hubby, shared, tie, links: 1, across: sideOf[ca] !== sideOf[cb] });
+        continue;
+      }
+      best.links += 1;
+      if (strongerThread(hubby, shared, tie, best)) {
+        best.edge = i;
+        best.hubby = hubby;
+        best.shared = shared;
+        best.tie = tie;
       }
     }
   }
   const threads = new Set<number>();
-  for (const t of thread.values()) threads.add(t.edge);
+  for (const t of thread.values()) {
+    if (!t.across || t.links >= SPAN_LINKS) threads.add(t.edge);
+  }
 
   for (let i = 0; i < m; i += 1) {
     const e = edges[i]!;
@@ -248,6 +307,10 @@ export function planEdges({ edges, keys, clusterOf, sideOf }: EdgeInput): EdgePl
     if (ca === cb) {
       kind[i] = WITHIN;
       rest[i] = near[i] = TRACT * damp;
+    } else if (sideOf[ca] !== sideOf[cb] && threads.has(i)) {
+      kind[i] = SPAN;
+      rest[i] = SPAN_THREAD;
+      near[i] = Math.max(THREAD, TRACT * NEAR_FISSURE * damp);
     } else if (sideOf[ca] !== sideOf[cb]) {
       kind[i] = FISSURE;
       rest[i] = GHOST;
@@ -266,7 +329,10 @@ export function planEdges({ edges, keys, clusterOf, sideOf }: EdgeInput): EdgePl
   return { kind, rest, near, primary };
 }
 
-/** 0 in the overview, 1 once zoomed in far enough that every link is back. Smooth between. */
+/**
+ * 0 in the overview, 1 once zoomed in far enough that held-back links are back.
+ * Smooth between. The scene applies it only to links with an end in view.
+ */
 export function opening(zoom: number): number {
   const t = Math.min(1, Math.max(0, (zoom - OPEN_FROM) / (OPEN_AT - OPEN_FROM)));
   return t * t * (3 - 2 * t);
@@ -276,7 +342,7 @@ export function opening(zoom: number): number {
  * The opacity one edge is drawn with this frame.
  *
  * `lit` is the strength of a spark on it, 0 to 1. A twin is drawn only if a
- * spark is put on it directly; the scene puts sparks on the carrier.
+ * spark is put on it directly; the scene skips sparks on twins.
  */
 export function edgeAlpha(plan: EdgePlan, i: number, open: number, focused: boolean, lit: number): number {
   const spark = lit * LIT;
@@ -286,20 +352,28 @@ export function edgeAlpha(plan: EdgePlan, i: number, open: number, focused: bool
 }
 
 /**
- * Half-width of a tract where it leaves a cell body, in world units.
- *
- * Divided by the square root of the zoom: on screen a tract still grows as you
- * come closer, but by the square root, so a magnified cluster does not turn
- * into a bundle of ribbons.
+ * How much a tract grows on screen at this zoom: the square root of it, never
+ * below 1. Computed once per frame and handed to `tractBase` and `tractMid`.
  */
-export function tractBase(radius: number, zoom: number, focused: boolean): number {
-  const base = Math.min(TRACT_BASE_MAX, Math.max(TRACT_BASE_MIN, radius * TRACT_BASE));
-  return (base * (focused ? FOCUS_WIDEN : 1)) / Math.sqrt(Math.max(1, zoom));
+export function growth(zoom: number): number {
+  return Math.sqrt(Math.max(1, zoom));
 }
 
-/** Half-width in the middle of a tract, in world units: half a screen pixel, growing with √zoom. */
-export function tractMid(zoom: number, scale: number): number {
-  return (TRACT_MID_PX * Math.sqrt(Math.max(1, zoom))) / Math.max(1e-6, scale);
+/**
+ * Half-width of a tract where it leaves a cell body, in world units.
+ *
+ * Divided by `growth`: on screen a tract still grows as you come closer, but by
+ * the square root of the zoom, so a magnified cluster does not turn into a
+ * bundle of ribbons.
+ */
+export function tractBase(radius: number, grow: number, focused: boolean): number {
+  const base = Math.min(TRACT_BASE_MAX, Math.max(TRACT_BASE_MIN, radius * TRACT_BASE));
+  return (base * (focused ? FOCUS_WIDEN : 1)) / grow;
+}
+
+/** Half-width in the middle of a tract, in world units: half a screen pixel, times `growth`. */
+export function tractMid(grow: number, scale: number): number {
+  return (TRACT_MID_PX * grow) / Math.max(1e-6, scale);
 }
 
 /** Halo strength of a note, 0 to 1: `GLOW_REST` at rest, the full halo while it fires. */

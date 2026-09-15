@@ -17,10 +17,10 @@
  * per node per frame is the garbage collector stuttering the animation.
  */
 
-import type { Camera } from './camera';
-import { FIT_MAX_SCALE } from './camera';
+import type { Camera, Inset } from './camera';
+import { fit } from './camera';
 import type { EdgePlan } from './edges';
-import { edgeAlpha, glow, opening, planEdges, tractBase, tractMid } from './edges';
+import { TWIN, edgeAlpha, glow, growth, opening, planEdges, tractBase, tractMid } from './edges';
 import type { BrainGraph } from './model';
 import type { Activity, PulseKind } from './activity';
 import type { BrainLayout } from './layout';
@@ -104,6 +104,9 @@ export interface Scene {
 export function bodyRadius(layoutRadius: number, depth: number): number {
   return layoutRadius * (0.8 + depth * 0.3);
 }
+
+/** The overview the zoom is measured against: the fit, without the caller's inset. */
+const NO_INSET: Inset = { top: 0, right: 0, bottom: 0, left: 0 };
 
 /** How many labels may be on screen at once. More text crowds exactly where the
  *  nodes are densest anyway. */
@@ -192,23 +195,28 @@ export class SceneBuilder {
     // makes the real resting view a few percent smaller, still well below where
     // held-back links start to return.
     const plan = this.#planFor(layout);
-    const { bounds } = layout;
-    const overview = Math.min(
-      FIT_MAX_SCALE,
-      width / Math.max(1, bounds.maxX - bounds.minX),
-      height / Math.max(1, bounds.maxY - bounds.minY),
-    );
+    const overview = fit(layout.bounds, width, height, NO_INSET).scale;
     const zoom = overview > 0 && Number.isFinite(overview) ? camera.scale / overview : 1;
     const open = opening(zoom);
-    const mid = tractMid(zoom, camera.scale);
+    const grow = growth(zoom);
+    const mid = tractMid(grow, camera.scale);
 
-    // Spark strength per edge, onto the edge that draws the link.
+    // The visible world rectangle. Held-back links open with the zoom only when
+    // one of their ends is in it: a long link from somewhere off screen to
+    // somewhere else off screen says nothing about what is being looked at.
+    const scale = Math.max(1e-6, camera.scale);
+    const left = -camera.x / scale;
+    const top = -camera.y / scale;
+    const right = (width - camera.x) / scale;
+    const bottom = (height - camera.y) / scale;
+
+    // Spark strength per edge. A twin's spark is skipped: the carrier touches
+    // the same note and has a spark of its own.
     const lit = this.#lit;
     lit.fill(0);
     for (const spark of activity.sparks) {
-      if (spark.edge < 0 || spark.t < 0) continue;
-      const at = plan.primary[spark.edge]!;
-      lit[at] = Math.max(lit[at]!, 1 - spark.t);
+      if (spark.edge < 0 || spark.t < 0 || plan.kind[spark.edge] === TWIN) continue;
+      lit[spark.edge] = Math.max(lit[spark.edge]!, 1 - spark.t);
     }
 
     // The control point is settled here, before anything is drawn. It used to be
@@ -229,10 +237,13 @@ export class SceneBuilder {
       out.cx = (ax + bx) / 2 - (by - ay) * e.curve;
       out.cy = (ay + by) / 2 + (bx - ax) * e.curve;
       const focused = picked >= 0 && (e.a === picked || e.b === picked);
-      out.aw = tractBase(layout.r[e.a]!, zoom, focused);
-      out.bw = tractBase(layout.r[e.b]!, zoom, focused);
+      out.aw = tractBase(layout.r[e.a]!, grow, focused);
+      out.bw = tractBase(layout.r[e.b]!, grow, focused);
       out.mw = mid;
-      out.alpha = edgeAlpha(plan, i, open, focused, lit[i]!);
+      const seen =
+        (ax >= left && ax <= right && ay >= top && ay <= bottom) ||
+        (bx >= left && bx <= right && by >= top && by <= bottom);
+      out.alpha = edgeAlpha(plan, i, seen ? open : 0, focused, lit[i]!);
     }
 
     scene.sparks = [];
@@ -253,11 +264,11 @@ export class SceneBuilder {
         continue;
       }
 
-      // Along the edge that is drawn: for a link in both directions, the spark
-      // on the undrawn twin would otherwise run beside the visible line.
-      const along = plan.primary[spark.edge]!;
-      const e = scene.edges[along]!;
-      const fromA = edges[along]!.a === spark.from;
+      // A link in both directions sends one spark, along the edge that is
+      // drawn; the twin's would run beside the line and double the pulse.
+      if (plan.kind[spark.edge] === TWIN) continue;
+      const e = scene.edges[spark.edge]!;
+      const fromA = edges[spark.edge]!.a === spark.from;
       const fx = fromA ? e.ax : e.bx;
       const fy = fromA ? e.ay : e.by;
       const tx = fromA ? e.bx : e.ax;
