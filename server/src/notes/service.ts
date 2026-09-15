@@ -104,7 +104,16 @@ export function parseConflictPath(notePath: string): ConflictInfo | null {
   const at = new Date(year, month - 1, day, hour, minute);
   if (Number.isNaN(at.getTime())) return null;
 
-  return { originalPath: `${base}${NOTE_EXTENSION}`, at: at.getTime() };
+  const originalPath = `${base}${NOTE_EXTENSION}`;
+
+  // `new Date` does not reject an impossible calendar value, it rolls it over —
+  // "2026-13-45 99.99" quietly becomes some date the following year rather than
+  // NaN. Regenerating the name from what was just parsed and comparing it back
+  // to the input catches that: a rolled-over `at` renders a different stamp, so
+  // the two will not match, and this is not a conflict copy after all.
+  if (conflictPath(originalPath, at) !== notePath) return null;
+
+  return { originalPath, at: at.getTime() };
 }
 
 export class NoteService {

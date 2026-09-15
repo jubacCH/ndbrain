@@ -74,6 +74,17 @@ describe('conflictPath and parseConflictPath', () => {
     expect(parseConflictPath('Plan (Konflikt 2026-09-11).md')).toBeNull();
     expect(parseConflictPath('Plan (Konflikt 2026-09-11 1058).md')).toBeNull();
   });
+
+  it('refuses a calendar value that only looks like a date', () => {
+    // `new Date` does not reject month 13 or day 45 — it rolls them over into a
+    // real date the following year, which `conflictPath` would never have
+    // written for that literal string. The round trip is what catches it: were
+    // this accepted at face value, "gone" or "still there" would be answered
+    // for a date that never existed rather than refused outright.
+    expect(parseConflictPath('Plan (Konflikt 2026-13-45 99.99).md')).toBeNull();
+    expect(parseConflictPath('Plan (Konflikt 2026-02-30 10.00).md')).toBeNull();
+    expect(parseConflictPath('Plan (Konflikt 2026-00-01 10.00).md')).toBeNull();
+  });
 });
 
 let dataDir: string;
@@ -171,6 +182,23 @@ describe('the conflict-copy finding', () => {
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0]?.originalExists).toBe(false);
     expect(conflicts[0]?.originalTitle).toBeNull();
+  });
+
+  it('finds the original even when its own extension is not lowercase', async () => {
+    // "Plan.MD" is a legal note here — `isNotePath` accepts any case — but
+    // `conflictPath` strips an extension case-insensitively and always writes
+    // the copy's own extension in lowercase, so `parseConflictPath` cannot
+    // recover which case the original really had; it always guesses
+    // lowercase. A case-sensitive existence lookup on that guess would then
+    // call this original "gone" for no reason but a letter's case.
+    await runtime.app.createNote('julian', 'Projekt/Plan.MD', '# Plan\n', 'julian');
+    await plantConflict('julian', 'Projekt/Plan.MD', new Date(2026, 8, 11, 10, 58));
+
+    const conflicts = runtime.app.queries.conflictCopies('julian');
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]?.originalPath).toBe('Projekt/Plan.md');
+    expect(conflicts[0]?.originalExists).toBe(true);
+    expect(conflicts[0]?.originalTitle).toBe('Plan');
   });
 
   it('leaves an ordinary note that merely has "Konflikt" in its title alone', async () => {
