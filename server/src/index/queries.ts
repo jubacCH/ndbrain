@@ -20,6 +20,7 @@ import type { Database, SqlValue } from '../db/database.js';
 import type { View } from '../auth/shares.js';
 import { caseKey } from '../vault/paths.js';
 import { DEFAULT_SETTINGS } from '../auth/settings.js';
+import { parseConflictPath } from '../notes/service.js';
 
 export interface SearchOptions {
   /** Only notes carrying this tag. */
@@ -76,6 +77,17 @@ export interface TaskFilter {
   /** Include finished tasks too. Unset or false means open tasks only. */
   includeDone?: boolean;
   limit?: number;
+}
+
+export interface ConflictRow extends NoteRow {
+  /** Path of the note the copy displaced, read back from the copy's own name. */
+  originalPath: string;
+  /** Title of the original, when it can still be read. Null when gone or hidden. */
+  originalTitle: string | null;
+  /** Whether that note still exists, in the caller's view — see `conflictCopies`. */
+  originalExists: boolean;
+  /** The moment named in the copy's filename. */
+  at: number;
 }
 
 export interface ActivityRow {
@@ -641,6 +653,69 @@ export class Queries {
   }
 
   /**
+   * The displaced versions `conflictPath` (`notes/service.ts`) wrote aside instead
+   * of losing them to a concurrent write.
+   *
+   * Recognition is not a second, hand-written pattern: `parseConflictPath` in that
+   * same module is the one place that reads the name back, so this and the write
+   * path cannot drift apart — `conflict.test.ts` checks both against each other.
+   *
+   * `n.path LIKE` is only a coarse prefilter to keep the scan cheap; an ordinary
+   * note whose title happens to contain "(Konflikt" is ruled back out by the exact
+   * parse below.
+   *
+   * The security shape matches `outgoingLinks`: the copy's own name already tells
+   * the caller what path it displaced — they are already reading a note in their
+   * view that says so — so echoing `originalPath` back is not a new leak. Whether
+   * that note **still exists** is the sensitive half, and it is answered with the
+   * same view the candidate list itself was scoped to. An original outside the
+   * caller's view must read exactly like a deleted one; anything else turns this
+   * finding into an oracle for "something you can't see is still there."
+   */
+  conflictCopies(view: Viewable): ConflictRow[] {
+    const scope = scopeSql('n', 'path', view);
+    const candidates = this.#db.all(
+      `SELECT n.owner, n.path, n.title, n.size, n.mtime_ms
+         FROM notes n
+        WHERE ${scope.sql} AND n.path LIKE '%(Konflikt%).md'`,
+      ...scope.params,
+    );
+
+    const originalScope = scopeSql('o', 'path', view);
+    const findOriginal = (owner: string, path: string): { title: string } | undefined =>
+      this.#db.get<{ title: string }>(
+        `SELECT o.title AS title FROM notes o
+          WHERE o.owner = ? AND o.path = ? AND ${originalScope.sql}`,
+        owner,
+        path,
+        ...originalScope.params,
+      );
+
+    const out: ConflictRow[] = [];
+    for (const row of candidates) {
+      const notePath = String(row['path']);
+      const info = parseConflictPath(notePath);
+      if (info === null) continue;
+
+      const owner = String(row['owner']);
+      const original = findOriginal(owner, info.originalPath);
+      out.push({
+        owner,
+        path: notePath,
+        title: String(row['title']),
+        size: Number(row['size']),
+        mtimeMs: Number(row['mtime_ms']),
+        originalPath: info.originalPath,
+        originalTitle: original?.title ?? null,
+        originalExists: original !== undefined,
+        at: info.at,
+      });
+    }
+
+    return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  }
+
+  /**
    * How many notes need attention — counted as notes, not as findings.
    *
    * Adding the four finding counts together overstates the total, because one
@@ -658,6 +733,7 @@ export class Queries {
     for (const note of this.stale(view, staleDays)) paths.add(note.path);
     for (const link of this.deadLinks(view)) paths.add(link.source);
     for (const note of this.untaggedFindings(view)) paths.add(note.path);
+    for (const conflict of this.conflictCopies(view)) paths.add(conflict.path);
     return paths.size;
   }
 

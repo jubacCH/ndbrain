@@ -496,7 +496,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         deadLinks: app.queries.deadLinks(caller).length,
         // The threshold is the caller's, not a number this file picked.
         stale: app.queries.stale(caller, settings.get(caller).staleDays).length,
-        // Notes, not findings — the four above overlap heavily. See attentionCount.
+        conflicts: app.queries.conflictCopies(caller).length,
+        // Notes, not findings — the five above overlap heavily. See attentionCount.
         attention: app.queries.attentionCount(caller, settings.get(caller).staleDays),
         tagsInUse: app.queries.tagsInUse(caller),
       },
@@ -1090,23 +1091,27 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // The same rule the overview applies, from the same function — so the count
     // and the list can never disagree about what counts as a finding.
     const untagged = app.queries.untaggedFindings(owner);
+    const conflicts = app.queries.conflictCopies(owner);
 
     return {
       orphans: orphans.slice(0, limit),
       untagged: untagged.slice(0, limit),
       deadLinks: deadLinks.slice(0, limit),
       stale: stale.slice(0, limit),
+      conflicts: conflicts.slice(0, limit),
       truncated:
         orphans.length > limit ||
         untagged.length > limit ||
         deadLinks.length > limit ||
-        stale.length > limit,
+        stale.length > limit ||
+        conflicts.length > limit,
       /** The real totals, so a capped list can still report what it stands for. */
       totals: {
         orphans: orphans.length,
         untagged: untagged.length,
         deadLinks: deadLinks.length,
         stale: stale.length,
+        conflicts: conflicts.length,
       },
     };
   });
