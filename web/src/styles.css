@@ -1648,6 +1648,46 @@ tbody tr[data-selected='true']:hover td {
   touch-action: none;
 }
 
+/*
+ * Focusable so that the keyboard can reach the view at all — `0` and Escape
+ * return it to the overview. The ring only ever appears for a keyboard focus,
+ * so a pointer user sees the canvas exactly as before.
+ */
+.brain:focus-visible {
+  outline: 2px solid rgba(127, 233, 240, 0.7);
+  outline-offset: -2px;
+}
+
+/*
+ * The way back.
+ *
+ * Rendered only while the camera has actually moved. In the resting state the
+ * view has nothing on it that was not there before this control existed, which
+ * is the point: it is an exit, not decoration, and there is nothing to exit from
+ * until somebody has zoomed or panned away.
+ */
+.brainhome {
+  position: absolute;
+  z-index: 2;
+  left: var(--s-3);
+  top: var(--s-3);
+  border: 1px solid rgba(140, 220, 235, 0.2);
+  border-radius: var(--r-full);
+  background: rgba(20, 44, 56, 0.55);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  padding: var(--s-1) var(--s-3);
+  font: inherit;
+  font-size: var(--t-xs);
+  color: rgba(200, 232, 240, 0.9);
+  cursor: pointer;
+}
+
+.brainhome:hover {
+  background: rgba(30, 62, 76, 0.7);
+  color: #eafaff;
+}
+
 .brainlegend,
 .brainfoot {
   position: absolute;
@@ -2586,6 +2626,13 @@ body {
 .side-graph .brain {
   flex: 1;
   min-height: 0;
+}
+/* The panel is the positioned ancestor here, not the canvas, so the top corner
+   would put the control over the panel's own heading. The canvas is the last
+   thing in the panel, which makes the bottom corner the canvas's corner. */
+.side-graph .brainhome {
+  top: auto;
+  bottom: var(--s-3);
 }
 .empty.small {
   font-size: var(--t-sm);
