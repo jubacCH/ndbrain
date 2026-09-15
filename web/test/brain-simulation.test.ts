@@ -1,28 +1,31 @@
+// @vitest-environment node
 /**
- * The simulation, pinned to the behaviour it had before the view was cut apart.
+ * The simulation, pinned to frozen numbers.
  *
- * When `step()` moved out of the component it was checked to be bit-identical
- * to the loop it replaced. A measurement taken once proves nothing about the
- * next change, though, and the next change is coming: the repulsion is still
- * O(n²), and Barnes-Hut will replace exactly that loop. Whoever does it needs to
- * know whether they changed the approximation they meant to change or, by
- * accident, a spring constant.
+ * **This reference replaced an older one on purpose.** Until phase 3 of the
+ * brain redesign the numbers here were produced by the `step()` of commit
+ * 8c3c1db — the loop that lived inside `Brain.tsx` — and the refactored layout
+ * reproduced them bit for bit. Phase 3 changed the simulation deliberately: an
+ * own world instead of the viewport, clusters with regions, cohesion,
+ * placement and containment, a temperature that brings it to rest. None of the
+ * old numbers could survive that, and keeping them would have meant keeping the
+ * old loop. They were replaced in the same commit that changed the simulation,
+ * after the new picture had been looked at.
  *
- * So the reference is **frozen numbers**, not a copy of the old loop. A copy
- * would sit next to the new code and be edited along with it the day somebody
- * "fixes" both; numbers cannot be. They were produced by the `step()` of commit
- * 8c3c1db (the last version with the simulation inside `Brain.tsx`), run
- * through the scenario below, and the refactored layout reproduced every one of
- * them bit for bit at the time of freezing.
+ * Why still frozen numbers, when `brain-form.test.ts` measures the behaviour?
+ * Because behaviour tests have tolerances wide enough for the next person to
+ * change a constant without noticing. Barnes-Hut will replace the repulsion
+ * loop; whoever does it has to know whether they changed the approximation they
+ * meant to change or, by accident, a spring. A copy of the loop next to the
+ * code would be edited along with it; numbers cannot be.
  *
- * The scenario covers the three ways the loop is driven in the app: free
- * running, a node held by the pointer, and the viewport changing size.
+ * The scenario covers the ways the loop is driven in the app: a fresh layout
+ * cooling down, a note picked up and moved, and let go.
  *
- * Compared to six decimals rather than exactly. V8's trigonometry is a fixed
- * port and has been stable for years, but a test that fails on a runtime
- * upgrade would teach people to update the numbers without looking — and a
- * force layout is chaotic enough that any real change to a force shows up as
- * whole pixels within a few dozen frames, far above that tolerance.
+ * Compared to six decimals rather than exactly. V8's trigonometry has been
+ * stable for years, but a test that fails on a runtime upgrade would teach
+ * people to update the numbers without looking — and any real change to a force
+ * shows up as whole units within a few dozen steps, far above that tolerance.
  *
  * **When this fails on purpose** — Barnes-Hut, a new force, a retuned constant —
  * the numbers are meant to be replaced. Say so in the commit, and look at the
@@ -31,34 +34,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { GraphData } from '../src/api';
 import { BrainLayout } from '../src/brain/layout';
-import { buildGraph, nodeKey } from '../src/brain/model';
+import { buildGraph } from '../src/brain/model';
+import { paraVault, shuffled } from './fixtures/para-vault';
 
-/** A repeatable vault: five folders, two owners, a scatter of links. */
-function vault(n: number, seed: number): GraphData {
-  let s = seed;
-  const rnd = (): number => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32;
-  const folders = ['00_Inbox', '10_Projects', '20_Areas', '30_Resources', '40_MOCs'];
-  const nodes = Array.from({ length: n }, (_, i) => {
-    const folder = folders[Math.floor(rnd() * folders.length)]!;
-    return { owner: i % 7 === 0 ? 'other' : 'jb', path: `${folder}/n${i}.md`, title: `n${i}`, folder, links: 0 };
-  });
-  const edges = [];
-  for (let k = 0; k < n * 2; k += 1) {
-    const a = nodes[Math.floor(rnd() * n)]!;
-    const b = nodes[Math.floor(rnd() * n)]!;
-    if (a.owner !== b.owner) continue;
-    edges.push({ owner: a.owner, from: a.path, to: b.path });
-    a.links += 1;
-    b.links += 1;
-  }
-  return { nodes, edges };
-}
-
-const W = 1000;
-const H = 700;
-const PROBES = [0, 7, 23, 41, 66];
+const PROBES = [0, 17, 42, 77, 108];
 
 interface Fingerprint {
   sumX: number;
@@ -66,28 +46,39 @@ interface Fingerprint {
   probes: Array<[number, number]>;
 }
 
-/** Produced by the 8c3c1db `step()`; see the header before changing any of it. */
+/** Produced by this commit's `step()`; see the header before changing any of it. */
 const REFERENCE: Record<number, Fingerprint> = {
   50: {
-    sumX: 39681.60228358631,
-    sumY: 27947.965913348584,
+    sumX: 4179.391316696708,
+    sumY: 2403.0733679265254,
     probes: [
-      [467.29809534849, 588.6016649927557],
-      [820.2392041501846, 447.0704175009331],
-      [508.24519433017275, 482.1865595391627],
-      [286.02844830305474, 286.0015664781306],
-      [391.1367992906057, 248.1357606809063],
+      [-98.95199201889464, -248.1442611931106],
+      [-464.73931668820813, -106.59896033116065],
+      [164.44043619998416, -85.78217711430734],
+      [365.1015159713861, 337.4062922921136],
+      [274.06909650217705, -291.2018297217238],
+    ],
+  },
+  160: {
+    sumX: 4831.9755563206745,
+    sumY: 2980.631143228091,
+    probes: [
+      [-90.1387537510175, -223.50404136724896],
+      [-464.16409097901385, -95.7345654357586],
+      [146.69097619524885, -111.21923788795532],
+      [389.2137801673563, 313.38122142398936],
+      [289.68374745445647, -312.8187949457619],
     ],
   },
   400: {
-    sumX: 27293.70214065636,
-    sumY: 25730.117228445415,
+    sumX: 4901.3819851542485,
+    sumY: 3209.7427664660686,
     probes: [
-      [304.9124518945929, 558.3388398409746],
-      [609.0719536289914, 462.5935490251786],
-      [348.4666075872832, 430.9251488198751],
-      [276.6781361096943, 80.28314446254875],
-      [293.88024768316376, 169.69168868066373],
+      [-88.99506502556792, -222.0992096388492],
+      [-462.4753864432969, -86.86084566054316],
+      [136.3595716044445, -113.41328310140861],
+      [399.9871392859241, 298.60078386597644],
+      [296.3248355548215, -312.50159039698946],
     ],
   },
 };
@@ -102,39 +93,25 @@ function fingerprint(layout: BrainLayout): Fingerprint {
   return { sumX, sumY, probes: PROBES.map((i) => [layout.x[i]!, layout.y[i]!]) };
 }
 
-describe('the force simulation', () => {
-  it('still moves every node the way the original loop did', () => {
-    const data = vault(80, 20260911);
-    const graph = buildGraph(data);
-
-    // The original starting ring by array index, handed in as remembered
-    // positions. It keeps the seeding out of this test on purpose: a change to
-    // where nodes *start* belongs to the layout tests, not to this one.
-    const start = new Map(
-      data.nodes.map((n, i) => {
-        const angle = (i / data.nodes.length) * Math.PI * 2;
-        const radius = 40 + (i % 6) * 24;
-        return [nodeKey(n.owner, n.path), { x: W / 2 + Math.cos(angle) * radius, y: H / 2 + Math.sin(angle) * radius }];
-      }),
-    );
-    const layout = new BrainLayout(graph, W, H, start);
-    expect(graph.edges.length).toBe(116);
-
-    const seen: Record<number, Fingerprint> = {};
-    for (let t = 1; t <= 400; t += 1) {
-      // Held by the pointer, set directly as the old handler did — not through
-      // `place()`, whose clamp is newer than the reference.
-      if (t === 120) {
-        layout.pinned = 3;
-        layout.x[3] = 310;
-        layout.y[3] = 260;
-      }
-      if (t === 180) layout.pinned = -1;
-      if (t === 220) layout.resize(W * 0.7, H * 0.9);
-      layout.step();
-      if (t in REFERENCE) seen[t] = fingerprint(layout);
+/** Runs the scenario and returns fingerprints at the steps the reference names. */
+function run(layout: BrainLayout, at: number[]): Record<number, Fingerprint> {
+  const seen: Record<number, Fingerprint> = {};
+  for (let t = 1; t <= Math.max(...at); t += 1) {
+    if (t === 120) {
+      layout.hold(3);
+      layout.place(3, layout.x[3]! + 90, layout.y[3]! - 40);
     }
+    if (t === 180) layout.release();
+    layout.step();
+    if (at.includes(t)) seen[t] = fingerprint(layout);
+  }
+  return seen;
+}
 
+describe('the force simulation', () => {
+  it('still moves every node the way it did when these numbers were frozen', () => {
+    const { data } = paraVault();
+    const seen = run(new BrainLayout(buildGraph(data), { arrangement: 'brain' }), [50, 160, 400]);
     for (const [t, want] of Object.entries(REFERENCE)) {
       const got = seen[Number(t)]!;
       expect(got.sumX, `sum of x at step ${t}`).toBeCloseTo(want.sumX, 6);
@@ -143,6 +120,25 @@ describe('the force simulation', () => {
         expect(got.probes[k]![0], `node ${PROBES[k]} x at step ${t}`).toBeCloseTo(x, 6);
         expect(got.probes[k]![1], `node ${PROBES[k]} y at step ${t}`).toBeCloseTo(y, 6);
       });
+    }
+  });
+
+  it('lays out the same vault identically whatever order the server listed it in', () => {
+    // Not "close": every force is summed in key order, so a reshuffled reply
+    // gives the same arithmetic in the same order. A tolerance here would hide
+    // the day somebody loops over the server's order again, and a force layout
+    // amplifies a rounding difference into a visibly different brain.
+    const { data } = paraVault();
+    const a = new BrainLayout(buildGraph(data), { arrangement: 'brain' });
+    a.settle();
+    for (const seed of [1, 2]) {
+      const b = new BrainLayout(buildGraph(shuffled(data, seed)), { arrangement: 'brain' });
+      b.settle();
+      for (let i = 0; i < a.x.length; i += 1) {
+        const j = b.graph.index.get(a.graph.nodes[i]!.key)!;
+        expect(b.x[j]).toBe(a.x[i]);
+        expect(b.y[j]).toBe(a.y[i]);
+      }
     }
   });
 });

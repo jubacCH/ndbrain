@@ -67,7 +67,20 @@ export class HitIndex {
   at(wx: number, wy: number, scale: number): number {
     const { x, y } = this.#layout;
     if (this.#tree === null) {
-      const tree = new Quadtree(0, 0, this.#layout.width, this.#layout.height);
+      // Rooted on the box the nodes actually occupy. The world is centred on
+      // the origin and a dragged node can leave the arrangement's bounds, so
+      // neither a fixed rectangle nor the layout's bounds would fit every point.
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (let i = 0; i < x.length; i += 1) {
+        minX = Math.min(minX, x[i]!);
+        minY = Math.min(minY, y[i]!);
+        maxX = Math.max(maxX, x[i]!);
+        maxY = Math.max(maxY, y[i]!);
+      }
+      const tree = x.length === 0 ? new Quadtree(0, 0, 1, 1) : new Quadtree(minX, minY, maxX, maxY);
       for (let i = 0; i < x.length; i += 1) tree.insert(i, x[i]!, y[i]!);
       this.#tree = tree;
     }

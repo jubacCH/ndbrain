@@ -4,22 +4,21 @@
  * The briefing's rule is that the brain must not look completely different after
  * every reload, because the point of a picture of a vault is that somebody
  * learns where things are in it. A force layout has no unique solution, so that
- * rule is entirely a question of what it starts from — which is what nearly all
- * of this file is about.
+ * rule is a question of what it starts from and of what it is allowed to move —
+ * which is what most of this file is about. The shape itself is measured in
+ * `brain-form.test.ts`.
  *
  * No canvas anywhere: positions are numbers, and the simulation never asked for
- * a DOM. It only looked that way while it lived inside one.
+ * a DOM, nor, any more, for the size of the window.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { GraphData } from '../src/api';
+import type { Arrangement } from '../src/brain/layout';
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph, nodeKey } from '../src/brain/model';
-import { loadPositions, savePositions } from '../src/brain/positions';
-
-const W = 900;
-const H = 600;
+import { loadPositions, positionsKey, savePositions } from '../src/brain/positions';
 
 function vault(count: number): GraphData {
   const nodes = Array.from({ length: count }, (_, i) => ({
@@ -36,65 +35,49 @@ function vault(count: number): GraphData {
   return { nodes, edges };
 }
 
-const laid = (data: GraphData, remembered?: Map<string, { x: number; y: number }>): BrainLayout =>
-  new BrainLayout(buildGraph(data), W, H, remembered);
+const laid = (
+  data: GraphData,
+  remembered?: ReturnType<BrainLayout['positions']>,
+  arrangement: Arrangement = 'brain',
+): BrainLayout => new BrainLayout(buildGraph(data), { arrangement, remembered });
+
+const captured = (data: GraphData, target: string): GraphData => ({
+  nodes: [...data.nodes, { owner: 'jb', path: '00_Inbox/captured.md', title: 'Captured', folder: '00_Inbox', links: 1 }],
+  edges: [...data.edges, { owner: 'jb', from: '00_Inbox/captured.md', to: target }],
+});
 
 describe('a start that does not move', () => {
   it('puts a note in the same place whatever order the server listed it in', () => {
     const data = vault(24);
-    const shuffled: GraphData = { nodes: [...data.nodes].reverse(), edges: data.edges };
-
-    const a = laid(data);
-    const b = laid(shuffled);
-    for (let i = 0; i < a.graph.nodes.length; i += 1) {
-      const j = b.graph.index.get(a.graph.nodes[i]!.key)!;
-      expect(b.x[j]).toBeCloseTo(a.x[i]!, 9);
-      expect(b.y[j]).toBeCloseTo(a.y[i]!, 9);
+    const shuffled: GraphData = { nodes: [...data.nodes].reverse(), edges: [...data.edges].reverse() };
+    for (const arrangement of ['brain', 'loose'] as const) {
+      const a = laid(data, undefined, arrangement);
+      const b = laid(shuffled, undefined, arrangement);
+      for (let i = 0; i < a.graph.nodes.length; i += 1) {
+        const j = b.graph.index.get(a.graph.nodes[i]!.key)!;
+        expect(b.x[j]).toBe(a.x[i]);
+        expect(b.y[j]).toBe(a.y[i]);
+      }
     }
   });
 
-  it('leaves the notes that were already there where they were', () => {
-    // The whole of briefing point 47: capturing one note must not rearrange the
-    // vault. Before, every position came from the array index, so inserting a
-    // note near the front of an alphabetical listing moved everything after it.
+  it('gives remembered positions priority over anything it would compute', () => {
     const before = laid(vault(24));
+    before.settle();
     const remembered = before.positions();
 
-    const grown = vault(24);
-    grown.nodes.unshift({
-      owner: 'jb',
-      path: '00_Inbox/captured.md',
-      title: 'Captured',
-      folder: '00_Inbox',
-      links: 1,
-    });
-    grown.edges.push({ owner: 'jb', from: '00_Inbox/captured.md', to: '10_Projects/note-0.md' });
-
-    const after = laid(grown, remembered);
+    const after = laid(captured(vault(24), '10_Projects/note-0.md'), remembered);
     for (const [key, at] of remembered) {
       const i = after.graph.index.get(key)!;
-      expect(after.x[i]).toBeCloseTo(at.x, 9);
-      expect(after.y[i]).toBeCloseTo(at.y, 9);
+      expect(after.x[i]).toBe(at.x);
+      expect(after.y[i]).toBe(at.y);
     }
   });
 
-  it('drops a new note beside what it links to, not across the canvas', () => {
-    const base = vault(24);
-    const settled = laid(base);
-    for (let i = 0; i < 200; i += 1) settled.step();
-    const remembered = settled.positions();
-
-    const grown = vault(24);
-    grown.nodes.push({
-      owner: 'jb',
-      path: '00_Inbox/captured.md',
-      title: 'Captured',
-      folder: '00_Inbox',
-      links: 1,
-    });
-    grown.edges.push({ owner: 'jb', from: '00_Inbox/captured.md', to: '20_Areas/note-7.md' });
-
-    const after = laid(grown, remembered);
+  it('drops a new note beside what it links to, not across the brain', () => {
+    const settled = laid(vault(24));
+    settled.settle();
+    const after = laid(captured(vault(24), '20_Areas/note-7.md'), settled.positions());
     const fresh = after.graph.index.get(nodeKey('jb', '00_Inbox/captured.md'))!;
     const anchor = after.graph.index.get(nodeKey('jb', '20_Areas/note-7.md'))!;
     const gap = Math.hypot(after.x[fresh]! - after.x[anchor]!, after.y[fresh]! - after.y[anchor]!);
@@ -103,57 +86,27 @@ describe('a start that does not move', () => {
     expect(gap).toBeCloseTo(18, 6);
   });
 
-  it('takes a remembered position back into the window even when the window shrank', () => {
-    const wide = laid(vault(8));
-    for (let i = 0; i < 50; i += 1) wide.step();
-    const narrow = new BrainLayout(buildGraph(vault(8)), 200, 150, wide.positions());
-    for (let i = 0; i < narrow.x.length; i += 1) {
-      expect(narrow.x[i]).toBeLessThanOrEqual(200);
-      expect(narrow.y[i]).toBeLessThanOrEqual(150);
-    }
-  });
-
   it('ignores a stored position that is not a position', () => {
     const broken = new Map([[nodeKey('jb', '10_Projects/note-0.md'), { x: NaN, y: 3 }]]);
     const layout = laid(vault(4), broken);
+    layout.settle();
     for (let i = 0; i < layout.x.length; i += 1) {
       expect(Number.isFinite(layout.x[i]!)).toBe(true);
       expect(Number.isFinite(layout.y[i]!)).toBe(true);
-    }
-  });
-});
-
-describe('the simulation', () => {
-  it('settles inside the world it was given, which is what lets the camera start there', () => {
-    const layout = laid(vault(60));
-    for (let i = 0; i < 400; i += 1) layout.step();
-    for (let i = 0; i < layout.x.length; i += 1) {
-      expect(layout.x[i]!).toBeGreaterThanOrEqual(0);
-      expect(layout.x[i]!).toBeLessThanOrEqual(W);
-      expect(layout.y[i]!).toBeGreaterThanOrEqual(0);
-      expect(layout.y[i]!).toBeLessThanOrEqual(H);
     }
   });
 
   it('never hands two notes the same starting point', () => {
     // Repulsion is computed from the vector between two nodes, so two nodes at
     // exactly the same point repel each other by zero in no direction and stay
-    // there for ever. The simulation does not rescue that case and is not being
-    // taught to here — the seeding is what has to avoid it, including for two
+    // there for ever. The seeding is what has to avoid it, including for two
     // notes created together against the same neighbour.
     const grown = vault(24);
     for (const name of ['first', 'second']) {
-      grown.nodes.push({
-        owner: 'jb',
-        path: `00_Inbox/${name}.md`,
-        title: name,
-        folder: '00_Inbox',
-        links: 1,
-      });
+      grown.nodes.push({ owner: 'jb', path: `00_Inbox/${name}.md`, title: name, folder: '00_Inbox', links: 1 });
       grown.edges.push({ owner: 'jb', from: `00_Inbox/${name}.md`, to: '20_Areas/note-7.md' });
     }
     const layout = laid(grown, laid(vault(24)).positions());
-
     const seen = new Set<string>();
     for (let i = 0; i < layout.x.length; i += 1) {
       const at = `${layout.x[i]!},${layout.y[i]!}`;
@@ -161,97 +114,175 @@ describe('the simulation', () => {
       seen.add(at);
     }
   });
+});
+
+describe('what may move', () => {
+  it('lets everything move in a layout nobody has seen', () => {
+    expect([...laid(vault(12)).mobile].every((m) => m === 1)).toBe(true);
+  });
+
+  it('lets only the new note and the note it links to move, and their neighbours', () => {
+    const before = laid(vault(24));
+    before.settle();
+    const after = laid(captured(vault(24), '20_Areas/note-7.md'), before.positions());
+    const moving = after.graph.nodes.filter((_, i) => after.mobile[i] === 1).map((n) => n.path).sort();
+    // note-7 links to note-6 and note-8 in the chain.
+    expect(moving).toEqual(['00_Inbox/captured.md', '10_Projects/note-6.md', '10_Projects/note-8.md', '20_Areas/note-7.md']);
+  });
+
+  it('notices a link between two notes that were both there before', () => {
+    const before = laid(vault(24));
+    before.settle();
+    const linked = vault(24);
+    linked.edges.push({ owner: 'jb', from: '10_Projects/note-2.md', to: '10_Projects/note-20.md' });
+    const after = laid(linked, before.positions());
+    const at = (path: string): number => after.mobile[after.graph.index.get(nodeKey('jb', path))!]!;
+    expect(at('10_Projects/note-2.md')).toBe(1);
+    expect(at('10_Projects/note-20.md')).toBe(1);
+    expect(at('20_Areas/note-13.md')).toBe(0);
+  });
+
+  it('frees everything once a note is picked up', () => {
+    const before = laid(vault(24));
+    before.settle();
+    const again = laid(vault(24), before.positions());
+    again.hold(4);
+    expect([...again.mobile].every((m) => m === 1)).toBe(true);
+  });
+});
+
+describe('the simulation', () => {
+  it('knows nothing about a window', () => {
+    // An own world: the constructor takes the graph and the arrangement, and
+    // the result depends on nothing else. The camera test shows that a resize
+    // changes only the mapping; the component test that a real resize leaves
+    // the stored positions alone.
+    const a = laid(vault(30));
+    const b = laid(vault(30));
+    a.settle();
+    b.settle();
+    expect([...a.x]).toEqual([...b.x]);
+    expect([...a.y]).toEqual([...b.y]);
+    expect(a.bounds.minX).toBeLessThan(0);
+    expect(a.bounds.maxX).toBeGreaterThan(0);
+  });
+
+  it('grows the brain with the vault instead of crowding it', () => {
+    const small = laid(vault(40));
+    const large = laid(vault(160));
+    // Four times the notes, twice the length: the same density.
+    expect(large.unitLength / small.unitLength).toBeCloseTo(2, 9);
+  });
 
   it('holds a pinned note still while everything else keeps moving', () => {
     const layout = laid(vault(20));
     for (let i = 0; i < 60; i += 1) layout.step();
-    layout.pinned = 3;
-    layout.place(3, 300, 200);
+    layout.hold(3);
+    layout.place(3, 30, 20);
     const other = layout.x[9];
     for (let i = 0; i < 30; i += 1) layout.step();
+    expect(layout.x[3]).toBe(30);
     expect(layout.vx[3]).toBe(0);
-    expect(layout.vy[3]).toBe(0);
     expect(layout.x[9]).not.toBe(other);
   });
 
-  it('keeps a dragged note inside the world', () => {
+  it('keeps a dragged note on a leash near the brain', () => {
     const layout = laid(vault(6));
-    layout.place(0, -5000, 9000);
-    expect(layout.x[0]!).toBeGreaterThan(0);
-    expect(layout.y[0]!).toBeLessThan(H);
+    layout.place(0, -50_000, 90_000);
+    const { minX, minY, maxX, maxY } = layout.bounds;
+    expect(layout.x[0]!).toBeGreaterThanOrEqual(minX - (maxX - minX));
+    expect(layout.y[0]!).toBeLessThanOrEqual(maxY + (maxY - minY));
   });
 
   it('survives an empty vault and a single note', () => {
     for (const size of [0, 1]) {
-      const layout = laid(vault(size));
-      expect(() => {
-        for (let i = 0; i < 10; i += 1) layout.step();
-      }).not.toThrow();
+      for (const arrangement of ['brain', 'loose'] as const) {
+        const layout = laid(vault(size), undefined, arrangement);
+        expect(() => layout.settle()).not.toThrow();
+      }
     }
   });
 
   it('goes nowhere near a NaN, which would spread to every node it repels', () => {
     const layout = laid(vault(40));
-    for (let i = 0; i < 300; i += 1) layout.step();
+    layout.settle();
     for (let i = 0; i < layout.x.length; i += 1) {
       expect(Number.isFinite(layout.x[i]!)).toBe(true);
       expect(Number.isFinite(layout.y[i]!)).toBe(true);
     }
   });
-
-  it('lays out the same vault identically twice, run for run', () => {
-    const a = laid(vault(30));
-    const b = laid(vault(30));
-    for (let i = 0; i < 150; i += 1) {
-      a.step();
-      b.step();
-    }
-    expect([...a.x]).toEqual([...b.x]);
-    expect([...a.y]).toEqual([...b.y]);
-  });
 });
 
 describe('remembering across sessions', () => {
+  const mine = { account: 'julian', store: 'network' };
   beforeEach(() => window.localStorage.clear());
 
   it('comes back from storage close enough that nothing visibly moved', () => {
     const layout = laid(vault(12));
-    for (let i = 0; i < 100; i += 1) layout.step();
-    savePositions('network', layout.positions());
+    layout.settle();
+    savePositions(mine, layout.positions());
 
-    const back = loadPositions('network');
+    const back = loadPositions(mine);
     for (const [key, at] of layout.positions()) {
       expect(back.get(key)!.x).toBeCloseTo(at.x, 1);
       expect(back.get(key)!.y).toBeCloseTo(at.y, 1);
+      expect(back.get(key)!.links).toBe(at.links);
     }
   });
 
-  it('forgets notes that are gone rather than growing forever', () => {
-    savePositions('network', laid(vault(12)).positions());
-    savePositions('network', laid(vault(3)).positions());
-    expect(loadPositions('network').size).toBe(3);
+  it('keeps two accounts in the same browser apart', () => {
+    // The first version kept one entry per view: whoever signed in last
+    // overwrote the other's brain.
+    savePositions({ account: 'julian', store: 'network' }, laid(vault(4)).positions());
+    savePositions({ account: 'ramona', store: 'network' }, laid(vault(9)).positions());
+    expect(loadPositions({ account: 'julian', store: 'network' }).size).toBe(4);
+    expect(loadPositions({ account: 'ramona', store: 'network' }).size).toBe(9);
   });
 
-  it('keeps two stores apart', () => {
-    savePositions('network', laid(vault(4)).positions());
-    expect(loadPositions('neighbourhood').size).toBe(0);
+  it('cannot be tricked into another account by a separator in the name', () => {
+    expect(positionsKey({ account: 'a.b', store: 'c' })).not.toBe(positionsKey({ account: 'a', store: 'b.c' }));
+    expect(positionsKey({ account: 'a/b', store: 'c' })).not.toBe(positionsKey({ account: 'a', store: 'b/c' }));
+  });
+
+  it('throws away positions from the old pixel format instead of reading them', () => {
+    window.localStorage.setItem('ndbrain.brain.network', '{"jb\\u0000a.md":[512,384]}');
+    window.localStorage.setItem('ndbrain.prefs', '{"theme":"dark"}');
+    expect(loadPositions(mine).size).toBe(0);
+    expect(window.localStorage.getItem('ndbrain.brain.network')).toBeNull();
+    // Only the brain's own old entries.
+    expect(window.localStorage.getItem('ndbrain.prefs')).not.toBeNull();
+  });
+
+  it('forgets notes that are gone rather than growing forever', () => {
+    savePositions(mine, laid(vault(12)).positions());
+    savePositions(mine, laid(vault(3)).positions());
+    expect(loadPositions(mine).size).toBe(3);
+  });
+
+  it('keeps two views apart', () => {
+    savePositions(mine, laid(vault(4)).positions());
+    expect(loadPositions({ account: 'julian', store: 'other' }).size).toBe(0);
   });
 
   it('reads an empty arrangement rather than throwing on rubbish', () => {
-    window.localStorage.setItem('ndbrain.brain.network', 'not json');
-    expect(loadPositions('network').size).toBe(0);
+    const key = positionsKey(mine);
+    window.localStorage.setItem(key, 'not json');
+    expect(loadPositions(mine).size).toBe(0);
 
-    window.localStorage.setItem('ndbrain.brain.network', '{"jb a.md":["left","up"]}');
-    expect(loadPositions('network').size).toBe(0);
+    window.localStorage.setItem(key, '{"a":["left","up"]}');
+    expect(loadPositions(mine).size).toBe(0);
 
-    window.localStorage.setItem('ndbrain.brain.network', '{"jb a.md":[1,2],"jb b.md":[3]}');
-    expect(loadPositions('network').size).toBe(1);
+    window.localStorage.setItem(key, '{"a":[1,2],"b":[3],"c":[4,5,-1]}');
+    const back = loadPositions(mine);
+    expect(back.size).toBe(2);
+    // A position without a usable link hash still counts, as a changed note.
+    expect(back.get('c')!.links).toBeUndefined();
   });
 
   it('declines to store a vault far past what this view is built for', () => {
     const huge = new Map<string, { x: number; y: number }>();
     for (let i = 0; i < 20_001; i += 1) huge.set(`jb n${i}.md`, { x: i, y: i });
-    savePositions('network', huge);
-    expect(window.localStorage.getItem('ndbrain.brain.network')).toBeNull();
+    savePositions(mine, huge);
+    expect(window.localStorage.getItem(positionsKey(mine))).toBeNull();
   });
 });

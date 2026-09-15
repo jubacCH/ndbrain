@@ -21,9 +21,6 @@ import { BrainLayout } from '../src/brain/layout';
 import { buildGraph } from '../src/brain/model';
 import { bodyRadius } from '../src/brain/scene';
 
-const W = 1000;
-const H = 700;
-
 function lonely(links: number, count = 40): BrainLayout {
   const data: GraphData = {
     nodes: Array.from({ length: count }, (_, i) => ({
@@ -35,7 +32,7 @@ function lonely(links: number, count = 40): BrainLayout {
     })),
     edges: [],
   };
-  return new BrainLayout(buildGraph(data), W, H);
+  return new BrainLayout(buildGraph(data), { arrangement: 'loose' });
 }
 
 describe('hitting a node', () => {
@@ -78,16 +75,18 @@ describe('hitting a node', () => {
       })),
       edges: [],
     };
-    const layout = new BrainLayout(buildGraph(data), W, H);
-    for (let i = 0; i < 300; i += 1) layout.step();
+    const layout = new BrainLayout(buildGraph(data), { arrangement: 'brain' });
+    layout.settle();
     const hits = new HitIndex(layout);
+    // Probe the world the arrangement occupies, which is centred on the origin.
+    const { minX, minY, maxX, maxY } = layout.bounds;
 
     let s = 42;
     const rnd = (): number => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32;
     let found = 0;
     for (let k = 0; k < 20000; k += 1) {
-      const x = rnd() * W;
-      const y = rnd() * H;
+      const x = minX + rnd() * (maxX - minX);
+      const y = minY + rnd() * (maxY - minY);
       let best = -1;
       let bd = Infinity;
       for (let i = 0; i < layout.x.length; i += 1) {

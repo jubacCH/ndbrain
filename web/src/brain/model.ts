@@ -45,14 +45,6 @@ export interface BrainNode {
    * this note" while the local edge count only says how much of it is on screen.
    */
   degree: number;
-  /**
-   * Where this node's folder falls in the vault, as a fraction in [0, 1).
-   *
-   * Folders are numbered in first-seen order, which the server's `ORDER BY path`
-   * makes alphabetical, so neighbouring folders get neighbouring fractions and
-   * the lobe force below pulls them into neighbouring regions.
-   */
-  lobe: number;
   /** Depth in the drawing stack, and with it size and opacity. Fixed per note. */
   depth: number;
 }
@@ -101,12 +93,6 @@ export interface BuildOptions {
  * A self-edge is dropped too, because a bezier from a point to itself is a dot.
  */
 export function buildGraph(data: GraphData, options: BuildOptions = {}): BrainGraph {
-  const folders = new Map<string, number>();
-  for (const n of data.nodes) {
-    if (!folders.has(n.folder)) folders.set(n.folder, folders.size);
-  }
-  const spread = Math.max(1, folders.size - 1);
-
   const nodes: BrainNode[] = data.nodes.map((n) => {
     const key = nodeKey(n.owner, n.path);
     return {
@@ -116,7 +102,6 @@ export function buildGraph(data: GraphData, options: BuildOptions = {}): BrainGr
       title: n.title,
       folder: n.folder,
       degree: n.links,
-      lobe: (folders.get(n.folder) ?? 0) / spread,
       depth: 0.5 + unit(key, 'depth') * 0.5,
     };
   });
