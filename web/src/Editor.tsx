@@ -61,6 +61,13 @@ export interface EditorProps {
    * what the registry is for.
    */
   tags?: readonly string[] | null;
+  /**
+   * A 1-based, file-relative line to put the cursor on and scroll into view —
+   * the task list's "open at the right line". Re-applied whenever it changes,
+   * even while this note stays open, so clicking a second task in the note
+   * that is already on screen jumps again without rebuilding the editor.
+   */
+  line: number | undefined;
   onChange: (content: string) => void;
   /**
    * Stores a pasted or dropped file beside this note and answers with its name.
@@ -159,6 +166,7 @@ export function Editor({
   initialContent,
   readOnly = false,
   tags = null,
+  line,
   onChange,
   onAttach,
 }: EditorProps): React.JSX.Element {
@@ -204,6 +212,23 @@ export function Editor({
     // which would fight the person typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner, path, readOnly]);
+
+  // Placing the cursor is a second effect rather than part of the document's
+  // initial selection above: that effect only runs when the note switches, so
+  // a second click from the task list — same note, a different line — would
+  // otherwise do nothing. Declared after the build effect, so on the render
+  // that opens a new note it runs against the instance that effect just
+  // created rather than a stale or missing one.
+  useEffect(() => {
+    const instance = view.current;
+    if (instance === null || line === undefined) return;
+
+    const clamped = Math.min(Math.max(1, Math.trunc(line)), instance.state.doc.lines);
+    const pos = instance.state.doc.line(clamped).from;
+    instance.dispatch({ selection: { anchor: pos, head: pos }, scrollIntoView: true });
+    if (!readOnly) instance.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner, path, line]);
 
   return <div className="pane" data-readonly={readOnly} ref={host} />;
 }

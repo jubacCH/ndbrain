@@ -6,10 +6,10 @@
  * rather than by colour.
  */
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { copy } from './copy';
 
-import { refKey, type LinkRow, type NoteRow, type Overview, type SearchHit, type Share, type TaskRow, type Tidy } from './api';
+import { refKey, type LinkRow, type NoteRow, type Overview, type SearchHit, type Share, type TaskRow, type Tasks, type Tidy } from './api';
 
 const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
 
@@ -37,11 +37,14 @@ export function OverviewView({
   data,
   onOpen,
   onFindings,
+  onTasks,
 }: {
   data: Overview;
   onOpen: (owner: string, path: string) => void;
   /** Opens the tidy view — the place every finding count leads to. */
   onFindings: () => void;
+  /** Opens the full task list — this tile only ever shows eight. */
+  onTasks: () => void;
 }): React.JSX.Element {
   const { counts } = data;
   // Counted by the server as distinct notes. Adding the four findings together
@@ -142,6 +145,11 @@ export function OverviewView({
               </button>
             ))}
           </div>
+          {/* Never the whole truth — the overview caps at eight and the server
+              at fifty. The full, filterable list lives one click away. */}
+          <button type="button" className="tile-more" onClick={onTasks}>
+            {copy.overview.seeAllTasks}
+          </button>
         </section>
         )}
 
@@ -375,6 +383,150 @@ export function TidyView({
             </div>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The full task list: every `- [ ]` the caller may read, grouped by the note
+ * it lives in.
+ *
+ * Grouped by note rather than shown as a flat list, on the same reasoning the
+ * search hits and the tidy findings already follow — a task read on its own is
+ * routinely meaningless ("Schritt 3 ausführen"), and the note it sits in is
+ * the cheapest context that fixes that. The list arrives from the server
+ * already ordered by owner, then path, then line, so grouping is one pass over
+ * it rather than a second request per note.
+ *
+ * A table with aligned columns, like the tidy view — not another bento tile.
+ * The overview tile is the teaser; this is the whole list, with the folder
+ * filter `search` already has and the same "capped, and says so" honesty
+ * `tidy` uses for a truncated answer.
+ */
+export function TasksView({
+  data,
+  dirs,
+  dir,
+  includeDone,
+  self,
+  busy,
+  onDir,
+  onIncludeDone,
+  onToggle,
+  onOpen,
+}: {
+  data: Tasks;
+  /** Top-level folders, for the folder filter — the same pattern `search` uses. */
+  dirs: string[];
+  dir: string | undefined;
+  includeDone: boolean;
+  /** The signed-in account; a task from elsewhere is marked with its vault. */
+  self: string;
+  /** A toggle is in flight — checkboxes are inert until it lands. */
+  busy: boolean;
+  onDir: (dir?: string) => void;
+  onIncludeDone: (value: boolean) => void;
+  onToggle: (task: TaskRow) => void;
+  onOpen: (owner: string, path: string, line: number) => void;
+}): React.JSX.Element {
+  const groups: Array<{ owner: string; path: string; tasks: TaskRow[] }> = [];
+  for (const task of data.tasks) {
+    const last = groups[groups.length - 1];
+    if (last !== undefined && last.owner === task.owner && last.path === task.path) {
+      last.tasks.push(task);
+    } else {
+      groups.push({ owner: task.owner, path: task.path, tasks: [task] });
+    }
+  }
+
+  return (
+    <div className="pane padded">
+      <h2 className="h-big">{copy.tasks.title}</h2>
+
+      {data.truncated && (
+        <p className="warnline" role="status">
+          {copy.tasks.truncated(data.tasks.length, data.total)}
+        </p>
+      )}
+
+      <p className="h-sub">
+        {data.tasks.length === 0
+          ? dir !== undefined || includeDone
+            ? copy.tasks.emptyFiltered
+            : copy.tasks.empty
+          : includeDone
+            ? copy.tasks.foundIncludingDone(data.tasks.length)
+            : copy.tasks.found(data.tasks.length)}
+      </p>
+
+      <div className="filters">
+        <button type="button" className="filter" aria-pressed={includeDone} onClick={() => onIncludeDone(!includeDone)}>
+          {copy.tasks.includeDone}
+        </button>
+
+        {dirs.length > 0 && <span className="filter-label">{copy.tasks.folder}</span>}
+        {dirs.slice(0, 12).map((d) => (
+          <button
+            type="button"
+            key={d}
+            className="filter"
+            aria-pressed={dir === d}
+            onClick={() => onDir(dir === d ? undefined : d)}
+          >
+            {d}
+          </button>
+        ))}
+
+        {dir !== undefined && (
+          <button type="button" className="filter" onClick={() => onDir(undefined)}>
+            {copy.tasks.clear}
+          </button>
+        )}
+      </div>
+
+      {groups.length > 0 && (
+        <div className="tablewrap">
+          <div className="tablescroll">
+            <table>
+              <tbody>
+                {groups.map((group) => (
+                  <Fragment key={refKey(group.owner, group.path)}>
+                    <tr
+                      className="task-group"
+                      onClick={() => onOpen(group.owner, group.path, group.tasks[0]?.line ?? 1)}
+                    >
+                      <td className="nm" colSpan={2}>
+                        {group.owner !== self && <span className="pill p-info">{group.owner}</span>}
+                        {group.path.split('/').slice(0, -1).join('/') || '/'}
+                        <span className="pth"> · {group.path.split('/').pop()}</span>
+                      </td>
+                    </tr>
+                    {group.tasks.map((task) => (
+                      <tr key={`${refKey(task.owner, task.path)}:${task.line}`}>
+                        <td className="pick" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={task.done}
+                            disabled={busy}
+                            onChange={() => onToggle(task)}
+                            aria-label={task.done ? copy.tasks.uncheck(task.text) : copy.tasks.check(task.text)}
+                          />
+                        </td>
+                        <td
+                          onClick={() => onOpen(task.owner, task.path, task.line)}
+                          style={task.done ? { textDecoration: 'line-through', opacity: 0.65 } : undefined}
+                        >
+                          {task.text}
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   );

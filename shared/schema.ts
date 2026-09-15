@@ -139,6 +139,14 @@ export const TidyResponse = z.object({
   }),
 });
 
+export const TasksResponse = z.object({
+  tasks: z.array(TaskRow),
+  /** The real count behind the (possibly capped) list — see `TidyResponse.totals`. */
+  total: z.number(),
+  /** True when `tasks` is fewer than `total`: shown, never swallowed. */
+  truncated: z.boolean(),
+});
+
 export const SearchResponse = z.object({ hits: z.array(SearchHit) });
 
 export const LinksResponse = z.object({
@@ -447,6 +455,20 @@ export const GrantShareRequest = z
   .object({ grantee: UserId, prefix: z.string(), canWrite: z.boolean() })
   .strict();
 
+export const ToggleTaskRequest = z
+  .object({
+    owner: UserId.optional(),
+    path: VaultPath,
+    /** 1-based, file-relative — exactly what `TaskRow.line` reports. */
+    line: z.number().int().positive(),
+    /** The task text and done state the client last saw at that line. */
+    expectedText: z.string(),
+    expectedDone: z.boolean(),
+    /** The state to set it to. */
+    done: z.boolean(),
+  })
+  .strict();
+
 /* ---- inferred types ------------------------------------------------------ */
 
 export type NoteRow = z.infer<typeof NoteRow>;
@@ -458,6 +480,7 @@ export type TaskRow = z.infer<typeof TaskRow>;
 export type ActivityRow = z.infer<typeof ActivityRow>;
 export type Overview = z.infer<typeof OverviewResponse>;
 export type Tidy = z.infer<typeof TidyResponse>;
+export type Tasks = z.infer<typeof TasksResponse>;
 export type User = z.infer<typeof User>;
 export type Share = z.infer<typeof Share>;
 export type GraphData = z.infer<typeof GraphResponse>;

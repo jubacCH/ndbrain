@@ -39,6 +39,7 @@ export type {
   SearchHit,
   Share,
   TaskRow,
+  Tasks,
   Tidy,
   AdminUser,
   ApiKey,
@@ -304,6 +305,34 @@ export const api = {
     request(`/api/v1/pulse${since === undefined ? '' : `?since=${since}`}`, S.PulseResponse),
 
   tidy: () => request('/api/v1/tidy', S.TidyResponse),
+
+  /** The full task list behind the overview tile's `slice(0, 8)`. */
+  tasks: (filters: { dir?: string; includeDone?: boolean } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.dir !== undefined) params.set('dir', filters.dir);
+    if (filters.includeDone === true) params.set('includeDone', 'true');
+    const qs = params.toString();
+    return request(`/api/v1/tasks${qs === '' ? '' : `?${qs}`}`, S.TasksResponse);
+  },
+
+  /**
+   * Ticks or unticks one task, verified server-side against the exact text and
+   * done state the client last saw at that line — see `App.toggleTask`. A
+   * mismatch (the note changed underneath the list) comes back as a 409 rather
+   * than silently hitting the wrong line.
+   */
+  toggleTask: (owner: string, task: { path: string; line: number; text: string; done: boolean }, done: boolean) =>
+    request('/api/v1/tasks/toggle', S.PutNoteResponse, {
+      method: 'POST',
+      body: JSON.stringify({
+        owner,
+        path: task.path,
+        line: task.line,
+        expectedText: task.text,
+        expectedDone: task.done,
+        done,
+      }),
+    }),
 
   // ---- files --------------------------------------------------------------
   //

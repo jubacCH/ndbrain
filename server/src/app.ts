@@ -12,6 +12,7 @@ import type { Indexer } from './index/indexer.js';
 import { Queries, toView, type NoteRow, type Viewable } from './index/queries.js';
 import { withinPrefix } from './auth/shares.js';
 import { addTag, removeTag } from './markdown/edit.js';
+import { toggleTask as applyTaskToggle, type TaskExpectation } from './markdown/tasks.js';
 import { proposeFor, type TopicProposal } from './notes/topics.js';
 import { parseNote } from './markdown/parse.js';
 import type { Note, NoteService, PutOptions, PutResult } from './notes/service.js';
@@ -25,7 +26,7 @@ import {
   normalizeVaultPath,
   noteTitle,
 } from './vault/paths.js';
-import { InvalidPathError, NotAFileError, NoteNotFoundError } from './errors.js';
+import { InvalidPathError, NotAFileError, NoteNotFoundError, TaskChangedError } from './errors.js';
 
 export interface RenameResult {
   note: Note;
@@ -133,6 +134,50 @@ export class App {
     this.#recordEdit(owner, result.note.path, result.created ? 'create' : 'update', actor);
     await this.#recordConflictCopy(owner, result, actor);
     return result;
+  }
+
+  /**
+   * Flips one task's checkbox, verified against the line it is expected to
+   * still be.
+   *
+   * The task list addresses a task by path and file-relative line number, and
+   * both come from whatever answer the client last loaded — which can be
+   * stale by the time somebody clicks. `applyTaskToggle` re-parses the note
+   * fresh and refuses when the line no longer holds the exact task (same text,
+   * same done state); this is the same "verify or refuse, never guess" rule
+   * `edit_note` already applies to MCP edits, applied here to the one write
+   * this view is allowed to make.
+   *
+   * Goes through `updateNote` like every other write — this is not a second
+   * write path, only a second way of computing the next `content` before
+   * handing it to the one that exists. `baseMtimeMs` is set from the same read
+   * the toggle was checked against, so a write landing in the gap between that
+   * read and this one still produces a conflict copy instead of overwriting it.
+   */
+  async toggleTask(
+    owner: string,
+    notePath: string,
+    line: number,
+    expected: TaskExpectation,
+    done: boolean,
+    actor?: string,
+  ): Promise<PutResult> {
+    const note = await this.notes.getNote(owner, notePath);
+    const result = applyTaskToggle(note.content, line, expected, done);
+
+    if (!result.ok) {
+      throw new TaskChangedError(
+        'that task has changed since the list was loaded — reload the task list and try again',
+      );
+    }
+
+    // Already in the requested state: nothing to write, and writing anyway
+    // would bump the note's modified time for a change that never happened.
+    if (result.content === note.content) {
+      return { note, created: false };
+    }
+
+    return this.updateNote(owner, notePath, result.content, actor, { baseMtimeMs: note.mtimeMs });
   }
 
   /* ---- topics -------------------------------------------------------------

@@ -1286,6 +1286,23 @@ button.ref:hover {
   padding: var(--s-1) 0;
 }
 
+/* A tile that only ever shows eight rows says so, and points at the view that
+   has the rest — never a colour, just a plain link out. */
+.tile-more {
+  display: block;
+  width: 100%;
+  margin-top: var(--s-2);
+  padding: var(--s-2) 0 0;
+  border-top: 1px solid var(--line);
+  font-size: var(--t-sm);
+  color: var(--text-3);
+  text-align: left;
+}
+
+.tile-more:hover {
+  color: var(--text);
+}
+
 .findings {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
@@ -1385,6 +1402,19 @@ tbody tr[data-selected='true'] td {
 
 tbody tr[data-selected='true']:hover td {
   background: var(--surface-3);
+}
+
+/* One task-list row per note it sits in, so a task never stands without the
+   context that gives it meaning. `--surface-2` is the same neutral the table
+   header already uses — structure, not a finding, so it carries no colour. */
+.task-group td {
+  background: var(--surface-2);
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.task-group:hover td {
+  background: var(--surface-2);
 }
 
 /* ---- installed on a phone ----------------------------------------------- */
