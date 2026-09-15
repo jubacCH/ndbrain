@@ -20,6 +20,7 @@ import type { Database, SqlValue } from '../db/database.js';
 import type { View } from '../auth/shares.js';
 import { caseKey } from '../vault/paths.js';
 import { DEFAULT_SETTINGS } from '../auth/settings.js';
+import { parseConflictPath } from '../notes/service.js';
 
 export interface SearchOptions {
   /** Only notes carrying this tag. */
@@ -68,6 +69,25 @@ export interface TaskRow {
   line: number;
   done: boolean;
   text: string;
+}
+
+export interface TaskFilter {
+  /** Only tasks in notes below this folder. */
+  dir?: string;
+  /** Include finished tasks too. Unset or false means open tasks only. */
+  includeDone?: boolean;
+  limit?: number;
+}
+
+export interface ConflictRow extends NoteRow {
+  /** Path of the note the copy displaced, read back from the copy's own name. */
+  originalPath: string;
+  /** Title of the original, when it can still be read. Null when gone or hidden. */
+  originalTitle: string | null;
+  /** Whether that note still exists, in the caller's view — see `conflictCopies`. */
+  originalExists: boolean;
+  /** The moment named in the copy's filename. */
+  at: number;
 }
 
 export interface ActivityRow {
@@ -142,6 +162,32 @@ function scopeSql(
   if (parts.length === 0) return { sql: '(1 = 0)', params: [] };
 
   return { sql: `(${parts.join(' OR ')})`, params };
+}
+
+/**
+ * The `dir` and `includeDone` conditions the task list and its count share.
+ *
+ * Kept separate from `scopeSql`, which the caller still adds on top: this part
+ * is a plain filter, not the sharing boundary, and the two must not be
+ * conflated the way `queries.ts`'s file comment warns against.
+ */
+function taskFilterSql(filter: TaskFilter): { sql: string; params: SqlValue[] } {
+  const conditions: string[] = [];
+  const params: SqlValue[] = [];
+
+  if (filter.includeDone !== true) {
+    conditions.push('t.done = 0');
+  }
+
+  if (filter.dir !== undefined && filter.dir !== '') {
+    // Prefix match on the folder, `substr` rather than `LIKE` — see the
+    // identical comment on `search`'s `dir` option, which this mirrors.
+    const prefix = filter.dir.endsWith('/') ? filter.dir : `${filter.dir}/`;
+    conditions.push('substr(t.path, 1, ?) = ?');
+    params.push(prefix.length, prefix);
+  }
+
+  return { sql: conditions.length === 0 ? '' : ` AND ${conditions.join(' AND ')}`, params };
 }
 
 /**
@@ -607,6 +653,80 @@ export class Queries {
   }
 
   /**
+   * The displaced versions `conflictPath` (`notes/service.ts`) wrote aside instead
+   * of losing them to a concurrent write.
+   *
+   * Recognition is not a second, hand-written pattern: `parseConflictPath` in that
+   * same module is the one place that reads the name back, so this and the write
+   * path cannot drift apart — `conflicts.test.ts` checks both against each other.
+   *
+   * `n.path LIKE` is only a coarse prefilter to keep the scan cheap; an ordinary
+   * note whose title happens to contain "(Konflikt" is ruled back out by the exact
+   * parse below.
+   *
+   * The security shape matches `outgoingLinks`: the copy's own name already tells
+   * the caller what path it displaced — they are already reading a note in their
+   * view that says so — so echoing `originalPath` back is not a new leak. Whether
+   * that note **still exists** is the sensitive half, and it is answered with the
+   * same view the candidate list itself was scoped to. An original outside the
+   * caller's view must read exactly like a deleted one; anything else turns this
+   * finding into an oracle for "something you can't see is still there."
+   */
+  conflictCopies(view: Viewable): ConflictRow[] {
+    const scope = scopeSql('n', 'path', view);
+    const candidates = this.#db.all(
+      `SELECT n.owner, n.path, n.title, n.size, n.mtime_ms
+         FROM notes n
+        WHERE ${scope.sql} AND n.path LIKE '%(Konflikt%).md'`,
+      ...scope.params,
+    );
+
+    const originalScope = scopeSql('o', 'path', view);
+    // `LOWER(...)`, not `=`: `conflictPath` strips the original's extension
+    // case-insensitively but always writes the copy's own extension in
+    // lowercase, so a original named e.g. "Plan.MD" (a legal note — `isNotePath`
+    // accepts any case) is indistinguishable, from the copy's name alone, from
+    // one named "Plan.md". `parseConflictPath` has to guess, and always guesses
+    // lowercase. A case-sensitive lookup on that guess would then call an
+    // existing original "gone" for no reason but a letter's case. This is safe
+    // to widen only here: the case-collision guard in `notes/service.ts`
+    // already refuses two sibling notes that differ solely by case, so at most
+    // one note can ever match, and it is still pinned to this exact owner and
+    // to the caller's view.
+    const findOriginal = (owner: string, path: string): { title: string } | undefined =>
+      this.#db.get<{ title: string }>(
+        `SELECT o.title AS title FROM notes o
+          WHERE o.owner = ? AND LOWER(o.path) = LOWER(?) AND ${originalScope.sql}`,
+        owner,
+        path,
+        ...originalScope.params,
+      );
+
+    const out: ConflictRow[] = [];
+    for (const row of candidates) {
+      const notePath = String(row['path']);
+      const info = parseConflictPath(notePath);
+      if (info === null) continue;
+
+      const owner = String(row['owner']);
+      const original = findOriginal(owner, info.originalPath);
+      out.push({
+        owner,
+        path: notePath,
+        title: String(row['title']),
+        size: Number(row['size']),
+        mtimeMs: Number(row['mtime_ms']),
+        originalPath: info.originalPath,
+        originalTitle: original?.title ?? null,
+        originalExists: original !== undefined,
+        at: info.at,
+      });
+    }
+
+    return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  }
+
+  /**
    * How many notes need attention — counted as notes, not as findings.
    *
    * Adding the four finding counts together overstates the total, because one
@@ -624,6 +744,7 @@ export class Queries {
     for (const note of this.stale(view, staleDays)) paths.add(note.path);
     for (const link of this.deadLinks(view)) paths.add(link.source);
     for (const note of this.untaggedFindings(view)) paths.add(note.path);
+    for (const conflict of this.conflictCopies(view)) paths.add(conflict.path);
     return paths.size;
   }
 
@@ -635,13 +756,47 @@ export class Queries {
           WHERE ${scope.sql} AND t.done = 0 ORDER BY t.owner, t.path, t.line`,
         ...scope.params,
       )
-      .map((row) => ({
-        owner: String(row['owner']),
-        path: String(row['path']),
-        line: Number(row['line']),
-        done: Number(row['done']) === 1,
-        text: String(row['text']),
-      }));
+      .map(toTaskRow);
+  }
+
+  /**
+   * The full task list behind `openTasks`, with the folder filter and the
+   * "include done" toggle the task view needs.
+   *
+   * Ordered by owner, then path, then line — the same order the task view
+   * groups by note in, so the client can do that grouping in one pass over
+   * this list rather than a second request per note.
+   */
+  tasks(view: Viewable, filter: TaskFilter = {}): TaskRow[] {
+    const scope = scopeSql('t', 'path', view);
+    const extra = taskFilterSql(filter);
+    const limit = Math.trunc(filter.limit ?? 1000);
+
+    return this.#db
+      .all(
+        `SELECT t.owner, t.path, t.line, t.done, t.text FROM tasks t
+          WHERE ${scope.sql}${extra.sql} ORDER BY t.owner, t.path, t.line LIMIT ?`,
+        ...scope.params,
+        ...extra.params,
+        limit,
+      )
+      .map(toTaskRow);
+  }
+
+  /**
+   * How many tasks match `filter`, ignoring its `limit` — the real total behind
+   * a capped `tasks()` answer, so the task view can say what it left out rather
+   * than let a `slice` look like the whole list.
+   */
+  taskCount(view: Viewable, filter: TaskFilter = {}): number {
+    const scope = scopeSql('t', 'path', view);
+    const extra = taskFilterSql(filter);
+    const row = this.#db.get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM tasks t WHERE ${scope.sql}${extra.sql}`,
+      ...scope.params,
+      ...extra.params,
+    );
+    return Number(row?.n ?? 0);
   }
 
   /**
@@ -980,6 +1135,16 @@ function toNoteRow(row: Record<string, unknown>): NoteRow {
     title: String(row['title']),
     size: Number(row['size']),
     mtimeMs: Number(row['mtime_ms']),
+  };
+}
+
+function toTaskRow(row: Record<string, unknown>): TaskRow {
+  return {
+    owner: String(row['owner']),
+    path: String(row['path']),
+    line: Number(row['line']),
+    done: Number(row['done']) === 1,
+    text: String(row['text']),
   };
 }
 

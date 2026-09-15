@@ -51,6 +51,16 @@ export class CaseCollisionError extends NdbrainError {}
 export class NotAFileError extends NdbrainError {}
 
 /**
+ * A task toggle no longer matches the line it was addressed at.
+ *
+ * The task list identifies a task by path and line number, and either can go
+ * stale between the list being loaded and the click — the note may have been
+ * edited from another tab, by an agent, or by the watcher. Rather than tick
+ * whatever is now on that line, the write is refused; see `markdown/tasks.ts`.
+ */
+export class TaskChangedError extends NdbrainError {}
+
+/**
  * A note name was chosen that no `[[wikilink]]` could ever point at.
  *
  * Its own class rather than an `InvalidPathError`, because the path is not

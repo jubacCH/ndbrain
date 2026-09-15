@@ -26,6 +26,7 @@ import {
   type PulseEvent,
   type FileRow,
   type Share,
+  type TaskRow,
   type User,
 } from './api';
 import { useQueryClient } from '@tanstack/react-query';
@@ -42,7 +43,7 @@ import { FilesView } from './Files';
 import { Login } from './Login';
 import { Palette } from './Palette';
 import { Tree, displayPath, type Finding } from './Tree';
-import { OverviewView, SearchView, SharesView, TidyView } from './Views';
+import { OverviewView, SearchView, SharesView, TasksView, TidyView } from './Views';
 import {
   invalidate,
   keys,
@@ -57,7 +58,9 @@ import {
   useShares,
   useTagRegistry,
   useTags,
+  useTasks,
   useTidy,
+  useToggleTask,
   useTree,
 } from './queries';
 
@@ -75,6 +78,7 @@ type View =
   | 'overview'
   | 'brain'
   | 'tidy'
+  | 'tasks'
   | 'search'
   | 'shares'
   | 'files'
@@ -197,6 +201,8 @@ function Shell({
   const [view, setView] = useState<View>(() => loadPrefs().startView as View);
   /** Which note is open — the identity, not its content. */
   const [openRef, setOpenRef] = useState<{ owner: string; path: string } | null>(null);
+  /** Where to place the cursor on the next open — a task's line, or nowhere. */
+  const [jumpLine, setJumpLine] = useState<number | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<Filters>({});
@@ -212,6 +218,9 @@ function Shell({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [taskDir, setTaskDir] = useState<string | undefined>(undefined);
+  const [taskIncludeDone, setTaskIncludeDone] = useState(false);
+  const [taskBusy, setTaskBusy] = useState(false);
   const [topicsDone, setTopicsDone] = useState<number | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const [props, setProps] = useState<Array<{ key: string; count: number }>>([]);
@@ -279,9 +288,20 @@ function Shell({
   const topicsQuery = useTopics(view === 'tidy');
   const adminUsersQuery = useAdminUsers(view === 'admin');
   const adminKeysQuery = useAdminKeys(keyOwner, view === 'admin');
+  // Built rather than spread with `dir: taskDir` directly: the filter type is
+  // properly optional (`dir?: string`), and `exactOptionalPropertyTypes` draws
+  // a line between "absent" and "present but undefined" that a plain object
+  // literal would cross the moment no folder is picked.
+  const taskFilter = useMemo(
+    () => (taskDir === undefined ? { includeDone: taskIncludeDone } : { dir: taskDir, includeDone: taskIncludeDone }),
+    [taskDir, taskIncludeDone],
+  );
+  const tasksQuery = useTasks(taskFilter, view === 'tasks');
+  const toggleTaskMutation = useToggleTask();
 
   const notes = treeQuery.data?.notes ?? [];
   const tidy = tidyQuery.data ?? null;
+  const tasks = tasksQuery.data ?? null;
   const overview = overviewQuery.data ?? null;
   const granted = sharesQuery.data?.granted ?? [];
   const received = sharesQuery.data?.received ?? [];
@@ -411,9 +431,10 @@ function Shell({
   }, [flush]);
 
   const openNote = useCallback(
-    async (owner: string, path: string): Promise<void> => {
+    async (owner: string, path: string, line?: number): Promise<void> => {
       // Never switch away from unsaved text without writing it first.
       if (pending.current !== null) await flush();
+      setJumpLine(line ?? null);
 
       try {
         // Fetched through the cache under this note's own key rather than into
@@ -947,6 +968,29 @@ function Shell({
   );
 
   /**
+   * Ticks or unticks one task, verified server-side against the exact line it
+   * came from — see `App.toggleTask` on the server. A 409 means the note
+   * changed since this list was loaded; the list is refreshed so the person
+   * sees the real state rather than a checkbox that silently did nothing.
+   */
+  const toggleTask = async (task: TaskRow): Promise<void> => {
+    setTaskBusy(true);
+    try {
+      await toggleTaskMutation.mutateAsync({ owner: task.owner, task, done: !task.done });
+      setError(null);
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError && caught.code === 'task_changed'
+          ? copy.errors.taskChanged
+          : copy.errors.saveFailed,
+      );
+      void client.invalidateQueries({ queryKey: keys.tasks(taskFilter) });
+    } finally {
+      setTaskBusy(false);
+    }
+  };
+
+  /**
    * Runs a bulk action over the current selection and reports honestly.
    *
    * Partial success is the normal outcome, not an exception: the server does
@@ -1081,6 +1125,9 @@ function Shell({
           </button>
           <button type="button" aria-current={view === 'tidy'} onClick={() => void showView('tidy')}>
             {copy.nav.tidy}
+          </button>
+          <button type="button" aria-current={view === 'tasks'} onClick={() => void showView('tasks')}>
+            {copy.nav.tasks}
           </button>
           <button type="button" aria-current={view === 'search'} onClick={() => void showView('search')}>
             {copy.nav.search}
@@ -1276,6 +1323,7 @@ function Shell({
                 initialContent={open.note.content}
                 readOnly={!open.canWrite}
                 tags={registryQuery.data ?? null}
+                line={jumpLine ?? undefined}
                 onChange={(content) => scheduleSave(open.owner, open.note.path, content)}
                 onAttach={attachFile}
               />
@@ -1301,6 +1349,7 @@ function Shell({
               data={overview}
               onOpen={(owner, path) => void openNote(owner, path)}
               onFindings={() => void showView('tidy')}
+              onTasks={() => void showView('tasks')}
             />
           )}
 
@@ -1367,6 +1416,21 @@ function Shell({
               }
               onOpen={(path) => void openNote(user.id, path)}
               onBulk={(action) => void runBulk(action)}
+            />
+          )}
+
+          {view === 'tasks' && tasks !== null && (
+            <TasksView
+              data={tasks}
+              dirs={topLevelDirs(notes)}
+              dir={taskDir}
+              includeDone={taskIncludeDone}
+              self={user.id}
+              busy={taskBusy}
+              onDir={setTaskDir}
+              onIncludeDone={setTaskIncludeDone}
+              onToggle={(task) => void toggleTask(task)}
+              onOpen={(owner, path, line) => void openNote(owner, path, line)}
             />
           )}
 
@@ -1533,6 +1597,7 @@ function titleOfView(view: string): string {
       overview: copy.nav.overview,
       brain: copy.nav.network,
       tidy: copy.nav.tidy,
+      tasks: copy.nav.tasks,
       files: copy.nav.files,
       settings: copy.nav.settings,
       admin: copy.nav.admin,

@@ -496,7 +496,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         deadLinks: app.queries.deadLinks(caller).length,
         // The threshold is the caller's, not a number this file picked.
         stale: app.queries.stale(caller, settings.get(caller).staleDays).length,
-        // Notes, not findings — the four above overlap heavily. See attentionCount.
+        conflicts: app.queries.conflictCopies(caller).length,
+        // Notes, not findings — the five above overlap heavily. See attentionCount.
         attention: app.queries.attentionCount(caller, settings.get(caller).staleDays),
         tagsInUse: app.queries.tagsInUse(caller),
       },
@@ -505,6 +506,42 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       tags: app.queries.tagCounts(view).slice(0, 30),
       activity: app.queries.activity(view, since, 20),
     };
+  });
+
+  /**
+   * The full task list behind the overview tile: every `- [ ]` the caller may
+   * read, with the folder filter and "include done" toggle the overview's
+   * `slice(0, 50)` has no room for.
+   */
+  fastify.get('/api/v1/tasks', async (request) => {
+    const view = shares.view(requireUser(request).id);
+    const query = (request.query ?? {}) as Record<string, unknown>;
+
+    const filter: Parameters<typeof app.queries.tasks>[1] = {
+      limit: clamp(Number(query['limit']) || 1000, 1, 5000),
+    };
+    if (typeof query['dir'] === 'string' && query['dir'] !== '') filter.dir = query['dir'];
+    if (query['includeDone'] === 'true' || query['includeDone'] === '1') filter.includeDone = true;
+
+    const tasks = app.queries.tasks(view, filter);
+    const total = app.queries.taskCount(view, filter);
+
+    return { tasks, total, truncated: total > tasks.length };
+  });
+
+  /**
+   * Ticks or unticks one task, verified against the line it is expected to
+   * still be — see `App.toggleTask` for why. A mismatch answers 409, not a
+   * silent no-op or a guess at the right line.
+   */
+  fastify.post('/api/v1/tasks/toggle', async (request) => {
+    const caller = requireUser(request).id;
+    const { path, line, expectedText, expectedDone, done } = body(request, S.ToggleTaskRequest);
+    const owner = ownerOf(request, caller);
+
+    shares.check(caller, owner, path, 'write');
+
+    return app.toggleTask(owner, path, line, { text: expectedText, done: expectedDone }, done, caller);
   });
 
   /* ---- files ---------------------------------------------------------------
@@ -1054,23 +1091,27 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // The same rule the overview applies, from the same function — so the count
     // and the list can never disagree about what counts as a finding.
     const untagged = app.queries.untaggedFindings(owner);
+    const conflicts = app.queries.conflictCopies(owner);
 
     return {
       orphans: orphans.slice(0, limit),
       untagged: untagged.slice(0, limit),
       deadLinks: deadLinks.slice(0, limit),
       stale: stale.slice(0, limit),
+      conflicts: conflicts.slice(0, limit),
       truncated:
         orphans.length > limit ||
         untagged.length > limit ||
         deadLinks.length > limit ||
-        stale.length > limit,
+        stale.length > limit ||
+        conflicts.length > limit,
       /** The real totals, so a capped list can still report what it stands for. */
       totals: {
         orphans: orphans.length,
         untagged: untagged.length,
         deadLinks: deadLinks.length,
         stale: stale.length,
+        conflicts: conflicts.length,
       },
     };
   });

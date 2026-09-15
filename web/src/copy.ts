@@ -31,6 +31,7 @@ export const copy = {
     overview: 'Overview',
     network: 'Whole network',
     tidy: 'Tidy up',
+    tasks: 'Tasks',
     search: 'Search',
     files: 'Files',
     settings: 'Settings',
@@ -112,6 +113,9 @@ export const copy = {
       `Somebody else changed this note in the meantime. Your version is the one in ` +
       `place; theirs was kept alongside it as “${copyName}”.`,
     settingsFailed: 'Could not save that setting.',
+    /* The one refusal the task list is built around: the line changed under it
+       rather than risk ticking the wrong one. See App.toggleTask. */
+    taskChanged: 'That task changed since the list was loaded. The list has been refreshed — try again.',
     attachFailed: 'Could not attach that file.',
     closeMessage: 'Dismiss message',
   },
@@ -130,10 +134,12 @@ export const copy = {
     brokenLinks: 'broken links',
     untagged: 'untagged',
     untouched: 'untouched',
+    conflictCopies: 'conflict copies',
     sinceYesterday: 'Since yesterday',
     nothingHappened: 'Nothing happened.',
     openTasks: 'Open tasks',
     noTasks: 'No open tasks.',
+    seeAllTasks: 'See all tasks',
     recentlyEdited: 'Recently edited',
     nothingYet: 'Nothing yet.',
     tags: 'Tags',
@@ -165,6 +171,28 @@ export const copy = {
     findingUntagged: 'untagged',
     findingUntouched: 'untouched',
     finding: 'Finding',
+    conflicts: 'Conflict copies',
+    conflictHint:
+      'ndBrain kept these instead of losing a version overwritten by a concurrent write. ' +
+      'Nothing merges automatically — open both, take what you need, then delete the copy.',
+    conflictCopy: 'Copy',
+    conflictOriginal: 'Original',
+    conflictNoOriginal: 'Original is gone',
+  },
+
+  tasks: {
+    title: 'Tasks',
+    empty: 'No open tasks. Mark something with “- [ ]” in a note and it shows up here.',
+    emptyFiltered: 'No open tasks match this filter.',
+    found: (count: number) => `${count} open ${count === 1 ? 'task' : 'tasks'}`,
+    foundIncludingDone: (count: number) => `${count} ${count === 1 ? 'task' : 'tasks'}, done included`,
+    truncated: (shown: number, total: number) =>
+      `Showing the first ${shown} of ${total} — narrow the folder filter to see the rest.`,
+    includeDone: 'Show done',
+    folder: 'Folder',
+    clear: 'clear',
+    check: (text: string) => `Mark “${text}” done`,
+    uncheck: (text: string) => `Mark “${text}” open`,
   },
 
   search: {
