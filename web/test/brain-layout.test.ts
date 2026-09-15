@@ -121,13 +121,15 @@ describe('what may move', () => {
     expect([...laid(vault(12)).mobile].every((m) => m === 1)).toBe(true);
   });
 
-  it('lets only the new note and the note it links to move, and their neighbours', () => {
+  it('lets only the new note and the note it links to move, not the other neighbours of that note', () => {
     const before = laid(vault(24));
     before.settle();
     const after = laid(captured(vault(24), '20_Areas/note-7.md'), before.positions());
     const moving = after.graph.nodes.filter((_, i) => after.mobile[i] === 1).map((n) => n.path).sort();
-    // note-7 links to note-6 and note-8 in the chain.
-    expect(moving).toEqual(['00_Inbox/captured.md', '10_Projects/note-6.md', '10_Projects/note-8.md', '20_Areas/note-7.md']);
+    // note-7 also links to note-6 and note-8 in the chain; they stay put. For a
+    // hub with forty neighbours that is the difference between two notes moving
+    // and forty-one.
+    expect(moving).toEqual(['00_Inbox/captured.md', '20_Areas/note-7.md']);
   });
 
   it('notices a link between two notes that were both there before', () => {
@@ -142,12 +144,18 @@ describe('what may move', () => {
     expect(at('20_Areas/note-13.md')).toBe(0);
   });
 
-  it('frees everything once a note is picked up', () => {
+  it('frees only the neighbours of a note that is picked up, and nothing once it has settled', () => {
     const before = laid(vault(24));
     before.settle();
+    expect([...before.mobile].every((m) => m === 0)).toBe(true);
     const again = laid(vault(24), before.positions());
-    again.hold(4);
-    expect([...again.mobile].every((m) => m === 1)).toBe(true);
+    again.hold(again.graph.index.get(nodeKey('jb', '10_Projects/note-4.md'))!);
+    const free = again.graph.nodes.filter((_, i) => again.mobile[i] === 1).map((n) => n.path).sort();
+    // The chain links note-4 to note-3 and note-5.
+    expect(free).toEqual(['20_Areas/note-3.md', '20_Areas/note-5.md']);
+    again.release();
+    again.settle();
+    expect([...again.mobile].every((m) => m === 0)).toBe(true);
   });
 });
 
@@ -174,16 +182,23 @@ describe('the simulation', () => {
     expect(large.unitLength / small.unitLength).toBeCloseTo(2, 9);
   });
 
-  it('holds a pinned note still while everything else keeps moving', () => {
+  it('moves a held note only by hand, its neighbours towards it, and leaves it where it is dropped', () => {
     const layout = laid(vault(20));
-    for (let i = 0; i < 60; i += 1) layout.step();
+    layout.settle();
+    const neighbour = layout.graph.index.get(nodeKey('jb', '10_Projects/note-2.md'))!;
+    const stranger = layout.graph.index.get(nodeKey('jb', '10_Projects/note-10.md'))!;
+    const was = { n: layout.x[neighbour], s: layout.x[stranger], sy: layout.y[stranger] };
     layout.hold(3);
-    layout.place(3, 30, 20);
-    const other = layout.x[9];
+    layout.place(3, layout.x[3]! + 60, layout.y[3]! + 20);
+    const dropped = { x: layout.x[3], y: layout.y[3] };
     for (let i = 0; i < 30; i += 1) layout.step();
-    expect(layout.x[3]).toBe(30);
-    expect(layout.vx[3]).toBe(0);
-    expect(layout.x[9]).not.toBe(other);
+    layout.release();
+    layout.settle();
+    expect(layout.x[3]).toBe(dropped.x);
+    expect(layout.y[3]).toBe(dropped.y);
+    expect(layout.x[neighbour]).not.toBe(was.n);
+    expect(layout.x[stranger]).toBe(was.s);
+    expect(layout.y[stranger]).toBe(was.sy);
   });
 
   it('keeps a dragged note on a leash near the brain', () => {

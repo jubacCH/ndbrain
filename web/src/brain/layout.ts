@@ -239,19 +239,22 @@ export class BrainLayout {
   /**
    * Which nodes the simulation may move, by node index.
    *
-   * All of them in a fresh layout. In one that starts from memory, only what
-   * changed: a note that is new, a note whose links are not the ones it had
-   * when its position was remembered, and the direct neighbours of either,
-   * which have to make room. Everything else stays exactly where it was — it
-   * still pushes and pulls on the notes that move, but is not moved itself.
+   * All of them in a fresh layout, until it has settled. In one that starts
+   * from memory, only what changed: a note that is new and the notes it links
+   * to, and a note whose links are not the ones it had when its position was
+   * remembered. Not the neighbours of that last kind: a hub that gains a link
+   * from a captured note would otherwise set its forty neighbours moving.
+   * Everything else stays exactly where it was — it still pushes and pulls on
+   * the notes that move, but is not moved itself.
    *
    * This is the answer to briefing point 47 that does not depend on luck. A
    * warm restart of the whole brain drifts every note by a few units even when
    * nothing changed at all, because a simulation stopped by cooling is never
    * exactly at rest; and a note whose cluster changed would be hauled across to
    * its new cluster. Neither is a reason to move a note that nothing happened to.
-   * Picking a note up (`hold`) frees everything: that is somebody deliberately
-   * rearranging.
+   * Picking a note up (`hold`) frees that note's neighbours and nothing else,
+   * and once the layout has come to rest nothing is free any more — a later
+   * warm-up can only ever move what it is explicitly given.
    */
   readonly mobile: Uint8Array;
   /** Which nodes started from a remembered position. */
@@ -280,6 +283,9 @@ export class BrainLayout {
   /** Force accumulators, reused: a fresh array per frame is garbage per frame. */
   readonly #ax: Float64Array;
   readonly #ay: Float64Array;
+  /** Scratch lists of the moving and the still nodes, in key order. */
+  readonly #moving: Int32Array;
+  readonly #still: Int32Array;
 
   constructor(graph: BrainGraph, options: LayoutOptions) {
     const n = graph.nodes.length;
@@ -307,6 +313,8 @@ export class BrainLayout {
     this.#nodeSide = new Int8Array(n);
     this.#ax = new Float64Array(n);
     this.#ay = new Float64Array(n);
+    this.#moving = new Int32Array(n);
+    this.#still = new Int32Array(n);
 
     const notes = Math.max(n, MIN_NOTES);
     if (this.arrangement === 'brain') {
@@ -344,10 +352,18 @@ export class BrainLayout {
         changed[i] = 1;
         continue;
       }
-      this.x[i] = at.x;
-      this.y[i] = at.y;
+      // A stored number can be finite and still absurd (1e308 is finite). Kept
+      // within twice the arrangement's extent around its middle, and counted as
+      // changed when it had to be pulled in, so the simulation may place it.
+      const { minX, minY, maxX, maxY } = this.bounds;
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const rx = maxX - minX;
+      const ry = maxY - minY;
+      this.x[i] = Math.min(cx + rx, Math.max(cx - rx, at.x));
+      this.y[i] = Math.min(cy + ry, Math.max(cy - ry, at.y));
       remembered[i] = 1;
-      if (at.links !== this.#links[i]) changed[i] = 1;
+      if (at.links !== this.#links[i] || this.x[i] !== at.x || this.y[i] !== at.y) changed[i] = 1;
       count += 1;
     }
     this.rememberedShare = n === 0 ? 1 : count / n;
@@ -359,6 +375,7 @@ export class BrainLayout {
       for (let i = 0; i < n; i += 1) {
         if (changed[i] !== 1) continue;
         this.mobile[i] = 1;
+        if (remembered[i] === 1) continue;
         for (const e of graph.touching[i]!) {
           this.mobile[graph.edges[e]!.a] = 1;
           this.mobile[graph.edges[e]!.b] = 1;
@@ -611,17 +628,34 @@ export class BrainLayout {
     this.vy[i] = 0;
   }
 
-  /** A node is picked up: hold it, and warm the rest so they make room. */
+  /**
+   * A node is picked up. It follows the pointer (`place`), and its direct
+   * neighbours are freed to follow it; nothing else moves.
+   *
+   * Only the neighbours: an earlier version freed the whole brain, and because a
+   * simulation stopped by cooling is never exactly at rest, every press moved
+   * every note a little — stored, and added up with the next press.
+   */
   hold(i: number): void {
     this.pinned = i;
-    this.mobile.fill(1);
+    this.mobile.fill(0);
+    for (const e of this.graph.touching[i]!) {
+      this.mobile[this.graph.edges[e]!.a] = 1;
+      this.mobile[this.graph.edges[e]!.b] = 1;
+    }
+    this.mobile[i] = 0;
     this.alphaTarget = HELD;
     this.alpha = Math.max(this.alpha, HELD);
     this.settled = false;
   }
 
-  /** The node is let go; everything cools down again. */
+  /**
+   * The node is let go. It stays where it was dropped — it is not freed, so it
+   * does not spring back towards where the forces would rather have it — and
+   * its neighbours settle around it.
+   */
   release(): void {
+    if (this.pinned >= 0) this.mobile[this.pinned] = 0;
     this.pinned = -1;
     this.alphaTarget = 0;
   }
@@ -653,7 +687,15 @@ export class BrainLayout {
     const ax = this.#ax.fill(0);
     const ay = this.#ay.fill(0);
 
-    repel(x, y, ax, ay, this.#seq, this.arrangement === 'brain' ? this.graph.clusters.of : null);
+    // Only what may move needs a force. In key order, split into the moving and
+    // the still, so the sums stay independent of the server's order.
+    let m = 0;
+    let st = 0;
+    for (const i of this.#seq) {
+      if (this.mobile[i] === 1 && i !== this.pinned) this.#moving[m++] = i;
+      else this.#still[st++] = i;
+    }
+    repel(x, y, ax, ay, this.#moving.subarray(0, m), this.#still.subarray(0, st), this.arrangement === 'brain' ? this.graph.clusters.of : null);
     this.#springs(ax, ay);
     if (this.arrangement === 'brain') this.#shape(ax, ay);
     else this.#gather(ax, ay);
@@ -677,6 +719,7 @@ export class BrainLayout {
       this.settled = true;
       vx.fill(0);
       vy.fill(0);
+      this.mobile.fill(0);
     }
     return !this.settled;
   }
@@ -792,30 +835,34 @@ export class BrainLayout {
 }
 
 /**
- * Repulsion between every pair closer than the cutoff, in `seq` order.
+ * Repulsion on every node that may move, from every node closer than the cutoff.
  *
  * The one O(n²) loop, and deliberately a function of flat arrays and nothing
  * else: Barnes-Hut replaces exactly this, and a worker can run it on arrays it
- * owns. `cluster` makes notes of different clusters push harder; null for the
- * loose arrangement, which has no clusters to separate.
+ * owns. Pairs of which neither note may move are skipped — nothing would come
+ * of them — so a remembered brain that only has to place a captured note costs
+ * a single row instead of the full triangle. `cluster` makes notes of different
+ * clusters push harder; null for the loose arrangement, which has none.
  */
 function repel(
   x: Float64Array,
   y: Float64Array,
   ax: Float64Array,
   ay: Float64Array,
-  seq: Int32Array,
+  moving: Int32Array,
+  still: Int32Array,
   cluster: Int32Array | null,
 ): void {
-  const n = seq.length;
-  for (let p = 0; p < n; p += 1) {
-    const i = seq[p]!;
+  // Written out twice rather than through a helper returning a pair: a tuple
+  // per pair per frame is thousands of short-lived arrays for the collector.
+  for (let p = 0; p < moving.length; p += 1) {
+    const i = moving[p]!;
     const xi = x[i]!;
     const yi = y[i]!;
     let fxi = ax[i]!;
     let fyi = ay[i]!;
-    for (let q = p + 1; q < n; q += 1) {
-      const j = seq[q]!;
+    for (let q = p + 1; q < moving.length; q += 1) {
+      const j = moving[q]!;
       const dx = x[j]! - xi;
       const dy = y[j]! - yi;
       const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
@@ -828,6 +875,17 @@ function repel(
       fyi -= fy;
       ax[j] = ax[j]! + fx;
       ay[j] = ay[j]! + fy;
+    }
+    for (let q = 0; q < still.length; q += 1) {
+      const j = still[q]!;
+      const dx = x[j]! - xi;
+      const dy = y[j]! - yi;
+      const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      if (d > CUTOFF) continue;
+      let f = REPULSION / (d * d);
+      if (cluster !== null && cluster[i] !== cluster[j]) f *= APART;
+      fxi -= (dx / d) * f;
+      fyi -= (dy / d) * f;
     }
     ax[i] = fxi;
     ay[i] = fyi;
