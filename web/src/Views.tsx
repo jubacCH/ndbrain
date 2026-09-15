@@ -296,9 +296,13 @@ export function TidyView({
 
   // Conflict copies are listed as their own section below — a copy and its
   // original are two paths, and the shared `rows` shape above only carries one.
-  // They still count toward "how many findings", so the header and the empty
-  // state stay honest about them.
+  // They still count toward "how many findings", "select all" and the bulk
+  // bar, so every one of those stays honest about them rather than only about
+  // the four findings that happen to fit the shared row shape.
   const total = rows.length + data.conflicts.length;
+  const allPaths = [...new Set([...rows.map((r) => r.path), ...data.conflicts.map((c) => c.path)])];
+  const allSelected = allPaths.length > 0 && selected.size === allPaths.length;
+  const selectAll = (): void => onToggleAll(allPaths);
 
   return (
     <div className="pane padded">
@@ -306,8 +310,9 @@ export function TidyView({
       {data.truncated && (
         <p className="warnline" role="status">
           More findings than fit in one answer — showing the first {data.orphans.length} of{' '}
-          {data.totals.orphans} orphaned, {data.untagged.length} of {data.totals.untagged} untagged.
-          Work through these and the rest will appear.
+          {data.totals.orphans} orphaned, {data.untagged.length} of {data.totals.untagged} untagged,{' '}
+          {data.conflicts.length} of {data.totals.conflicts} conflict copies. Work through these and
+          the rest will appear.
         </p>
       )}
       <p className="h-sub">
@@ -316,84 +321,93 @@ export function TidyView({
           : copy.tidy.found(total)}
       </p>
 
-      {rows.length > 0 && (
-        <>
-          {/*
-            The action bar sits above the table and stays visible, so the number
-            of selected notes is in view while choosing what to do to them.
-          */}
-          <div className="bulkbar" data-active={selected.size > 0}>
-            <span className="bulkcount">
-              {selected.size === 0 ? copy.tidy.nothingSelected : copy.tidy.selected(selected.size)}
-            </span>
-            <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('move')}>
-              {copy.tidy.move}
-            </button>
-            <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('tag')}>
-              {copy.tidy.tag}
-            </button>
-            <button
-              type="button"
-              className="btn btn-solid"
-              disabled={selected.size === 0 || busy}
-              onClick={() => onBulk('delete')}
-            >
-              {copy.tidy.delete}
-            </button>
-            <span className="bulkhint">{copy.tidy.linksFollow}</span>
-          </div>
+      {/*
+        The action bar sits above both tables and stays visible whenever there
+        is anything to select — a conflict copy is deleted through this same
+        bar, not a second one, so it must not depend on the four findings
+        below it having found anything.
+      */}
+      {total > 0 && (
+        <div className="bulkbar" data-active={selected.size > 0}>
+          <span className="bulkcount">
+            {selected.size === 0 ? copy.tidy.nothingSelected : copy.tidy.selected(selected.size)}
+          </span>
+          <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('move')}>
+            {copy.tidy.move}
+          </button>
+          <button type="button" className="btn" disabled={selected.size === 0 || busy} onClick={() => onBulk('tag')}>
+            {copy.tidy.tag}
+          </button>
+          <button
+            type="button"
+            className="btn btn-solid"
+            disabled={selected.size === 0 || busy}
+            onClick={() => onBulk('delete')}
+          >
+            {copy.tidy.delete}
+          </button>
+          <span className="bulkhint">{copy.tidy.linksFollow}</span>
+        </div>
+      )}
 
-          <div className="tablewrap">
-            <div className="tablescroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th className="pick">
+      {rows.length > 0 && (
+        <div className="tablewrap">
+          <div className="tablescroll">
+            <table>
+              <thead>
+                <tr>
+                  <th className="pick">
+                    <input
+                      type="checkbox"
+                      aria-label={copy.tidy.selectAll}
+                      checked={allSelected}
+                      onChange={selectAll}
+                    />
+                  </th>
+                  <th>{copy.tidy.note}</th>
+                  <th>{copy.tidy.path}</th>
+                  <th>{copy.tidy.finding}</th>
+                  <th className="n">{copy.tidy.lastTouched}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr
+                    key={`${row.finding}:${row.path}:${index}`}
+                    data-selected={selected.has(row.path)}
+                    onClick={() => onOpen(row.path)}
+                  >
+                    <td className="pick" onClick={(event) => event.stopPropagation()}>
                       <input
                         type="checkbox"
-                        aria-label={copy.tidy.selectAll}
-                        checked={selected.size > 0 && selected.size === new Set(rows.map((r) => r.path)).size}
-                        onChange={() => onToggleAll([...new Set(rows.map((r) => r.path))])}
+                        checked={selected.has(row.path)}
+                        onChange={() => onToggle(row.path)}
+                        aria-label={copy.tidy.select(row.title)}
                       />
-                    </th>
-                    <th>{copy.tidy.note}</th>
-                    <th>{copy.tidy.path}</th>
-                    <th>{copy.tidy.finding}</th>
-                    <th className="n">{copy.tidy.lastTouched}</th>
+                    </td>
+                    <td className="nm">{row.title}</td>
+                    <td className="pth">{row.path.split('/').slice(0, -1).join('/') || '/'}</td>
+                    <td>
+                      <span className={`pill p-${row.kind}`}>{row.finding}</span>
+                    </td>
+                    <td className="n">{row.when}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, index) => (
-                    <tr
-                      key={`${row.finding}:${row.path}:${index}`}
-                      data-selected={selected.has(row.path)}
-                      onClick={() => onOpen(row.path)}
-                    >
-                      <td className="pick" onClick={(event) => event.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={selected.has(row.path)}
-                          onChange={() => onToggle(row.path)}
-                          aria-label={copy.tidy.select(row.title)}
-                        />
-                      </td>
-                      <td className="nm">{row.title}</td>
-                      <td className="pth">{row.path.split('/').slice(0, -1).join('/') || '/'}</td>
-                      <td>
-                        <span className={`pill p-${row.kind}`}>{row.finding}</span>
-                      </td>
-                      <td className="n">{row.when}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </>
+        </div>
       )}
 
       {data.conflicts.length > 0 && (
-        <ConflictSection conflicts={data.conflicts} selected={selected} onToggle={onToggle} onOpen={onOpen} />
+        <ConflictSection
+          conflicts={data.conflicts}
+          selected={selected}
+          allSelected={allSelected}
+          onToggle={onToggle}
+          onSelectAll={selectAll}
+          onOpen={onOpen}
+        />
       )}
     </div>
   );
@@ -556,12 +570,17 @@ export function TasksView({
 function ConflictSection({
   conflicts,
   selected,
+  allSelected,
   onToggle,
+  onSelectAll,
   onOpen,
 }: {
   conflicts: ConflictRow[];
   selected: Set<string>;
+  /** Mirrors the main table's own "select all" — one selection, two tables. */
+  allSelected: boolean;
   onToggle: (path: string) => void;
+  onSelectAll: () => void;
   onOpen: (path: string) => void;
 }): React.JSX.Element {
   const linkStyle = { textDecoration: 'underline', textUnderlineOffset: 2 } as const;
@@ -575,7 +594,14 @@ function ConflictSection({
           <table>
             <thead>
               <tr>
-                <th className="pick" />
+                <th className="pick">
+                  <input
+                    type="checkbox"
+                    aria-label={copy.tidy.selectAll}
+                    checked={allSelected}
+                    onChange={onSelectAll}
+                  />
+                </th>
                 <th>{copy.tidy.conflictCopy}</th>
                 <th>{copy.tidy.conflictOriginal}</th>
                 <th className="n">{copy.tidy.lastTouched}</th>
@@ -603,7 +629,7 @@ function ConflictSection({
                         {c.originalTitle ?? c.originalPath}
                       </button>
                     ) : (
-                      <span className="pill p-crit">{copy.tidy.conflictNoOriginal}</span>
+                      <span className="pill p-warn">{copy.tidy.conflictNoOriginal}</span>
                     )}
                   </td>
                   <td className="n">{ago(c.mtimeMs)}</td>
