@@ -151,7 +151,7 @@ const HUB_FLOOR = 0.5;
  * without a cap — nearly twenty units across at the largest hub.
  */
 const TRACT_BASE = 0.11;
-const TRACT_BASE_MIN = 0.8;
+export const TRACT_BASE_MIN = 0.8;
 export const TRACT_BASE_MAX = 2.2;
 /** A focused link grows this much wider at the body. */
 const FOCUS_WIDEN = 1.3;
