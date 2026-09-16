@@ -179,6 +179,46 @@ describe('squarify', () => {
       }
     }
   });
+
+  /**
+   * The regression this guards: the map view once fed a fixed 1000×620 SVG
+   * `viewBox` to a container of whatever shape the browser actually gave it.
+   * `squarify` itself was always correct — this exact assertion already
+   * passed against the fixed box — but the *caller* passed the wrong
+   * rectangle, and the SVG's default `preserveAspectRatio` letterboxed the
+   * mismatch into empty bars on both sides. The fix is for the caller to
+   * measure its real container and hand that rectangle in here; this test
+   * pins the property that fix depends on: whatever rectangle comes in,
+   * squarify fills all of it, flush to every edge, for any aspect ratio —
+   * a wide desktop window, a tall phone, or an extreme strip.
+   */
+  it.each([
+    ['1440×900 desktop', { x: 0, y: 0, w: 1440, h: 900 }],
+    ['390×844 phone portrait', { x: 0, y: 0, w: 390, h: 844 }],
+    ['a very wide strip', { x: 0, y: 0, w: 2000, h: 300 }],
+    ['a non-zero origin', { x: 40, y: 20, w: 731, h: 517 }],
+  ] as const)('fills %s flush to every edge, with the right total area', (_label, bounds) => {
+    const weights = [37, 21, 15, 11, 8, 6, 4, 3, 2, 1, 1, 1];
+    const placed = squarify(
+      weights.map((w, i) => ({ weight: w, cell: i })),
+      bounds,
+    );
+
+    const totalArea = bounds.w * bounds.h;
+    const sumArea = placed.reduce((s, p) => s + p.rect.w * p.rect.h, 0);
+    expect(sumArea).toBeCloseTo(totalArea, 0);
+
+    // No gap at any edge: the extreme rects must reach exactly to the
+    // container's boundary on every side, not stop short of it.
+    const minX = Math.min(...placed.map((p) => p.rect.x));
+    const maxX = Math.max(...placed.map((p) => p.rect.x + p.rect.w));
+    const minY = Math.min(...placed.map((p) => p.rect.y));
+    const maxY = Math.max(...placed.map((p) => p.rect.y + p.rect.h));
+    expect(minX).toBeCloseTo(bounds.x, 6);
+    expect(maxX).toBeCloseTo(bounds.x + bounds.w, 6);
+    expect(minY).toBeCloseTo(bounds.y, 6);
+    expect(maxY).toBeCloseTo(bounds.y + bounds.h, 6);
+  });
 });
 
 describe('layoutFolder', () => {
