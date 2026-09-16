@@ -108,8 +108,8 @@ describe('the closed-by-default tree', () => {
     await user.click(screen.getByText('Areas'));
     expect(screen.getByText('Homelab')).toBeInTheDocument();
 
-    // Persisted, so the shape of the tree survives a reload.
-    expect(window.localStorage.getItem('ndbrain.openFolders')).toContain('20_Areas');
+    // Persisted, so the shape of the tree survives a reload — per account.
+    expect(window.localStorage.getItem('ndbrain.openFolders.julian')).toContain('20_Areas');
   });
 
   it('reveals the note that is selected, however deep it sits', () => {
