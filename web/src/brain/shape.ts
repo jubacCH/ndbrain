@@ -1,28 +1,31 @@
 /**
  * The outline the brain grows into.
  *
- * Not a mask and not a picture. Nothing here places a node, and nothing is ever
- * drawn from it: it is the boundary of a soft force (`layout.ts`) that nudges a
- * node back when it strays past its hemisphere's edge. The nodes fill the
- * outline because their regions are laid out inside it and repel each other
- * outwards until they reach it — so the silhouette is made of clusters pressing
- * against a wall, the way a real cortex is folded tissue inside a skull, rather
- * than of dots scattered evenly over a shape (briefing 9, 12, 52).
+ * Not a mask and not a picture — nothing is ever drawn from it. Since phase 4 it
+ * is not a soft wall either: it is the **container**. `layout.ts` samples the
+ * inside of this outline, divides it into one cell per region and puts the notes
+ * on places inside their cell, so the silhouette carries whether or not the
+ * simulation runs. Before, regions were laid out freely and pressed into shape
+ * by a force; the outline then held only as long as the forces balanced, and the
+ * rim was ragged wherever they did not.
  *
  * Seen from above: two hemispheres side by side, the longitudinal fissure
  * between them running top to bottom. Each hemisphere is a star-shaped outline
- * around its own centre — rounder on the outer side, flatter where it faces the
- * other one, a little narrower at the front — with two slow ripples on the rim,
- * and the two differ slightly in size, height and ripple. A perfectly mirrored
- * pair of ellipses reads as a diagram; this should read as something grown.
+ * around its own centre — round on the outer side, much flatter where it faces
+ * the other one, a little narrower at the front — and the two differ slightly in
+ * size, height and ripple. A perfectly mirrored pair of ellipses reads as a
+ * diagram; this should read as something grown.
  *
- * Landscape rather than anatomical. A real brain seen from above is longer than
- * it is wide, but this view lives in a wide window, and an upright brain would
- * fill a third of it. Squashed to about 1.3 : 1 it still has everything that
- * makes the shape recognisable — two halves, the fissure, the rounded outer
- * edge — and uses the screen.
+ * **The numbers come from the optics prototype** (round 4, `brain-proto`), which
+ * was tuned against the target picture and then measured: a bounding box of
+ * about 1.11 : 1 over both halves, the back (screen down) ten percent wider than
+ * the front, a medial side round enough (superellipse exponent 2.7) that the
+ * fissure is narrow in the middle and cuts deeper at both ends, and a rim
+ * notched by two slow ripples plus two faster gyri ripples (11 and 17 periods).
+ * The earlier outline here was 1.42 : 1 with a flatter medial side; side by side
+ * with the target it read as two eggs.
  *
- * Normalised coordinates here: the brain spans about −1…1 across. The layout
+ * Normalised coordinates here: the brain spans about −1.2…1.2 across. The layout
  * scales by a world length that grows with the number of notes, so a larger
  * vault gets a larger brain at the same density instead of a more crowded one.
  */
@@ -38,9 +41,11 @@ interface Hemisphere {
   ry: number;
   /** Overall size, for the asymmetry between the halves. */
   scale: number;
-  /** Phase of the two rim ripples, different per side. */
+  /** Phase of the four rim ripples, different per side. */
   phase2: number;
   phase3: number;
+  phase11: number;
+  phase17: number;
 }
 
 /**
@@ -51,17 +56,34 @@ interface Hemisphere {
  * nobody sees a mirror.
  */
 const HEMISPHERES: Record<Side, Hemisphere> = {
-  [-1]: { cx: -0.63, cy: -0.012, rx: 0.45, ry: 0.75, scale: 1.02, phase2: 0.4, phase3: 1.1 },
-  [1]: { cx: 0.63, cy: 0.01, rx: 0.455, ry: 0.74, scale: 1, phase2: 2.2, phase3: 4.0 },
+  [-1]: { cx: -0.575, cy: -0.01, rx: 0.565, ry: 1.0, scale: 1.02, phase2: 0.4, phase3: 1.1, phase11: 0.9, phase17: 2.6 },
+  [1]: { cx: 0.575, cy: 0.01, rx: 0.555, ry: 0.99, scale: 1, phase2: 2.2, phase3: 4.0, phase11: 3.7, phase17: 0.4 },
 };
 
-/** How much flatter the inner side is than the outer: a superellipse exponent. */
-const MEDIAL_FLATNESS = 2.4;
+/**
+ * Superellipse exponents: how much flatter the inner side is than the outer.
+ *
+ * Both above 2, so neither side is a plain ellipse. The medial one is the larger
+ * of the two — round rather than flat — which is what narrows the fissure in the
+ * middle and lets it cut deeper at the front and the back.
+ */
+const MEDIAL_FLATNESS = 2.7;
+const LATERAL_FLATNESS = 2.2;
 /** How much narrower the front (top) is than the back. */
-const FRONT_TAPER = 0.07;
-/** Amplitude of the two rim ripples. */
-const RIPPLE2 = 0.03;
-const RIPPLE3 = 0.022;
+const FRONT_TAPER = 0.1;
+/** Amplitude of the two slow rim ripples, and of the two faster gyri notches. */
+const RIPPLE2 = 0.022;
+const RIPPLE3 = 0.016;
+const GYRI11 = 0.013;
+const GYRI17 = 0.009;
+/**
+ * The fissure is never narrower than this, whatever the outline measures.
+ *
+ * With a round medial side the two rims can come within a few thousandths of
+ * each other, and a gap that small is no gap: notes on either side would touch
+ * across it and the eye would stop seeing two halves.
+ */
+const MIN_FISSURE = 0.028;
 
 /**
  * The outline's radius around a hemisphere's centre, in the direction `phi`.
@@ -73,13 +95,24 @@ export function rim(side: Side, phi: number): number {
   const h = HEMISPHERES[side];
   const c = Math.cos(phi);
   const s = Math.sin(phi);
-  // Outer half an ellipse, inner half a superellipse: round away from the
-  // fissure, flat along it. Both give `ry` at ±π/2, so the seam is smooth.
-  const p = c < 0 ? MEDIAL_FLATNESS : 2;
+  // Two superellipses meeting at ±π/2, where both give `ry`, so the seam is
+  // smooth: rounder towards the fissure than away from it.
+  const p = c < 0 ? MEDIAL_FLATNESS : LATERAL_FLATNESS;
   const base = Math.pow(Math.pow(Math.abs(c) / h.rx, p) + Math.pow(Math.abs(s) / h.ry, p), -1 / p);
+  // `s < 0` is the front (screen up): narrower there than at the back.
   const taper = 1 + FRONT_TAPER * s;
-  const ripple = 1 + RIPPLE2 * Math.cos(2 * phi + h.phase2) + RIPPLE3 * Math.sin(3 * phi + h.phase3);
+  const ripple =
+    1 +
+    RIPPLE2 * Math.cos(2 * phi + h.phase2) +
+    RIPPLE3 * Math.sin(3 * phi + h.phase3) +
+    GYRI11 * Math.sin(11 * phi + h.phase11) +
+    GYRI17 * Math.sin(17 * phi + h.phase17);
   return base * taper * ripple * h.scale;
+}
+
+/** Which hemisphere a normalised point belongs to. The fissure is at x = 0. */
+export function sideOf(x: number): Side {
+  return x < 0 ? -1 : 1;
 }
 
 /** A hemisphere's centre, normalised. */
@@ -143,6 +176,42 @@ export const OUTLINE = measure();
 
 /**
  * Half the width of the gap between the hemispheres at its narrowest,
- * normalised. The fissure test and the simulation both use it.
+ * normalised. The fissure test, the cells and the simulation all use it.
  */
-export const FISSURE = OUTLINE.medial;
+export const FISSURE = Math.max(OUTLINE.medial, MIN_FISSURE);
+
+/**
+ * A little wider than the fissure itself: how close to the middle a note may
+ * come. A note exactly on the rim of the fissure has its cell body across it.
+ */
+const FISSURE_KEEP = 1.05;
+
+/**
+ * Whether a normalised point lies inside the silhouette — inside one
+ * hemisphere's rim and clear of the fissure.
+ *
+ * `margin` scales the rim: 0.93 asks for a point comfortably inside, 1 for the
+ * outline itself. This is the test the cells are sampled with, and the one
+ * decoration clips against (through `BrainLayout.inside`, in world units).
+ */
+export function withinOutline(x: number, y: number, margin = 1): boolean {
+  return Math.abs(x) > FISSURE * FISSURE_KEEP && reach(sideOf(x), x, y) < margin;
+}
+
+/**
+ * How far a normalised point lies inside the silhouette: positive inside,
+ * negative outside, zero on the edge.
+ *
+ * The radial distance to the rim, and the distance to the fissure, whichever is
+ * smaller. Radial rather than truly perpendicular — for a star-shaped outline
+ * the two agree except where the rim turns sharply, and this is a fade, not a
+ * measurement.
+ */
+export function outlineDepth(x: number, y: number): number {
+  const side = sideOf(x);
+  const h = HEMISPHERES[side];
+  const dx = x - h.cx;
+  const dy = y - h.cy;
+  const edge = rim(side, Math.atan2(dy, dx * side));
+  return Math.min(edge - Math.hypot(dx, dy), Math.abs(x) - FISSURE * FISSURE_KEEP);
+}

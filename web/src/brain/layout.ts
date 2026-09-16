@@ -17,43 +17,48 @@
  * neighbourhood beside an open note is a handful of notes and stays a loose,
  * round cluster — pressing six notes into two hemispheres would be a joke.
  *
- * **How the brain takes shape, without a mask.** Every cluster gets a region: a
- * hemisphere, a place in it, and a size that grows with its members. In a brain
- * nobody has seen yet, each region is first laid out on its own — its notes,
- * their repulsion, the springs of the links among them — and only then does
- * the whole brain run together, cool, so that neighbouring regions make room
- * and the links between them pull. Three gentle forces add the brain:
+ * **The silhouette is the container, not a wall.** Until phase 4 this file laid
+ * the regions out freely and pressed them into shape with a soft force; the
+ * outline held only where the forces balanced, and what the eye saw was a cloud
+ * that happened to be brain-ish. Since phase 4 it is the other way round, which
+ * is the whole of the optics prototype's lesson: **first cells inside the shape,
+ * then places inside the cell, then notes onto places.**
  *
- *  - *cohesion*: a note that strays too far from the middle of its cluster —
- *    most of its region's radius — is drawn back. Inside that nothing pulls,
- *    so a cluster takes whatever organic form its links give it.
- *  - *placement*: a cluster as a whole drifts towards its place, but only once
- *    it is further than a dead zone away. That dead zone is what lets a
- *    remembered arrangement stay put when the place itself shifts a little.
- *  - *containment*: a note past its hemisphere's outline (`shape.ts`) is nudged
- *    back, harder the further it is out; a note deep in the middle of its
- *    hemisphere is nudged gently outwards, towards the cortex. In between,
- *    nothing.
+ *  1. *Cells.* The inside of the outline (`shape.ts`) is sampled on a grid, the
+ *     samples are divided between the regions by a weighted Lloyd relaxation,
+ *     and every region ends up with a cell that reaches from the middle of its
+ *     hemisphere out to the rim. Regions are dealt to the two halves by size, so
+ *     the halves carry a similar number of notes; the region that is mostly
+ *     connective tissue — the one whose notes link outwards more than any
+ *     other's — is pinned at the fissure, because that is what it is.
+ *  2. *Places.* Each cell is filled with a Poisson-disk sample of its own
+ *     points, at the largest spacing that still yields about a third more places
+ *     than the region has notes. The places therefore cover the **whole** cell,
+ *     out to the rim, rather than a disc around a centre.
+ *  3. *Notes.* The region's hub takes the place nearest the cell's centre;
+ *     about one note in four and a half with two or more links inside the region
+ *     becomes a secondary core and takes the free place furthest from the cores
+ *     already set; every other note takes the free place nearest the core or
+ *     neighbour it is most strongly linked to. That is what makes the dense
+ *     knots that read as star clusters.
  *
- * Nothing places a note inside the silhouette. The outline is filled because the
- * regions are spread round both hemispheres near the rim and their notes push
- * out against it.
+ * The simulation is then a **fine correction**, not the placement: it loosens
+ * overlaps, lets the springs between regions pull, and keeps a note inside its
+ * cell, its hemisphere and out of the fissure. Two forces remain:
  *
- * **Where a region is, and why that survives a change to the vault.** A
- * cluster's *anchor* lies in the arc of the folder most of its members are in
- * (`folderArcs`), at a point along the arc and a depth that come from the
- * hash of its core — the part of a cluster that captures rarely change. No
- * rank, no slot number, no relaxation against other regions: a capture moves
- * no other cluster's anchor unless it doubles a folder's note count or opens a
- * new folder. (The first version numbered the notes along a loop in path
- * order, so one capture shifted every anchor after it, and then let regions
- * push each other apart, so one region's size moved all the others.)
- * That only decides a region that nobody has seen yet. Once the notes
- * have been laid out and remembered, a cluster's place is simply where most of
- * its members already are. Clusters can change when links change — a note
- * torn between two ties may switch (`clusters.ts`) — but a region's place is
- * never a number the clustering hands out: renumbering moves nothing, and a
- * merged or split cluster finds its members where they already were.
+ *  - *cohesion*: a note that strays past most of its cell's radius is drawn back
+ *    towards the cell's middle. Inside that nothing pulls.
+ *  - *containment*: a note past its hemisphere's outline is nudged back, harder
+ *    the further it is out; a note inside the fissure is pushed out of it; and a
+ *    note that has wandered into another region's cell is pushed home.
+ *
+ * **Where a region is, and why that survives a change to the vault.** A region's
+ * cell comes from the Lloyd relaxation, which depends on the regions of its own
+ * hemisphere and on nothing else — not on a rank, a slot number or the order the
+ * server listed anything in. A capture that does not change the regions does not
+ * move a cell by more than the half percent the whole brain grows. Once the
+ * notes have been laid out and remembered, positions come from memory anyway and
+ * the cell is only the fence they are held inside.
  *
  * **It comes to rest, and stays.** Forces are scaled by a temperature that
  * decays towards zero; below a floor the simulation stops and `step` does
@@ -67,14 +72,38 @@
  * here, since none of them hold an object.
  */
 
+import type { RegionGroup } from './clusters';
+import { groupRegions } from './clusters';
 import type { BrainGraph } from './model';
 import { hash32, unit } from './seed';
 import type { Side } from './shape';
-import { OUTLINE, centre, pointAt, rim } from './shape';
+import { FISSURE, OUTLINE, centre, outlineDepth, rim, sideOf, withinOutline } from './shape';
 
 export interface Point {
   x: number;
   y: number;
+}
+
+/**
+ * One region of the brain: a group of notes that share a cell of the silhouette.
+ *
+ * The contract between this layer and the renderer: everything the picture needs
+ * to draw a region — where its cell is, which half it is in, which note is its
+ * hub (the waypoint bundled edges run through) and what it is called.
+ */
+export interface Region {
+  readonly id: number;
+  /** Display name, e.g. "Homelab". Already user-facing. */
+  readonly name: string;
+  /** -1 = left hemisphere, +1 = right. */
+  readonly side: Side;
+  /** Centre of the region's cell, world coordinates. */
+  readonly cx: number;
+  readonly cy: number;
+  /** Index of the region's hub node — the waypoint for bundled edges. */
+  readonly hub: number;
+  /** Members, node indices, in hash order. */
+  readonly members: readonly number[];
 }
 
 /**
@@ -123,25 +152,59 @@ const MIN_NOTES = 24;
  */
 const LOOSE_AREA_PER_NOTE = 2400;
 const LOOSE_MIN_NOTES = 8;
-/** A region's area, as a share of the area its notes would have to themselves. */
-const REGION_FILL = 0.85;
 
 /**
- * How deep in its hemisphere a region's anchor sits, as a share of the rim:
- * between `ANCHOR_DEEPEST` and `ANCHOR_DEPTH`, from the core's hash.
+ * The grid the inside of the outline is sampled on, in normalised units, and
+ * how far short of the rim it stops.
  *
- * Near the rim rather than in the middle. The notes of a brain live in its
- * cortex, and on screen the cortex is what draws the outline: regions along
- * the rim trace the silhouette with their own cell bodies, while the tracts
- * between them run through the middle.
+ * Fine enough that a cell of a dozen notes still has a few hundred points to
+ * choose places from, coarse enough that the Lloyd relaxation stays a few
+ * hundred thousand operations for a vault of a hundred notes.
  */
-const ANCHOR_DEPTH = 0.8;
-const ANCHOR_DEEPEST = 0.35;
+const SAMPLE_STEP = 0.03;
+const SAMPLE_MARGIN = 0.98;
+/** Lloyd: how many rounds, and how far a centre moves towards its cell each round. */
+const LLOYD_STEPS = 40;
+const LLOYD_RATE = 0.7;
+/** Where the connective region sits, measured out from the fissure. */
+const FISSURE_CELL = 0.22;
+/** How many more places than notes a cell is filled with. */
+const SITE_SURPLUS = 1.35;
+/** The search for the Poisson spacing, and how finely it is resolved. */
+const SPACING_MIN = 0.02;
+const SPACING_MAX = 0.6;
+const SPACING_STEPS = 14;
+/** The step the spacing is rounded down to: about one note's worth of it. */
+const SPACING_QUANT = 0.004;
+/**
+ * A region whose notes hardly link each other gathers round its core instead of
+ * spreading over the whole cell; the dendrites and the fog fill the rest.
+ */
+const SPARSE_LINKS = 0.7;
+const SPARSE_CELL = 0.66;
+/** About one core per this many notes, each with at least this many links inside the region. */
+const NOTES_PER_CORE = 4.5;
+const CORE_MIN_LINKS = 2;
 
-/** Repulsion between two notes at distance d is REPULSION / d². */
+/**
+ * Repulsion between two notes at distance d is REPULSION / d², out to CUTOFF.
+ *
+ * **Much weaker and much shorter-ranged in the brain than it used to be.** While
+ * the simulation did the placing, the repulsion was what spread the notes over
+ * the picture, and it had to reach across a region to do it. Since the places do
+ * that, its only remaining job is that nothing overlaps — a cell body is 9 to 50
+ * units across — and at the old strength it undid the placement: the notes a
+ * galaxy had gathered around its core were pushed back out again, the closest
+ * pairs from 23 units to 34, and the dense knots that make the picture read as
+ * star clusters flattened into an even scatter.
+ *
+ * The loose arrangement keeps the old numbers: there is no placement there, and
+ * the repulsion is still what opens the star out.
+ */
 const REPULSION = 1600;
-/** Beyond this the repulsion is a few hundredths of a unit and invisible. */
 const CUTOFF = 230;
+const BRAIN_REPULSION = 500;
+const BRAIN_CUTOFF = 90;
 /**
  * Notes of different clusters push a little harder, which opens a furrow
  * between regions. Only a little: much harder, and linked regions end up far
@@ -152,6 +215,12 @@ const APART = 2;
 const SPRING = 0.012;
 const REST = 70;
 /**
+ * A link inside a region rests at this share of a step between the places of
+ * its cell, rather than at the fixed `REST`. Under one: linked notes sit a
+ * little closer than two unrelated ones, which is what makes a galaxy.
+ */
+const WITHIN_REGION_REST = 0.75;
+/**
  * A link between clusters pulls less than one inside a cluster, and one across
  * the fissure much less. It is still drawn at full strength; but at full pull a
  * handful of links across the middle would close the fissure.
@@ -159,38 +228,42 @@ const REST = 70;
 const ACROSS_CLUSTERS = 0.4;
 const ACROSS_FISSURE = 0.05;
 
-/** Region radius, as a share, within which cohesion does nothing. */
-const COHESION_FREE = 0.6;
+/** Cell radius, as a share, within which cohesion does nothing. */
+const COHESION_FREE = 0.8;
 const COHESION = 0.02;
 /**
- * Beyond this many region radii from its cluster, a remembered note is not
- * drawn back. Twice the radius is further than any member settles in a layout
- * of its own; a note that far out got there by being reassigned.
+ * Beyond this many cell radii from its region, a remembered note is not drawn
+ * back. A note that far out got there by being reassigned, not by straying.
  */
 const LET_GO = 2;
-/** Region radius, as a share, within which placement does nothing. */
-const PLACEMENT_FREE = 0.3;
-const PLACEMENT = 0.004;
 /** Past the rim, the push back in, per unit of overshoot. */
 const CONTAINMENT = 0.25;
+/** And the wall itself: how far out a step is allowed to leave a note. */
+const WALL = 0.99;
+/** Out of the fissure, per unit of intrusion, and how far clear a note is held. */
+const FISSURE_PUSH = 0.25;
+const FISSURE_KEEP = 1.25;
 /**
- * Inside this share of the rim, a slight push outwards.
+ * The push home on a note that has wandered into another region's cell.
  *
- * Cross-links pull notes towards the middle of their hemisphere. A slight push
- * keeps the middle from filling into a disc; the first, stronger version
- * emptied it, and the hemispheres read as two rings.
+ * Gentle: it is a fence, not a magnet. A note pulled over the line by its links
+ * leans across it, which is what makes neighbouring regions touch rather than
+ * sit in numbered boxes.
  */
-const HOLLOW = 0.6;
-const HOLLOW_PUSH = 0.01;
+const CELL_HOME = 0.04;
+/**
+ * How clearly a remembered note has to be out of place before it is moved.
+ *
+ * A quarter past the rim. The simulation's own wall keeps everything it moves
+ * inside the outline, and the store is versioned, so nothing this build wrote
+ * can be out here at all: this catches a number from somewhere else, and is
+ * loose enough never to move a note that was deliberately dragged clear of the
+ * brain to be looked at.
+ */
+const CLAMP_MARGIN = 1.25;
 /** The loose arrangement's gentle pull towards the middle. */
 const GRAVITY = 0.004;
 
-/**
- * How far round its hemisphere the anchors go, as a share of a half turn each
- * way from the outward direction: most of the way to the fissure, so the
- * inner halves are used too.
- */
-const SWEEP = 0.8;
 /** The most a note may move in one step, in world units. */
 const MAX_SPEED = 30;
 /** Velocity kept per step. Lower is calmer; this is still lively enough to see settle. */
@@ -200,14 +273,16 @@ const COOLING = 0.016;
 /** Below this the layout counts as settled and stops. */
 const FROZEN = 0.004;
 /**
- * The temperature a fresh brain starts at once every region has been laid out
- * on its own, and the velocity kept per step while it cools: enough for
- * neighbouring regions to push apart and for the links between them to pull,
- * not enough to rearrange what the regions settled on. Heavily damped, because
- * damped motion follows the forces instead of overshooting, and an overshoot
- * is where one more note in the vault becomes a different brain.
+ * The temperature a fresh brain starts at once every note is on its place, and
+ * the velocity kept per step while it cools.
+ *
+ * Low, and heavily damped: this is the fine correction. It loosens overlaps and
+ * lets the springs pull, and it must not rearrange what the places already
+ * decided. It was 1 while the simulation still did the placing; at that
+ * temperature the notes drifted off their places within a few dozen steps and
+ * the cells stopped reading as cells.
  */
-const JOIN = 1;
+const JOIN = 0.4;
 const JOIN_INERTIA = 0.45;
 /**
  * The pull back towards its remembered place on a remembered note that may move
@@ -239,15 +314,12 @@ export class BrainLayout {
   readonly bounds: Bounds;
 
   /**
-   * Per cluster: its anchor (world), its place — the anchor, or where its
-   * remembered members are — its region radius and its hemisphere.
+   * The regions, one cell of the silhouette each. Empty in the loose
+   * arrangement, which has no hemispheres and no cells.
    */
-  readonly anchorX: Float64Array;
-  readonly anchorY: Float64Array;
-  readonly placeX: Float64Array;
-  readonly placeY: Float64Array;
-  readonly radius: Float64Array;
-  readonly side: Int8Array;
+  readonly regions: readonly Region[];
+  /** Region index per node index. Zero throughout in the loose arrangement. */
+  readonly regionOf: Int32Array;
   /**
    * Hemisphere per node, -1 or 1: its cluster's, or for a remembered note the
    * one it is in. Settled when the layout is built and fixed after that. Zero
@@ -313,9 +385,29 @@ export class BrainLayout {
   readonly #springA: Int32Array;
   readonly #springB: Int32Array;
   readonly #springK: Float64Array;
-  /** Live centroid per cluster, recomputed each step. */
-  readonly #cx: Float64Array;
-  readonly #cy: Float64Array;
+  readonly #springRest: Float64Array;
+  /**
+   * Per region: the centre of its cell in world units, the weight the cell test
+   * divides by, and the radius of a circle of the cell's area.
+   */
+  #cellX: Float64Array;
+  #cellY: Float64Array;
+  #cellW: Float64Array;
+  #cellR: Float64Array;
+  /** Per region: the hash of its identity, for the Poisson sample's order. */
+  #regionSeed = new Uint32Array(0);
+  /** Per region: the distance between neighbouring places in its cell, world units. */
+  #spacing = new Float64Array(0);
+  /**
+   * The grid points inside the outline, normalised, and the region each fell to.
+   *
+   * Kept because they are the places: a note that has to be put back into its
+   * cell is put on the nearest of these, and a fresh layout picks every note's
+   * place from them.
+   */
+  #sampleX = new Float64Array(0);
+  #sampleY = new Float64Array(0);
+  #sampleOf = new Int32Array(0);
   /** Force accumulators, reused: a fresh array per frame is garbage per frame. */
   readonly #ax: Float64Array;
   readonly #ay: Float64Array;
@@ -325,7 +417,6 @@ export class BrainLayout {
 
   constructor(graph: BrainGraph, options: LayoutOptions) {
     const n = graph.nodes.length;
-    const clusters = graph.clusters.clusters;
     this.graph = graph;
     this.arrangement = options.arrangement;
     this.x = new Float64Array(n);
@@ -339,15 +430,17 @@ export class BrainLayout {
       graph.nodes.map((_, i) => i).sort((a, b) => (graph.nodes[a]!.key < graph.nodes[b]!.key ? -1 : 1)),
     );
 
-    const k = clusters.length;
-    this.anchorX = new Float64Array(k);
-    this.anchorY = new Float64Array(k);
-    this.placeX = new Float64Array(k);
-    this.placeY = new Float64Array(k);
-    this.radius = new Float64Array(k);
-    this.side = new Int8Array(k);
-    this.#cx = new Float64Array(k);
-    this.#cy = new Float64Array(k);
+    // Regions only where there are hemispheres to divide: the neighbourhood is
+    // six notes round one, and a cell of the silhouette means nothing to it.
+    const grouping =
+      this.arrangement === 'brain' ? groupRegions(graph, graph.clusters) : { of: new Int32Array(n), regions: [] };
+    this.regionOf = grouping.of;
+    const k = grouping.regions.length;
+    this.#cellX = new Float64Array(k);
+    this.#cellY = new Float64Array(k);
+    this.#cellW = new Float64Array(k);
+    this.#cellR = new Float64Array(k);
+    this.#spacing = new Float64Array(k);
     this.nodeSide = new Int8Array(n);
     this.#ax = new Float64Array(n);
     this.#ay = new Float64Array(n);
@@ -406,6 +499,14 @@ export class BrainLayout {
     }
     this.rememberedShare = n === 0 ? 1 : count / n;
 
+    // The cells, and then the fence: a remembered note that is outside the
+    // silhouette or well inside another region's cell is put back on the nearest
+    // place of its own, and counts as changed so the simulation may tidy after
+    // it. Otherwise a region that changed under a note would walk out of the
+    // shape and stay there for ever, since a remembered note never moves.
+    this.regions = this.arrangement === 'brain' ? this.#buildCells(grouping.regions, remembered) : [];
+    if (this.arrangement === 'brain') this.#clampToCells(remembered, changed);
+
     this.mobile = new Uint8Array(n);
     this.#tether = new Uint8Array(n);
     this.#homeX = Float64Array.from(this.x);
@@ -427,8 +528,6 @@ export class BrainLayout {
       }
     }
 
-    if (this.arrangement === 'brain') this.#placeRegions(remembered);
-
     // Springs in key order, with their strength decided once.
     const edges = graph.edges
       .map((e, index) => ({ e, index, ka: graph.nodes[e.a]!.key, kb: graph.nodes[e.b]!.key }))
@@ -437,161 +536,572 @@ export class BrainLayout {
     this.#springB = Int32Array.from(edges.map((s) => s.e.b));
     this.#springK = Float64Array.from(edges.map(({ e }) => {
       if (this.arrangement !== 'brain') return SPRING;
-      const of = graph.clusters.of;
+      const of = this.regionOf;
       if (this.nodeSide[e.a] !== this.nodeSide[e.b]) return SPRING * ACROSS_FISSURE;
       return of[e.a] === of[e.b] ? SPRING : SPRING * ACROSS_CLUSTERS;
+    }));
+    // Where a link comes to rest. Inside a region that is a step across its own
+    // cell, not a fixed length: the places are what decide how dense a region
+    // is, and a spring that wanted seventy units between two notes standing
+    // forty apart pushed every galaxy back open as fast as it formed.
+    this.#springRest = Float64Array.from(edges.map(({ e }) => {
+      if (this.arrangement !== 'brain') return REST;
+      const of = this.regionOf;
+      if (of[e.a] !== of[e.b] || this.nodeSide[e.a] !== this.nodeSide[e.b]) return REST;
+      return Math.min(REST, this.#spacing[of[e.a]!]! * WITHIN_REGION_REST);
     }));
 
     this.#seed(remembered);
 
     const fresh = this.rememberedShare < 0.5;
-    if (fresh && this.arrangement === 'brain') {
-      for (let c = 0; c < clusters.length; c += 1) this.#arrangeRegion(c);
-    }
+    if (fresh && this.arrangement === 'brain') this.#galaxies();
     this.alpha = !fresh ? WARM : this.arrangement === 'brain' ? JOIN : 1;
     if (fresh && this.arrangement === 'brain') this.#inertia = JOIN_INERTIA;
     // Nothing that may move, nothing to simulate: a refetch that changed no link.
     if (!this.mobile.includes(1)) this.settled = true;
   }
 
-  /**
-   * Decides every cluster's hemisphere, place and size.
-   *
-   * A cluster most of whose members are remembered keeps the place they are
-   * at and the hemisphere most of them are in. Only a cluster that is mostly
-   * new is placed from its anchor — and from nothing else. The first version
-   * let new regions push each other apart in a small relaxation; that made
-   * every region's place depend on every other region's size, and one captured
-   * note moved regions on the far side of the brain by two hundred units.
-   */
-  #placeRegions(remembered: Uint8Array): void {
-    const { nodes } = this.graph;
-    const { clusters } = this.graph.clusters;
+  /** True when a world point lies inside the silhouette. Decoration clips against this. */
+  inside(x: number, y: number): boolean {
     const u = this.unitLength;
-    const arcs = folderArcs(nodes, clusters);
-    const arcOf = arcs.arcOf;
-    clusters.forEach((cluster, c) => {
-      const members = cluster.members;
-      this.radius[c] = Math.sqrt((members.length * AREA_PER_NOTE * REGION_FILL) / Math.PI);
+    if (this.arrangement !== 'brain') return Math.hypot(x, y) < u;
+    return withinOutline(x / u, y / u);
+  }
 
-      // The anchor, from the folder's arc and the cluster's core and from
-      // nothing else: how far along the arc and how deep, both from the core's
-      // hash. No slot numbers — a numbered slot would move whenever another
-      // cluster in the same folder appeared.
-      const arc = arcOf[c]!;
-      const g = arcs.start[arc]! + (0.08 + 0.84 * unit(cluster.core, 'along')) * arcs.size[arc]!;
-      const anchorSide = arcs.side[arc]! as Side;
-      // Around most of the hemisphere, not only its outer half: from the front
-      // of the fissure, out and round, to the back of the fissure. (Measured from
-      // the outward direction; ±π would be the fissure itself.)
-      const sweep = Math.PI * SWEEP;
-      const phi = anchorSide === -1 ? -sweep + 2 * sweep * g : sweep - 2 * sweep * g;
-      const depth = ANCHOR_DEPTH - (ANCHOR_DEPTH - ANCHOR_DEEPEST) * unit(cluster.core, 'depth');
-      const anchor = pointAt(anchorSide, phi, depth);
-      this.anchorX[c] = anchor.x * u;
-      this.anchorY[c] = anchor.y * u;
-
-      let known = 0;
-      let kx = 0;
-      let ky = 0;
-      let left = 0;
-      for (const i of members) {
-        if (remembered[i] !== 1) continue;
-        known += 1;
-        kx += this.x[i]!;
-        ky += this.y[i]!;
-        if (this.x[i]! < 0) left += 1;
-      }
-
-      let side: Side = anchorSide;
-      if (known * 2 >= members.length && known > 0) {
-        side = left * 2 > known ? -1 : left * 2 < known ? 1 : kx < 0 ? -1 : 1;
-        this.placeX[c] = kx / known;
-        this.placeY[c] = ky / known;
-      } else {
-        this.placeX[c] = this.anchorX[c]!;
-        this.placeY[c] = this.anchorY[c]!;
-      }
-      this.side[c] = side;
-      // A remembered note keeps the hemisphere it is in, even when its cluster
-      // is on the other side now: the fissure is not something a note should be
-      // pushed across because a link somewhere else changed its cluster.
-      for (const i of members) this.nodeSide[i] = remembered[i] === 1 ? (this.x[i]! < 0 ? -1 : 1) : side;
-    });
+  /** Distance from a world point to the silhouette's edge, world units, negative outside. */
+  depthInside(x: number, y: number): number {
+    const u = this.unitLength;
+    if (this.arrangement !== 'brain') return u - Math.hypot(x, y);
+    return outlineDepth(x / u, y / u) * u;
   }
 
   /**
-   * Lays out one cluster inside its region, as if nothing else existed.
+   * Divides the inside of the outline into one cell per region.
    *
-   * The brief's "a local force simulation per region", and the reason a
-   * capture without any stored positions does not reshuffle the brain: a
-   * cluster whose members did not change gets the same arrangement, shifted
-   * with its region, whatever happened in the next cluster. Only afterwards
-   * does the whole brain run together, and then cool (`JOIN`), just enough for
-   * the links between regions and the push between neighbours to take effect.
-   * Simulated jointly from the start, the same vault with one note more ran
-   * through a few hundred chaotic steps and came out visibly different
-   * everywhere.
+   * Hemispheres first: a region most of whose notes are already somewhere keeps
+   * the half they are in — that is what makes "Homelab bottom left" survive a
+   * change to the clustering — and the rest are dealt out largest first to
+   * whichever half carries fewer notes. The region that is mostly connective
+   * tissue, the one whose notes link outwards more than any other's, is pinned
+   * at the fissure: in a PARA vault that is the maps of content, and they are
+   * what holds the two halves together.
+   *
+   * Then a weighted Lloyd relaxation over the grid points of each half: every
+   * region ends up with a cell of about the area its note count asks for, and
+   * the cells together cover the hemisphere out to the rim. That is why the
+   * notes reach the outline — not because a force pushes them there.
    */
-  #arrangeRegion(c: number): void {
-    const members = this.graph.clusters.clusters[c]!.members;
-    const k = members.length;
-    if (k < 2) return;
-    const { x, y } = this;
-    const inside = new Set(members);
-    const springs = this.#springPairs().filter(([a, b]) => inside.has(a) && inside.has(b));
-    const vx = new Float64Array(k);
-    const vy = new Float64Array(k);
-    const fx = new Float64Array(k);
-    const fy = new Float64Array(k);
-    const slot = new Map(members.map((i, s) => [i, s]));
-    let alpha = 1;
-    while (alpha >= FROZEN) {
-      fx.fill(0);
-      fy.fill(0);
-      for (let p = 0; p < k; p += 1) {
-        const i = members[p]!;
-        for (let q = p + 1; q < k; q += 1) {
-          const j = members[q]!;
-          const dx = x[j]! - x[i]!;
-          const dy = y[j]! - y[i]!;
-          const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-          if (d > CUTOFF) continue;
-          const f = REPULSION / (d * d);
-          fx[p] = fx[p]! - (dx / d) * f;
-          fy[p] = fy[p]! - (dy / d) * f;
-          fx[q] = fx[q]! + (dx / d) * f;
-          fy[q] = fy[q]! + (dy / d) * f;
+  #buildCells(groups: readonly RegionGroup[], remembered: Uint8Array): Region[] {
+    const { nodes, edges, touching } = this.graph;
+    const u = this.unitLength;
+    const k = groups.length;
+    if (k === 0) return [];
+
+    const hubs: number[] = [];
+    const outward = new Float64Array(k);
+    groups.forEach((group, r) => {
+      let hub = group.members[0]!;
+      for (const i of group.members) if (nodes[i]!.degree > nodes[hub]!.degree) hub = i;
+      hubs.push(hub);
+      let out = 0;
+      for (const i of group.members) {
+        for (const e of touching[i]!) {
+          const other = edges[e]!.a === i ? edges[e]!.b : edges[e]!.a;
+          if (this.regionOf[other] !== r) out += 1;
         }
       }
-      for (const [a, b] of springs) {
-        const dx = x[b]! - x[a]!;
-        const dy = y[b]! - y[a]!;
-        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-        const f = (d - REST) * SPRING;
-        const sa = slot.get(a)!;
-        const sb = slot.get(b)!;
-        fx[sa] = fx[sa]! + (dx / d) * f;
-        fy[sa] = fy[sa]! + (dy / d) * f;
-        fx[sb] = fx[sb]! - (dx / d) * f;
-        fy[sb] = fy[sb]! - (dy / d) * f;
+      outward[r] = out / group.members.length;
+    });
+    // The connective region: the one whose notes link outwards most, among the
+    // regions no larger than the average. The size bar matters — without it the
+    // biggest region wins on some vaults simply by having the vault's busiest
+    // note in it, and a region of twenty pinned at the fissure fills the middle
+    // of the brain, which is the one place that has to stay clear.
+    //
+    // Counted in quarter-links per note, with the region's own identity as the
+    // tie-break. One captured note changes an outward ratio by a twentieth, and
+    // read exactly that was enough to hand the fissure to a different region —
+    // which moves two cells to opposite ends of the brain for one new note.
+    const average = groups.reduce((sum, group) => sum + group.members.length, 0) / k;
+    let connective = -1;
+    let lead = -1;
+    for (let r = 0; r < k; r += 1) {
+      // A whole folder group, never half of one. The two halves of a cut group
+      // are dealt to opposite hemispheres as a pair; pinning one of them at the
+      // fissure takes it out of that pair, leaves its sibling to the load deal,
+      // and a capture that moved the pin swapped both halves across the brain.
+      // It is also what the thing is: connective tissue is a part of the vault,
+      // not one side of a part.
+      if (groups[r]!.half >= 0) continue;
+      if (groups[r]!.members.length > average) continue;
+      const score = Math.round(outward[r]! * 4) / 4;
+      const better =
+        connective === -1 ||
+        score > lead ||
+        (score === lead && unit(groups[r]!.id, 'fissure') > unit(groups[connective]!.id, 'fissure'));
+      if (better) {
+        connective = r;
+        lead = score;
       }
-      for (let p = 0; p < k; p += 1) {
-        const i = members[p]!;
-        this.#pull(i, this.placeX[c]!, this.placeY[c]!, this.radius[c]!, fx, fy, p);
-        const [nx, ny] = capped((vx[p]! + fx[p]! * alpha) * INERTIA, (vy[p]! + fy[p]! * alpha) * INERTIA);
-        vx[p] = nx;
-        vy[p] = ny;
-        x[i] = x[i]! + nx;
-        y[i] = y[i]! + ny;
+    }
+    if (connective === -1) connective = 0;
+
+    // The weight a cell's size and a hemisphere's load are counted in: one
+    // share, plus one for every doubling of the notes in the region. Not the
+    // note count itself and not its square root, for the reason the folder arcs
+    // used the same rule — a weight that moved with every capture would redraw
+    // every cell of the hemisphere, and tip the deal below, for one new note.
+    for (let r = 0; r < k; r += 1) this.#cellW[r] = 1 + Math.floor(Math.log2(Math.max(1, groups[r]!.members.length)));
+
+    const side = new Int8Array(k);
+    const decided = new Uint8Array(k);
+    const load: Record<number, number> = { [-1]: 0, [1]: 0 };
+    groups.forEach((group, r) => {
+      let known = 0;
+      let left = 0;
+      let sum = 0;
+      for (const i of group.members) {
+        if (remembered[i] !== 1) continue;
+        known += 1;
+        sum += this.x[i]!;
+        if (this.x[i]! < 0) left += 1;
       }
-      alpha -= alpha * COOLING;
+      if (known === 0 || known * 2 < group.members.length) return;
+      side[r] = left * 2 > known ? -1 : left * 2 < known ? 1 : sum < 0 ? -1 : 1;
+      decided[r] = 1;
+      load[side[r]!] = load[side[r]!]! + this.#cellW[r]!;
+    });
+    if (decided[connective] !== 1) {
+      side[connective] = 1;
+      decided[connective] = 1;
+      // It counts for less on its side: sitting at the fissure it serves both.
+      load[1] = load[1]! + this.#cellW[connective]! * 0.6;
+    }
+    // The two halves of a cut folder group go to opposite hemispheres. That
+    // balances the halves by construction and, more to the point, it is stable:
+    // a folder group is the same thing before and after a capture, while the
+    // deal below depends on every region's weight and would re-deal the whole
+    // brain when one of them crossed a doubling.
+    const cut = new Map<string, number[]>();
+    for (const r of groups.keys()) {
+      if (decided[r] === 1 || groups[r]!.half < 0) continue;
+      const list = cut.get(groups[r]!.group);
+      if (list === undefined) cut.set(groups[r]!.group, [r]);
+      else list.push(r);
+    }
+    for (const [, pair] of [...cut].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      if (pair.length !== 2) continue;
+      const [a, b] = [...pair].sort((p, q) => groups[p]!.half - groups[q]!.half);
+      // The first half left, the second right, and no hash anywhere near the
+      // decision. Drawing lots from the region's identity looked neater until a
+      // capture changed which cluster a region is named after and the two halves
+      // swapped hemispheres for one new note.
+      side[a!] = -1;
+      side[b!] = 1;
+      decided[a!] = 1;
+      decided[b!] = 1;
+      load[side[a!]!] = load[side[a!]!]! + this.#cellW[a!]!;
+      load[side[b!]!] = load[side[b!]!]! + this.#cellW[b!]!;
+    }
+    [...groups.keys()]
+      .filter((r) => decided[r] !== 1)
+      .sort((a, b) => this.#cellW[b]! - this.#cellW[a]! || (groups[a]!.id < groups[b]!.id ? -1 : 1))
+      .forEach((r) => {
+        const to = load[-1]! <= load[1]! ? -1 : 1;
+        side[r] = to;
+        load[to] = load[to]! + this.#cellW[r]!;
+      });
+
+    // A remembered note keeps the hemisphere it is in, even when its region is
+    // on the other side now: the fissure is not something a note should be
+    // pushed across because a link somewhere else changed its cluster.
+    groups.forEach((group, r) => {
+      for (const i of group.members) this.nodeSide[i] = remembered[i] === 1 ? (this.x[i]! < 0 ? -1 : 1) : side[r]!;
+    });
+
+    // The grid of the interior, normalised.
+    const cols = Math.round((OUTLINE.maxX - OUTLINE.minX) / SAMPLE_STEP);
+    const rows = Math.round((OUTLINE.maxY - OUTLINE.minY) / SAMPLE_STEP);
+    const sx: number[] = [];
+    const sy: number[] = [];
+    for (let a = 0; a <= cols; a += 1) {
+      const px = OUTLINE.minX + a * SAMPLE_STEP;
+      for (let b = 0; b <= rows; b += 1) {
+        const py = OUTLINE.minY + b * SAMPLE_STEP;
+        if (withinOutline(px, py, SAMPLE_MARGIN)) {
+          sx.push(px);
+          sy.push(py);
+        }
+      }
+    }
+    this.#sampleX = Float64Array.from(sx);
+    this.#sampleY = Float64Array.from(sy);
+    this.#sampleOf = new Int32Array(sx.length).fill(-1);
+
+    const cellX = new Float64Array(k);
+    const cellY = new Float64Array(k);
+    for (const s of [-1, 1] as const) {
+      // Ordered by the folder group and the half of it, never by an index and
+      // never by a hash of the region's identity: the ring below places them by
+      // their rank, and a rank that moved would swap two cells for one new note.
+      // The folder group is the one thing here that a capture cannot change —
+      // the region's identity can, as soon as another cluster becomes its
+      // largest, and hashing that swapped cells across the brain.
+      const mine = [...groups.keys()]
+        .filter((r) => side[r] === s)
+        .sort((a, b) => (groups[a]!.group < groups[b]!.group ? -1 : groups[a]!.group > groups[b]!.group ? 1 : groups[a]!.half - groups[b]!.half));
+      if (mine.length === 0) continue;
+      const h = centre(s);
+      mine.forEach((r, rank) => {
+        const phi = (rank / mine.length) * Math.PI * 2 + 0.7;
+        cellX[r] = h.x + s * Math.cos(phi) * 0.3;
+        cellY[r] = h.y + Math.sin(phi) * 0.45;
+      });
+      const pinned = side[connective] === s ? connective : -1;
+      if (pinned !== -1) {
+        cellX[pinned] = s * (FISSURE + FISSURE_CELL);
+        cellY[pinned] = 0.02;
+      }
+      const points: number[] = [];
+      for (let p = 0; p < sx.length; p += 1) if (sideOf(sx[p]!) === s) points.push(p);
+      const accX = new Float64Array(mine.length);
+      const accY = new Float64Array(mine.length);
+      const accN = new Int32Array(mine.length);
+      for (let it = 0; it < LLOYD_STEPS; it += 1) {
+        accX.fill(0);
+        accY.fill(0);
+        accN.fill(0);
+        for (const p of points) {
+          let best = 0;
+          let bd = Infinity;
+          mine.forEach((r, slot) => {
+            const dx = sx[p]! - cellX[r]!;
+            const dy = sy[p]! - cellY[r]!;
+            const d = (dx * dx + dy * dy) / this.#cellW[r]!;
+            if (d < bd) {
+              bd = d;
+              best = slot;
+            }
+          });
+          accX[best] = accX[best]! + sx[p]!;
+          accY[best] = accY[best]! + sy[p]!;
+          accN[best] = accN[best]! + 1;
+        }
+        mine.forEach((r, slot) => {
+          if (r === pinned || accN[slot] === 0) return;
+          cellX[r] = cellX[r]! + (accX[slot]! / accN[slot]! - cellX[r]!) * LLOYD_RATE;
+          cellY[r] = cellY[r]! + (accY[slot]! / accN[slot]! - cellY[r]!) * LLOYD_RATE;
+        });
+      }
+    }
+
+    for (let r = 0; r < k; r += 1) {
+      this.#cellX[r] = cellX[r]! * u;
+      this.#cellY[r] = cellY[r]! * u;
+    }
+    const regions: Region[] = groups.map((group, r) => ({
+      id: r,
+      name: group.name,
+      side: side[r] as Side,
+      cx: this.#cellX[r]!,
+      cy: this.#cellY[r]!,
+      hub: hubs[r]!,
+      members: group.members,
+    }));
+
+    // Which cell every sample fell to, and from that each cell's area.
+    const area = new Int32Array(k);
+    for (let p = 0; p < sx.length; p += 1) {
+      const r = nearestCell(regions, this.#cellW, sx[p]! * u, sy[p]! * u, sideOf(sx[p]!));
+      this.#sampleOf[p] = r;
+      if (r !== -1) area[r] = area[r]! + 1;
+    }
+    for (let r = 0; r < k; r += 1) {
+      const covered = Math.max(area[r]!, 1) * SAMPLE_STEP * SAMPLE_STEP;
+      this.#cellR[r] = Math.sqrt(covered / Math.PI) * u;
+      // How far apart the places in this cell will be: its area shared between
+      // the notes and the surplus of free places. Worked out rather than taken
+      // from the Poisson search, because a remembered brain never runs that
+      // search and the springs still have to know what a step across the cell is.
+      const places = Math.max(1, groups[r]!.members.length) * SITE_SURPLUS;
+      this.#spacing[r] = Math.sqrt((covered * u * u) / places);
+    }
+    // Seeded from the folder group, for the same reason the ring is ordered by
+    // it: a region re-draws every place in its cell when its seed changes.
+    this.#regionSeed = Uint32Array.from(groups, (group) => hash32(`${group.group}#${group.half}`));
+    return regions;
+  }
+
+  /**
+   * Puts remembered notes back inside the shape.
+   *
+   * A stored position can be outside the shape the brain has now — it is, for
+   * every position stored before this phase changed the outline — and a note
+   * outside the shape would stay there for ever, because a remembered note is
+   * never moved by the simulation. So a note past the rim is put back on the
+   * nearest place of its own cell, and counts as changed so the simulation may
+   * tidy up after it.
+   *
+   * **Only past the rim, deliberately.** An earlier version also pulled home a
+   * note that had ended up in a neighbour's cell after its region changed under
+   * it. That put the silhouette first and spatial memory second: an unrelated
+   * capture that tipped one note's strongest tie moved notes on the far side of
+   * the brain by fifty units, and a note that moves for no reason its owner can
+   * see is the whole thing this layer exists to prevent. A note in the wrong
+   * cell is still inside the brain and still where it was left; the cell force
+   * nudges it home if and when it is allowed to move at all.
+   */
+  #clampToCells(remembered: Uint8Array, changed: Uint8Array): void {
+    const u = this.unitLength;
+    if (this.regions.length === 0) return;
+    for (let i = 0; i < this.x.length; i += 1) {
+      if (remembered[i] !== 1) continue;
+      const r = this.regionOf[i]!;
+      const region = this.regions[r];
+      if (region === undefined) continue;
+      const nx = this.x[i]! / u;
+      const ny = this.y[i]! / u;
+      if (withinOutline(nx, ny, CLAMP_MARGIN)) continue;
+      const home = region.side === this.nodeSide[i] ? this.#nearestPlaceIn(r, this.x[i]!, this.y[i]!) : null;
+      if (home !== null) {
+        this.x[i] = home.x;
+        this.y[i] = home.y;
+      } else {
+        // Its region is in the other half; only the outline is put right, and
+        // the note stays in the half its owner last saw it in.
+        const s = this.nodeSide[i] as Side;
+        const h = centre(s);
+        const px = nx - h.x;
+        const py = ny - h.y;
+        const edge = rim(s, Math.atan2(py, px * s));
+        const dist = Math.hypot(px, py) || 1e-6;
+        const f = Math.min(1, (edge * SAMPLE_MARGIN) / dist);
+        let cx = (h.x + px * f) * u;
+        const cy = (h.y + py * f) * u;
+        const keep = FISSURE * FISSURE_KEEP * u;
+        if (s * cx < keep) cx = s * keep;
+        this.x[i] = cx;
+        this.y[i] = cy;
+      }
+      changed[i] = 1;
     }
   }
 
-  /** Spring endpoints in key order. */
-  #springPairs(): Array<[number, number]> {
-    return Array.from(this.#springA, (a, s) => [a, this.#springB[s]!] as [number, number]);
+  /** The place of region `r` nearest a world point, or null when it has no cell. */
+  #nearestPlaceIn(r: number, x: number, y: number): Point | null {
+    const u = this.unitLength;
+    let best = -1;
+    let bd = Infinity;
+    for (let p = 0; p < this.#sampleOf.length; p += 1) {
+      if (this.#sampleOf[p] !== r) continue;
+      const dx = this.#sampleX[p]! * u - x;
+      const dy = this.#sampleY[p]! * u - y;
+      const d = dx * dx + dy * dy;
+      if (d < bd) {
+        bd = d;
+        best = p;
+      }
+    }
+    return best === -1 ? null : { x: this.#sampleX[best]! * u, y: this.#sampleY[best]! * u };
+  }
+
+  /**
+   * Fills every cell with places and puts its notes on them.
+   *
+   * The prototype's galaxies, and the step that replaced "lay each cluster out
+   * on its own and let the shape emerge". A Poisson-disk sample of the cell's
+   * own points at the largest spacing that still gives about a third more places
+   * than notes; the hub takes the place nearest the cell's middle; every core
+   * takes the free place furthest from the cores already set, which is what
+   * spreads the knots over the cell instead of stacking them; and every leaf
+   * takes the free place nearest the core it hangs off.
+   *
+   * Only for a brain nobody has seen. A remembered one has its positions, and
+   * whatever is new is dropped beside what it links to (`#seed`).
+   */
+  #galaxies(): void {
+    const { nodes, edges, touching } = this.graph;
+    const u = this.unitLength;
+    for (const region of this.regions) {
+      const members = region.members;
+      const m = members.length;
+      if (m === 0) continue;
+      const r = region.id;
+      const seed = this.#regionSeed[r]!;
+      const inRegion = new Set(members);
+      // Members arrive in hash order; their position in that list is the only
+      // tie-break used below, so nothing depends on the server's order.
+      const place = new Map(members.map((i, p) => [i, p]));
+
+      const weightTo = new Map<number, Map<number, number>>();
+      const inDegree = new Map<number, number>();
+      for (const i of members) {
+        const to = new Map<number, number>();
+        for (const e of touching[i]!) {
+          const other = edges[e]!.a === i ? edges[e]!.b : edges[e]!.a;
+          if (!inRegion.has(other) || other === i) continue;
+          to.set(other, (to.get(other) ?? 0) + 1);
+        }
+        weightTo.set(i, to);
+        inDegree.set(i, to.size);
+      }
+
+      const hub = region.hub;
+      const coreCount = Math.max(1, Math.round(m / NOTES_PER_CORE));
+      const cores = members
+        .filter((i) => i !== hub && inDegree.get(i)! >= CORE_MIN_LINKS)
+        .sort(
+          (a, b) =>
+            inDegree.get(b)! - inDegree.get(a)! || nodes[b]!.degree - nodes[a]!.degree || place.get(a)! - place.get(b)!,
+        )
+        .slice(0, coreCount - 1);
+      const isCore = new Set([hub, ...cores]);
+
+      // Every note hangs off the core it links to most — a secondary core
+      // before the hub, so the secondary galaxies get their members — else off
+      // the best-connected neighbour it has inside the region, else the hub.
+      const parent = new Map<number, number>();
+      for (const i of members) {
+        if (i === hub) continue;
+        if (isCore.has(i)) {
+          parent.set(i, hub);
+          continue;
+        }
+        let best = -1;
+        let bestScore = -1;
+        for (const [other, w] of weightTo.get(i)!) {
+          if (!isCore.has(other)) continue;
+          const score = w + (other === hub ? 0 : 0.5);
+          if (score > bestScore || (score === bestScore && place.get(other)! < place.get(best)!)) {
+            best = other;
+            bestScore = score;
+          }
+        }
+        if (best === -1) {
+          for (const [other] of weightTo.get(i)!) {
+            if (best === -1 || inDegree.get(other)! > inDegree.get(best)! || (inDegree.get(other)! === inDegree.get(best)! && place.get(other)! < place.get(best)!)) {
+              best = other;
+            }
+          }
+        }
+        parent.set(i, best === -1 ? hub : best);
+      }
+
+      // Hub, then cores, then whoever's parent is already down.
+      const order = [hub, ...cores];
+      const down = new Set(order);
+      let rest = members
+        .filter((i) => !down.has(i))
+        .sort((a, b) => nodes[b]!.degree - nodes[a]!.degree || place.get(a)! - place.get(b)!);
+      while (rest.length > 0) {
+        const ready = rest.filter((i) => down.has(parent.get(i)!));
+        if (ready.length === 0) {
+          for (const i of rest) parent.set(i, hub);
+          continue;
+        }
+        for (const i of ready) {
+          order.push(i);
+          down.add(i);
+        }
+        rest = rest.filter((i) => !down.has(i));
+      }
+
+      let cell: number[] = [];
+      for (let p = 0; p < this.#sampleOf.length; p += 1) if (this.#sampleOf[p] === r) cell.push(p);
+      if (cell.length === 0) {
+        // No cell at all — a region alone in a half too small to sample. A ring
+        // around its centre is honest and never a divide by zero.
+        order.forEach((i, p) => {
+          const phi = (p / m) * Math.PI * 2 + 0.6;
+          this.x[i] = region.cx + Math.cos(phi) * this.#cellR[r]! * 0.6;
+          this.y[i] = region.cy + Math.sin(phi) * this.#cellR[r]! * 0.6;
+        });
+        continue;
+      }
+
+      // A region whose notes hardly link each other gathers round its core.
+      let internal = 0;
+      for (const i of members) internal += inDegree.get(i)!;
+      if (internal / 2 < SPARSE_LINKS * m) {
+        let far = 0;
+        for (const p of cell) far = Math.max(far, Math.hypot(this.#sampleX[p]! * u - region.cx, this.#sampleY[p]! * u - region.cy));
+        const inner = cell.filter(
+          (p) => Math.hypot(this.#sampleX[p]! * u - region.cx, this.#sampleY[p]! * u - region.cy) < SPARSE_CELL * far,
+        );
+        if (inner.length >= m) cell = inner;
+      }
+
+      let lo = SPACING_MIN;
+      let hi = SPACING_MAX;
+      for (let step = 0; step < SPACING_STEPS; step += 1) {
+        const mid = (lo + hi) / 2;
+        if (poissonPick(this.#sampleX, this.#sampleY, cell, mid, seed).length >= m * SITE_SURPLUS) lo = mid;
+        else hi = mid;
+      }
+      // Rounded down to a step, so a capture usually leaves the spacing — and
+      // with it every place in the cell — exactly where it was. The search
+      // resolves far finer than one note's worth of spacing, and without this
+      // one more note in a region re-drew every place in it.
+      lo = Math.max(SPACING_MIN, Math.floor(lo / SPACING_QUANT) * SPACING_QUANT);
+      let sites = poissonPick(this.#sampleX, this.#sampleY, cell, lo, seed);
+      if (sites.length < m) sites = cell;
+
+      const freeX = sites.map((p) => this.#sampleX[p]! * u);
+      const freeY = sites.map((p) => this.#sampleY[p]! * u);
+      const coreX: number[] = [];
+      const coreY: number[] = [];
+      for (const i of order) {
+        if (freeX.length === 0) {
+          // More notes than places: stack the rest just off their parent, where
+          // the repulsion will open them out.
+          const from = parent.get(i) ?? hub;
+          const phi = unit(nodes[i]!.key, 'spill') * Math.PI * 2;
+          this.x[i] = this.x[from]! + Math.cos(phi) * NUDGE * 0.4;
+          this.y[i] = this.y[from]! + Math.sin(phi) * NUDGE * 0.4;
+          continue;
+        }
+        let pick = 0;
+        let best = -Infinity;
+        if (i === hub) {
+          for (let s = 0; s < freeX.length; s += 1) {
+            const v = -((freeX[s]! - region.cx) ** 2 + (freeY[s]! - region.cy) ** 2);
+            if (v > best) {
+              best = v;
+              pick = s;
+            }
+          }
+        } else if (isCore.has(i) && coreX.length > 0 && freeX.length > 1) {
+          for (let s = 0; s < freeX.length; s += 1) {
+            let nearest = Infinity;
+            for (let c = 0; c < coreX.length; c += 1) {
+              const d = (freeX[s]! - coreX[c]!) ** 2 + (freeY[s]! - coreY[c]!) ** 2;
+              if (d < nearest) nearest = d;
+            }
+            if (nearest > best) {
+              best = nearest;
+              pick = s;
+            }
+          }
+        } else {
+          const from = parent.get(i) ?? hub;
+          for (let s = 0; s < freeX.length; s += 1) {
+            const v = -((freeX[s]! - this.x[from]!) ** 2 + (freeY[s]! - this.y[from]!) ** 2);
+            if (v > best) {
+              best = v;
+              pick = s;
+            }
+          }
+        }
+        this.x[i] = freeX[pick]!;
+        this.y[i] = freeY[pick]!;
+        if (isCore.has(i)) {
+          coreX.push(freeX[pick]!);
+          coreY.push(freeY[pick]!);
+        }
+        freeX.splice(pick, 1);
+        freeY.splice(pick, 1);
+      }
+    }
   }
 
   /**
@@ -601,12 +1111,12 @@ export class BrainLayout {
    *     Dropping it anywhere else would make the springs haul it across the
    *     picture and drag everything it passes out of place — one new note would
    *     rearrange the brain, which is exactly what must not happen.
-   *  2. **In its region**, for the rest: a point in the region's disc, from the
-   *     path hash. This is where the simulation starts, not where it ends — the
-   *     local forces take it from there.
+   *  2. **In its cell**, for the rest: a point in the cell's disc, from the path
+   *     hash. In a brain nobody has seen this is only a starting point —
+   *     `#galaxies` then puts every note on a place of its cell.
    */
   #seed(remembered: Uint8Array): void {
-    const { nodes, touching, edges, clusters } = this.graph;
+    const { nodes, touching, edges } = this.graph;
     for (const i of this.#seq) {
       if (remembered[i] === 1) continue;
       const key = nodes[i]!.key;
@@ -629,12 +1139,12 @@ export class BrainLayout {
         const angle = unit(key, 'nudge') * Math.PI * 2;
         this.x[i] = sx / count + Math.cos(angle) * NUDGE;
         this.y[i] = sy / count + Math.sin(angle) * NUDGE;
-      } else if (this.arrangement === 'brain') {
-        const c = clusters.of[i]!;
+      } else if (this.arrangement === 'brain' && this.regions.length > 0) {
+        const r = this.regionOf[i]!;
         const angle = unit(key, 'angle') * Math.PI * 2;
-        const distance = Math.sqrt(unit(key, 'ring')) * this.radius[c]! * 0.8;
-        this.x[i] = this.placeX[c]! + Math.cos(angle) * distance;
-        this.y[i] = this.placeY[c]! + Math.sin(angle) * distance;
+        const distance = Math.sqrt(unit(key, 'ring')) * this.#cellR[r]! * 0.8;
+        this.x[i] = this.#cellX[r]! + Math.cos(angle) * distance;
+        this.y[i] = this.#cellY[r]! + Math.sin(angle) * distance;
       } else {
         const angle = unit(key, 'angle') * Math.PI * 2;
         const distance = 40 + Math.floor(unit(key, 'ring') * 6) * 24;
@@ -726,7 +1236,14 @@ export class BrainLayout {
       if (this.mobile[i] === 1 && i !== this.pinned) this.#moving[m++] = i;
       else this.#still[st++] = i;
     }
-    repel(x, y, ax, ay, this.#moving.subarray(0, m), this.#still.subarray(0, st), this.arrangement === 'brain' ? this.graph.clusters.of : null);
+    const brain = this.arrangement === 'brain';
+    repel(
+      x, y, ax, ay,
+      this.#moving.subarray(0, m), this.#still.subarray(0, st),
+      brain ? this.regionOf : null,
+      brain ? BRAIN_REPULSION : REPULSION,
+      brain ? BRAIN_CUTOFF : CUTOFF,
+    );
     this.#springs(ax, ay);
     if (this.arrangement === 'brain') this.#shape(ax, ay);
     else this.#gather(ax, ay);
@@ -747,6 +1264,7 @@ export class BrainLayout {
       vy[i] = ny;
       x[i] = x[i]! + nx;
       y[i] = y[i]! + ny;
+      if (this.arrangement === 'brain') this.#wall(i);
     }
 
     this.alpha += (this.alphaTarget - this.alpha) * COOLING;
@@ -761,6 +1279,36 @@ export class BrainLayout {
     return !this.settled;
   }
 
+  /**
+   * The wall: a note that a step moved out of the shape is put back on it.
+   *
+   * The containment force alone cannot hold the outline, and it took a phase to
+   * see why. Forces are scaled by a temperature that falls to zero, so a note
+   * that a spring pulled past the rim early is not pushed back before the
+   * simulation freezes — it simply stops a few percent outside, and the rim the
+   * whole picture is built on is ragged. A projection costs nothing and is
+   * exactly the promise: the silhouette contains the notes.
+   *
+   * Only for a note the simulation moved. A note under the pointer is on a
+   * leash and not a wall (`place`), because dragging a note out of the brain to
+   * look at it is a thing somebody may want to do.
+   */
+  #wall(i: number): void {
+    const u = this.unitLength;
+    const side = this.nodeSide[i] as Side;
+    const h = centre(side);
+    const px = this.x[i]! / u - h.x;
+    const py = this.y[i]! / u - h.y;
+    const dist = Math.hypot(px, py);
+    const edge = rim(side, Math.atan2(py, px * side)) * WALL;
+    if (dist > edge) {
+      this.x[i] = (h.x + (px * edge) / dist) * u;
+      this.y[i] = (h.y + (py * edge) / dist) * u;
+    }
+    const keep = FISSURE * FISSURE_KEEP * u;
+    if (side * this.x[i]! < keep) this.x[i] = side * keep;
+  }
+
   #springs(ax: Float64Array, ay: Float64Array): void {
     const { x, y } = this;
     for (let s = 0; s < this.#springA.length; s += 1) {
@@ -769,7 +1317,7 @@ export class BrainLayout {
       const dx = x[b]! - x[a]!;
       const dy = y[b]! - y[a]!;
       const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      const f = (d - REST) * this.#springK[s]!;
+      const f = (d - this.#springRest[s]!) * this.#springK[s]!;
       const fx = (dx / d) * f;
       const fy = (dy / d) * f;
       ax[a] = ax[a]! + fx;
@@ -779,86 +1327,67 @@ export class BrainLayout {
     }
   }
 
-  /** Cohesion, placement and containment: the three forces that make it a brain. */
+  /**
+   * The fine correction: cohesion to the cell, and containment in the cell, the
+   * hemisphere and out of the fissure.
+   *
+   * There is no *placement* force any more. A cluster used to drift as a whole
+   * towards a place, because the place was all that said where a region was;
+   * now the cell says it, the notes are already on it, and a force pulling
+   * whole regions about would only undo that.
+   */
   #shape(ax: Float64Array, ay: Float64Array): void {
     const { x, y } = this;
-    const { clusters, of } = this.graph.clusters;
+    const u = this.unitLength;
+    for (const i of this.#seq) {
+      const r = this.regionOf[i]!;
+      const region = this.regions[r];
+      let fx = 0;
+      let fy = 0;
 
-    // Live centroids, members in hash order so the sums do not depend on the reply.
-    clusters.forEach((cluster, c) => {
-      let sx = 0;
-      let sy = 0;
-      for (const i of cluster.members) {
-        sx += x[i]!;
-        sy += y[i]!;
-      }
-      this.#cx[c] = sx / cluster.members.length;
-      this.#cy[c] = sy / cluster.members.length;
-    });
-
-    clusters.forEach((_, c) => {
-      // Placement: the whole cluster at once, and only outside the dead zone.
-      const gx = this.placeX[c]! - this.#cx[c]!;
-      const gy = this.placeY[c]! - this.#cy[c]!;
-      const gap = Math.hypot(gx, gy);
-      const free = this.radius[c]! * PLACEMENT_FREE;
-      if (gap > free) {
-        const f = ((gap - free) * PLACEMENT) / gap;
-        for (const i of clusters[c]!.members) {
-          ax[i] = ax[i]! + gx * f;
-          ay[i] = ay[i]! + gy * f;
+      if (region !== undefined) {
+        // Cohesion towards the cell's middle, and nothing inside most of it. A
+        // remembered note far outside its cell did not stray: its region changed
+        // under it, because a link elsewhere tipped its strongest tie. It stays
+        // where it is remembered rather than crossing the brain to join.
+        const dx = region.cx - x[i]!;
+        const dy = region.cy - y[i]!;
+        const d = Math.hypot(dx, dy);
+        const free = this.#cellR[r]! * COHESION_FREE;
+        if (d > free && !(this.#remembered[i] === 1 && d > this.#cellR[r]! * LET_GO)) {
+          const f = ((d - free) * COHESION) / d;
+          fx += dx * f;
+          fy += dy * f;
+        }
+        // Home: a note that has drifted into a neighbour's cell is pushed back.
+        if (region.side === this.nodeSide[i]) {
+          const near = nearestCell(this.regions, this.#cellW, x[i]!, y[i]!, this.nodeSide[i]!);
+          if (near !== -1 && near !== r) {
+            fx += dx * CELL_HOME;
+            fy += dy * CELL_HOME;
+          }
         }
       }
-    });
 
-    for (const i of this.#seq) {
-      const c = of[i]!;
-      // A remembered note far outside its cluster did not stray: its cluster
-      // changed under it, because a link elsewhere tipped its strongest tie. It
-      // stays where it is remembered rather than crossing the brain to join.
-      const d = Math.hypot(this.#cx[c]! - x[i]!, this.#cy[c]! - y[i]!);
-      const letGo = this.#remembered[i] === 1 && d > this.radius[c]! * LET_GO;
-      this.#pull(i, letGo ? x[i]! : this.#cx[c]!, letGo ? y[i]! : this.#cy[c]!, this.radius[c]!, ax, ay, i);
-    }
-  }
+      // Containment, measured in normalised units against the node's hemisphere.
+      const side = this.nodeSide[i] as Side;
+      const h = centre(side);
+      const px = x[i]! / u - h.x;
+      const py = y[i]! / u - h.y;
+      const dist = Math.hypot(px, py);
+      const edge = rim(side, Math.atan2(py, px * side));
+      if (dist > edge) {
+        const f = ((dist - edge) * u * CONTAINMENT) / (dist || 1);
+        fx -= px * f;
+        fy -= py * f;
+      }
+      // Out of the fissure: the gap between the halves has to stay a gap.
+      const keep = FISSURE * FISSURE_KEEP * u;
+      if (side * x[i]! < keep) fx += side * (keep - side * x[i]!) * FISSURE_PUSH;
 
-  /**
-   * Cohesion towards a cluster's middle and containment in the node's
-   * hemisphere, added to `ax[at]`, `ay[at]` for node `i`.
-   */
-  #pull(i: number, mx: number, my: number, radius: number, ax: Float64Array, ay: Float64Array, at: number): void {
-    const { x, y } = this;
-    const u = this.unitLength;
-    let fx = 0;
-    let fy = 0;
-    const dx = mx - x[i]!;
-    const dy = my - y[i]!;
-    const d = Math.hypot(dx, dy);
-    const free = radius * COHESION_FREE;
-    if (d > free) {
-      const f = ((d - free) * COHESION) / d;
-      fx += dx * f;
-      fy += dy * f;
+      ax[i] = ax[i]! + fx;
+      ay[i] = ay[i]! + fy;
     }
-
-    // Containment, measured in normalised units against the node's hemisphere.
-    const side = this.nodeSide[i] as Side;
-    const h = centre(side);
-    const px = x[i]! / u - h.x;
-    const py = y[i]! / u - h.y;
-    const dist = Math.hypot(px, py);
-    const edge = rim(side, Math.atan2(py, px * side));
-    if (dist > edge) {
-      const f = ((dist - edge) * u * CONTAINMENT) / (dist || 1);
-      fx -= px * f;
-      fy -= py * f;
-    } else if (dist < edge * HOLLOW) {
-      const f = ((edge * HOLLOW - dist) * u * HOLLOW_PUSH) / (dist || 1);
-      fx += px * f;
-      fy += py * f;
-    }
-    ax[at] = ax[at]! + fx;
-    ay[at] = ay[at]! + fy;
   }
 
   /** The loose arrangement: a soft pull to the middle, and a soft round edge. */
@@ -897,79 +1426,93 @@ function capped(vx: number, vy: number): [number, number] {
   return speed <= MAX_SPEED ? [vx, vy] : [(vx / speed) * MAX_SPEED, (vy / speed) * MAX_SPEED];
 }
 
+/** Weighted squared distance from a world point to a region's cell centre. */
+function weightedDistance(region: Region, weight: number, x: number, y: number): number {
+  return ((x - region.cx) ** 2 + (y - region.cy) ** 2) / weight;
+}
+
 /**
- * Where each cluster's folder lies: a hemisphere and an arc along its rim.
+ * Which region's cell a world point falls in: the nearest weighted centre on
+ * its own side, or -1 when that half has no region at all.
  *
- * The unit is the second-level folder — `10_Projects/11_Active`,
- * `20_Areas/21_Homelab` — with notes directly in a top-level folder counting as
- * one more, unnamed subfolder; each vault's folders come as a block. A cluster
- * belongs to the folder most of its members are in.
- *
- * Hemispheres first: the folders by how many clustered notes they hold, the
- * largest first into the lighter hemisphere. That keeps the halves even — a
- * PARA vault's folders differ in size by a factor of forty — and it moves a
- * folder to the other side only when a capture tips two loads that were equal.
- *
- * Arcs second: within its hemisphere each folder, in order, gets one share of
- * the rim plus one for every doubling of its notes — 1 note one share, 2–3 two,
- * 4–7 three, … 32–63 six. Not in proportion to the notes, on purpose: then every
- * capture would shift every folder's arc. As it is, a capture shifts other arcs
- * only when it is the note that doubles a folder or opens a new one.
+ * Weighted by the square root of the note count, which is what makes a region
+ * of twenty notes claim a wider cell than one of six without claiming the
+ * hemisphere.
  */
-function folderArcs(
-  nodes: BrainGraph['nodes'],
-  clusters: BrainGraph['clusters']['clusters'],
-): { arcOf: Int32Array; side: Int8Array; start: Float64Array; size: Float64Array } {
-  const folderOf = nodes.map((node) => {
-    const parts = node.folder === '' ? [] : node.folder.split('/');
-    return `${node.owner}\u0000${parts[0] ?? ''}\u0000${parts[1] ?? ''}`;
-  });
-  const folders = [...new Set(folderOf)].sort();
-  const index = new Map(folders.map((f, i) => [f, i]));
-  const of = Int32Array.from(folderOf, (f) => index.get(f)!);
-
-  const arcOf = Int32Array.from(clusters, (cluster) => {
-    const counts = new Map<number, number>();
-    for (const i of cluster.members) counts.set(of[i]!, (counts.get(of[i]!) ?? 0) + 1);
-    let arc = -1;
-    for (const [a, n] of counts) {
-      if (arc === -1 || n > counts.get(arc)! || (n === counts.get(arc)! && a < arc)) arc = a;
+function nearestCell(regions: readonly Region[], weight: Float64Array, x: number, y: number, side: number): number {
+  let best = -1;
+  let bd = Infinity;
+  for (const region of regions) {
+    if (region.side !== side) continue;
+    const d = weightedDistance(region, weight[region.id]!, x, y);
+    if (d < bd) {
+      bd = d;
+      best = region.id;
     }
-    return arc;
-  });
-  const notes = new Float64Array(folders.length);
-  for (const f of of) notes[f] = notes[f]! + 1;
-  // One share, plus one for every doubling of the notes in it: 1 note one
-  // share, 2–3 two, 4–7 three, … 32–63 six. Every folder, whether or not a
-  // cluster calls it home, so that a cluster moving in or out does not open or
-  // close an arc.
-  const weight = Array.from(notes, (n) => 1 + Math.floor(Math.log2(n)));
-  const side = new Int8Array(folders.length);
-  const halves = { [-1]: 0, [1]: 0 } as Record<Side, number>;
-  [...folders.keys()]
-    .filter((f) => weight[f]! > 0)
-    .sort((a, b) => weight[b]! - weight[a]! || a - b)
-    .forEach((f) => {
-      const to: Side = halves[-1] <= halves[1] ? -1 : 1;
-      side[f] = to;
-      halves[to] += weight[f]!;
-    });
+  }
+  return best;
+}
 
-  const total = { [-1]: 0, [1]: 0 } as Record<Side, number>;
-  folders.forEach((_, f) => {
-    if (weight[f]! > 0) total[side[f] as Side] += weight[f]!;
-  });
-  const start = new Float64Array(folders.length);
-  const size = new Float64Array(folders.length);
-  const at = { [-1]: 0, [1]: 0 } as Record<Side, number>;
-  folders.forEach((_, f) => {
-    if (weight[f] === 0) return;
-    const s = side[f] as Side;
-    start[f] = at[s] / total[s];
-    size[f] = weight[f]! / total[s];
-    at[s] += weight[f]!;
-  });
-  return { arcOf, side, start, size };
+/**
+ * A Poisson-disk sample of a cell: the points of it that are at least `spacing`
+ * apart, taken in an order that depends only on the region's identity.
+ *
+ * The naive version compared each candidate against every point accepted so far
+ * and cost a few million comparisons per layout; this buckets the accepted
+ * points by `spacing`, so a candidate only looks at the nine buckets around it.
+ * The two give the same answer for the same order.
+ */
+function poissonPick(
+  px: Float64Array,
+  py: Float64Array,
+  points: readonly number[],
+  spacing: number,
+  seed: number,
+): number[] {
+  const order = points.slice();
+  let state = seed >>> 0 || 1;
+  for (let i = order.length - 1; i > 0; i -= 1) {
+    state ^= state << 13;
+    state >>>= 0;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    state >>>= 0;
+    const j = state % (i + 1);
+    const swap = order[i]!;
+    order[i] = order[j]!;
+    order[j] = swap;
+  }
+  const inv = 1 / spacing;
+  const buckets = new Map<number, number[]>();
+  // The grid runs over normalised coordinates, well inside ±2, so a bucket
+  // index fits in a few bits either way; the offset keeps it non-negative.
+  const key = (gx: number, gy: number): number => (gx + 4096) * 8192 + (gy + 4096);
+  const out: number[] = [];
+  for (const p of order) {
+    const gx = Math.floor(px[p]! * inv);
+    const gy = Math.floor(py[p]! * inv);
+    let ok = true;
+    for (let a = -1; a <= 1 && ok; a += 1) {
+      for (let b = -1; b <= 1 && ok; b += 1) {
+        const bucket = buckets.get(key(gx + a, gy + b));
+        if (bucket === undefined) continue;
+        for (const q of bucket) {
+          const dx = px[p]! - px[q]!;
+          const dy = py[p]! - py[q]!;
+          if (dx * dx + dy * dy < spacing * spacing) {
+            ok = false;
+            break;
+          }
+        }
+      }
+    }
+    if (!ok) continue;
+    out.push(p);
+    const bucket = buckets.get(key(gx, gy));
+    if (bucket === undefined) buckets.set(key(gx, gy), [p]);
+    else bucket.push(p);
+  }
+  return out;
 }
 
 /**
@@ -979,8 +1522,9 @@ function folderArcs(
  * else: Barnes-Hut replaces exactly this, and a worker can run it on arrays it
  * owns. Pairs of which neither note may move are skipped — nothing would come
  * of them — so a remembered brain that only has to place a captured note costs
- * a single row instead of the full triangle. `cluster` makes notes of different
- * clusters push harder; null for the loose arrangement, which has none.
+ * a single row instead of the full triangle. `region` makes notes of different
+ * regions push harder, which is what opens a furrow between them; null for the
+ * loose arrangement, which has none.
  */
 function repel(
   x: Float64Array,
@@ -989,7 +1533,9 @@ function repel(
   ay: Float64Array,
   moving: Int32Array,
   still: Int32Array,
-  cluster: Int32Array | null,
+  region: Int32Array | null,
+  strength: number,
+  cutoff: number,
 ): void {
   // Written out twice rather than through a helper returning a pair: a tuple
   // per pair per frame is thousands of short-lived arrays for the collector.
@@ -1004,9 +1550,9 @@ function repel(
       const dx = x[j]! - xi;
       const dy = y[j]! - yi;
       const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      if (d > CUTOFF) continue;
-      let f = REPULSION / (d * d);
-      if (cluster !== null && cluster[i] !== cluster[j]) f *= APART;
+      if (d > cutoff) continue;
+      let f = strength / (d * d);
+      if (region !== null && region[i] !== region[j]) f *= APART;
       const fx = (dx / d) * f;
       const fy = (dy / d) * f;
       fxi -= fx;
@@ -1019,9 +1565,9 @@ function repel(
       const dx = x[j]! - xi;
       const dy = y[j]! - yi;
       const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      if (d > CUTOFF) continue;
-      let f = REPULSION / (d * d);
-      if (cluster !== null && cluster[i] !== cluster[j]) f *= APART;
+      if (d > cutoff) continue;
+      let f = strength / (d * d);
+      if (region !== null && region[i] !== region[j]) f *= APART;
       fxi -= (dx / d) * f;
       fyi -= (dy / d) * f;
     }

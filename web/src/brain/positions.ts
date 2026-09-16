@@ -32,8 +32,19 @@
 
 import type { Place } from './layout';
 
-/** Bumped whenever a stored number stops meaning what it meant. */
-const VERSION = 2;
+/**
+ * Bumped whenever a stored number stops meaning what it meant.
+ *
+ *  - v1 → v2: world coordinates instead of CSS pixels of some window.
+ *  - v2 → v3: phase 4. The outline changed shape (1.11 : 1 where it was
+ *    1.42 : 1, a rounder medial side, a narrower fissure) and the notes are put
+ *    on places inside cells of it rather than pressed into it by a force. A v2
+ *    position is a point in a brain that no longer exists: read into this one it
+ *    would sit outside the silhouette or in the wrong cell, and a remembered
+ *    note is never moved by the simulation, so it would stay there. The review
+ *    of 2026-09-15 named discarding them as the condition for the change.
+ */
+const VERSION = 3;
 
 /** The first format: `ndbrain.brain.<store>`, CSS pixels, no account. */
 const LEGACY = 'ndbrain.brain.';
@@ -70,17 +81,20 @@ export function positionsKey({ account, store }: PositionStore): string {
 }
 
 /**
- * Removes entries in a format this build no longer reads.
+ * Removes entries in a format this build no longer reads: the unversioned first
+ * shape, and anything stamped with a version below this one.
  *
- * Only the legacy shape — `ndbrain.brain.` followed by a store name with no
- * version — so that a newer build's entries are left for that build.
+ * A *newer* version's entries are left alone. Somebody who opens an older build
+ * after a newer one should lose the arrangement the old build cannot read, not
+ * the one the new build can.
  */
-function discardLegacy(): void {
+function discardOlder(): void {
   const doomed: string[] = [];
   for (let i = 0; i < window.localStorage.length; i += 1) {
     const key = window.localStorage.key(i);
     if (key === null || !key.startsWith(LEGACY)) continue;
-    if (/^v\d+\//.test(key.slice(LEGACY.length))) continue;
+    const stamped = /^v(\d+)\//.exec(key.slice(LEGACY.length));
+    if (stamped !== null && Number(stamped[1]) >= VERSION) continue;
     doomed.push(key);
   }
   for (const key of doomed) window.localStorage.removeItem(key);
@@ -90,7 +104,7 @@ function discardLegacy(): void {
 export function loadPositions(where: PositionStore): Map<string, Place> {
   const out = new Map<string, Place>();
   try {
-    discardLegacy();
+    discardOlder();
     const raw = window.localStorage.getItem(positionsKey(where));
     if (raw === null) return out;
     const parsed: unknown = JSON.parse(raw);
