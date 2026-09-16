@@ -345,29 +345,29 @@ th button:focus-visible {
 .network-view {
   --nv-cool: color-mix(in srgb, var(--nv-cyan) 12%, var(--nv-surface-2));
   --nv-heat-h: 76;
-  --nv-heat-l0: 0.94;
-  --nv-heat-l1: 0.8;
-  --nv-heat-c0: 0.035;
-  --nv-heat-c1: 0.15;
+  --nv-heat-l0: 0.95;
+  --nv-heat-l1: 0.85;
+  --nv-heat-c0: 0.03;
+  --nv-heat-c1: 0.125;
   --nv-heat-edge: oklch(0.62 0.13 var(--nv-heat-h));
   --nv-heat-text: #2a1a05;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) .network-view {
-    --nv-heat-l0: 0.36;
-    --nv-heat-l1: 0.78;
-    --nv-heat-c0: 0.05;
-    --nv-heat-c1: 0.155;
+    --nv-heat-l0: 0.34;
+    --nv-heat-l1: 0.7;
+    --nv-heat-c0: 0.045;
+    --nv-heat-c1: 0.135;
     --nv-heat-edge: oklch(0.86 0.13 var(--nv-heat-h));
   }
 }
 
 :root[data-theme='dark'] .network-view {
-  --nv-heat-l0: 0.36;
-  --nv-heat-l1: 0.78;
-  --nv-heat-c0: 0.05;
-  --nv-heat-c1: 0.155;
+  --nv-heat-l0: 0.34;
+  --nv-heat-l1: 0.7;
+  --nv-heat-c0: 0.045;
+  --nv-heat-c1: 0.135;
   --nv-heat-edge: oklch(0.86 0.13 var(--nv-heat-h));
 }
 
@@ -435,7 +435,14 @@ g:focus-visible > .nv-cell-frame {
 }
 
 .nv-hover-panel {
-  min-height: 3.4rem;
+  /* A fixed height, not a minimum. The panel sits under the treemap in one
+     column; if its content could make it taller, every hover would resize
+     the map frame, and the ResizeObserver would lay the whole map out again
+     under the pointer. */
+  flex: none;
+  height: 3.75rem;
+  box-sizing: border-box;
+  overflow: hidden;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--nv-line);
   border-radius: var(--nv-radius-sm);
@@ -450,10 +457,15 @@ g:focus-visible > .nv-cell-frame {
 .nv-hover-panel .nv-hover-title {
   color: var(--nv-text);
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nv-hover-panel .nv-hover-stats {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  overflow: hidden;
   gap: 0.8rem;
 }
