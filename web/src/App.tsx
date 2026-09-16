@@ -32,6 +32,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 
 import { Brain } from './Brain';
+import { RECENT_DAYS } from './brain/scene';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { copy } from './copy';
@@ -1370,6 +1371,9 @@ function Shell({
                 <div className="brainlegend">
                   <span><i style={{ background: '#7fe9f0' }} />{copy.network.read}</span>
                   <span><i style={{ background: '#ffb86b' }} />{copy.network.written}</span>
+                  {/* The amber points, as opposed to the amber flash: what has
+                      been worked on lately, not what is being written now. */}
+                  <span><i style={{ background: '#f0cd8c' }} />{copy.network.recent(RECENT_DAYS)}</span>
                 </div>
                 <div className="brainfoot">
                   {copy.network.stats(

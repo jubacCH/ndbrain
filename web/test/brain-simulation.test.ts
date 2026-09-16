@@ -190,7 +190,7 @@ describe('the force simulation', () => {
     const hub = first.graph.nodes[first.graph.hub]!;
     const path = `${hub.folder}/zz captured.md`;
     const grown = buildGraph({
-      nodes: [...data.nodes, { owner: 'jb', path, title: 'captured', folder: hub.folder, links: 1 }],
+      nodes: [...data.nodes, { owner: 'jb', path, title: 'captured', folder: hub.folder, links: 1, tags: [], updatedAt: 0 }],
       edges: [...data.edges, { owner: 'jb', from: path, to: hub.path }],
     });
     const layout = new BrainLayout(grown, { arrangement: 'brain', remembered: first.positions() });

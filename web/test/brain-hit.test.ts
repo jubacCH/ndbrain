@@ -29,6 +29,8 @@ function lonely(links: number, count = 40): BrainLayout {
       title: `n${i}`,
       folder: '',
       links,
+      tags: [],
+      updatedAt: 0,
     })),
     edges: [],
   };
@@ -72,6 +74,8 @@ describe('hitting a node', () => {
         title: `n${i}`,
         folder: `f${i % 4}`,
         links: i % 13,
+        tags: [],
+        updatedAt: 0,
       })),
       edges: [],
     };

@@ -141,7 +141,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
   /** The glowing body of one note: a sprite halo, a coloured disc, a white core. */
   const body = (g: CanvasRenderingContext2D, n: SceneNode): void => {
     const halo = n.r * (1.7 + n.glow * 0.9);
-    const sprite = sprites.halo(n.warm ? 'warm' : 'cyan', halo);
+    const sprite = sprites.halo(n.warm >= 0.4 ? 'warm' : 'cyan', halo);
     g.globalAlpha = Math.min(1, (0.14 + 0.17 * n.glow) * n.alpha + n.heat * 0.4);
     if (sprite !== null) g.drawImage(sprite, n.x - halo, n.y - halo, halo * 2, halo * 2);
     else {
@@ -254,10 +254,13 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
 
     for (let i = 0; i < deco.dendriteCount; i += 1) {
       const d = deco.dendrites[i * 6 + 4]!;
-      const warm = deco.dendrites[i * 6 + 5]! === 1;
+      const warm = deco.dendrites[i * 6 + 5]!;
       g.lineWidth = (DENDRITE_WIDTH + (DENDRITE_TIP_WIDTH - DENDRITE_WIDTH) * d) * grain;
       const a = (DENDRITE_ALPHA + (DENDRITE_TIP_ALPHA - DENDRITE_ALPHA) * d) * dim;
-      g.strokeStyle = warm ? `rgba(220,185,120,${a})` : `rgba(100,215,230,${a})`;
+      // The branches of a note being worked on warm with it, by the same amount.
+      g.strokeStyle = warm > 0
+        ? `rgba(${Math.round(100 + 120 * warm)},${Math.round(215 - 30 * warm)},${Math.round(230 - 110 * warm)},${a})`
+        : `rgba(100,215,230,${a})`;
       g.beginPath();
       g.moveTo(deco.dendrites[i * 6]!, deco.dendrites[i * 6 + 1]!);
       g.lineTo(deco.dendrites[i * 6 + 2]!, deco.dendrites[i * 6 + 3]!);

@@ -30,7 +30,7 @@ import {
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph } from '../src/brain/model';
 import { regionLabels, regionView } from '../src/brain/regions';
-import { SceneBuilder, planeOf } from '../src/brain/scene';
+import { ACCENT, SceneBuilder, planeOf } from '../src/brain/scene';
 import { paraVault } from './fixtures/para-vault';
 
 const ROOM = 4000;
@@ -332,5 +332,55 @@ describe('the semantic zoom', () => {
       if (named.has(title.length > 26 ? `${title.slice(0, 25)}…` : title)) neighbours += 1;
     }
     expect(neighbours).toBeGreaterThan(4);
+  });
+});
+
+describe('the warm accent', () => {
+  it('warms a note with how recently it was written, and lets it cool back to cyan', () => {
+    const builder = new SceneBuilder(graph);
+    const heat = new Float64Array(graph.nodes.length);
+    // Written today, written a week ago, untouched for a month.
+    heat[0] = 1;
+    heat[1] = 0.5;
+    heat[2] = 0;
+    builder.recent(heat);
+    const scene = builder.build(layout, new Activity(graph), IDENTITY, -1, ROOM, ROOM);
+
+    const hot = scene.nodes[0]!;
+    const half = scene.nodes[1]!;
+    const cold = scene.nodes[2]!;
+    expect(hot.warm).toBe(1);
+    expect(hot.colour).toEqual(ACCENT);
+    expect(cold.warm).toBe(0);
+    // Red up, blue down, monotonically with the age — no step anywhere.
+    expect(half.colour[0]).toBeGreaterThan(cold.colour[0]!);
+    expect(half.colour[0]).toBeLessThan(hot.colour[0]!);
+    expect(half.colour[2]).toBeLessThan(cold.colour[2]!);
+    expect(half.colour[2]).toBeGreaterThan(hot.colour[2]!);
+  });
+
+  it('carries the same warmth into the links a note grows and the branches around it', () => {
+    const builder = new SceneBuilder(graph);
+    const heat = new Float64Array(graph.nodes.length);
+    heat.fill(1);
+    builder.recent(heat);
+    const warm = builder.build(layout, new Activity(graph), IDENTITY, -1, ROOM, ROOM);
+    const drawn = warm.edges.find((e) => e.alpha > 0.05)!;
+    expect(drawn.colour).toEqual(ACCENT);
+
+    const branches = buildDecoration({ view, x: layout.x, y: layout.y, warm: heat });
+    let hottest = 0;
+    for (let i = 0; i < branches.dendriteCount; i += 1) {
+      hottest = Math.max(hottest, branches.dendrites[i * 6 + 5]!);
+    }
+    expect(hottest).toBe(1);
+  });
+
+  it('draws a vault nobody has touched lately entirely in cyan', () => {
+    const builder = new SceneBuilder(graph);
+    builder.recent(new Float64Array(graph.nodes.length));
+    const scene = builder.build(layout, new Activity(graph), IDENTITY, -1, ROOM, ROOM);
+    for (const node of scene.nodes) expect(node.warm).toBe(0);
+    for (const edge of scene.edges) expect(edge.colour).not.toEqual(ACCENT);
   });
 });

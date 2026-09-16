@@ -39,6 +39,8 @@ function star(folder: string, hub: string, leaves: string[]): GraphData {
     title: name,
     folder,
     links: 0,
+    tags: [],
+    updatedAt: 0,
   }));
   return {
     nodes,
@@ -52,7 +54,7 @@ function star(folder: string, hub: string, leaves: string[]): GraphData {
 /** The vault plus one new note in an inbox, linked to `target`. */
 function captured(data: GraphData, target: string): GraphData {
   return {
-    nodes: [...data.nodes, { owner: 'jb', path: '00_Inbox/captured.md', title: 'captured', folder: '00_Inbox', links: 1 }],
+    nodes: [...data.nodes, { owner: 'jb', path: '00_Inbox/captured.md', title: 'captured', folder: '00_Inbox', links: 1, tags: [], updatedAt: 0 }],
     edges: [...data.edges, { owner: 'jb', from: '00_Inbox/captured.md', to: target }],
   };
 }
@@ -109,7 +111,7 @@ describe('clusters', () => {
     // loudest voice in both stars, and the stars merge into one.
     const data = merge(star('a', 'hub-a', ['a1', 'a2', 'a3']), star('b', 'hub-b', ['b1', 'b2', 'b3']));
     for (const map of ['index', 'index copy', 'home']) {
-      data.nodes.push({ owner: 'jb', path: `moc/${map}.md`, title: map, folder: 'moc', links: 0 });
+      data.nodes.push({ owner: 'jb', path: `moc/${map}.md`, title: map, folder: 'moc', links: 0, tags: [], updatedAt: 0 });
       for (const target of ['a/hub-a', 'a/a1', 'a/a2', 'a/a3', 'b/hub-b', 'b/b1', 'b/b2', 'b/b3']) {
         data.edges.push({ owner: 'jb', from: `moc/${map}.md`, to: `${target}.md` });
       }
@@ -125,7 +127,7 @@ describe('clusters', () => {
     // its strongest tie. But the index links thirty notes; `y` links only `x`.
     const data: GraphData = { nodes: [], edges: [] };
     const add = (path: string): void => {
-      data.nodes.push({ owner: 'jb', path, title: path, folder: path.split('/')[0]!, links: 0 });
+      data.nodes.push({ owner: 'jb', path, title: path, folder: path.split('/')[0]!, links: 0, tags: [], updatedAt: 0 });
     };
     const both = (a: string, b: string): void => {
       data.edges.push({ owner: 'jb', from: a, to: b }, { owner: 'jb', from: b, to: a });
@@ -146,8 +148,8 @@ describe('clusters', () => {
 
   it('puts a note linked to nothing with its folder, and failing that with the folder above', () => {
     const data = merge(star('p/active', 'hub', ['one', 'two']), star('q', 'other', ['x', 'y']));
-    data.nodes.push({ owner: 'jb', path: 'p/active/lonely.md', title: 'lonely', folder: 'p/active', links: 0 });
-    data.nodes.push({ owner: 'jb', path: 'p/archive/forgotten.md', title: 'forgotten', folder: 'p/archive', links: 0 });
+    data.nodes.push({ owner: 'jb', path: 'p/active/lonely.md', title: 'lonely', folder: 'p/active', links: 0, tags: [], updatedAt: 0 });
+    data.nodes.push({ owner: 'jb', path: 'p/archive/forgotten.md', title: 'forgotten', folder: 'p/archive', links: 0, tags: [], updatedAt: 0 });
     const g = buildGraph(data);
     expect(clusterOf(g, 'p/active/lonely.md')).toBe(clusterOf(g, 'p/active/hub.md'));
     expect(clusterOf(g, 'p/archive/forgotten.md')).toBe(clusterOf(g, 'p/active/hub.md'));
@@ -155,7 +157,7 @@ describe('clusters', () => {
 
   it('lets a shared tag decide between two otherwise equal links', () => {
     const data = merge(star('a', 'hub-a', ['a1', 'a2']), star('b', 'hub-b', ['b1', 'b2']));
-    data.nodes.push({ owner: 'jb', path: 'c/bridge.md', title: 'bridge', folder: 'c', links: 0 });
+    data.nodes.push({ owner: 'jb', path: 'c/bridge.md', title: 'bridge', folder: 'c', links: 0, tags: [], updatedAt: 0 });
     data.edges.push({ owner: 'jb', from: 'c/bridge.md', to: 'a/a1.md' });
     data.edges.push({ owner: 'jb', from: 'c/bridge.md', to: 'b/b1.md' });
     const key = (path: string): string => nodeKey('jb', path);
@@ -216,7 +218,7 @@ describe('clusters', () => {
 
   it('falls back to the tags most members share when no folder holds a majority', () => {
     const data: GraphData = {
-      nodes: ['a/one', 'b/two', 'c/three'].map((p) => ({ owner: 'jb', path: `${p}.md`, title: p, folder: p.split('/')[0]!, links: 2 })),
+      nodes: ['a/one', 'b/two', 'c/three'].map((p) => ({ owner: 'jb', path: `${p}.md`, title: p, folder: p.split('/')[0]!, links: 2, tags: [], updatedAt: 0 })),
       edges: [
         { owner: 'jb', from: 'a/one.md', to: 'b/two.md' },
         { owner: 'jb', from: 'b/two.md', to: 'c/three.md' },
@@ -229,7 +231,7 @@ describe('clusters', () => {
 
   it('copes with an empty vault and a single note', () => {
     expect(buildGraph({ nodes: [], edges: [] }).clusters.clusters).toEqual([]);
-    const one = buildGraph({ nodes: [{ owner: 'jb', path: 'x.md', title: 'x', folder: '', links: 0 }], edges: [] });
+    const one = buildGraph({ nodes: [{ owner: 'jb', path: 'x.md', title: 'x', folder: '', links: 0, tags: [], updatedAt: 0 }], edges: [] });
     expect(one.clusters.clusters).toHaveLength(1);
     expect(one.clusters.clusters[0]!.name).toBe('x');
   });

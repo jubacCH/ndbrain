@@ -86,8 +86,12 @@ export interface SceneNode {
   glow: number;
   /** Which of the three planes this note is painted into. */
   depth: Depth;
-  /** True for the warm accent: worked on recently. */
-  warm: boolean;
+  /**
+   * How warm this note is drawn, 0 to 1: 1 the day it was written, 0 a
+   * fortnight later. Already folded into `colour`; the renderer reads it to
+   * pick the halo sprite.
+   */
+  warm: number;
 }
 
 export interface SceneEdge {
@@ -222,6 +226,16 @@ export const RECENT_DAYS = 14;
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+/** A colour part way between two, for the warm accent fading with a note's age. */
+function mix(from: Rgb, to: Rgb, t: number): Rgb {
+  const k = clamp01(t);
+  return [
+    Math.round(from[0] + (to[0] - from[0]) * k),
+    Math.round(from[1] + (to[1] - from[1]) * k),
+    Math.round(from[2] + (to[2] - from[2]) * k),
+  ];
+}
+
 /**
  * Which plane a note sits in.
  *
@@ -251,8 +265,8 @@ export class SceneBuilder {
   #curvesStale = true;
   /** Which plane each note is in. Fixed per graph. */
   #plane: Uint8Array;
-  /** Whether a note carries the warm accent. Set by the caller from the data. */
-  #recent: Uint8Array;
+  /** How warm each note is drawn, 0 to 1. Set by the caller from the data. */
+  #recent: Float64Array;
   #deco: Decoration = NO_DECORATION;
   #decoFor: BrainLayout | null = null;
   #decoMoving = true;
@@ -267,7 +281,7 @@ export class SceneBuilder {
     for (let i = 0; i < graph.nodes.length; i += 1) {
       this.#plane[i] = planeOf(graph.nodes[i]!.degree, graph.nodes[i]!.key);
     }
-    this.#recent = new Uint8Array(graph.nodes.length);
+    this.#recent = new Float64Array(graph.nodes.length);
     this.#curves = graph.edges.map(() => new Float64Array((CURVE_STEPS + 1) * 2));
     this.#curveLength = new Int32Array(graph.edges.length);
     this.#scene = {
@@ -280,7 +294,7 @@ export class SceneBuilder {
         heat: 0,
         glow: 0,
         depth: this.#plane[i] as Depth,
-        warm: false,
+        warm: 0,
       })),
       order: graph.order,
       edges: graph.edges.map((_, i) => ({
@@ -317,16 +331,17 @@ export class SceneBuilder {
   }
 
   /**
-   * Which notes were worked on recently, by node index.
+   * How warm each note is drawn, by node index: 1 the day it was written, 0 a
+   * fortnight later.
    *
-   * The warm accent in the target picture is "what is being worked on". The
-   * graph endpoint does not carry a timestamp yet, so the caller passes whatever
-   * it has; with nothing to pass, the picture is simply all cyan, which is the
-   * honest answer rather than a guess dressed up as one.
+   * The warm accent in the target picture is "what is being worked on", and the
+   * caller decides that from the graph reply's timestamps. A continuous value
+   * rather than a flag, so that a note does not change colour overnight on a
+   * boundary nobody watching can see.
    */
-  recent(flags: Uint8Array): void {
-    if (flags.length !== this.#recent.length) return;
-    this.#recent = flags;
+  recent(heat: Float64Array): void {
+    if (heat.length !== this.#recent.length) return;
+    this.#recent = heat;
     this.#curvesStale = true;
     this.#stamp += 1;
   }
@@ -440,9 +455,10 @@ export class SceneBuilder {
       const node = nodes[i]!;
       const depth = node.depth;
       const heat = Math.max(activity.fire[i]!, activity.warm[i]! * 0.42);
-      const warm = this.#recent[i] === 1;
-      const base: Rgb =
-        node.degree === 0 ? [58, 96, 110] : warm ? ACCENT : node.degree >= 8 ? [79, 216, 224] : [64, 158, 178];
+      const warm = this.#recent[i]!;
+      const cool: Rgb =
+        node.degree === 0 ? [58, 96, 110] : node.degree >= 8 ? [79, 216, 224] : [64, 158, 178];
+      const base = warm > 0 ? mix(cool, ACCENT, warm) : cool;
 
       const out = scene.nodes[i]!;
       out.x = layout.x[i]!;
@@ -520,11 +536,8 @@ export class SceneBuilder {
       // The far end of a tract fades out: that is what makes a link grow out of
       // a note rather than lie between two of them.
       out.tail = alpha * 0.32;
-      out.colour = focused
-        ? [230, 255, 255]
-        : this.#recent[thick] === 1
-          ? ACCENT
-          : TISSUE;
+      const heat = this.#recent[thick]!;
+      out.colour = focused ? [230, 255, 255] : heat > 0 ? mix(TISSUE, ACCENT, heat) : TISSUE;
       out.depth = this.#plane[thick] as Depth;
       out.strands = nodes[thick]!.degree >= 8 && alpha > 0.1;
     }
