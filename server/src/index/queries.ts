@@ -954,7 +954,15 @@ export class Queries {
    * "how connected is this note" it makes no difference who pointed at whom.
    */
   graph(view: Viewable): {
-    nodes: Array<{ owner: string; path: string; title: string; folder: string; links: number }>;
+    nodes: Array<{
+      owner: string;
+      path: string;
+      title: string;
+      folder: string;
+      links: number;
+      tags: string[];
+      updatedAt: number;
+    }>;
     edges: Array<{ owner: string; from: string; to: string }>;
   } {
     // The degree counts the same links the edges below draw, and it has to be
@@ -969,7 +977,7 @@ export class Queries {
     const nodeScope = scopeSql('n', 'path', view);
     const nodes = this.#db
       .all(
-        `SELECT n.owner, n.path, n.title,
+        `SELECT n.owner, n.path, n.title, n.mtime_ms,
                 (SELECT COUNT(*) FROM links l
                   WHERE l.owner = n.owner AND l.target_path IS NOT NULL
                     AND ${degSourceScope.sql} AND ${degTargetScope.sql}
@@ -990,8 +998,30 @@ export class Queries {
           title: String(row['title']),
           folder: cut === -1 ? '' : p.slice(0, cut),
           links: Number(row['deg']),
+          tags: [] as string[],
+          updatedAt: Number(row['mtime_ms']),
         };
       });
+
+    // Tags for every node above, in one query rather than one per node — the
+    // endpoint has no limit, so a correlated subquery per note (the shape
+    // `vaultMap` uses, capped at 5000 rows) would not scale the same way here.
+    // Same `scopeSql` fragment as the nodes, on the same `path` column: a tag
+    // must be exactly as visible as the note that carries it, never more.
+    const tagScope = scopeSql('t', 'path', view);
+    const tagsByNode = new Map<string, string[]>();
+    for (const row of this.#db.all(
+      `SELECT t.owner, t.path, t.tag FROM tags t WHERE ${tagScope.sql} ORDER BY t.path, t.tag`,
+      ...tagScope.params,
+    )) {
+      const key = `${row['owner']} ${row['path']}`;
+      const list = tagsByNode.get(key);
+      if (list) list.push(String(row['tag']));
+      else tagsByNode.set(key, [String(row['tag'])]);
+    }
+    for (const node of nodes) {
+      node.tags = tagsByNode.get(`${node.owner} ${node.path}`) ?? [];
+    }
 
     // Both ends, not just the source. An edge whose target lies outside the
     // view would otherwise draw a line to a path the caller may not read — the

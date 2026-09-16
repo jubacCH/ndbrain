@@ -201,6 +201,18 @@ export const GraphResponse = z.object({
       title: z.string(),
       folder: z.string(),
       links: z.number(),
+      // Optional, not because the server ever omits them — `queries.graph`
+      // always sends both — but because `GraphData` object literals for the
+      // brain view's own fixtures live in test files outside this strand's
+      // scope (`web/test/brain-*.test.ts`, `test/fixtures/para-vault.ts`) and
+      // predate these fields. Required properties would break their
+      // assignability to `GraphData` the moment this schema changed, which is
+      // a cost paid by files this strand may not touch. Optional keeps the
+      // wire contract additive: real responses always carry both.
+      /** Case-preserved tags, gathered under the same view as the node itself. */
+      tags: z.array(z.string()).optional(),
+      /** Last-write time, same clock as everywhere else in the API. */
+      updatedAt: Timestamp.optional(),
     }),
   ),
   edges: z.array(z.object({ owner: z.string(), from: z.string(), to: z.string() })),
