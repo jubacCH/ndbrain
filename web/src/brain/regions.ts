@@ -254,6 +254,17 @@ export function regionAnchors(view: RegionView, x: ArrayLike<number>, y: ArrayLi
       }
     }
 
+    // To the nearest usable edge. The ways above go in fixed directions — outward
+    // from the hemisphere's middle, or straight up or down — and a region can sit
+    // far from the rim in all of them while one of its notes is close to the rim
+    // in another. That is how a region against the fissure was left without a
+    // name: both its ways started over a quarter of the brain's width from the
+    // rim, further than any leader may be. So every region also offers the
+    // shortest way out there is, from any of its notes, in any direction that
+    // does not lead into the fissure.
+    const edge = nearestEdge(view, region.members, x, y, side, fissure);
+    if (edge !== null) ways.push(edge);
+
     // Never none: a region whose every way pointed inward still has its outward one.
     if (ways.length === 0) {
       const rim = walkToRim(view, mx, my, regionOut.dx, regionOut.dy);
@@ -273,6 +284,75 @@ export function regionAnchors(view: RegionView, x: ArrayLike<number>, y: ArrayLi
     });
   }
   return out;
+}
+
+/** How much of the layout's radial depth is trusted as a lower bound on the true distance. */
+const DEPTH_TRUST = 0.5;
+/**
+ * Directions tried when looking for the nearest edge: every 5 degrees.
+ *
+ * Fifteen was tried first and missed by a third on the fixture: the rim has
+ * notches, and the nearest edge of a note beside one lay between two directions.
+ * The search runs only when the notes come to rest, so the finer step costs
+ * nothing per frame.
+ */
+const EDGE_DIRECTIONS = 72;
+/**
+ * A direction pointing this much towards the fissure is not a way out: the edge
+ * it finds is the gap between the hemispheres, where a name would sit over the
+ * other half or in the dark between them.
+ */
+const TOWARD_FISSURE = -0.2;
+
+/**
+ * The shortest way from any note of a region to the silhouette's edge, in any
+ * direction that does not lead into the fissure. Null for an empty region or
+ * one whose every direction does.
+ *
+ * Exported for the test, which checks it against a finer search of its own.
+ */
+export function nearestEdge(
+  view: RegionView,
+  members: readonly number[],
+  x: ArrayLike<number>,
+  y: ArrayLike<number>,
+  side: -1 | 1,
+  fissure: number,
+): LabelWay | null {
+  let best: LabelWay | null = null;
+  let bestGap = Infinity;
+  // Nearest the edge first, and stop at notes too deep to beat the best way found.
+  // `depthInside` is the layout's *radial* depth — measured along the ray from the
+  // hemisphere's middle — which can overstate the true distance to the outline
+  // where the rim runs obliquely to that ray. So a note is only ruled out when
+  // even half its radial depth is further than the best way: that allows for
+  // the rim meeting the ray at up to sixty degrees, far beyond what this outline
+  // does. The test checks the result against a finer search without any cut.
+  const order = members
+    .filter((i) => view.inside(x[i]!, y[i]!))
+    .map((i) => ({ i, depth: view.depthInside(x[i]!, y[i]!) }))
+    .sort((a, b) => a.depth - b.depth || a.i - b.i);
+  for (const { i, depth } of order) {
+    if (depth * DEPTH_TRUST >= bestGap) break;
+    const px = x[i]!;
+    const py = y[i]!;
+    for (let k = 0; k < EDGE_DIRECTIONS; k += 1) {
+      const phi = (k / EDGE_DIRECTIONS) * Math.PI * 2;
+      const dx = Math.cos(phi);
+      const dy = Math.sin(phi);
+      if (dx * side < TOWARD_FISSURE) continue;
+      const rim = walkToRim(view, px, py, dx, dy, bestGap);
+      if (rim === null) continue;
+      // The edge found must be on the region's own side, not across the gap.
+      if ((rim.x - fissure) * side <= 0) continue;
+      const gap = Math.hypot(rim.x - px, rim.y - py);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = { anchorX: px, anchorY: py, rimX: rim.x, rimY: rim.y, dirX: dx, dirY: dy };
+      }
+    }
+  }
+  return best;
 }
 
 function nearest(members: readonly number[], x: ArrayLike<number>, y: ArrayLike<number>, px: number, py: number): number {
@@ -356,8 +436,28 @@ export function largestCluster(
  * Marched first and bisected after, not bisected over the whole range: a ray
  * can leave one hemisphere, cross the fissure and enter the other, and a plain
  * bisection over that range would happily settle on the far side.
+ *
+ * With a `limit`, the search gives up once it is further than that without
+ * reaching the rim, and returns null — the nearest-edge search only needs to
+ * know whether a direction beats the best one found so far.
  */
-function walkToRim(view: RegionView, x: number, y: number, dx: number, dy: number): { x: number; y: number } {
+function walkToRim(view: RegionView, x: number, y: number, dx: number, dy: number): { x: number; y: number };
+function walkToRim(
+  view: RegionView,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  limit: number,
+): { x: number; y: number } | null;
+function walkToRim(
+  view: RegionView,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  limit = Infinity,
+): { x: number; y: number } | null {
   const step = view.unit * RIM_MARCH;
   const inside = (t: number): boolean => view.inside(x + dx * t, y + dy * t);
   // A note can sit just outside the rim; then the rim is behind it.
@@ -366,6 +466,7 @@ function walkToRim(view: RegionView, x: number, y: number, dx: number, dy: numbe
   let found = false;
   for (let k = 1; k <= RIM_MARCHES; k += 1) {
     const t = dir * k * step;
+    if (Math.abs(t) - step > limit) return null;
     if (inside(t) !== (dir === 1)) {
       found = true;
       break;

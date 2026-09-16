@@ -194,6 +194,50 @@ describe('where a region is named', () => {
     expect(offered).toBeGreaterThan(0);
   });
 
+  it('offers every region the nearest way out there is, from any of its notes', () => {
+    // The fix for a name that was left out on the real vault: a region against
+    // the fissure had only fixed directions — outward, or straight up or down —
+    // and both started over a quarter of the brain's width from the rim, further
+    // than any leader may be, while one of its notes was close to the rim in
+    // another direction. Checked here against a search of its own: every note,
+    // the same 5° steps with a march four times finer, and no pruning.
+    const fissure = anchors[0]!.fissureX;
+    const rimDistance = (px: number, py: number, dx: number, dy: number): number => {
+      let t = 0;
+      const step = view.unit * 0.005;
+      while (view.inside(px + dx * (t + step), py + dy * (t + step)) && t < view.unit * 3) t += step;
+      return t;
+    };
+    for (const a of anchors) {
+      const region = view.regions.find((r) => r.id === a.region)!;
+      let truth = Infinity;
+      for (const i of region.members) {
+        if (!view.inside(layout.x[i]!, layout.y[i]!)) continue;
+        for (let k = 0; k < 72; k += 1) {
+          const dx = Math.cos((k / 72) * Math.PI * 2);
+          const dy = Math.sin((k / 72) * Math.PI * 2);
+          if (dx * a.side < -0.2) continue;
+          const t = rimDistance(layout.x[i]!, layout.y[i]!, dx, dy);
+          if ((layout.x[i]! + dx * t - fissure) * a.side <= 0) continue;
+          truth = Math.min(truth, t);
+        }
+      }
+      if (!Number.isFinite(truth)) continue;
+      const shortest = Math.min(...a.ways.map((w) => Math.hypot(w.rimX - w.anchorX, w.rimY - w.anchorY)));
+      // Within what the coarser march can add.
+      expect(shortest, `${a.text} offers no way near its nearest edge`).toBeLessThanOrEqual(truth * 1.05 + view.unit * 0.01);
+    }
+  });
+
+  it('never offers a way that leads into the fissure', () => {
+    const fissure = anchors[0]!.fissureX;
+    for (const a of anchors) {
+      for (const w of a.ways) {
+        expect((w.rimX - fissure) * a.side, `${a.text} has a way ending across the fissure`).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it('moves a name out of a control laid where it would have gone', () => {
     const size = SIZES.normal;
     const open = place(size, []);
