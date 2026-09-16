@@ -70,6 +70,8 @@
   --panel-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 12px 32px -22px rgba(9, 62, 74, 0.35);
   --hover: rgba(9, 62, 74, 0.055);
   --field: #ffffff;
+  --accent-warm: #95590a;
+  --accent-warm-glow: rgba(149, 89, 10, 0.28);
 
   --ok: #1b7a4b;
   --ok-bg: #dff1e7;
@@ -126,6 +128,8 @@
     --panel-shadow: 0 1px 0 rgba(160, 240, 250, 0.04) inset, 0 18px 40px -24px rgba(0, 0, 0, 0.7);
     --hover: rgba(93, 210, 220, 0.07);
     --field: rgba(3, 12, 17, 0.55);
+    --accent-warm: #f0cd8c;
+    --accent-warm-glow: rgba(240, 205, 140, 0.4);
 
     --ok: #4fd18b;
     --ok-bg: rgba(79, 209, 139, 0.12);
@@ -164,6 +168,8 @@
   --panel-shadow: 0 1px 0 rgba(160, 240, 250, 0.04) inset, 0 18px 40px -24px rgba(0, 0, 0, 0.7);
   --hover: rgba(93, 210, 220, 0.07);
   --field: rgba(3, 12, 17, 0.55);
+  --accent-warm: #f0cd8c;
+  --accent-warm-glow: rgba(240, 205, 140, 0.4);
 
   --ok: #4fd18b;
   --ok-bg: rgba(79, 209, 139, 0.12);
@@ -198,6 +204,14 @@
   --solid-fg: var(--accent-ink);
   --focus-line: var(--accent-line);
   --blur: 18px;
+
+  /* Names the network's list and map views read (see `network/`): the accent,
+     the warm accent for what was edited lately — the same meaning as the warm
+     points in the brain — and the two control radii. */
+  --accent-cyan: var(--accent);
+  --accent-cyan-glow: color-mix(in srgb, var(--accent) 40%, transparent);
+  --radius-md: var(--r-md);
+  --radius-sm: var(--r-sm);
 }
 
 /*
