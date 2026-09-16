@@ -24,6 +24,15 @@
  *     name already written, and no earlier leader crosses it;
  *  6. its leader is short enough that the name still reads as its region's.
  *
+ * **The second pass (2026-09-16).** A name left out by the first pass gets one
+ * more try, after every other name is written, with a longer leader
+ * (`fallbackReach`). Some regions lie deeper in the tissue than the first
+ * pass's leader is long — on the real vault "Proxmox" sits between the
+ * hemispheres, its nearest note 21 % of the brain's width from any rim — and
+ * there the choice is a longer leader or no name at all. Because the second
+ * pass runs last, it can only fill room the first pass left: it never moves or
+ * displaces a name that fitted with the short leader.
+ *
  * If no position keeps them all, the name is left out. A name in the wrong place
  * is worse than no name: the region is still there, and zooming in names its
  * notes.
@@ -71,6 +80,8 @@ export interface LabelCandidate {
   dirY: number;
   /** The longest the leader may be, in pixels. */
   reach: number;
+  /** The longest the leader may be in the second pass, for a name the first left out. */
+  fallbackReach?: number;
 }
 
 export interface PlacedLabel {
@@ -146,8 +157,23 @@ export function placeLabels(candidates: readonly LabelCandidate[], screen: Place
 
   const placed: PlacedLabel[] = [];
   const leaders: Array<Array<{ x: number; y: number }>> = [];
+  const left: Array<readonly LabelCandidate[]> = [];
   for (const ways of regions) {
     const found = shortestFit(ways, screen, placed, leaders);
+    if (found === null) {
+      left.push(ways);
+      continue;
+    }
+    placed.push(found);
+    leaders.push(sampleLeader(found));
+  }
+  // Second pass: only into the room the first left, so no name placed above moves.
+  for (const ways of left) {
+    const longer = ways
+      .filter((c) => c.fallbackReach !== undefined && c.fallbackReach > c.reach)
+      .map((c) => ({ ...c, reach: c.fallbackReach! }));
+    if (longer.length === 0) continue;
+    const found = shortestFit(longer, screen, placed, leaders);
     if (found === null) continue;
     placed.push(found);
     leaders.push(sampleLeader(found));
@@ -417,6 +443,7 @@ export function placeRegionNames(
       dirX: w.dirX,
       dirY: w.dirY,
       reach: a.reach * camera.scale,
+      fallbackReach: a.fallbackReach * camera.scale,
     }));
   });
   return placeLabels(candidates, {

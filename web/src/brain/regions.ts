@@ -111,6 +111,11 @@ export interface RegionAnchor {
    */
   reach: number;
   /**
+   * The longest a leader may be when the name fits nowhere within `reach`, world
+   * units. Used only after every other name is placed (see `labels.ts`).
+   */
+  fallbackReach: number;
+  /**
    * The ways the name may go, at least one. Placement takes whichever gives the
    * shortest leader that keeps every rule — not the first that fits.
    */
@@ -131,6 +136,16 @@ const MEDIAL_NEAR = 0.45;
  * that cannot be placed that near is left out.
  */
 const LEADER_REACH = 0.18;
+/**
+ * The longest leader of the second pass, for a name left out by the first.
+ *
+ * 22 %, the ceiling set on 2026-09-16. On the real vault "Proxmox" lies between
+ * the hemispheres with its nearest note 21 % of the brain's width from the
+ * nearest rim on its side, so no leader of 18 % reaches out of the tissue from
+ * it. The layout is not this module's to move; the alternative is a region with
+ * no name. Anything deeper than 22 % stays unnamed.
+ */
+const LEADER_FALLBACK = 0.22;
 /** A medial name leans this much towards its own side as it goes up or down. */
 const MEDIAL_LEAN = 0.12;
 /** Walking out to the rim: march in these steps (share of a unit), then bisect. */
@@ -280,6 +295,7 @@ export function regionAnchors(view: RegionView, x: ArrayLike<number>, y: ArrayLi
       medial,
       fissureX: fissure,
       reach: LEADER_REACH * width,
+      fallbackReach: LEADER_FALLBACK * width,
       ways,
     });
   }
