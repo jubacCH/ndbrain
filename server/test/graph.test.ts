@@ -100,6 +100,12 @@ describe('the link graph', () => {
       '---\ntags: [server]\n---\n# Proxmox\n\nMehr in [[Storage]].\n',
     );
 
+    // Ramona's own notes, in both worlds, at paths Julian uses too: one where his
+    // note is shared with her, one where his is private. A tag joined to its
+    // note by the path alone would land on the wrong owner's note.
+    await runtime.app.createNote('ramona', 'Homelab/Storage.md', '---\ntags: [nas]\n---\n# Ihr Storage\n');
+    await runtime.app.createNote('ramona', 'Privat/Tagebuch.md', '---\ntags: [meins]\n---\nihr Tagebuch\n');
+
     // World A: nothing private exists outside the share.
     const worldA = runtime.app.queries.graph(runtime.shares.view('ramona'));
 
@@ -107,11 +113,33 @@ describe('the link graph', () => {
     // the share — "not yours" and "not there" must read the same to Ramona.
     await runtime.app.createNote('julian', 'Privat/Tagebuch.md', '---\ntags: [geheim]\n---\nstreng geheim\n');
     await runtime.app.putNote('julian', 'MOC.md', '---\ntags: [oeffentlich]\n---\nSiehe [[Proxmox]] und [[Storage]].\n');
+    const spy = vi.spyOn(runtime.db, 'all');
     const worldB = runtime.app.queries.graph(runtime.shares.view('ramona'));
+
+    // The tag query itself stays inside the view. Checked on the rows it
+    // returns, not only on the graph: the join to the nodes would hide a tag
+    // query that read every vault, and a second barrier is not a first one.
+    const tagCalls = spy.mock.calls
+      .map((call, i) => ({ sql: String(call[0]), rows: spy.mock.results[i]!.value as Array<Record<string, unknown>> }))
+      .filter(({ sql }) => sql.includes('FROM tags'));
+    spy.mockRestore();
+    expect(tagCalls).toHaveLength(1);
+    const rows = tagCalls[0]!.rows.map((r) => `${String(r['owner'])}:${String(r['path'])}:${String(r['tag'])}`).sort();
+    expect(rows).toEqual([
+      'julian:Homelab/Proxmox.md:server',
+      'ramona:Homelab/Storage.md:nas',
+      'ramona:Privat/Tagebuch.md:meins',
+    ]);
 
     expect(worldB).toEqual(worldA);
     // Sanity: the shared note's own tag did come through in both worlds.
     expect(worldA.nodes.find((n) => n.path === 'Homelab/Proxmox.md')?.tags).toEqual(['server']);
+    // Each tag on its own owner's note, where two owners share a path.
+    const tagsOf = (owner: string, p: string): string[] | undefined =>
+      worldB.nodes.find((n) => n.owner === owner && n.path === p)?.tags;
+    expect(tagsOf('ramona', 'Homelab/Storage.md')).toEqual(['nas']);
+    expect(tagsOf('julian', 'Homelab/Storage.md')).toEqual([]);
+    expect(tagsOf('ramona', 'Privat/Tagebuch.md')).toEqual(['meins']);
   });
 
   it('draws an edge only where a link actually resolved', async () => {

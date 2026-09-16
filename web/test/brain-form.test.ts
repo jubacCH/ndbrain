@@ -453,11 +453,14 @@ describe('a capture on a device that remembers nothing', () => {
     expect(steady.length).toBeGreaterThan(clean.length * 0.7);
     expect(Math.max(...drift)).toBeLessThan(1e-12);
     // And their notes: half move less than 5 units (under a cell body), nine in
-    // ten less than 25 (a third of a spring), none more than 400. Measured on
-    // this vault: see the numbers in the report of this phase.
+    // ten less than 25 (a third of a spring). Measured on this vault over 5803
+    // notes in 66 steady captures: median 1.21, 90th percentile 1.51, largest
+    // 11.63. The largest is held to about a quarter above what was measured, so
+    // a change that lets one untouched note travel noticeably further fails here
+    // instead of hiding under a bound thirty times too loose.
     expect(quantile(moved, 0.5)).toBeLessThan(5);
     expect(quantile(moved, 0.9)).toBeLessThan(25);
-    expect(Math.max(...moved)).toBeLessThan(400);
+    expect(Math.max(...moved)).toBeLessThan(14.5);
   });
 });
 

@@ -7,12 +7,21 @@
  * the same strength as a quiet one.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { NO_DECORATION } from '../src/brain/deco';
+import { placeRegionNames } from '../src/brain/labels';
+import type { RegionAnchor } from '../src/brain/regions';
 import { createCanvasRenderer } from '../src/brain/renderer';
 import type { Scene, SceneEdge } from '../src/brain/scene';
 import { TISSUE } from '../src/brain/scene';
+
+// Counted, not run: what is under test is how often the renderer asks for a
+// placement, and the placement itself has its own tests (`brain-labels`).
+vi.mock('../src/brain/labels', async (original) => ({
+  ...(await original<typeof import('../src/brain/labels')>()),
+  placeRegionNames: vi.fn(() => []),
+}));
 
 interface Fill {
   alpha: number;
@@ -141,5 +150,53 @@ describe('the canvas renderer', () => {
     expect(fills.map((f) => f.alpha)).toEqual([0.16, 0.012, 0.6]);
     // The opacity does not leak into what is drawn after the tracts.
     expect(alpha()).toBe(1);
+  });
+});
+
+describe('the region names', () => {
+  /** A scene with names to place; what the anchors say does not matter to a counted placement. */
+  const named = (): Scene => ({
+    ...sceneWith([]),
+    regions: [{ region: 0, text: 'Homelab' } as unknown as RegionAnchor],
+    regionAlpha: 1,
+    blocked: [{ x: 10, y: 250, w: 120, h: 40 }],
+  });
+
+  it('are placed once per stand, not once per frame', () => {
+    const place = vi.mocked(placeRegionNames);
+    place.mockClear();
+    const { canvas } = recorder();
+    const paint = createCanvasRenderer(canvas);
+    paint.resize(400, 300);
+    const scene = named();
+
+    // Two frames of the same stand — a pulse running over a settled brain.
+    // The font stack is read on resize, not per frame.
+    const style = vi.spyOn(window, 'getComputedStyle');
+    paint.draw(scene);
+    paint.draw(scene);
+    expect(place).toHaveBeenCalledTimes(1);
+    expect(style).not.toHaveBeenCalled();
+    style.mockRestore();
+
+    // Each input of the placement, changed on its own, places again.
+    const changes: Array<[string, (s: Scene) => void]> = [
+      ['camera scale', (s) => (s.camera = { ...s.camera, scale: 1.1 })],
+      ['camera x', (s) => (s.camera = { ...s.camera, x: 5 })],
+      ['camera y', (s) => (s.camera = { ...s.camera, y: -5 })],
+      ['width', (s) => (s.width = 420)],
+      ['height', (s) => (s.height = 310)],
+      ['stamp', (s) => (s.stamp += 1)],
+      ['blocked areas', (s) => (s.blocked = [{ x: 10, y: 240, w: 120, h: 50 }])],
+      ['anchors', (s) => (s.regions = [...s.regions])],
+    ];
+    for (const [what, change] of changes) {
+      const calls = place.mock.calls.length;
+      change(scene);
+      paint.draw(scene);
+      expect(place.mock.calls.length, `after a change of ${what}`).toBe(calls + 1);
+      paint.draw(scene);
+      expect(place.mock.calls.length, `a second frame after a change of ${what}`).toBe(calls + 1);
+    }
   });
 });
