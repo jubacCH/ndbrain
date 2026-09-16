@@ -16,7 +16,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { GraphData } from '../src/api';
-import { HitIndex } from '../src/brain/hit';
+import { GRAB, HitIndex } from '../src/brain/hit';
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph } from '../src/brain/model';
 import { bodyRadius } from '../src/brain/scene';
@@ -40,12 +40,20 @@ function lonely(links: number, count = 40): BrainLayout {
 describe('hitting a node', () => {
   it('takes the whole drawn cell body when zoomed in, including its rim', () => {
     const layout = lonely(12);
-    // The node that sits furthest forward is drawn largest — up to 1.1 times
-    // its layout radius, which is exactly the ring that used to miss.
+    // The node that sits furthest forward is drawn largest, and its outer rim
+    // is exactly the ring that used to miss.
+    //
+    // The original version of this test fixed the rim by saying the drawn body
+    // is larger than the layout radius, which it was while the two were the
+    // same number. They are not any more: the layout radius is how much room a
+    // note needs, and `bodyRadius` paints a smaller disc inside it. What has to
+    // hold is what always mattered — the whole *drawn* body is the target, out
+    // to its rim, and nothing beyond it is.
     const graph = layout.graph;
     const front = graph.order[graph.order.length - 1]!;
+    const back = graph.order[0]!;
     const drawn = bodyRadius(layout.r[front]!, graph.nodes[front]!.depth);
-    expect(drawn).toBeGreaterThan(layout.r[front]!);
+    expect(drawn).toBeGreaterThan(bodyRadius(layout.r[back]!, graph.nodes[back]!.depth));
 
     // Alone in the middle of the world, so no neighbour can claim the point.
     for (let i = 0; i < layout.x.length; i += 1) {
@@ -59,7 +67,8 @@ describe('hitting a node', () => {
     const scale = 8;
     // Five screen pixels inside the visible edge.
     const inside = drawn - 5 / scale;
-    expect(inside).toBeGreaterThan(layout.r[front]!);
+    // Far enough in that the generous starting-zoom slack is not what answers.
+    expect(drawn).toBeGreaterThan(GRAB / scale);
     expect(hits.at(600 + inside, 400, scale)).toBe(front);
     // And just outside it is the dark, where a press pans.
     expect(hits.at(600 + drawn + 5 / scale, 400, scale)).toBe(-1);

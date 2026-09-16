@@ -61,8 +61,8 @@ const MARGIN = 10;
 const PLANE_BLUR = 11;
 const TISSUE_BLUR = 9;
 /** How strongly a bloom is added back over its own layer. */
-const BLOOM_STRENGTH = 0.3;
-const TISSUE_BLOOM = 0.5;
+const BLOOM_STRENGTH = 0.38;
+const TISSUE_BLOOM = 0.42;
 
 const rgba = (c: Rgb, a: number): string => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
@@ -140,9 +140,9 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
 
   /** The glowing body of one note: a sprite halo, a coloured disc, a white core. */
   const body = (g: CanvasRenderingContext2D, n: SceneNode): void => {
-    const halo = n.r * (1.7 + n.glow * 0.9);
+    const halo = n.r * (1.5 + n.glow * 0.8);
     const sprite = sprites.halo(n.warm >= 0.4 ? 'warm' : 'cyan', halo);
-    g.globalAlpha = Math.min(1, (0.14 + 0.17 * n.glow) * n.alpha + n.heat * 0.4);
+    g.globalAlpha = Math.min(1, (0.11 + 0.13 * n.glow) * n.alpha + n.heat * 0.4);
     if (sprite !== null) g.drawImage(sprite, n.x - halo, n.y - halo, halo * 2, halo * 2);
     else {
       const grad = g.createRadialGradient(n.x, n.y, 0, n.x, n.y, halo);
@@ -161,7 +161,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     g.fill();
     const core = sprites.halo('core', n.r * 1.3);
     if (core !== null) g.drawImage(core, n.x - n.r * 1.3, n.y - n.r * 1.3, n.r * 2.6, n.r * 2.6);
-    g.fillStyle = `rgba(255,255,255,${0.72 * Math.min(1, n.alpha)})`;
+    g.fillStyle = `rgba(255,255,255,${0.66 * Math.min(1, n.alpha)})`;
     g.beginPath();
     g.arc(n.x, n.y, n.r * 0.42, 0, Math.PI * 2);
     g.fill();

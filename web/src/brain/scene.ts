@@ -179,7 +179,7 @@ export interface Scene {
  * magnified node where a press panned the camera instead of grabbing the node.
  */
 export function bodyRadius(layoutRadius: number, depth: number): number {
-  return layoutRadius * (0.8 + depth * 0.3);
+  return layoutRadius * BODY * (0.8 + depth * 0.3);
 }
 
 /**
@@ -198,6 +198,19 @@ export function bodyRadius(layoutRadius: number, depth: number): number {
 export function bodyScale(zoom: number): number {
   return zoom <= 1 ? 1 : (0.8 + 0.2 * zoom) / zoom;
 }
+
+/**
+ * How much of its layout radius a cell body is actually drawn at.
+ *
+ * The layout's radius is a spacing decision — how much room a note needs before
+ * the next one — and using it unchanged as the drawn radius made the notes far
+ * larger than the target picture's. Measured against the target, the filled
+ * discs were eleven percent of the brain's area where the optics prototype was
+ * at three; that one number was most of why the whole view read as too bright.
+ * The spacing is right and stays; what is painted inside it does not have to
+ * fill it.
+ */
+const BODY = 0.62;
 
 /** The overview the zoom is measured against: the fit, without the caller's inset. */
 const NO_INSET: Inset = { top: 0, right: 0, bottom: 0, left: 0 };

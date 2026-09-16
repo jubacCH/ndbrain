@@ -120,7 +120,7 @@ export const DENDRITE_TIP_ALPHA = 0.1;
  * is tuned against; the step and the radius decide the texture. Measured
  * against the target picture on 2026-09-16.
  */
-const FOG_GAIN = 0.42;
+const FOG_GAIN = 0.33;
 const FOG_STEP = 0.02;
 const FOG_RADIUS = 0.075;
 
