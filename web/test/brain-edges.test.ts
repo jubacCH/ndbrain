@@ -254,14 +254,40 @@ describe('edge weighting', () => {
     const data = paraVault().data;
     const first = brain(data);
     const from = '10_Projects/11_Active/Game one.md';
-    const targets = ['CT 127 service', 'CT 129 service', 'CT 116 service'].map(
-      (name) => `20_Areas/22_Selfhosted-Services/${name}.md`,
-    );
     const owner = data.nodes[0]!.owner;
-    const graph = buildGraph({
-      nodes: data.nodes,
-      edges: [...data.edges, ...targets.map((to) => ({ owner, from, to }))],
+    // The three targets are searched for rather than named: which notes end up
+    // in which half depends on the layout, and three names pinned this test to
+    // one arrangement. Wanted: three notes of one cluster, in the half `from` is
+    // not in, that `from` really joins once it links them — a tie is divided by
+    // the degrees at both ends, so linking three maps of content joins nothing.
+    const start = first.layout;
+    const here = start.nodeSide[start.graph.index.get(`${owner}\u0000${from}`)!]!;
+    const overThere = new Map<number, number[]>();
+    start.graph.nodes.forEach((_, i) => {
+      if (start.nodeSide[i] === here) return;
+      const c = start.graph.clusters.of[i]!;
+      overThere.set(c, [...(overThere.get(c) ?? []), i]);
     });
+    const candidates = [...overThere.values()]
+      .filter((list) => list.length >= 3)
+      .sort((a, b) => b.length - a.length)
+      .map((list) =>
+        [...list]
+          .sort((a, b) => start.graph.nodes[a]!.degree - start.graph.nodes[b]!.degree)
+          .slice(0, 3)
+          .map((i) => start.graph.nodes[i]!.path),
+      );
+    let targets: string[] = [];
+    let graph = first.graph;
+    for (const pick of candidates) {
+      const grown = buildGraph({ nodes: data.nodes, edges: [...data.edges, ...pick.map((to) => ({ owner, from, to }))] });
+      const moved = grown.index.get(`${owner}\u0000${from}`)!;
+      if (grown.clusters.of[moved] !== grown.clusters.of[grown.index.get(`${owner}\u0000${pick[0]}`)!]) continue;
+      targets = pick;
+      graph = grown;
+      break;
+    }
+    expect(targets.length, 'a cluster in the other half that the note would join').toBe(3);
     const layout = new BrainLayout(graph, { arrangement: 'brain', remembered: first.layout.positions() });
     layout.settle();
 
@@ -269,7 +295,12 @@ describe('edge weighting', () => {
     const service = graph.index.get(`${owner}\u0000${targets[0]}`)!;
     const cluster = graph.clusters.of[note]!;
     expect(cluster).toBe(graph.clusters.of[service]);
-    expect(layout.nodeSide[note]).not.toBe(layout.side[cluster]);
+    // What makes the links cross: the note stayed in the half it was remembered
+    // in, and the notes it now shares a cluster with are in the other one.
+    // (Until phase 4 this was phrased as "its cluster's side is not its own";
+    // clusters no longer carry a side, regions do, and a note's region can be
+    // the one it is in while the cluster it joined lives across the fissure.)
+    expect(layout.nodeSide[service]).not.toBe(layout.nodeSide[note]);
     expect(Math.sign(layout.x[note]!)).toBe(layout.nodeSide[note]);
 
     const plan = planEdges(inputOf(graph, layout));
