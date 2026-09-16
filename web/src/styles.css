@@ -4804,3 +4804,19 @@ button.ref:hover {
     display: none;
   }
 }
+
+/* An explicit theme also sets the native controls — checkboxes, selects,
+   scrollbars — or a light page under a dark system draws them dark. */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+td.pick input,
+th.pick input,
+.cm-editor .cm-task {
+  accent-color: var(--accent);
+}
