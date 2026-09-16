@@ -11,7 +11,9 @@
  * 18 % of the brain's width (it was 28 %), and a name may reach a narrow band
  * into the tissue, never over a note, on a dark plaque (it was never on the
  * tissue at all). Of all the ways a region's name may go, the shortest leader
- * that keeps the rules wins.
+ * that keeps the rules wins. A name that fits nowhere within 18 % gets a second
+ * try, after all others, with a leader of up to 22 %; that try may never move a
+ * name the first pass placed.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -103,6 +105,14 @@ function expectValid(
   from: readonly RegionAnchor[] = anchors,
 ): void {
   const byRegion = new Map(from.map((a) => [a.region, a]));
+  // The same placement without the second pass: what the short leader alone gives.
+  const shortOnly = from.map((a) => ({ ...a, fallbackReach: a.reach }));
+  const first = new Map(place(size, blocked, shortOnly).names.map((n) => [n.region, n]));
+  for (const [region, label] of first) {
+    const same = names.find((n) => n.region === region);
+    expect(same, `the second pass pushed out region ${region}`).toBeDefined();
+    expect(same!.box, `the second pass moved region ${region}`).toEqual(label.box);
+  }
   const fissure = toScreen(camera, from[0]!.fissureX, 0).x;
   const screenWidth = brainWidth * camera.scale;
   const depth = (x: number, y: number): number =>
@@ -137,7 +147,8 @@ function expectValid(
     expect((cx - fissure) * a.side, `${name} is on the other hemisphere`).toBeGreaterThan(0);
 
     // The leader starts at one of the region's ways, points outward along it,
-    // and is at most 18 % of the brain's width long.
+    // and is at most 18 % of the brain's width long — or 22 % for a name the
+    // short leader could not place at all.
     const used = a.ways.find((w) => {
       const p = toScreen(camera, w.anchorX, w.anchorY);
       return Math.abs(label.fromX - p.x) < 1e-6 && Math.abs(label.fromY - p.y) < 1e-6;
@@ -148,9 +159,9 @@ function expectValid(
       (label.toX - anchor.x) * used!.dirX + (label.toY - anchor.y) * used!.dirY,
       `${name} points back into the brain`,
     ).toBeGreaterThan(-1e-6);
-    expect(Math.hypot(label.toX - label.fromX, label.toY - label.fromY), `${name} is far from its region`).toBeLessThanOrEqual(
-      0.18 * screenWidth + 1e-6,
-    );
+    const length = Math.hypot(label.toX - label.fromX, label.toY - label.fromY);
+    const limit = first.has(label.region) ? 0.18 : 0.22;
+    expect(length, `${name} is far from its region`).toBeLessThanOrEqual(limit * screenWidth + 1e-6);
     void cy;
   }
 
@@ -316,6 +327,27 @@ describe('choosing among a region’s ways', () => {
     const [placed] = placeLabels([impossible, possible], open);
     expect(placed!.fromX).toBe(570);
     expect(placed!.fromY).toBe(320);
+  });
+
+  it('gives a name the short leader cannot place a longer one, but only into room the others left', () => {
+    // Anchor 150 px inside the rim: out of reach at 100 px, within it at 200.
+    const shortOnly = { ...base, region: 2, weight: 50, anchorX: 450, anchorY: 300, reach: 100 };
+    const deep = { ...shortOnly, fallbackReach: 200 };
+    expect(placeLabels([shortOnly], open)).toHaveLength(0);
+    const [alone] = placeLabels([deep], open);
+    expect(alone).toBeDefined();
+    expect(Math.hypot(alone!.toX - alone!.fromX, alone!.toY - alone!.fromY)).toBeLessThanOrEqual(200);
+
+    // A lighter region whose own place is exactly where the deep one went alone:
+    // though the deep region is heavier, the light one keeps its place.
+    const at = { anchorX: alone!.toX - 10, anchorY: alone!.toY, rimX: alone!.toX, rimY: alone!.toY };
+    const light = { ...base, ...at, region: 1, weight: 5, reach: 60 };
+    const lightAlone = placeLabels([light], open)[0]!;
+    const both = placeLabels([deep, light], open);
+    const kept = both.find((n) => n.region === 1);
+    expect(kept?.box).toEqual(lightAlone.box);
+    const other = both.find((n) => n.region === 2);
+    if (other !== undefined) expect(overlaps(other.box, kept!.box)).toBe(false);
   });
 
   it('reaches into the tissue only a band deep, never over a note, and puts a plaque behind it', () => {
