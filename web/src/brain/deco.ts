@@ -59,7 +59,7 @@ export interface Decoration {
   /** Grains: x, y, radius, alpha, warm (0 or 1). */
   readonly dust: Float32Array;
   readonly dustCount: number;
-  /** Branches: x1, y1, x2, y2, depth (0 at the note, 1 at the tip), warm. */
+  /** Branches: x1, y1, x2, y2, depth (0 at the note, 1 at the tip), warmth 0 to 1. */
   readonly dendrites: Float32Array;
   readonly dendriteCount: number;
 }
@@ -224,7 +224,7 @@ export interface DecoInput {
   view: RegionView;
   x: ArrayLike<number>;
   y: ArrayLike<number>;
-  /** True for a note drawn in the warm accent. Its branches are warm too. */
+  /** How warm each note is, 0 to 1. Its branches carry the same warmth. */
   warm: ArrayLike<number>;
 }
 
@@ -531,7 +531,7 @@ function grow(
       }
     }
 
-    const hot = warm[i] === 1 ? 1 : 0;
+    const hot = warm[i] ?? 0;
     for (let s = 0; s < segments.length; s += 5) {
       const x2 = segments[s + 2]!;
       const y2 = segments[s + 3]!;

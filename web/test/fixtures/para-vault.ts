@@ -27,6 +27,18 @@ export interface FixtureVault {
 
 const OWNER = 'jb';
 
+/**
+ * The clock this fixture was written against, and one day of it.
+ *
+ * `updatedAt` is required on a graph node now. A fixture may not read the real
+ * clock — a test that passes in the morning and fails after lunch is worse than
+ * no test — so every note is stamped a fixed number of days before a fixed
+ * date. Nothing here asserts on recency; a test that wants a warm note builds
+ * its own timestamps from its own "now".
+ */
+const EPOCH = Date.UTC(2026, 8, 16);
+const DAY = 86_400_000;
+
 export function paraVault(): FixtureVault {
   const nodes: GraphData['nodes'] = [];
   const edges: GraphData['edges'] = [];
@@ -34,7 +46,17 @@ export function paraVault(): FixtureVault {
 
   const note = (folder: string, name: string, noteTags: string[] = []): string => {
     const path = `${folder}/${name}.md`;
-    nodes.push({ owner: OWNER, path, title: name, folder, links: 0 });
+    // Spread over a few months, oldest first, so ordering by `updatedAt` is a
+    // stable permutation rather than the order the notes happen to be created in.
+    nodes.push({
+      owner: OWNER,
+      path,
+      title: name,
+      folder,
+      links: 0,
+      tags: noteTags,
+      updatedAt: EPOCH - ((nodes.length * 7) % 120) * DAY,
+    });
     if (noteTags.length > 0) tags.set(`${OWNER}\u0000${path}`, noteTags);
     return path;
   };

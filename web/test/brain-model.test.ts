@@ -21,10 +21,10 @@ import { PULSE_COLOUR, SceneBuilder } from '../src/brain/scene';
 
 const VAULT: GraphData = {
   nodes: [
-    { owner: 'jb', path: '10_Projects/ndbrain.md', title: 'ndBrain', folder: '10_Projects', links: 9 },
-    { owner: 'jb', path: '10_Projects/myai.md', title: 'MyAI', folder: '10_Projects', links: 3 },
-    { owner: 'jb', path: '20_Areas/homelab.md', title: 'Homelab', folder: '20_Areas', links: 4 },
-    { owner: 'jb', path: '20_Areas/lonely.md', title: 'Lonely', folder: '20_Areas', links: 0 },
+    { owner: 'jb', path: '10_Projects/ndbrain.md', title: 'ndBrain', folder: '10_Projects', links: 9, tags: [], updatedAt: 0 },
+    { owner: 'jb', path: '10_Projects/myai.md', title: 'MyAI', folder: '10_Projects', links: 3, tags: [], updatedAt: 0 },
+    { owner: 'jb', path: '20_Areas/homelab.md', title: 'Homelab', folder: '20_Areas', links: 4, tags: [], updatedAt: 0 },
+    { owner: 'jb', path: '20_Areas/lonely.md', title: 'Lonely', folder: '20_Areas', links: 0, tags: [], updatedAt: 0 },
   ],
   edges: [
     { owner: 'jb', from: '10_Projects/ndbrain.md', to: '20_Areas/homelab.md' },
@@ -77,7 +77,7 @@ describe('the graph model', () => {
     // seed every note after it changed depth, and the whole picture with it.
     const grown: GraphData = {
       nodes: [
-        { owner: 'jb', path: '00_Inbox/new.md', title: 'New', folder: '00_Inbox', links: 0 },
+        { owner: 'jb', path: '00_Inbox/new.md', title: 'New', folder: '00_Inbox', links: 0, tags: [], updatedAt: 0 },
         ...VAULT.nodes,
       ],
       edges: VAULT.edges,
@@ -107,8 +107,8 @@ describe('the graph model', () => {
   it('keeps two vaults apart even when the paths are the same', () => {
     const g = buildGraph({
       nodes: [
-        { owner: 'jb', path: 'note.md', title: 'Mine', folder: '', links: 0 },
-        { owner: 'other', path: 'note.md', title: 'Theirs', folder: '', links: 0 },
+        { owner: 'jb', path: 'note.md', title: 'Mine', folder: '', links: 0, tags: [], updatedAt: 0 },
+        { owner: 'other', path: 'note.md', title: 'Theirs', folder: '', links: 0, tags: [], updatedAt: 0 },
       ],
       edges: [],
     });
@@ -253,6 +253,8 @@ describe('the render model', () => {
         title: `Note ${i}`,
         folder: '',
         links: 1,
+        tags: [],
+        updatedAt: 0,
       })),
       edges: [],
     };
@@ -289,6 +291,8 @@ describe('the render model', () => {
           title: 'A title far longer than anything that fits beside a node',
           folder: '',
           links: 1,
+          tags: [],
+          updatedAt: 0,
         },
       ],
       edges: [],

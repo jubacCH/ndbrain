@@ -47,7 +47,7 @@ import { noteKind } from './brain/kind';
 import type { Arrangement } from './brain/layout';
 import { BrainLayout } from './brain/layout';
 import type { BrainGraph } from './brain/model';
-import { buildGraph } from './brain/model';
+import { buildGraph, nodeKey } from './brain/model';
 import type { PositionStore } from './brain/positions';
 import { loadPositions, savePositions } from './brain/positions';
 import type { RegionView } from './brain/regions';
@@ -155,29 +155,8 @@ interface Card {
   edited: string | null;
 }
 
-/**
- * When a note was last written, from the graph reply — if it says.
- *
- * The endpoint does not carry a timestamp yet. Rather than guess, everything
- * that wants one asks here and gets null, and both the warm accent and the
- * "last edited" line simply appear the day the field arrives. Accepts either
- * epoch milliseconds or anything `Date.parse` understands, so whichever spelling
- * the server settles on works without a change here.
- */
-function editedAt(node: unknown): number | null {
-  const raw = (node as { edited?: unknown; modified?: unknown }).edited ?? (node as { modified?: unknown }).modified;
-  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
-  if (typeof raw === 'string') {
-    const at = Date.parse(raw);
-    return Number.isNaN(at) ? null : at;
-  }
-  return null;
-}
-
-/** "today", "yesterday", "12 days ago" — or null when there is no timestamp. */
-function edited(node: unknown, now: number): string | null {
-  const at = editedAt(node);
-  if (at === null) return null;
+/** "today", "yesterday", "12 days ago". */
+function edited(at: number, now: number): string {
   const days = Math.max(0, Math.floor((now - at) / DAY));
   if (days === 0) return copy.network.card.today;
   if (days === 1) return copy.network.card.yesterday;
@@ -185,27 +164,44 @@ function edited(node: unknown, now: number): string | null {
 }
 
 /**
- * Which notes carry the warm accent: the ones worked on in the last fortnight.
+ * How warm each note is drawn: 1 the day it was written, 0 a fortnight later.
  *
  * The target picture scatters warm points through the cyan, and what they mean
- * is "this is what is being worked on". With no timestamp in the reply, nothing
- * is warm — which is honest, and better than colouring a whole folder warm and
- * calling it recency.
+ * is "this is what is being worked on". A hard fortnight boundary would make a
+ * note change colour overnight for no reason anybody watching could see, so the
+ * accent fades with the age instead — the picture then shows not only *what* is
+ * being worked on but roughly *how recently*, and a vault nobody has touched in
+ * a month is honestly all cyan.
+ *
+ * Computed when the graph arrives, not per frame: "now" moving by a few minutes
+ * cannot change a colour anybody would notice, and a fortnight is the scale.
  */
-function recentNotes(data: GraphData): Uint8Array {
-  const flags = new Uint8Array(data.nodes.length);
+function warmth(data: GraphData): Float64Array {
+  const heat = new Float64Array(data.nodes.length);
   const now = Date.now();
+  const span = RECENT_DAYS * DAY;
   data.nodes.forEach((node, i) => {
-    const at = editedAt(node);
-    if (at !== null && now - at <= RECENT_DAYS * DAY) flags[i] = 1;
+    const age = now - node.updatedAt;
+    heat[i] = age <= 0 ? 1 : age >= span ? 0 : 1 - age / span;
   });
-  return flags;
+  return heat;
 }
 
-/** Tags of a note, when the reply carries them. */
-function topicsOf(node: unknown): string[] {
-  const raw = (node as { tags?: unknown }).tags;
-  return Array.isArray(raw) ? raw.filter((t): t is string => typeof t === 'string') : [];
+/**
+ * Tags by node key, for the clustering.
+ *
+ * `detectClusters` groups by links, folders *and* tags, and `groupRegions`
+ * names a region after the tags its members share when no folder dominates it.
+ * Without this the regions fall back to folders alone — which still works, and
+ * is what the neighbourhood panel gets, since a subgraph's tags say nothing
+ * about the vault's shape.
+ */
+function tagsByKey(data: GraphData): Map<string, readonly string[]> {
+  const tags = new Map<string, readonly string[]>();
+  for (const node of data.nodes) {
+    if (node.tags.length > 0) tags.set(nodeKey(node.owner, node.path), node.tags);
+  }
+  return tags;
 }
 
 interface Engine {
@@ -318,7 +314,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     if (canvas === null) return;
 
     const rect = canvas.getBoundingClientRect();
-    const graph = buildGraph(data);
+    const graph = buildGraph(data, { tags: tagsByKey(data) });
     const store = remember ?? null;
     // The same view refetched, as opposed to a first mount or another note — or
     // the same view of another account after signing in again.
@@ -353,7 +349,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         : (graph.index.get(same.graph.nodes[same.picked]!.key) ?? -1);
 
     const builder = new SceneBuilder(graph);
-    builder.recent(recentNotes(data));
+    builder.recent(warmth(data));
 
     engine.current = {
       graph,
@@ -553,6 +549,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         return;
       }
       const node = e.graph.nodes[over]!;
+      const row = rows.current[over];
       const left = x + canvas.offsetLeft;
       const top = y + canvas.offsetTop;
       // Which way it opens, so it never runs off the canvas and takes its own
@@ -575,8 +572,8 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
           links: node.degree,
           folder: node.folder,
           region: region?.name ?? '',
-          topics: topicsOf(rows.current[over]),
-          edited: edited(rows.current[over], Date.now()),
+          topics: rows.current[over]?.tags ?? [],
+          edited: row === undefined ? null : edited(row.updatedAt, Date.now()),
         };
       });
     };

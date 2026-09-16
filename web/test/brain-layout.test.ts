@@ -28,6 +28,8 @@ function vault(count: number): GraphData {
     title: `Note ${i}`,
     folder: i % 2 === 0 ? '10_Projects' : '20_Areas',
     links: i % 5,
+    tags: [],
+    updatedAt: 0,
   }));
   const edges = [];
   for (let i = 1; i < count; i += 1) {
@@ -43,7 +45,7 @@ const laid = (
 ): BrainLayout => new BrainLayout(buildGraph(data), { arrangement, remembered });
 
 const captured = (data: GraphData, target: string): GraphData => ({
-  nodes: [...data.nodes, { owner: 'jb', path: '00_Inbox/captured.md', title: 'Captured', folder: '00_Inbox', links: 1 }],
+  nodes: [...data.nodes, { owner: 'jb', path: '00_Inbox/captured.md', title: 'Captured', folder: '00_Inbox', links: 1, tags: [], updatedAt: 0 }],
   edges: [...data.edges, { owner: 'jb', from: '00_Inbox/captured.md', to: target }],
 });
 
@@ -116,7 +118,7 @@ describe('a start that does not move', () => {
     // notes created together against the same neighbour.
     const grown = vault(24);
     for (const name of ['first', 'second']) {
-      grown.nodes.push({ owner: 'jb', path: `00_Inbox/${name}.md`, title: name, folder: '00_Inbox', links: 1 });
+      grown.nodes.push({ owner: 'jb', path: `00_Inbox/${name}.md`, title: name, folder: '00_Inbox', links: 1, tags: [], updatedAt: 0 });
       grown.edges.push({ owner: 'jb', from: `00_Inbox/${name}.md`, to: '20_Areas/note-7.md' });
     }
     const layout = laid(grown, laid(vault(24)).positions());
@@ -343,7 +345,7 @@ describe('remembering across sessions', () => {
     for (const target of [hub, data.nodes[7]!]) {
       const path = `${target.folder}/zz captured.md`;
       const grown: GraphData = {
-        nodes: [...data.nodes, { owner: 'jb', path, title: 'captured', folder: target.folder, links: 1 }],
+        nodes: [...data.nodes, { owner: 'jb', path, title: 'captured', folder: target.folder, links: 1, tags: [], updatedAt: 0 }],
         edges: [...data.edges, { owner: 'jb', from: path, to: target.path }],
       };
       const after = new BrainLayout(buildGraph(grown), { arrangement: 'brain', remembered: stored });

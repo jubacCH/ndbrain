@@ -303,6 +303,15 @@ export const copy = {
     canvas: 'Relationships between your notes',
     read: 'read',
     written: 'written',
+    /**
+     * The third thing in the legend, and the only one that is about the vault
+     * rather than about the moment.
+     *
+     * `read` and `written` are what is happening right now; this is what has
+     * been happening lately. The accent fades with the age, so the legend names
+     * the window rather than claiming a hard line.
+     */
+    recent: (days: number) => `edited in the last ${days} days`,
     resetView: 'Reset view',
     stats: (notes: number, links: number, loose: number) =>
       `${notes} notes · ${links} links · ${loose} without a connection`,

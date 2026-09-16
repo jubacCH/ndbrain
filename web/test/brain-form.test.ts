@@ -252,7 +252,7 @@ describe('the shape', () => {
 describe('the loose arrangement', () => {
   it('lays a neighbourhood out as a loose cluster around its middle, not as a brain', () => {
     const star: GraphData = {
-      nodes: ['hub', 'a', 'b', 'c', 'd', 'e'].map((name) => ({ owner: 'jb', path: `${name}.md`, title: name, folder: '', links: 1 })),
+      nodes: ['hub', 'a', 'b', 'c', 'd', 'e'].map((name) => ({ owner: 'jb', path: `${name}.md`, title: name, folder: '', links: 1, tags: [], updatedAt: 0 })),
       edges: ['a', 'b', 'c', 'd', 'e'].map((name) => ({ owner: 'jb', from: 'hub.md', to: `${name}.md` })),
     };
     const layout = new Layout(buildGraph(star), { arrangement: 'loose' });
@@ -274,7 +274,7 @@ function capturedInto(data: GraphData, target: GraphData['nodes'][number]): Grap
   const folder = target.folder;
   const path = `${folder === '' ? '' : `${folder}/`}zz captured.md`;
   return {
-    nodes: [...data.nodes, { owner: target.owner, path, title: 'captured', folder, links: 1 }],
+    nodes: [...data.nodes, { owner: target.owner, path, title: 'captured', folder, links: 1, tags: [], updatedAt: 0 }],
     edges: [...data.edges, { owner: target.owner, from: path, to: target.path }],
   };
 }

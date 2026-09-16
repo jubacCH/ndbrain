@@ -29,7 +29,7 @@ import { loadPositions } from '../src/brain/positions';
 function graph(centre: string, extra = 0): GraphData {
   const around = Array.from({ length: 4 + extra }, (_, i) => `n${i}.md`);
   return {
-    nodes: [centre, ...around].map((path) => ({ owner: 'jb', path, title: path, folder: '', links: 1 })),
+    nodes: [centre, ...around].map((path) => ({ owner: 'jb', path, title: path, folder: '', links: 1, tags: [], updatedAt: 0 })),
     edges: around.map((to) => ({ owner: 'jb', from: centre, to })),
   };
 }

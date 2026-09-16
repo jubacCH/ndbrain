@@ -84,7 +84,7 @@ describe('regions', () => {
   it('copes with an empty vault and with a vault of one note', () => {
     const empty = buildGraph({ nodes: [], edges: [] });
     expect(groupRegions(empty, empty.clusters).regions).toEqual([]);
-    const one = buildGraph({ nodes: [{ owner: 'jb', path: 'x.md', title: 'x', folder: '', links: 0 }], edges: [] });
+    const one = buildGraph({ nodes: [{ owner: 'jb', path: 'x.md', title: 'x', folder: '', links: 0, tags: [], updatedAt: 0 }], edges: [] });
     expect(groupRegions(one, one.clusters).regions).toHaveLength(1);
   });
 
@@ -107,7 +107,7 @@ describe('regions', () => {
       const path = `${target.folder}/zz captured.md`;
       const grown = buildGraph(
         {
-          nodes: [...data.nodes, { owner: 'jb', path, title: 'captured', folder: target.folder, links: 1 }],
+          nodes: [...data.nodes, { owner: 'jb', path, title: 'captured', folder: target.folder, links: 1, tags: [], updatedAt: 0 }],
           edges: [...data.edges, { owner: 'jb', from: path, to: target.path }],
         },
         { tags },
