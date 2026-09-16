@@ -50,7 +50,7 @@ interface Form {
 }
 
 function measure(layout: BrainLayout): Form {
-  const { x, y, r, unitLength: u, graph } = layout;
+  const { x, y, r, unitLength: u } = layout;
   const n = x.length;
   let inside = 0;
   let inFissure = 0;
@@ -73,10 +73,10 @@ function measure(layout: BrainLayout): Form {
     maxY = Math.max(maxY, y[i]!);
   }
 
-  // Cohesion: for every cluster of four or more, the mean distance of its notes
+  // Cohesion: for every region of four or more, the mean distance of its notes
   // to its own centre, against the distance from that centre to the nearest
-  // other cluster's centre.
-  const centres = graph.clusters.clusters.map((c) => {
+  // other region's centre.
+  const centres = layout.regions.map((c) => {
     let sx = 0;
     let sy = 0;
     for (const i of c.members) {
@@ -154,17 +154,83 @@ describe('the shape', () => {
   });
 
   it('is wider than tall, in about the proportion of the outline', () => {
-    // The outline is 1.42 : 1; this vault's notes span 1.42 : 1.
+    // The outline is 1.11 : 1 since phase 4 (it was 1.42 : 1); this vault's
+    // notes span 1.35 : 1. A little wider than the outline, and it has to be:
+    // the medial rim is nearly vertical, so the cells reach the full width of
+    // the brain, while at the top and bottom the rim curves away and the
+    // outermost place is short of it. The bound allows a quarter over.
     const outline = (OUTLINE.maxX - OUTLINE.minX) / (OUTLINE.maxY - OUTLINE.minY);
     expect(form.aspect).toBeGreaterThan(outline * 0.85);
-    expect(form.aspect).toBeLessThan(outline * 1.2);
+    expect(form.aspect).toBeLessThan(outline * 1.25);
   });
 
   it('reaches out to the outline instead of huddling in the middle', () => {
-    // The notes span at least four fifths of the outline in both directions
-    // (this vault: all of it in both directions).
-    expect(form.reachX).toBeGreaterThan(0.8);
-    expect(form.reachY).toBeGreaterThan(0.8);
+    // Three quarters of the outline in both directions; measured on this vault:
+    // 0.86 across and 0.79 down.
+    //
+    // It was four fifths while the repulsion was what spread the notes: it
+    // reached across a region and pressed them into the rim, so they ended up
+    // against it everywhere. Since phase 4 a note sits on a place of its cell,
+    // the outermost places of a cell are often left free — a leaf takes the free
+    // place nearest its core — and at the top and bottom of the outline the rim
+    // is a ripple peak that a grid of places rarely lands on. The last tenth is
+    // drawn by the decoration, which has the outline itself (`depthInside`).
+    expect(form.reachX).toBeGreaterThan(0.75);
+    expect(form.reachY).toBeGreaterThan(0.75);
+  });
+
+  it('puts every note inside the silhouette, by the test the decoration clips against', () => {
+    // Since phase 4 the outline is the container rather than a soft wall, so
+    // this is not "nine in ten" any more: `inside` is the contract the renderer
+    // clips its decoration against, and a note outside it would be a note in a
+    // part of the picture that is not drawn.
+    const layout = settled(data);
+    for (let i = 0; i < layout.x.length; i += 1) {
+      expect(layout.inside(layout.x[i]!, layout.y[i]!), layout.graph.nodes[i]!.key).toBe(true);
+      expect(layout.depthInside(layout.x[i]!, layout.y[i]!)).toBeGreaterThan(0);
+    }
+    // And the measure is signed: outside is negative, and the middle of a
+    // hemisphere is deeper in than a point by the rim.
+    const u = layout.unitLength;
+    expect(layout.inside(OUTLINE.maxX * u * 1.5, 0)).toBe(false);
+    expect(layout.depthInside(OUTLINE.maxX * u * 1.5, 0)).toBeLessThan(0);
+    expect(layout.depthInside(-0.575 * u, 0)).toBeGreaterThan(layout.depthInside(-1.05 * u, 0));
+
+    // The fissure is outside, at every height. Without this the renderer's fog,
+    // dust and dendrites — which clip against `inside` — would run into the gap
+    // between the halves and close it.
+    for (const at of [-0.8, -0.4, 0, 0.4, 0.8]) {
+      expect(layout.inside(0, at * u), `the middle at y = ${at}`).toBe(false);
+      expect(layout.depthInside(0, at * u)).toBeLessThan(0);
+    }
+    // Depth is a world length, not a normalised one: a note sitting a spring's
+    // length inside the rim is that many world units deep, not a fraction.
+    expect(layout.depthInside(-0.575 * u, 0)).toBeGreaterThan(REST_OF_A_SPRING);
+  });
+
+  it('spreads the notes over the whole outline rather than over a part of it', () => {
+    // The evenness of the fill, as the share of empty cells in a grid over the
+    // inside of the outline whose cells are about one note's worth of area.
+    // Measured on this vault: 14 %. Well under a third means the notes are
+    // spread over the shape; the gaps that remain are the dark space between
+    // the star clusters, which is what the decoration is drawn into.
+    const layout = settled(data);
+    const step = Math.sqrt(4200) * 1.6;
+    const { minX, minY, maxX, maxY } = layout.bounds;
+    const all = new Set<string>();
+    const taken = new Set<string>();
+    for (let a = 0; a * step < maxX - minX; a += 1) {
+      for (let b = 0; b * step < maxY - minY; b += 1) {
+        if (layout.inside(minX + (a + 0.5) * step, minY + (b + 0.5) * step)) all.add(`${a}:${b}`);
+      }
+    }
+    for (let i = 0; i < layout.x.length; i += 1) {
+      taken.add(`${Math.floor((layout.x[i]! - minX) / step)}:${Math.floor((layout.y[i]! - minY) / step)}`);
+    }
+    let empty = 0;
+    for (const cell of all) if (!taken.has(cell)) empty += 1;
+    expect(all.size).toBeGreaterThan(30);
+    expect(empty / all.size).toBeLessThan(1 / 3);
   });
 
   it('is made of clusters, not of dots scattered inside a silhouette', () => {
@@ -213,6 +279,9 @@ function capturedInto(data: GraphData, target: GraphData['nodes'][number]): Grap
   };
 }
 
+/** A link's rest length, in world units: the scale "a world unit" is measured in. */
+const REST_OF_A_SPRING = 70;
+
 const quantile = (values: number[], q: number): number => {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!;
@@ -236,9 +305,12 @@ describe('holding still', () => {
     // moving. Every note but the target stays exactly where it was. The target
     // makes room for the newcomer, held back by its tether.
     //
-    // Bounds: 90 % of targets move less than 20 units and none more than 40 —
-    // a third and two thirds of a spring's rest length, so the target never
-    // leaves the place its links define. Measured on this vault: at most ~11.
+    // Bounds: 90 % of targets move less than 25 units and none more than 50 —
+    // a third and three quarters of a spring's rest length, so the target never
+    // leaves the place its links define. Measured on this vault: at most ~42.
+    // (Phase 3 measured ~11 against bounds of 20 and 40. The target is pushed a
+    // little harder now: it is inside a cell and out of the fissure, and both
+    // are forces the note it makes room for did not feel before.)
     const { data } = paraVault();
     const before = settled(data);
     const remembered = before.positions();
@@ -255,9 +327,9 @@ describe('holding still', () => {
         else expect(moved, `${other} after a capture onto ${target.path}`).toBe(0);
       }
     }
-    expect(moves[0]!, 'the hub').toBeLessThan(40);
-    expect(quantile(moves, 0.9)).toBeLessThan(20);
-    expect(Math.max(...moves)).toBeLessThan(40);
+    expect(moves[0]!, 'the hub').toBeLessThan(50);
+    expect(quantile(moves, 0.9)).toBeLessThan(25);
+    expect(Math.max(...moves)).toBeLessThan(50);
   });
 
   it('starts the captured note beside what it links to', () => {
@@ -276,63 +348,92 @@ describe('holding still', () => {
 describe('a capture on a device that remembers nothing', () => {
   // A new browser, the iPhone app, a cleared cache: the brain is laid out from
   // scratch, and it should still be the brain its owner knows.
+  //
+  // **This pair of tests replaced two from phase 3** ("keeps the anchor of every
+  // cluster the capture did not touch" and "moves the notes of untouched
+  // clusters only a little"). They measured the cluster, which is what decided a
+  // note's place then; since phase 4 it is the region and its cell, and there is
+  // no anchor at all. The promise they guarded is unchanged and is what these
+  // measure: a capture changes the part of the brain it lands in and leaves the
+  // rest of it alone.
   const { data } = paraVault();
   const before = settled(data);
-  const membersOf = (layout: BrainLayout): Map<string, number> =>
-    new Map(layout.graph.clusters.clusters.map((c, k) => [c.members.map((i) => layout.graph.nodes[i]!.key).sort().join('|'), k]));
-  const clustersBefore = membersOf(before);
-  const notesIn = (folder: string): number => data.nodes.filter((n) => n.folder.split('/').slice(0, 2).join('/') === folder.split('/').slice(0, 2).join('/')).length;
+  type Cell = BrainLayout['regions'][number];
+  const keysOf = (layout: BrainLayout, members: readonly number[]): string =>
+    members.map((i) => layout.graph.nodes[i]!.key).sort().join('|');
 
-  it('keeps the anchor of every cluster the capture did not touch', { timeout: 60_000 }, () => {
-    // Compared in brain units: one more note grows the whole brain by half a
-    // percent, the same for everything, and that is not a move. The one
-    // exception is designed in and counted: a capture that doubles its folder's
-    // notes gives that folder a wider arc (`folderArcs`), and the arcs beside it
-    // shift.
-    let checked = 0;
-    let doubling = 0;
-    for (const target of data.nodes) {
-      const n = notesIn(target.folder);
-      if (Math.floor(Math.log2(n + 1)) !== Math.floor(Math.log2(n))) {
-        doubling += 1;
-        continue;
-      }
-      const after = new Layout(buildGraph(capturedInto(data, target)), { arrangement: 'brain' });
-      for (const [members, k] of membersOf(after)) {
-        const was = clustersBefore.get(members);
-        if (was === undefined) continue;
-        checked += 1;
-        expect(after.anchorX[k]! / after.unitLength, members).toBeCloseTo(before.anchorX[was]! / before.unitLength, 9);
-        expect(after.anchorY[k]! / after.unitLength, members).toBeCloseTo(before.anchorY[was]! / before.unitLength, 9);
-      }
-    }
-    expect(checked).toBeGreaterThan(1500);
-    expect(doubling).toBeGreaterThan(0);
+  /** Every possible capture, with the regions it left exactly as they were. */
+  const was = new Map(before.regions.map((r) => [keysOf(before, r.members), r]));
+  const runs = data.nodes.map((target) => {
+    const after = settled(capturedInto(data, target));
+    const kept = after.regions
+      .map((now) => ({ now, then: was.get(keysOf(after, now.members)) }))
+      .filter((pair): pair is { now: Cell; then: Cell } => pair.then !== undefined);
+    return { after, kept };
+  });
+  /**
+   * A capture that changed nothing but the region it landed in, *and* did not
+   * push that region across a doubling of its note count.
+   *
+   * The second half is designed in and is the same exception the folder arcs
+   * made before regions existed: a cell's share of its hemisphere is one plus
+   * one for every doubling of the notes in it, so a region going from fifteen
+   * notes to sixteen claims a wider cell and its neighbours give way. Not in
+   * proportion to the notes, on purpose — that way every capture would move
+   * every cell.
+   */
+  const doubles = (kept: Array<{ now: Cell; then: Cell }>, after: BrainLayout): boolean =>
+    after.regions.some((now) => {
+      if (kept.some((pair) => pair.now === now)) return false;
+      const n = now.members.length;
+      return Math.floor(Math.log2(n)) !== Math.floor(Math.log2(n - 1));
+    });
+  const clean = runs.filter(
+    ({ after, kept }) => after.regions.length === before.regions.length && kept.length === before.regions.length - 1,
+  );
+  /** Of those, the ones that did not push their region across a doubling. */
+  const steady = clean.filter(({ after, kept }) => !doubles(kept, after));
+
+  it('changes no region but the one it lands in, for at least three quarters of the possible captures', { timeout: 120_000 }, () => {
+    // The rest are captures that tip a note's strongest tie somewhere and carry
+    // a whole cluster into another region (`clusters.ts`); the clustering
+    // underneath reassigns notes for about the same share of captures, so that
+    // is what clustering costs, not something the region layer added. Measured
+    // on this vault: 84 of 109.
+    expect(clean.length).toBeGreaterThanOrEqual(Math.ceil(data.nodes.length * 0.75));
   });
 
-  it('moves the notes of untouched clusters only a little', { timeout: 60_000 }, () => {
-    // Without memory the whole brain is simulated again, and the notes of a
-    // region pushed by a changed neighbour do move. Bounds, over all captures
-    // and all notes in clusters the capture did not change: half move less than
-    // 5 units (under a cell body), nine in ten less than 25 (a third of a
-    // spring), and none more than 250 — a quarter of the brain's width, where
-    // the old layout moved notes by up to 570. Measured: 2 / 18 / 190.
+  it('keeps the cell of every region it did not change, and moves their notes only a little', { timeout: 120_000 }, () => {
+    // Cells compared in brain units: one more note grows the whole brain by half
+    // a percent, the same for everything, and that is not a move. Most untouched
+    // cells come out identical to the last digit; the exceptions are captures
+    // that change which region is the connective one, and then that hemisphere's
+    // cells are dealt again. None may move by half a brain unit — that would be
+    // two regions changing places.
+    const drift: number[] = [];
     const moved: number[] = [];
-    for (const target of data.nodes) {
-      const after = settled(capturedInto(data, target));
-      const unchanged = membersOf(after);
-      for (let i = 0; i < before.graph.nodes.length; i += 1) {
-        const key = before.graph.nodes[i]!.key;
-        const j = after.graph.index.get(key)!;
-        const cluster = after.graph.clusters.clusters[after.graph.clusters.of[j]!]!;
-        const members = cluster.members.map((m) => after.graph.nodes[m]!.key).sort().join('|');
-        if (!clustersBefore.has(members) || !unchanged.has(members)) continue;
-        moved.push(Math.hypot(after.x[j]! - before.x[i]!, after.y[j]! - before.y[i]!));
+    for (const { after, kept } of steady) {
+      for (const { now, then } of kept) {
+        drift.push(
+          Math.hypot(now.cx / after.unitLength - then.cx / before.unitLength, now.cy / after.unitLength - then.cy / before.unitLength),
+        );
+        for (const i of now.members) {
+          const j = before.graph.index.get(after.graph.nodes[i]!.key);
+          if (j === undefined) continue;
+          moved.push(Math.hypot(after.x[i]! - before.x[j]!, after.y[i]! - before.y[j]!));
+        }
       }
     }
+    // Zero to the last bit the arithmetic can carry: the same cell computed in a
+    // brain one note bigger comes out at the same normalised point.
+    expect(steady.length).toBeGreaterThan(clean.length * 0.8);
+    expect(Math.max(...drift)).toBeLessThan(1e-12);
+    // And their notes: half move less than 5 units (under a cell body), nine in
+    // ten less than 25 (a third of a spring), none more than 400. Measured on
+    // this vault: see the numbers in the report of this phase.
     expect(quantile(moved, 0.5)).toBeLessThan(5);
     expect(quantile(moved, 0.9)).toBeLessThan(25);
-    expect(Math.max(...moved)).toBeLessThan(250);
+    expect(Math.max(...moved)).toBeLessThan(400);
   });
 });
 

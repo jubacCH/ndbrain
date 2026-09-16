@@ -462,6 +462,6 @@ function countNotes(folder: Folder): number {
  * stripped as well, so typing what you *see* works.
  */
 function matches(note: NoteRow, filter: string): boolean {
-  const haystack = `${note.title} ${note.path} ${displayPath(note.path)}`.toLowerCase();
+  const haystack = `${note.title}\u0000${note.path}\u0000${displayPath(note.path)}`.toLowerCase();
   return filter.split(/\s+/).every((word) => haystack.includes(word));
 }
