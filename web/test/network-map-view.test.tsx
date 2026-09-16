@@ -355,6 +355,16 @@ describe('MapView — warmth is amber, not mud', () => {
     return out;
   }
 
+  it('gives the details panel a fixed height, so hovering cannot resize the map', () => {
+    // Found in the browser, where jsdom has no layout: a panel that grew by a
+    // line on hover shrank the treemap frame, and the ResizeObserver laid the
+    // whole map out again under the pointer.
+    const rule = /\.nv-hover-panel\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(rule).toMatch(/(^|\s)height:\s*[\d.]+rem;/);
+    expect(rule).toMatch(/flex:\s*none;/);
+    expect(rule).not.toMatch(/min-height/);
+  });
+
   it('fills warm cells in OKLCH at one fixed hue, never by mixing into the petrol surface', () => {
     const rule = /\.nv-cell-rect\[data-warm\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
     expect(rule).toMatch(/fill:\s*oklch\(/);
