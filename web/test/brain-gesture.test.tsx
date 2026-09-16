@@ -133,7 +133,7 @@ function neighbours(key: string): Set<string> {
 const targets = [3, 20, 47, 71, 96].map((i) => graph.nodes[i]!.key);
 
 describe('a click', () => {
-  it('moves nothing, five times over, double clicks included', async () => {
+  it('moves nothing, five times over, double clicks included', { timeout: 30_000 }, async () => {
     const before = await firstVisit();
     const { canvas, unmount } = await mount();
 
@@ -176,7 +176,11 @@ describe('a click', () => {
 });
 
 describe('a drag', () => {
-  it('leaves the note where it was dropped and every note but its neighbours exactly where it was, five times over', async () => {
+  // Five mounts with eight seconds of frames each: about 1.5 s alone, past the
+  // default 5 s when the machine is busy. A timeout leaves the view mounted and
+  // its timers running into the tests after it, which then fail for no reason
+  // of their own.
+  it('leaves the note where it was dropped and every note but its neighbours exactly where it was, five times over', { timeout: 30_000 }, async () => {
     const original = await firstVisit();
     let before = original;
     const untouched = new Set(original.keys());
