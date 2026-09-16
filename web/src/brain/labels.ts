@@ -3,36 +3,39 @@
  *
  * A name belongs at the edge of the brain *next to its own region*, joined to it
  * by a short swung leader — like the target picture, where "Knowledge
- * Management" sits beside the lobe it names. The first version placed names in
- * world space and then clamped them into the canvas, which produced exactly the
- * failures it was meant to avoid: a name for the maps of content in the middle
- * of the fissure ended up on the far outer flank, a name pushed down a column
- * slid back over the tissue, and a name near the top right was written under
- * the legend.
- *
- * All of those are screen questions — how wide the text is, where the canvas
- * ends, where the controls laid over it are — so placement happens here, in
- * screen pixels, once the camera is known. The world only supplies, per region,
- * which way is outward and where its notes are (`regions.ts`).
+ * Management" sits beside the lobe it names. Placement happens in screen pixels,
+ * once the camera is known, because every question it has to answer is a screen
+ * question: how wide the text is, where the canvas ends, where the controls
+ * laid over it are. The world only supplies, per region, the ways its name may
+ * go (`regions.ts`).
  *
  * **The rule.** Regions are placed in order of how many notes they hold, so when
  * there is not room for everybody it is the smallest region's name that goes.
- * For each, positions are tried outward from the rim along the region's own
- * direction, then fanned a little either side of it, nearest first. A region
- * may offer more than one way out — a medial one first above or below the
- * brain, then outward — and those are tried in order. The first position that
- * passes every check is taken:
+ * For each, every way it offers is tried at positions along its direction —
+ * from a little inside the rim outward, fanned either side — and of all the
+ * positions that keep every rule, the one with the **shortest leader** is
+ * taken. The rules:
  *
  *  1. the whole text box is on the canvas — nothing is ever clipped;
  *  2. it covers no blocked area (legend, footer, controls: real DOM rectangles);
- *  3. it does not sit on the tissue;
+ *  3. it covers no note, and reaches at most a narrow band into the tissue;
  *  4. it is on its region's side of the fissure;
- *  5. it overlaps no name already written, and its leader crosses no leader or
+ *  5. it overlaps no name already written, its leader crosses no leader or
  *     name already written, and no earlier leader crosses it;
  *  6. its leader is short enough that the name still reads as its region's.
  *
- * If no position passes, the name is left out. A name in the wrong place is
- * worse than no name: the region is still there, and zooming in names its notes.
+ * If no position keeps them all, the name is left out. A name in the wrong place
+ * is worse than no name: the region is still there, and zooming in names its
+ * notes.
+ *
+ * **Why a name may now reach into the tissue (2026-09-16).** The rule used to be
+ * "never on the tissue", and it was kept — every name stood outside the outline.
+ * But the outline is wide, a region's notes are often well inside it, and the
+ * leaders grew long enough that the eye no longer joined a name to its notes.
+ * Julian chose a name nearer its notes over a name clear of the tissue. So a
+ * name may now sit up to a band's width inside the rim, never over a note, and
+ * when it does it is written on a dark plaque, so the grain behind it cannot
+ * make it harder to read.
  *
  * Nothing here depends on what a region is called or how many there are.
  */
@@ -46,7 +49,7 @@ export interface Rect {
   h: number;
 }
 
-/** One region's name, ready to place: everything in screen pixels. */
+/** One way to place one region's name, ready to place: everything in screen pixels. */
 export interface LabelCandidate {
   region: number;
   lines: readonly string[];
@@ -57,10 +60,10 @@ export interface LabelCandidate {
   side: -1 | 1;
   /** How many notes it holds: larger regions are placed first. */
   weight: number;
-  /** Where the leader starts: the member nearest the rim. */
+  /** Where the leader starts. */
   anchorX: number;
   anchorY: number;
-  /** The rim point outward from the region. */
+  /** The rim point outward from the anchor. */
   rimX: number;
   rimY: number;
   /** The outward direction, a unit vector. */
@@ -82,6 +85,14 @@ export interface PlacedLabel {
   cy: number;
   toX: number;
   toY: number;
+  /** True when the name reaches into the tissue and is drawn on a dark plaque. */
+  plaque: boolean;
+}
+
+export interface NoteDisc {
+  x: number;
+  y: number;
+  r: number;
 }
 
 export interface Placement {
@@ -91,19 +102,25 @@ export interface Placement {
   fissureX: number;
   /** Areas no name may cover, canvas-relative. */
   blocked: readonly Rect[];
-  /** True when a screen point is on the tissue. */
-  onTissue: (x: number, y: number) => boolean;
+  /** How far a screen point lies inside the silhouette, in pixels; negative outside. */
+  depth: (x: number, y: number) => number;
+  /** How far into the tissue a name may reach, in pixels. */
+  band: number;
+  /** The notes, which no name may cover. */
+  notes: readonly NoteDisc[];
 }
 
 /** Room kept from the canvas edge and from blocked areas. */
 const MARGIN = 8;
 /** Room kept between two names. */
 const SPACING = 6;
-/** First try this far outside the rim, then step outward. */
-const FIRST_OUT = 14;
-const STEP_OUT = 12;
-const MAX_OUT = 170;
-/** Fan either side of the outward direction, in radians, nearest first. */
+/** Room kept around a note. */
+const NOTE_ROOM = 4;
+/** Positions along a way: from this far inside its rim point to this far outside, in steps. */
+const FIRST_OUT = -36;
+const STEP_OUT = 9;
+const MAX_OUT = 150;
+/** Fan either side of the outward direction, in radians. */
 const FAN = [0, 0.2, -0.2, 0.4, -0.4, 0.6, -0.6, 0.85, -0.85];
 /** Below this horizontal share the name sits centred above or below its point. */
 const CENTRED = 0.38;
@@ -119,8 +136,6 @@ const LEADER_SAMPLES = 12;
  * so a name does not flicker between two equally good places from frame to frame.
  */
 export function placeLabels(candidates: readonly LabelCandidate[], screen: Placement): PlacedLabel[] {
-  // Grouped by region, keeping each region's own order of alternatives; the
-  // regions themselves largest first.
   const byRegion = new Map<number, LabelCandidate[]>();
   for (const c of candidates) {
     const list = byRegion.get(c.region);
@@ -132,35 +147,41 @@ export function placeLabels(candidates: readonly LabelCandidate[], screen: Place
   const placed: PlacedLabel[] = [];
   const leaders: Array<Array<{ x: number; y: number }>> = [];
   for (const ways of regions) {
-    for (const c of ways) {
-      const found = firstFit(c, screen, placed, leaders);
-      if (found === null) continue;
-      placed.push(found);
-      leaders.push(sampleLeader(found));
-      break;
-    }
+    const found = shortestFit(ways, screen, placed, leaders);
+    if (found === null) continue;
+    placed.push(found);
+    leaders.push(sampleLeader(found));
   }
   return placed;
 }
 
-function firstFit(
-  c: LabelCandidate,
+/** Of every position every way offers, the one with the shortest leader that keeps the rules. */
+function shortestFit(
+  ways: readonly LabelCandidate[],
   screen: Placement,
   placed: readonly PlacedLabel[],
   leaders: ReadonlyArray<ReadonlyArray<{ x: number; y: number }>>,
 ): PlacedLabel | null {
-  for (let out = FIRST_OUT; out <= MAX_OUT; out += STEP_OUT) {
-    for (const turn of FAN) {
-      const cos = Math.cos(turn);
-      const sin = Math.sin(turn);
-      const ux = c.dirX * cos - c.dirY * sin;
-      const uy = c.dirX * sin + c.dirY * cos;
-      const px = c.rimX + ux * out;
-      const py = c.rimY + uy * out;
-      const label = layout(c, px, py, ux, uy);
-      if (fits(label, c, screen, placed, leaders)) return label;
+  const options: Array<{ label: PlacedLabel; way: LabelCandidate; length: number; order: number }> = [];
+  let order = 0;
+  for (const c of ways) {
+    for (let out = FIRST_OUT; out <= MAX_OUT; out += STEP_OUT) {
+      for (const turn of FAN) {
+        const cos = Math.cos(turn);
+        const sin = Math.sin(turn);
+        const ux = c.dirX * cos - c.dirY * sin;
+        const uy = c.dirX * sin + c.dirY * cos;
+        const label = layout(c, c.rimX + ux * out, c.rimY + uy * out, ux, uy);
+        const length = Math.hypot(label.toX - label.fromX, label.toY - label.fromY);
+        if (length > c.reach) continue;
+        options.push({ label, way: c, length, order: order++ });
+      }
     }
   }
+  // Shortest first; ties keep the order they were generated in, so the answer
+  // does not depend on how the sort breaks them.
+  options.sort((a, b) => a.length - b.length || a.order - b.order);
+  for (const o of options) if (fits(o.label, o.way, screen, placed, leaders)) return o.label;
   return null;
 }
 
@@ -168,13 +189,10 @@ function firstFit(
 function layout(c: LabelCandidate, px: number, py: number, ux: number, uy: number): PlacedLabel {
   let align: PlacedLabel['align'];
   let box: Rect;
-  let toX = px;
-  let toY = py;
   if (Math.abs(ux) < CENTRED) {
     align = 'center';
     const above = uy < 0;
     box = { x: px - c.width / 2, y: above ? py - TICK - c.height : py + TICK, w: c.width, h: c.height };
-    toY = py;
   } else if (ux > 0) {
     align = 'left';
     box = { x: px + TICK, y: py - c.height / 2, w: c.width, h: c.height };
@@ -184,8 +202,8 @@ function layout(c: LabelCandidate, px: number, py: number, ux: number, uy: numbe
   }
 
   // One bow, away from the brain: the leader reads as a pointer, not a tract.
-  const dx = toX - c.anchorX;
-  const dy = toY - c.anchorY;
+  const dx = px - c.anchorX;
+  const dy = py - c.anchorY;
   const len = Math.hypot(dx, dy) || 1;
   const bow = 0.14 * len * (c.side * (dy < 0 ? -1 : 1));
   return {
@@ -195,10 +213,11 @@ function layout(c: LabelCandidate, px: number, py: number, ux: number, uy: numbe
     align,
     fromX: c.anchorX,
     fromY: c.anchorY,
-    cx: (c.anchorX + toX) / 2 - (dy / len) * bow,
-    cy: (c.anchorY + toY) / 2 + (dx / len) * bow,
-    toX,
-    toY,
+    cx: (c.anchorX + px) / 2 - (dy / len) * bow,
+    cy: (c.anchorY + py) / 2 + (dx / len) * bow,
+    toX: px,
+    toY: py,
+    plaque: false,
   };
 }
 
@@ -210,8 +229,6 @@ function fits(
   leaders: ReadonlyArray<ReadonlyArray<{ x: number; y: number }>>,
 ): boolean {
   const { box } = label;
-  // 6. Near enough to its notes. Checked first: it is the cheapest.
-  if (Math.hypot(label.toX - label.fromX, label.toY - label.fromY) > c.reach) return false;
   // 1. Wholly on the canvas.
   if (box.x < MARGIN || box.y < MARGIN || box.x + box.w > screen.width - MARGIN || box.y + box.h > screen.height - MARGIN) {
     return false;
@@ -219,8 +236,11 @@ function fits(
   // 2. Clear of every blocked area.
   const grown = inflate(box, MARGIN / 2);
   for (const b of screen.blocked) if (overlaps(grown, b)) return false;
-  // 3. Off the tissue: the box and a thin ring around it.
-  if (touchesTissue(inflate(box, 3), screen.onTissue)) return false;
+  // 3. Over no note, and no deeper into the tissue than the band.
+  for (const n of screen.notes) if (circleHitsRect(n.x, n.y, n.r + NOTE_ROOM, box)) return false;
+  const deepest = deepestPoint(inflate(box, 3), screen.depth);
+  if (deepest > screen.band) return false;
+  label.plaque = deepest > 0;
   // 4. On its region's side of the fissure.
   if ((box.x + box.w / 2 - screen.fissureX) * c.side <= 0) return false;
   // 5. Clear of the names and leaders already written, both ways round.
@@ -241,17 +261,24 @@ export function overlaps(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
-function touchesTissue(r: Rect, onTissue: (x: number, y: number) => boolean): boolean {
-  // A grid over the box, fine enough that no fold narrower than a line of text
-  // can hide between two samples.
+export function circleHitsRect(cx: number, cy: number, r: number, box: Rect): boolean {
+  const nx = Math.max(box.x, Math.min(cx, box.x + box.w));
+  const ny = Math.max(box.y, Math.min(cy, box.y + box.h));
+  return (cx - nx) ** 2 + (cy - ny) ** 2 < r * r;
+}
+
+/** How far the deepest of a grid of points over the box lies inside the silhouette. */
+export function deepestPoint(r: Rect, depth: (x: number, y: number) => number): number {
+  // Fine enough that no fold narrower than a line of text can hide between two samples.
   const cols = Math.max(3, Math.ceil(r.w / 12));
   const rows = Math.max(3, Math.ceil(r.h / 8));
+  let deepest = -Infinity;
   for (let i = 0; i <= cols; i += 1) {
     for (let j = 0; j <= rows; j += 1) {
-      if (onTissue(r.x + (r.w * i) / cols, r.y + (r.h * j) / rows)) return true;
+      deepest = Math.max(deepest, depth(r.x + (r.w * i) / cols, r.y + (r.h * j) / rows));
     }
   }
-  return false;
+  return deepest;
 }
 
 /** The leader as a polyline, for the crossing tests. */
@@ -347,6 +374,12 @@ export function breakName(text: string, measure: (s: string) => number, singleLi
 export const LINE_HEIGHT = 17;
 /** A name wider than this on one line is broken over two. */
 export const SINGLE_LINE = 118;
+/**
+ * How far into the tissue a name may reach, as a share of the brain's width.
+ * Enough for a name to sit beside notes near the rim; far too little for a name
+ * to wander into the middle of a hemisphere.
+ */
+export const TISSUE_BAND = 0.045;
 
 /**
  * Everything the placement needs, from the world anchors and the camera.
@@ -360,16 +393,17 @@ export function placeRegionNames(
   width: number,
   height: number,
   blocked: readonly Rect[],
-  inside: (x: number, y: number) => boolean,
+  depthInside: (x: number, y: number) => number,
   measure: (text: string) => number,
+  notes: readonly NoteDisc[],
+  brainWidth: number,
 ): PlacedLabel[] {
   if (anchors.length === 0) return [];
   const sx = (x: number): number => x * camera.scale + camera.x;
   const sy = (y: number): number => y * camera.scale + camera.y;
   const candidates: LabelCandidate[] = anchors.flatMap((a) => {
     const lines = breakName(a.text, measure, SINGLE_LINE);
-    const ways = a.alternate === null ? [a] : [a, a.alternate];
-    return ways.map((w) => ({
+    return a.ways.map((w) => ({
       region: a.region,
       lines,
       width: Math.ceil(Math.max(...lines.map(measure))),
@@ -382,7 +416,7 @@ export function placeRegionNames(
       rimY: sy(w.rimY),
       dirX: w.dirX,
       dirY: w.dirY,
-      reach: w.reach * camera.scale,
+      reach: a.reach * camera.scale,
     }));
   });
   return placeLabels(candidates, {
@@ -390,6 +424,8 @@ export function placeRegionNames(
     height,
     fissureX: sx(anchors[0]!.fissureX),
     blocked,
-    onTissue: (x, y) => inside((x - camera.x) / camera.scale, (y - camera.y) / camera.scale),
+    depth: (x, y) => depthInside((x - camera.x) / camera.scale, (y - camera.y) / camera.scale) * camera.scale,
+    band: TISSUE_BAND * brainWidth * camera.scale,
+    notes: notes.map((n) => ({ x: sx(n.x), y: sy(n.y), r: n.r * camera.scale })),
   });
 }

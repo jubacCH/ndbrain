@@ -189,6 +189,10 @@ export interface Scene {
   blocked: readonly Rect[];
   /** Whether a world point is on the tissue. Names are kept off it. */
   inside: (x: number, y: number) => boolean;
+  /** How far a world point lies inside the silhouette, world units. Names may reach a band in. */
+  depthInside: (x: number, y: number) => number;
+  /** The brain's width in world units, which a name's leader and tissue band are measured against. */
+  brainWidth: number;
   /** 0 to 1: how strongly the region names are drawn. */
   regionAlpha: number;
   /** The tissue. Never hit tested, never data. */
@@ -391,6 +395,8 @@ export class SceneBuilder {
       regions: [],
       blocked: [],
       inside: () => false,
+      depthInside: () => -1,
+      brainWidth: 1,
       regionAlpha: 0,
       deco: NO_DECORATION,
       decoAlpha: 0,
@@ -674,6 +680,8 @@ export class SceneBuilder {
     this.#names(layout, activity, picked, zoom);
     scene.regions = view.shaped && scene.regionAlpha > 0.01 ? regionAnchors(view, layout.x, layout.y) : [];
     scene.inside = view.inside;
+    scene.depthInside = view.depthInside;
+    scene.brainWidth = view.bounds.maxX - view.bounds.minX;
 
     if (restChanged || picked !== this.#lastPicked || Math.abs(zoom - this.#lastZoom) > 0.004) {
       this.#lastPicked = picked;

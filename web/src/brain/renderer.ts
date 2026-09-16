@@ -71,6 +71,8 @@ const TAIL: Rgb = [60, 200, 215];
 const FOCUS_TAIL: Rgb = [120, 230, 245];
 /** How far a hub's parallel fibres bow away from the ray, as a share of its length. */
 const FIBRE_BOW = 0.06;
+/** Room around a name on its plaque, in CSS pixels. */
+const PLAQUE_PAD = 5;
 /** A note this much of a hub (see `SceneNode.hub`) gets the wide second halo. */
 const HUB_HALO = 0.25;
 
@@ -460,8 +462,10 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
         scene.width,
         scene.height,
         scene.blocked,
-        scene.inside,
+        scene.depthInside,
         measure,
+        scene.nodes,
+        scene.brainWidth,
       );
       for (const label of names) {
         g.strokeStyle = `rgba(190,228,235,${0.38 * scene.regionAlpha})`;
@@ -472,6 +476,12 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
         g.stroke();
 
         const { box } = label;
+        // A name that reaches into the tissue sits on a dark plaque: the grain
+        // and the folds behind it must not cost it its legibility.
+        if (label.plaque) {
+          g.fillStyle = `rgba(4,12,17,${0.78 * scene.regionAlpha})`;
+          plaque(g, box.x - PLAQUE_PAD, box.y - PLAQUE_PAD / 2, box.w + PLAQUE_PAD * 2, box.h + PLAQUE_PAD, 4);
+        }
         g.textAlign = label.align;
         const tx = label.align === 'center' ? box.x + box.w / 2 : label.align === 'left' ? box.x : box.x + box.w;
         g.fillStyle = `rgba(212,230,234,${0.92 * scene.regionAlpha})`;
@@ -513,6 +523,22 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       sprites.dispose();
     },
   };
+}
+
+/** A rounded rectangle, filled. */
+function plaque(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.lineTo(x + w - r, y);
+  g.quadraticCurveTo(x + w, y, x + w, y + r);
+  g.lineTo(x + w, y + h - r);
+  g.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  g.lineTo(x + r, y + h);
+  g.quadraticCurveTo(x, y + h, x, y + h - r);
+  g.lineTo(x, y + r);
+  g.quadraticCurveTo(x, y, x + r, y);
+  g.closePath();
+  g.fill();
 }
 
 /** Strokes a polyline; a NaN pair lifts the pen, which is how a fold is broken. */
