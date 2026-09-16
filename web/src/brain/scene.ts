@@ -54,8 +54,9 @@ import type { Activity, PulseKind } from './activity';
 import type { BrainLayout } from './layout';
 import type { Decoration } from './deco';
 import { NO_DECORATION, buildDecoration } from './deco';
-import type { RegionLabel, RegionView } from './regions';
-import { regionLabels, regionView } from './regions';
+import type { Rect } from './labels';
+import type { RegionAnchor, RegionView } from './regions';
+import { regionAnchors, regionView } from './regions';
 import { unit } from './seed';
 
 export type Rgb = readonly [number, number, number];
@@ -148,7 +149,14 @@ export interface Scene {
   /** Note titles, most connected first. The renderer measures and drops collisions. */
   labels: SceneLabel[];
   /** Region names outside the outline, with their leader curves. */
-  regions: RegionLabel[];
+  regions: RegionAnchor[];
+  /**
+   * Screen areas no region name may cover: the controls laid over the canvas,
+   * canvas-relative CSS pixels. The caller measures them from the DOM.
+   */
+  blocked: readonly Rect[];
+  /** Whether a world point is on the tissue. Names are kept off it. */
+  inside: (x: number, y: number) => boolean;
   /** 0 to 1: how strongly the region names are drawn. */
   regionAlpha: number;
   /** The tissue. Never hit tested, never data. */
@@ -328,6 +336,8 @@ export class SceneBuilder {
       sparks: [],
       labels: [],
       regions: [],
+      blocked: [],
+      inside: () => false,
       regionAlpha: 0,
       deco: NO_DECORATION,
       decoAlpha: 0,
@@ -442,6 +452,7 @@ export class SceneBuilder {
     width: number,
     height: number,
     pointer: { x: number; y: number; over: number } = { x: 0, y: 0, over: -1 },
+    blocked: readonly Rect[] = [],
   ): Scene {
     const scene = this.#scene;
     const { nodes, edges } = this.#graph;
@@ -451,6 +462,7 @@ export class SceneBuilder {
     scene.parallaxX = pointer.x;
     scene.parallaxY = pointer.y;
     scene.hovered = pointer.over;
+    scene.blocked = blocked;
 
     const { plan, routes, view } = this.#planFor(layout);
     this.#tissue(layout, view);
@@ -594,7 +606,8 @@ export class SceneBuilder {
     }
 
     this.#names(layout, activity, picked, zoom);
-    scene.regions = view.shaped && scene.regionAlpha > 0.01 ? regionLabels(view, layout.x, layout.y) : [];
+    scene.regions = view.shaped && scene.regionAlpha > 0.01 ? regionAnchors(view, layout.x, layout.y) : [];
+    scene.inside = view.inside;
 
     if (picked !== this.#lastPicked || Math.abs(zoom - this.#lastZoom) > 0.004) {
       this.#lastPicked = picked;
