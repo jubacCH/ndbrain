@@ -71,6 +71,13 @@ describe('a vault with only conflict copies', () => {
     expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
   });
 
+  it('draws delete as the destructive button, not the accent', () => {
+    renderTidy({ data: tidy({ conflicts: [conflict()] }) });
+    const button = screen.getByRole('button', { name: /delete/i });
+    expect(button).toHaveClass('btn-danger');
+    expect(button).not.toHaveClass('btn-solid');
+  });
+
   it('counts the conflict copy in the header, with no other finding present', () => {
     renderTidy({ data: tidy({ conflicts: [conflict(), conflict({ path: 'Zwei (Konflikt 2026-09-11 10.58).md' })] }) });
 

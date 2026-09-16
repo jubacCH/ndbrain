@@ -84,6 +84,16 @@ export const DEFAULT_PREFS: Prefs = {
   networkView: 'graph',
 };
 
+/**
+ * The browser chrome's colour — the address bar, the iOS status bar area.
+ *
+ * Kept in step by hand with three places that cannot import this: the two
+ * `theme-color` tags and the inline theme script in `index.html`, and
+ * `public/manifest.webmanifest` (dark, the app's own look, since a manifest has
+ * one colour for both schemes). `test/pwa-colours.test.ts` holds them together.
+ */
+export const THEME_COLOR = { light: '#f3f7f8', dark: '#050b0e' } as const;
+
 const KEY = 'ndbrain.prefs';
 /** Read by the inline script in index.html, which cannot see this module. */
 const THEME_KEY = 'ndbrain.theme';
@@ -190,6 +200,6 @@ export function applyPrefs(prefs: Prefs): void {
     prefs.theme === 'dark' ||
     (prefs.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   for (const tag of document.querySelectorAll('meta[name="theme-color"]')) {
-    tag.setAttribute('content', dark ? '#050b0e' : '#f3f7f8');
+    tag.setAttribute('content', dark ? THEME_COLOR.dark : THEME_COLOR.light);
   }
 }
