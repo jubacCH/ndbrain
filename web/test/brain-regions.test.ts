@@ -23,53 +23,58 @@ describe('regions', () => {
   const graph = buildGraph(data, { tags });
   const grouping = groupRegions(graph, graph.clusters);
 
-  it('gathers many clusters into seven to nine regions of a similar size', () => {
-    // The number the optics prototype settled on. Twenty clusters give twenty
-    // cells, which over two hemispheres are thin, mostly empty, and carry
-    // twenty labels nobody can read.
+  it('gathers many clusters into six to eight regions of at least eight notes', () => {
+    // Twenty clusters give twenty cells, which over two hemispheres are thin,
+    // mostly empty, and carry twenty labels nobody can read. Eight notes is the
+    // floor: a region of five was one small knot in a cell and read as empty.
     expect(graph.clusters.clusters.length).toBeGreaterThan(12);
-    expect(grouping.regions.length).toBeGreaterThanOrEqual(7);
-    expect(grouping.regions.length).toBeLessThanOrEqual(9);
+    expect(grouping.regions.length).toBeGreaterThanOrEqual(6);
+    expect(grouping.regions.length).toBeLessThanOrEqual(8);
 
     const sizes = grouping.regions.map((r) => r.members.length).sort((a, b) => a - b);
     // Every note in exactly one region.
     expect(sizes.reduce((sum, n) => sum + n, 0)).toBe(graph.nodes.length);
-    // None a fragment, and the largest no more than four times the smallest.
-    // Measured on this vault: 6 to 23.
-    expect(sizes[0]!).toBeGreaterThanOrEqual(5);
-    expect(sizes[sizes.length - 1]! / sizes[0]!).toBeLessThanOrEqual(4);
+    // None under eight, and the largest no more than three times the smallest.
+    // Measured on this vault: 12 to 23.
+    expect(sizes[0]!).toBeGreaterThanOrEqual(8);
+    expect(sizes[sizes.length - 1]! / sizes[0]!).toBeLessThanOrEqual(3);
   });
 
-  it('names a region after the folder its notes are filed in', () => {
+  it('names regions the way a person would, never like a path', () => {
     const names = grouping.regions.map((r) => r.name);
-    // The folder part of the name, without any tag a cut group's half added.
-    const base = names.map((n) => n.split(':')[0]!.trim());
-    // "Projects" for the region that holds nearly all of `10_Projects`, the
-    // subfolder's name where a region holds only part of a top-level folder.
-    // Never the ordering prefix; and never "Active", because nobody calls the
-    // part of their vault where the projects live "Active".
-    expect(base).toContain('Projects');
-    expect(base).toContain('Homelab');
-    for (const name of base) {
+    for (const name of names) {
       expect(name).not.toBe('');
+      // No "Group: tag" pattern, no ordering prefix, no folder a PARA vault
+      // uses for filing rather than for a subject.
+      expect(name).not.toContain(':');
+      expect(name).not.toContain('/');
       expect(/^\d/.test(name)).toBe(false);
       expect(name).not.toBe('Active');
       expect(name).not.toBe('Areas');
     }
+    // "Projects" for the region that holds most of `10_Projects`.
+    expect(names).toContain('Projects');
   });
 
-  it('gives both halves of a cut group the group name, adding a tag only where one tells them apart', () => {
+  it('names the halves of a cut group so that each stands on its own', () => {
     const halves = grouping.regions.filter((r) => r.half >= 0);
     expect(halves.length).toBeGreaterThanOrEqual(4);
+    const all = grouping.regions.map((r) => r.name);
     for (const half of halves) {
       const sibling = halves.find((other) => other !== half && other.group === half.group);
       expect(sibling, half.name).toBeDefined();
-      const base = half.name.split(':')[0]!.trim();
-      expect(sibling!.name.split(':')[0]!.trim()).toBe(base);
-      // Either the group's name twice — the prototype's answer where no tag
-      // sets the halves apart — or the group's name and one tag.
-      if (half.name !== base) expect(half.name.startsWith(`${base}: `)).toBe(true);
+      // Two halves that a tag tells apart never share a name.
+      if (half.name !== sibling!.name) {
+        expect(all.filter((n) => n === half.name)).toHaveLength(1);
+      }
     }
+    // The halves of a topic are named after what sets them apart, alone:
+    // "Proxmox" and "Networking", not "Homelab: Proxmox".
+    expect(all).toContain('Networking');
+    expect(all).toContain('Proxmox');
+    // The half of a kind of note keeps the kind: "AI Projects", not "AI".
+    expect(all.some((n) => /^\S+ Projects$/.test(n))).toBe(true);
+    expect(all).not.toContain('AI');
   });
 
   it('works without tags at all, which is the path the app runs today', () => {
@@ -77,7 +82,8 @@ describe('regions', () => {
     // halves may carry the same name twice; nothing may fall apart.
     const bare = buildGraph(data);
     const without = groupRegions(bare, bare.clusters);
-    expect(without.regions.length).toBe(grouping.regions.length);
+    expect(without.regions.length).toBeGreaterThanOrEqual(6);
+    expect(without.regions.length).toBeLessThanOrEqual(8);
     for (const region of without.regions) expect(region.name).not.toBe('');
   });
 
