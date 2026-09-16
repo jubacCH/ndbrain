@@ -1,5 +1,5 @@
 /**
- * How loudly each link is drawn.
+ * How loudly each link is drawn, and along which curve.
  *
  * The layout arranges the notes into regions and two hemispheres; drawn with
  * every link at the same width and opacity, the links between regions ran
@@ -46,7 +46,23 @@
  *
  * Only opacity, width and glow strength change here. The colours stay the
  * ones the scene already uses: colour is for meaning, not for clusters.
+ *
+ * **The route.** The second half of this file is the other question about a
+ * link: not how loudly, but where it runs. A link inside a region is a bowed
+ * cubic, leaving its hub outwards so that a hub radiates rather than sprouting a
+ * fan of parallel lines. A link into another region is **bundled**: it travels
+ * to that region's hub first and only branches off just past it, bent the same
+ * way for every link into the same region. That turns a hundred lines crossing
+ * the middle of the brain into a handful of trunks with branch points where the
+ * regions are — which is the difference between white matter and a bowl of
+ * spaghetti, and it is the one structural thing the optics prototype does that
+ * a straight line cannot fake.
+ *
+ * The control points are pulled back inside the silhouette (`keepInside`): a
+ * curve is free to bow, but not out of the tissue and into the dark.
  */
+
+import { unit } from './seed';
 
 /** A link inside one cluster, or any link in the loose neighbourhood arrangement. */
 export const WITHIN = 0;
@@ -403,4 +419,308 @@ export function visibleShare(plan: EdgePlan, open = 0): number {
     if (edgeAlpha(plan, i, open, false, 0) >= VISIBLE) shown += 1;
   }
   return pairs === 0 ? 1 : shown / pairs;
+}
+
+/* ===================== where a link runs ===================== */
+
+/** Points sampled along a tract. Twenty-four is where a bundled curve stops looking faceted. */
+export const CURVE_STEPS = 24;
+
+/**
+ * How far back inside the rim a control point is pulled, as a share of the way
+ * from the region's centre to the last point that was still inside.
+ *
+ * The prototype found 0.82: high enough that a curve still bows generously, low
+ * enough that a bow near the edge does not leave the tissue and draw a line into
+ * the dark.
+ */
+const KEEP_INSIDE = 0.82;
+/** Bisection steps when pulling a control point back in. Four is a sixteenth of the way. */
+const KEEP_STEPS = 4;
+
+/** Where along the corridor to the target hub a bundle bends. */
+const TRUNK_AT = 0.45;
+/** How far a bundle's trunk is bowed, per region, as a share of its length. */
+const TRUNK_BOW = 0.28;
+/** How far each fibre wanders off its bundle's trunk. Fibres, not a pipe. */
+const TRUNK_JITTER = 0.09;
+/** Where the branch to the leaf leaves the hub. */
+const BRANCH_AT = 0.35;
+
+/** How far a link inside one region bows, and one into another that is not bundled. */
+const BEND_WITHIN = 0.8;
+const BEND_ACROSS = 1.4;
+
+/** The geometry a route needs from the layout. Everything else is the layout's business. */
+export interface EdgeGeometry {
+  inside(x: number, y: number): boolean;
+  depthInside(x: number, y: number): number;
+  /** Region id per node, -1 for none. */
+  readonly regionOf: ArrayLike<number>;
+  /** Hub node index and centre per region id. */
+  readonly regions: ReadonlyArray<{ readonly hub: number; readonly cx: number; readonly cy: number }>;
+}
+
+export interface RoutePlan {
+  /** The end a tract leaves thick: the better-connected one. */
+  readonly hubEnd: Int32Array;
+  readonly leafEnd: Int32Array;
+  /** The region hub a bundled link travels through, or -1 for a plain curve. */
+  readonly via: Int32Array;
+  /** Signed bow of this link, -0.5 to 0.5. */
+  readonly bend: Float64Array;
+  /** This fibre's wander off its bundle's trunk, -0.5 to 0.5. */
+  readonly jitter: Float64Array;
+  /** The bow shared by every link into the same region, by region id. */
+  readonly trunk: Float64Array;
+}
+
+export interface RouteInput {
+  edges: ReadonlyArray<{ a: number; b: number }>;
+  /** Node keys by index, so a bow belongs to the pair and not to the reply order. */
+  keys: readonly string[];
+  degree: ArrayLike<number>;
+  geometry: EdgeGeometry | null;
+}
+
+/**
+ * Settles the route of every link: which end is the thick one, and whether it is
+ * bundled through another region's hub.
+ *
+ * Once per graph and layout, like `planEdges`. Positions are not read here, only
+ * which region a note is in — so a note moving does not re-decide a route, it
+ * only moves the curve that was decided.
+ */
+export function planRoutes({ edges, keys, degree, geometry }: RouteInput): RoutePlan {
+  const m = edges.length;
+  const hubEnd = new Int32Array(m);
+  const leafEnd = new Int32Array(m);
+  const via = new Int32Array(m).fill(-1);
+  const bend = new Float64Array(m);
+  const jitter = new Float64Array(m);
+  const trunk = new Float64Array(geometry === null ? 0 : geometry.regions.length);
+
+  for (let r = 0; r < trunk.length; r += 1) trunk[r] = (unit(`region:${r}`, 'trunk') - 0.5) * 2;
+
+  for (let i = 0; i < m; i += 1) {
+    const e = edges[i]!;
+    // The thick end is the better-connected note; ties go to the smaller key, so
+    // a reversed reply draws the same tract the same way round.
+    const first = degree[e.a]! > degree[e.b]! || (degree[e.a] === degree[e.b] && keys[e.a]! <= keys[e.b]!);
+    const hub = first ? e.a : e.b;
+    const leaf = first ? e.b : e.a;
+    hubEnd[i] = hub;
+    leafEnd[i] = leaf;
+
+    const pair = keys[hub]! < keys[leaf]! ? `${keys[hub]}|${keys[leaf]}` : `${keys[leaf]}|${keys[hub]}`;
+    bend[i] = unit(pair, 'bend') - 0.5;
+    jitter[i] = unit(pair, 'fibre') - 0.5;
+
+    if (geometry === null) continue;
+    const ra = geometry.regionOf[hub]!;
+    const rb = geometry.regionOf[leaf]!;
+    if (ra < 0 || rb < 0 || ra === rb) continue;
+    const target = geometry.regions[rb];
+    // Bundled — unless the far end already *is* that region's hub, in which case
+    // the corridor and the link are the same line.
+    if (target !== undefined && target.hub !== leaf) via[i] = target.hub;
+  }
+
+  return { hubEnd, leafEnd, via, bend, jitter, trunk };
+}
+
+/**
+ * Pulls a control point back inside the silhouette.
+ *
+ * Bisection between the point and an anchor known to be inside — the region's
+ * centre — using only `inside`. Written against the contract rather than against
+ * the outline, so the day the outline changes this keeps working and nothing
+ * here has to know what a hemisphere is.
+ *
+ * Writes into `out`: this runs a few thousand times per rebuild and a fresh pair
+ * of numbers each time is the garbage collector stuttering the rebuild.
+ */
+export function keepInside(
+  geometry: EdgeGeometry,
+  px: number,
+  py: number,
+  anchorX: number,
+  anchorY: number,
+  out: { x: number; y: number },
+): void {
+  out.x = px;
+  out.y = py;
+  if (geometry.inside(px, py)) return;
+  let lo = 0;
+  let hi = 1;
+  for (let k = 0; k < KEEP_STEPS; k += 1) {
+    const mid = (lo + hi) / 2;
+    if (geometry.inside(anchorX + (px - anchorX) * mid, anchorY + (py - anchorY) * mid)) lo = mid;
+    else hi = mid;
+  }
+  const t = lo * KEEP_INSIDE;
+  out.x = anchorX + (px - anchorX) * t;
+  out.y = anchorY + (py - anchorY) * t;
+}
+
+const scratch = { x: 0, y: 0 };
+
+/**
+ * Samples one link's curve into `out`, as x,y pairs in world units.
+ *
+ * Returns the number of points written. `out` must hold `(CURVE_STEPS + 1) * 2`
+ * numbers; the caller allocates it once and reuses it.
+ */
+export function traceEdge(
+  out: Float64Array,
+  plan: RoutePlan,
+  i: number,
+  x: ArrayLike<number>,
+  y: ArrayLike<number>,
+  geometry: EdgeGeometry | null,
+): number {
+  const hub = plan.hubEnd[i]!;
+  const leaf = plan.leafEnd[i]!;
+  const x0 = x[hub]!;
+  const y0 = y[hub]!;
+  const x3 = x[leaf]!;
+  const y3 = y[leaf]!;
+  const dx = x3 - x0;
+  const dy = y3 - y0;
+  const len = Math.hypot(dx, dy) || 1;
+
+  const waypoint = plan.via[i]!;
+  if (geometry !== null && waypoint >= 0) {
+    const hx = x[waypoint]!;
+    const hy = y[waypoint]!;
+    const target = geometry.regionOf[leaf]!;
+    const region = geometry.regions[target];
+    const anchorX = region?.cx ?? hx;
+    const anchorY = region?.cy ?? hy;
+
+    // The corridor from the far end to the region's hub, bowed once per region
+    // plus a little per fibre.
+    const tx = hx - x0;
+    const ty = hy - y0;
+    const tl = Math.hypot(tx, ty) || 1;
+    const bow = (plan.trunk[target] ?? 0) * TRUNK_BOW * tl + plan.jitter[i]! * TRUNK_JITTER * tl;
+    keepInside(geometry, x0 + tx * TRUNK_AT - (ty / tl) * bow, y0 + ty * TRUNK_AT + (tx / tl) * bow, anchorX, anchorY, scratch);
+    const c1x = scratch.x;
+    const c1y = scratch.y;
+
+    // And the branch, just past the hub, to the note itself.
+    const bx = x3 - hx;
+    const by = y3 - hy;
+    const bl = Math.hypot(bx, by) || 1;
+    const swing = plan.bend[i]! * bl * 0.5;
+    keepInside(geometry, hx + bx * BRANCH_AT - (by / bl) * swing, hy + by * BRANCH_AT + (bx / bl) * swing, anchorX, anchorY, scratch);
+    return catmull(out, x0, y0, c1x, c1y, scratch.x, scratch.y, x3, y3);
+  }
+
+  // A plain bowed cubic. The hub end leaves outwards from its region's centre,
+  // so the links of a hub radiate instead of lying on top of one another.
+  const sameRegion = geometry !== null && geometry.regionOf[hub] === geometry.regionOf[leaf];
+  const bow = plan.bend[i]! * len * (sameRegion ? BEND_WITHIN : BEND_ACROSS);
+  const nx = -dy / len;
+  const ny = dx / len;
+  let outX = 0;
+  let outY = 0;
+  const home = geometry === null ? undefined : geometry.regions[geometry.regionOf[hub]!];
+  if (home !== undefined && home.hub !== hub) {
+    const rx = x0 - home.cx;
+    const ry = y0 - home.cy;
+    const rl = Math.hypot(rx, ry) || 1;
+    const away = Math.min(len * 0.25, 30);
+    outX = (rx / rl) * away;
+    outY = (ry / rl) * away;
+  }
+
+  let c1x = x0 + dx * 0.28 + nx * bow * 0.7 + outX;
+  let c1y = y0 + dy * 0.28 + ny * bow * 0.7 + outY;
+  let c2x = x0 + dx * 0.68 + nx * bow;
+  let c2y = y0 + dy * 0.68 + ny * bow;
+  if (geometry !== null) {
+    const anchorX = home?.cx ?? x0;
+    const anchorY = home?.cy ?? y0;
+    keepInside(geometry, c1x, c1y, anchorX, anchorY, scratch);
+    c1x = scratch.x;
+    c1y = scratch.y;
+    keepInside(geometry, c2x, c2y, anchorX, anchorY, scratch);
+    c2x = scratch.x;
+    c2y = scratch.y;
+  }
+
+  for (let k = 0; k <= CURVE_STEPS; k += 1) {
+    const t = k / CURVE_STEPS;
+    const it = 1 - t;
+    out[k * 2] = it * it * it * x0 + 3 * it * it * t * c1x + 3 * it * t * t * c2x + t * t * t * x3;
+    out[k * 2 + 1] = it * it * it * y0 + 3 * it * it * t * c1y + 3 * it * t * t * c2y + t * t * t * y3;
+  }
+  return CURVE_STEPS + 1;
+}
+
+/** Catmull-Rom through four points, sampled evenly: the bundled route's shape. */
+function catmull(
+  out: Float64Array,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  x3: number,
+  y3: number,
+): number {
+  const px = [x0, x0, x1, x2, x3, x3];
+  const py = [y0, y0, y1, y2, y3, y3];
+  const spans = 4;
+  const per = Math.max(2, Math.round(CURVE_STEPS / spans));
+  let n = 0;
+  for (let s = 0; s < spans; s += 1) {
+    const a0 = px[s]!;
+    const a1 = px[s + 1]!;
+    const a2 = px[s + 2]!;
+    const a3 = px[s + 3]!;
+    const b0 = py[s]!;
+    const b1 = py[s + 1]!;
+    const b2 = py[s + 2]!;
+    const b3 = py[s + 3]!;
+    const last = s === spans - 1 ? per : per - 1;
+    for (let k = 0; k <= last; k += 1) {
+      const t = k / per;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      out[n * 2] =
+        0.5 * (2 * a1 + (-a0 + a2) * t + (2 * a0 - 5 * a1 + 4 * a2 - a3) * t2 + (-a0 + 3 * a1 - 3 * a2 + a3) * t3);
+      out[n * 2 + 1] =
+        0.5 * (2 * b1 + (-b0 + b2) * t + (2 * b0 - 5 * b1 + 4 * b2 - b3) * t2 + (-b0 + 3 * b1 - 3 * b2 + b3) * t3);
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/**
+ * A point at `t` along a sampled curve, written into `out`.
+ *
+ * Sparks travel the line that is drawn. They used to travel a quadratic the
+ * renderer happened to draw as well; now that a link into another region runs
+ * through that region's hub, a spark on the old straight line would visibly
+ * leave its own tract.
+ */
+export function alongCurve(pts: Float64Array, n: number, t: number, out: { x: number; y: number }): void {
+  if (n <= 0) {
+    out.x = 0;
+    out.y = 0;
+    return;
+  }
+  const at = Math.min(n - 1, Math.max(0, t * (n - 1)));
+  const i = Math.max(0, Math.min(n - 2, Math.floor(at)));
+  const f = at - i;
+  const ax = pts[i * 2]!;
+  const ay = pts[i * 2 + 1]!;
+  const bx = pts[(i + 1) * 2] ?? ax;
+  const by = pts[(i + 1) * 2 + 1] ?? ay;
+  out.x = ax + (bx - ax) * f;
+  out.y = ay + (by - ay) * f;
 }
