@@ -129,6 +129,28 @@ export function loadPositions(where: PositionStore): Map<string, Place> {
   return out;
 }
 
+/**
+ * Removes every arrangement one account has on this browser, in any format.
+ *
+ * The keys name note paths, so what was left behind after signing out would
+ * tell the next person on the browser what the vault holds.
+ */
+export function forgetPositions(account: string): void {
+  try {
+    const mine = `/${encodeURIComponent(account)}/`;
+    const doomed: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (key === null || !key.startsWith(LEGACY)) continue;
+      const stamped = /^v\d+(\/.*)$/.exec(key.slice(LEGACY.length));
+      if (stamped !== null && stamped[1]!.startsWith(mine)) doomed.push(key);
+    }
+    for (const key of doomed) window.localStorage.removeItem(key);
+  } catch {
+    // Blocked storage holds nothing.
+  }
+}
+
 /** Replaces the remembered arrangement. Notes that are gone go with it. */
 export function savePositions(where: PositionStore, positions: ReadonlyMap<string, Place>): void {
   if (positions.size > MAX_ENTRIES) return;

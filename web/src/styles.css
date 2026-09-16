@@ -4627,6 +4627,18 @@ button.ref:hover {
   backdrop-filter: none;
 }
 
+/* A message raised in full screen is drawn inside the frame (see App.tsx),
+   below the switcher, over whatever view is showing. */
+.netframe > .floaterror {
+  position: absolute;
+  z-index: 5;
+  top: calc(var(--s-4) + 3.25rem);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(44rem, calc(100% - 2 * var(--s-4)));
+  margin: 0;
+}
+
 .warnline {
   background: var(--warn-bg);
   border-color: color-mix(in srgb, var(--warn) 35%, transparent);

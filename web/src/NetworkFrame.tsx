@@ -31,6 +31,12 @@ import { NETWORK_VIEWS, type NetworkView } from './prefs';
  */
 const NETWORK_INSET = { top: 64, right: 20, bottom: 64, left: 20 };
 
+/** A frame in full screen: where overlays must be drawn to be seen, and the way out. */
+export interface FullscreenFrame {
+  host: HTMLElement;
+  leave: () => void;
+}
+
 const LABELS: Record<NetworkView, { label: string; icon: React.JSX.Element }> = {
   graph: { label: copy.shell.network.graph, icon: <NetworkIcon size={15} /> },
   list: { label: copy.shell.network.list, icon: <ListIcon size={15} /> },
@@ -44,6 +50,7 @@ export function NetworkFrame({
   view,
   onView,
   onOpen,
+  onFullscreen,
 }: {
   graph: GraphData;
   events: PulseEvent[];
@@ -52,6 +59,15 @@ export function NetworkFrame({
   view: NetworkView;
   onView: (view: NetworkView) => void;
   onOpen: (owner: string, path: string) => void;
+  /**
+   * Told when full screen begins and ends.
+   *
+   * In full screen nothing outside this frame is visible — with the platform's
+   * API the browser shows only this element, and without it the frame covers
+   * the window — so the shell needs to know where a message has to go, and how
+   * to step out before opening something that lives outside.
+   */
+  onFullscreen?: (frame: FullscreenFrame | null) => void;
 }): React.JSX.Element {
   const frame = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(false);
@@ -78,18 +94,29 @@ export function NetworkFrame({
     return () => window.removeEventListener('keydown', onKey);
   }, [full]);
 
+  const leave = useCallback((): void => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    setFull(false);
+  }, []);
+
+  useEffect(() => {
+    if (onFullscreen === undefined) return;
+    const host = frame.current;
+    onFullscreen(full && host !== null ? { host, leave } : null);
+    return () => onFullscreen(null);
+  }, [full, leave, onFullscreen]);
+
   const toggleFull = useCallback((): void => {
     const el = frame.current;
     if (full) {
-      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
-      setFull(false);
+      leave();
       return;
     }
     setFull(true);
     if (el !== null && document.fullscreenEnabled && typeof el.requestFullscreen === 'function') {
       void el.requestFullscreen().catch(() => undefined);
     }
-  }, [full]);
+  }, [full, leave]);
 
   /**
    * Arrow keys move between the three, as in any radio group; the choice

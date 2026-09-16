@@ -34,6 +34,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from './copy';
 
 import { refKey, type NoteRow, type Share } from './api';
+import { loadOpenFolders, saveOpenFolders } from './accountStorage';
 import { ChevronIcon, FileIcon, FolderIcon } from './icons';
 
 export type Finding = 'crit' | 'warn';
@@ -141,17 +142,6 @@ function writeLabel(owner: string, received: Share[]): string | null {
   if (mine.length === 0 || mine.every((share) => !share.canWrite)) return copy.shares.readOnly;
   if (mine.every((share) => share.canWrite)) return copy.shares.readWrite;
   return copy.shares.partlyWritable;
-}
-
-const OPEN_KEY = 'ndbrain.openFolders';
-
-function loadOpen(): Set<string> {
-  try {
-    const raw = window.localStorage.getItem(OPEN_KEY);
-    return new Set(raw === null ? [] : (JSON.parse(raw) as string[]));
-  } catch {
-    return new Set();
-  }
 }
 
 /** Every ancestor folder of a note, so the selection can reveal itself. */
@@ -291,15 +281,13 @@ export function Tree({
 
   // Which folders are *open*, not which are closed: the default has to survive
   // a vault growing a new folder, and an unknown folder should start shut.
-  const [open, setOpen] = useState<Set<string>>(loadOpen);
+  // Kept per account: the keys name folders, and the next person signing in on
+  // this browser must not find them (see `accountStorage.ts`).
+  const [open, setOpen] = useState<Set<string>>(() => loadOpenFolders(self));
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(OPEN_KEY, JSON.stringify([...open]));
-    } catch {
-      // A vault that cannot remember which folders were open is still usable.
-    }
-  }, [open]);
+    saveOpenFolders(self, open);
+  }, [self, open]);
 
   // Opening a note from search, from a link or from the palette reveals it in
   // the tree. Without this the selected row would sit inside a shut folder and

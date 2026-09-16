@@ -340,6 +340,7 @@ export const copy = {
   },
 
   login: {
+    name: 'Name',
     password: 'Password',
     signIn: 'Sign in',
     working: 'One moment…',

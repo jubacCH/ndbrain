@@ -13,11 +13,13 @@
  *  - the switcher and the account menu work from the keyboard
  */
 
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { GraphData, NoteRow } from '../src/api';
+import type { GraphData, NoteRow, User } from '../src/api';
+import { App } from '../src/App';
 import { copy } from '../src/copy';
 import { MenuButton } from '../src/Menu';
 import { NetworkFrame } from '../src/NetworkFrame';
@@ -29,6 +31,77 @@ import { Topbar } from '../src/Topbar';
 vi.mock('../src/Brain', () => ({
   Brain: () => <canvas className="brain" data-testid="brain" />,
 }));
+
+// The whole shell, over a server that is a handful of functions. The editor and
+// the context panel have their own tests and nothing to show here.
+vi.mock('../src/Editor', () => ({ Editor: () => <div data-testid="editor" /> }));
+vi.mock('../src/Context', () => ({ ContextPanel: () => <div /> }));
+
+const server = vi.hoisted(() => ({
+  signedIn: null as User | null,
+  /** Every account's notes; `Shared/` is shared with everybody. */
+  notes: [] as NoteRow[],
+  failOpen: false,
+}));
+
+vi.mock('../src/api', async (original) => {
+  const real = await original<typeof import('../src/api')>();
+  const seen = (): NoteRow[] =>
+    server.notes.filter((n) => server.signedIn !== null && (n.owner === server.signedIn.id || n.path.startsWith('Shared/')));
+  const fake: Record<string, (...args: never[]) => Promise<unknown>> = {
+    me: async () => {
+      if (server.signedIn === null) throw new real.ApiError(401, 'unauthorized', 'signed out');
+      return { user: server.signedIn };
+    },
+    login: async (name: string) => {
+      server.signedIn = { id: name, displayName: name, role: 'user' };
+      return { user: server.signedIn };
+    },
+    logout: async () => {
+      server.signedIn = null;
+      return { ok: true };
+    },
+    tree: async () => ({ notes: seen(), dirs: [] }),
+    tidy: async () => ({
+      orphans: [],
+      untagged: [],
+      deadLinks: [],
+      stale: [],
+      conflicts: [],
+      truncated: false,
+      totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0 },
+    }),
+    shares: async () => ({ granted: [], received: [] }),
+    tags: async () => ({ tags: [] }),
+    pulse: async () => ({ events: [], now: 1 }),
+    propKeys: async () => ({ props: [] }),
+    graph: async () => ({
+      nodes: seen().map((n) => ({
+        owner: n.owner,
+        path: n.path,
+        title: n.title,
+        folder: n.path.split('/').slice(0, -1).join('/'),
+        links: 0,
+        tags: [],
+        updatedAt: 0,
+      })),
+      edges: [],
+    }),
+    quickFind: async () => ({ notes: seen() }),
+    getNote: async (owner: string, path: string) => {
+      const row = seen().find((n) => n.owner === owner && n.path === path);
+      if (server.failOpen || row === undefined) throw new real.ApiError(404, 'not_found', 'gone');
+      return {
+        owner,
+        canWrite: owner === server.signedIn?.id,
+        note: { path, title: row.title, content: '', size: 0, mtimeMs: 0 },
+      };
+    },
+  };
+  // Anything a test does not care about simply never answers.
+  const api = new Proxy(fake, { get: (target, key: string) => target[key] ?? (() => new Promise(() => {})) });
+  return { ...real, api };
+});
 
 function note(path: string): NoteRow {
   return { owner: 'julian', path, title: path.replace(/\.md$/, ''), size: 1, mtimeMs: 0 };
@@ -66,10 +139,18 @@ function renderSidebar(props: Partial<SidebarProps> = {}) {
 
 beforeEach(() => {
   window.localStorage.clear();
+  Element.prototype.scrollIntoView = () => {};
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
 });
 
 afterEach(() => {
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 describe('the sidebar', () => {
@@ -301,5 +382,132 @@ describe('the network frame', () => {
     expect(screen.getByRole('button', { name: copy.shell.network.exitFullscreen })).toHaveAttribute('aria-pressed', 'true');
     await userEvent.keyboard('{Escape}');
     expect(screen.getByRole('button', { name: copy.shell.network.fullscreen })).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
+describe('the shell, signed in', () => {
+  function row(owner: string, path: string): NoteRow {
+    return { owner, path, title: path.split('/').pop()!.replace(/\.md$/, ''), size: 1, mtimeMs: 0 };
+  }
+
+  function mount(user: User | null): void {
+    server.signedIn = user;
+    server.failOpen = false;
+    server.notes = [row('anna', 'Shared/Salary review.md'), row('anna', 'Anna only.md'), row('julian', 'Julian only.md')];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <App />
+      </QueryClientProvider>,
+    );
+  }
+
+  async function signOut(): Promise<void> {
+    await userEvent.click(await screen.findByRole('button', { name: copy.shell.account }));
+    await userEvent.click(screen.getByRole('menuitem', { name: copy.nav.signOut }));
+  }
+
+  async function signIn(name: string): Promise<void> {
+    await userEvent.type(await screen.findByLabelText(copy.login.name), name);
+    await userEvent.type(screen.getByLabelText(copy.login.password), 'secret');
+    await userEvent.click(screen.getByRole('button', { name: copy.login.signIn }));
+    await screen.findByRole('button', { name: copy.shell.account });
+  }
+
+  async function openFromPalette(title: string): Promise<void> {
+    await screen.findByRole('button', { name: copy.shell.account });
+    await userEvent.keyboard('{Control>}k{/Control}');
+    const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
+    await userEvent.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
+    await screen.findByTestId('editor');
+  }
+
+  function recentTitles(): string[] {
+    const heading = screen.queryByText(copy.nav.recent);
+    if (heading === null) return [];
+    return within(heading.parentElement!)
+      .queryAllByRole('button')
+      .map((b) => b.textContent ?? '');
+  }
+
+  it("keeps one account's recents from the next account on the same browser", async () => {
+    // What an earlier build left behind, shared by every account.
+    window.localStorage.setItem('ndbrain.recents', JSON.stringify([{ owner: 'anna', path: 'Anna only.md' }]));
+    window.localStorage.setItem('ndbrain.openFolders', JSON.stringify(['julian Private']));
+
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await openFromPalette('Salary review');
+    await waitFor(() => expect(recentTitles().join()).toMatch(/Salary review/));
+    expect(window.localStorage.getItem('ndbrain.recents')).toBeNull();
+    expect(window.localStorage.getItem('ndbrain.openFolders')).toBeNull();
+    // Brain arrangements, as the network view leaves them.
+    window.localStorage.setItem('ndbrain.brain.v3/julian/network', JSON.stringify({ 'anna/Shared/Salary review.md': [1, 2] }));
+    window.localStorage.setItem('ndbrain.brain.v3/anna/network', JSON.stringify({ 'anna/Anna only.md': [1, 2] }));
+
+    await signOut();
+    await signIn('anna');
+    // Anna's vault holds the note Julian read, and she still must not learn that he did.
+    await screen.findAllByText('Anna only');
+    expect(recentTitles()).toEqual([]);
+
+    // Nothing Julian read is left for anyone to find in the storage either.
+    const stored = Object.keys(window.localStorage)
+      .map((key) => `${key}=${window.localStorage.getItem(key)}`)
+      .join('\n');
+    expect(stored).not.toMatch(/Salary review/);
+    expect(stored).not.toMatch(/julian/i);
+    // Anna's own arrangement is hers and stays.
+    expect(window.localStorage.getItem('ndbrain.brain.v3/anna/network')).not.toBeNull();
+  });
+
+  it('gives each account its own recents when both come back', async () => {
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await openFromPalette('Julian only');
+    await signOut();
+    await signIn('anna');
+    await openFromPalette('Anna only');
+    await waitFor(() => expect(recentTitles().join()).toMatch(/Anna only/));
+    expect(recentTitles().join()).not.toMatch(/Julian only/);
+  });
+
+  it('offers no admin entry to an account that is not an administrator', async () => {
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await userEvent.click(await screen.findByRole('button', { name: copy.shell.account }));
+    expect(screen.getByRole('menuitem', { name: copy.nav.signOut })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: copy.nav.admin })).toBeNull();
+  });
+
+  it('offers the admin entry to an administrator', async () => {
+    mount({ id: 'julian', displayName: 'Julian', role: 'admin' });
+    await userEvent.click(await screen.findByRole('button', { name: copy.shell.account }));
+    expect(screen.getByRole('menuitem', { name: copy.nav.admin })).toBeInTheDocument();
+  });
+
+  async function fullScreenList(): Promise<HTMLElement> {
+    window.localStorage.setItem('ndbrain.prefs', JSON.stringify({ networkView: 'list' }));
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await userEvent.click(await screen.findByRole('button', { name: copy.nav.network }));
+    await userEvent.click(await screen.findByRole('button', { name: copy.shell.network.fullscreen }));
+    const frame = document.querySelector<HTMLElement>('.netframe')!;
+    expect(frame).toHaveAttribute('data-full', 'true');
+    return frame;
+  }
+
+  it('⌘K leaves full screen before the palette opens, so the palette is seen', async () => {
+    await fullScreenList();
+    await userEvent.keyboard('{Meta>}k{/Meta}');
+    expect(await screen.findByRole('dialog', { name: copy.palette.label })).toBeInTheDocument();
+    expect(document.querySelector('.netframe')).toHaveAttribute('data-full', 'false');
+  });
+
+  it('draws a message raised in full screen inside the full-screen frame', async () => {
+    const frame = await fullScreenList();
+    server.failOpen = true;
+    const cell = await within(frame).findByText('Julian only');
+    await act(async () => {
+      fireEvent.click(cell);
+    });
+    const message = await screen.findByText(copy.errors.noteGone);
+    expect(frame).toContainElement(message);
   });
 });

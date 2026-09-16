@@ -46,7 +46,7 @@ export function Login({ onSignedIn }: { onSignedIn: (user: User) => void }): Rea
         {error !== null && <div className="error">{error}</div>}
 
         <label>
-          Name
+          {copy.login.name}
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}

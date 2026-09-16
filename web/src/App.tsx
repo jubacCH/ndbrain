@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   ApiError,
@@ -35,9 +36,10 @@ import { Brain } from './Brain';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { copy } from './copy';
+import { discardLegacy, forgetAccount, loadRecents, pushRecent, type Recent } from './accountStorage';
 import { applyPrefs, loadPrefs, savePrefs, type Prefs, type Theme } from './prefs';
 import { GearIcon, ShareIcon, ShieldIcon, SignOutIcon } from './icons';
-import { NetworkFrame } from './NetworkFrame';
+import { NetworkFrame, type FullscreenFrame } from './NetworkFrame';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import type { MenuItem } from './Menu';
@@ -92,43 +94,14 @@ type View =
 type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
 
 
-/**
- * Recently opened notes.
+/*
+ * Recently opened notes live in `accountStorage.ts`, keyed by account.
  *
  * Most navigation is return traffic rather than discovery, and the tree is the
  * slowest possible way to reach a note you had open ten minutes ago. Kept in the
  * browser, not on the server: it is a property of this screen, and syncing it
  * would make two people sharing a vault steer each other's sidebar.
  */
-const RECENTS_KEY = 'ndbrain.recents';
-
-/** The most the settings page offers to show; see `LIMITS.recentCount` in prefs. */
-const RECENTS_KEPT = 20;
-
-interface Recent {
-  owner: string;
-  path: string;
-}
-
-function loadRecents(): Recent[] {
-  try {
-    const raw = window.localStorage.getItem(RECENTS_KEY);
-    return raw === null ? [] : (JSON.parse(raw) as Recent[]);
-  } catch {
-    return [];
-  }
-}
-
-function pushRecent(owner: string, path: string): void {
-  try {
-    const next = [{ owner, path }, ...loadRecents().filter((r) => !(r.owner === owner && r.path === path))];
-    // As many as the settings page lets the sidebar show, so raising the number
-    // there shows more straight away rather than after twenty more opens.
-    window.localStorage.setItem(RECENTS_KEY, JSON.stringify(next.slice(0, RECENTS_KEPT)));
-  } catch {
-    // Private browsing, a full quota — none of it is worth an error message.
-  }
-}
 
 
 /**
@@ -210,6 +183,15 @@ function Shell({
    */
   const searchSeq = useRef(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  /**
+   * The network frame, while it is in full screen.
+   *
+   * Nothing outside it is visible then. Messages are drawn inside it, and the
+   * palette steps out of full screen first — see `openPalette`.
+   */
+  const [fullscreen, setFullscreen] = useState<FullscreenFrame | null>(null);
+  const fullscreenRef = useRef<FullscreenFrame | null>(null);
+  fullscreenRef.current = fullscreen;
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [taskDir, setTaskDir] = useState<string | undefined>(undefined);
@@ -244,7 +226,10 @@ function Shell({
   const [keyOwner, setKeyOwner] = useState(user.id);
   const [adminBusy, setAdminBusy] = useState(false);
   const [filesBusy, setFilesBusy] = useState(false);
-  const [recents, setRecents] = useState<Recent[]>(loadRecents);
+  const [recents, setRecents] = useState<Recent[]>(() => {
+    discardLegacy();
+    return loadRecents(user.id);
+  });
 
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<{ owner: string; path: string; content: string } | null>(null);
@@ -452,8 +437,8 @@ function Shell({
         setSaveState('saved');
         setDrawerOpen(false);
         setError(null);
-        pushRecent(owner, path);
-        setRecents(loadRecents());
+        pushRecent(user.id, owner, path);
+        setRecents(loadRecents(user.id));
       } catch {
         // A note in a share that has just been withdrawn is gone in exactly the
         // same way as a deleted one, and is told so in the same words. There is
@@ -463,7 +448,7 @@ function Shell({
         invalidate.afterStructure(client);
       }
     },
-    [flush, client],
+    [flush, client, user.id],
   );
 
   /**
@@ -478,12 +463,12 @@ function Shell({
     if (restored.current || prefs.startView !== 'note' || notes.length === 0) return;
     restored.current = true;
 
-    const last = loadRecents()[0];
+    const last = loadRecents(user.id)[0];
     if (last === undefined) return;
     if (!notes.some((note) => note.owner === last.owner && note.path === last.path)) return;
 
     void openNote(last.owner, last.path);
-  }, [notes, prefs.startView, openNote]);
+  }, [notes, prefs.startView, openNote, user.id]);
 
   /**
    * Reloads the open note after a restore.
@@ -736,18 +721,36 @@ function Shell({
     void runSearch(query, {}).catch(() => undefined);
   };
 
+  /**
+   * Opens the palette, leaving full screen first.
+   *
+   * Leaving rather than drawing the palette inside the full-screen frame, for
+   * three reasons. Everything the palette does opens a note, which ends the
+   * network view and with it full screen anyway. With the platform's full-screen
+   * API, Escape belongs to the browser and cannot be intercepted, so closing a
+   * palette drawn inside would throw somebody out of full screen as a side
+   * effect. And outside, the whole shell is back, header search included.
+   */
+  const openPalette = useCallback((): void => {
+    fullscreenRef.current?.leave();
+    setPaletteOpen(true);
+  }, []);
+  const paletteOpenRef = useRef(paletteOpen);
+  paletteOpenRef.current = paletteOpen;
+
   // ⌘K on a Mac, Ctrl-K elsewhere. Registered on the window so it works while
   // the editor has focus, which is where it will usually be pressed.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        setPaletteOpen((open) => !open);
+        if (paletteOpenRef.current) setPaletteOpen(false);
+        else openPalette();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [openPalette]);
 
   useEffect(() => {
     // The vault's own vocabulary, re-read whenever its notes changed: a key
@@ -1079,6 +1082,11 @@ function Shell({
   const signOut = async (): Promise<void> => {
     if (pending.current !== null) await flush();
     await api.logout();
+    // What this browser kept about the account goes with it: the recents, the
+    // open folders, the brain's arrangement — and every answer in the cache,
+    // which would otherwise be on screen for the next account until refetched.
+    forgetAccount(user.id);
+    client.clear();
     onSignedOut();
   };
 
@@ -1094,6 +1102,16 @@ function Shell({
   ];
 
   const heading = headingOf();
+
+  const errorBox =
+    error === null ? null : (
+      <div className="floaterror" role="status">
+        <span>{error}</span>
+        <button type="button" onClick={() => setError(null)} aria-label={copy.errors.closeMessage}>
+          ✕
+        </button>
+      </div>
+    );
 
   /** The title and the line of numbers under it, for whatever view is on screen. */
   function headingOf(): { title: string; subtitle: string } {
@@ -1178,7 +1196,7 @@ function Shell({
         onClose={() => setDrawerOpen(false)}
         filter={treeFilter}
         onFilter={setTreeFilter}
-        onJump={() => setPaletteOpen(true)}
+        onJump={openPalette}
         recents={recentRows}
         current={view === 'note' && open !== null ? { owner: open.owner, path: open.note.path } : null}
         onOpen={(owner, path) => void openNote(owner, path)}
@@ -1243,20 +1261,16 @@ function Shell({
           accountName={user.displayName}
           accountItems={accountItems}
           onMenu={() => setDrawerOpen((o) => !o)}
-          onSearch={() => setPaletteOpen(true)}
+          onSearch={openPalette}
           onToggleTheme={() => setPrefs((current) => ({ ...current, theme: dark ? 'light' : 'dark' }))}
         />
 
         <div className="stage">
           <main className="main">
-            {error !== null && (
-              <div className="floaterror" role="status">
-                <span>{error}</span>
-                <button type="button" onClick={() => setError(null)} aria-label={copy.errors.closeMessage}>
-                  ✕
-                </button>
-              </div>
-            )}
+            {/* In full screen only the network frame is visible, so a message
+                raised there — a note that could not be opened — is drawn in it. */}
+            {error !== null &&
+              (fullscreen === null ? errorBox : createPortal(errorBox, fullscreen.host))}
 
             <div className="main-body">
               {view === 'note' &&
@@ -1312,6 +1326,7 @@ function Shell({
                     view={prefs.networkView}
                     onView={(networkView) => setPrefs((current) => ({ ...current, networkView }))}
                     onOpen={(owner, path) => void openNote(owner, path)}
+                    onFullscreen={setFullscreen}
                   />
                 ))}
 
