@@ -193,9 +193,11 @@ function warmth(data: GraphData): Float64Array {
  *
  * `detectClusters` groups by links, folders *and* tags, and `groupRegions`
  * names a region after the tags its members share when no folder dominates it.
- * Without this the regions fall back to folders alone — which still works, and
- * is what the neighbourhood panel gets, since a subgraph's tags say nothing
- * about the vault's shape.
+ * Both uses of this component pass them: the full network and the
+ * neighbourhood panel alike, since the graph reply carries tags for every node
+ * either way. Without them the regions would fall back to folders alone, which
+ * still works; only the loose neighbourhood arrangement draws no regions, so
+ * there the tags only shape the clusters.
  */
 function tagsByKey(data: GraphData): Map<string, readonly string[]> {
   const tags = new Map<string, readonly string[]>();
@@ -351,6 +353,9 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
 
     const builder = new SceneBuilder(graph);
     builder.recent(warmth(data));
+    // The tissue and the region anchors are grown from positions and regions;
+    // a refetch that changed neither keeps them instead of growing them again.
+    if (same !== null) builder.inherit(same.builder);
 
     engine.current = {
       graph,

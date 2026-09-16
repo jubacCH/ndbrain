@@ -36,6 +36,7 @@
 
 import { CachedLayer, Sprites } from './bloom';
 import type { Decoration } from './deco';
+import type { PlacedLabel } from './labels';
 import { LINE_HEIGHT, placeRegionNames } from './labels';
 import { DENDRITE_ALPHA, DENDRITE_TIP_ALPHA, DENDRITE_TIP_WIDTH, DENDRITE_WIDTH, TISSUE_LEVEL } from './deco';
 import type { Depth, Rgb, Scene, SceneEdge, SceneNode } from './scene';
@@ -85,6 +86,20 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
   // One outline buffer, x and y interleaved, left side then right. Filled per
   // tract instead of two fresh arrays of pairs per tract per frame.
   let outline = new Float64Array(256);
+  /**
+   * The page's font stack, read on resize rather than per frame: a computed
+   * style is a style recalculation, and the stack is a stylesheet decision that
+   * does not change while the view is open.
+   */
+  let family = 'sans-serif';
+  /** The last region name placement and what it was placed for (see `regionNames`). */
+  let placement: {
+    key: string;
+    regions: Scene['regions'];
+    nodes: Scene['nodes'];
+    depthInside: Scene['depthInside'];
+    names: PlacedLabel[];
+  } | null = null;
 
   const resize = (width: number, height: number): void => {
     // Capped at 2. A phone claiming 3 or 4 asks for nine to sixteen times the
@@ -92,6 +107,55 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.max(1, Math.round(width * dpr));
     canvas.height = Math.max(1, Math.round(height * dpr));
+    family =
+      typeof getComputedStyle === 'function' && typeof document !== 'undefined'
+        ? getComputedStyle(document.body).fontFamily || 'sans-serif'
+        : 'sans-serif';
+  };
+
+  /**
+   * Where the region names go, placed once per stand and remembered.
+   *
+   * The placement tries every way out of every region against every note, every
+   * blocked area and every name already placed — for two thousand notes an
+   * estimated hundred million operations. It used to run in every frame, and a
+   * frame with a pulse on screen changes nothing it depends on. So it runs again
+   * only when one of its inputs does: the camera, the canvas size, the scene's
+   * stamp (notes moved, zoom, selection), the areas the controls cover, the font,
+   * or the anchors themselves — which the scene rebuilds as a new array when the
+   * notes come to rest, a frame that need not bump the stamp.
+   */
+  const regionNames = (scene: Scene, measure: (text: string) => number): PlacedLabel[] => {
+    const { camera } = scene;
+    let blocked = '';
+    // To the half pixel, as `sameAreas` compares them: a control does not move
+    // by less, and sub-pixel noise in a layout read must not count as a move.
+    for (const r of scene.blocked) {
+      blocked += `${Math.round(r.x * 2)},${Math.round(r.y * 2)},${Math.round(r.w * 2)},${Math.round(r.h * 2)};`;
+    }
+    const key = `${camera.scale}:${camera.x}:${camera.y}:${scene.width}x${scene.height}:${scene.stamp}:${scene.brainWidth}:${family}:${blocked}`;
+    if (
+      placement !== null &&
+      placement.key === key &&
+      placement.regions === scene.regions &&
+      placement.nodes === scene.nodes &&
+      placement.depthInside === scene.depthInside
+    ) {
+      return placement.names;
+    }
+    const names = placeRegionNames(
+      scene.regions,
+      camera,
+      scene.width,
+      scene.height,
+      scene.blocked,
+      scene.depthInside,
+      measure,
+      scene.nodes,
+      scene.brainWidth,
+    );
+    placement = { key, regions: scene.regions, nodes: scene.nodes, depthInside: scene.depthInside, names };
+    return names;
   };
 
   /** Puts the canvas into world units for the camera of this scene. */
@@ -445,7 +509,6 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     const { camera } = scene;
     const sx = (x: number): number => x * camera.scale + camera.x;
     const sy = (y: number): number => y * camera.scale + camera.y;
-    const family = typeof getComputedStyle === 'function' ? getComputedStyle(document.body).fontFamily : 'sans-serif';
 
     if (scene.regionAlpha > 0.01 && scene.regions.length > 0) {
       g.font = `400 13px ${family}`;
@@ -456,18 +519,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       // Where each name goes is decided in `labels.ts`: next to its own region,
       // on the canvas, off the tissue, clear of the controls and of each other —
       // or not at all.
-      const names = placeRegionNames(
-        scene.regions,
-        camera,
-        scene.width,
-        scene.height,
-        scene.blocked,
-        scene.depthInside,
-        measure,
-        scene.nodes,
-        scene.brainWidth,
-      );
-      for (const label of names) {
+      for (const label of regionNames(scene, measure)) {
         g.strokeStyle = `rgba(190,228,235,${0.38 * scene.regionAlpha})`;
         g.lineWidth = 0.8;
         g.beginPath();

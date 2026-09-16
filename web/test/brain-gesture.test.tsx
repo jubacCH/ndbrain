@@ -24,7 +24,9 @@
 import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { PulseEvent } from '../src/api';
 import { Brain } from '../src/Brain';
+import type { Activity } from '../src/brain/activity';
 import type { Camera } from '../src/brain/camera';
 import { fit, toScreen, toWorld } from '../src/brain/camera';
 import { BrainLayout } from '../src/brain/layout';
@@ -44,6 +46,13 @@ const graph = buildGraph(data);
 /** The resting camera the component will use: it depends only on the data and the canvas. */
 const home: Camera = fit(new BrainLayout(graph, { arrangement: 'brain' }).bounds, W, H, INSET);
 
+/**
+ * The frames the component has asked for: how many in total, and which are
+ * still queued. The loop is scheduled, not standing, so these are what says
+ * whether it runs.
+ */
+const frames = { requested: 0, pending: new Set<number>() };
+
 beforeEach(() => {
   vi.useFakeTimers();
   window.localStorage.clear();
@@ -53,8 +62,21 @@ beforeEach(() => {
     addEventListener: () => {},
     removeEventListener: () => {},
   }));
-  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => window.setTimeout(() => cb(performance.now()), 16));
-  vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
+  frames.requested = 0;
+  frames.pending.clear();
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    frames.requested += 1;
+    const id = window.setTimeout(() => {
+      frames.pending.delete(id);
+      cb(performance.now());
+    }, 16);
+    frames.pending.add(id);
+    return id;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+    frames.pending.delete(id);
+    window.clearTimeout(id);
+  });
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
   vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockImplementation(
     () => ({ x: 0, y: 0, top: 0, left: 0, right: W, bottom: H, width: W, height: H, toJSON: () => ({}) }) as DOMRect,
@@ -111,7 +133,7 @@ function neighbours(key: string): Set<string> {
 const targets = [3, 20, 47, 71, 96].map((i) => graph.nodes[i]!.key);
 
 describe('a click', () => {
-  it('moves nothing, five times over, double clicks included', async () => {
+  it('moves nothing, five times over, double clicks included', { timeout: 30_000 }, async () => {
     const before = await firstVisit();
     const { canvas, unmount } = await mount();
 
@@ -154,7 +176,11 @@ describe('a click', () => {
 });
 
 describe('a drag', () => {
-  it('leaves the note where it was dropped and every note but its neighbours exactly where it was, five times over', async () => {
+  // Five mounts with eight seconds of frames each: about 1.5 s alone, past the
+  // default 5 s when the machine is busy. A timeout leaves the view mounted and
+  // its timers running into the tests after it, which then fail for no reason
+  // of their own.
+  it('leaves the note where it was dropped and every note but its neighbours exactly where it was, five times over', { timeout: 30_000 }, async () => {
     const original = await firstVisit();
     let before = original;
     const untouched = new Set(original.keys());
@@ -230,6 +256,124 @@ describe('the selection', () => {
     fireEvent.keyDown(canvas, { key: 'Escape' });
     await run(100);
     expect(selected(build)).toBe(-1);
+    unmount();
+  });
+});
+
+/**
+ * The frame loop runs only while something moves.
+ *
+ * It is scheduled rather than standing (`Brain.tsx`, `ask`), which makes four
+ * things load-bearing that no picture shows at once: that it stops at rest,
+ * that a pulse starts it again, that reduced motion keeps every note where it
+ * is, and that a key that changes the picture asks for exactly the frame it
+ * needs. Each test names the mutation it was checked against.
+ */
+describe('the frame loop', () => {
+  /** Mounts the network over a first visit's stored positions and lets it come to rest. */
+  async function quiet(): Promise<{
+    canvas: HTMLCanvasElement;
+    rerender: (events: PulseEvent[]) => void;
+    unmount: () => void;
+  }> {
+    await firstVisit();
+    const props = { data, onOpen: vi.fn(), view: 'network', arrangement: 'brain', remember, inset: INSET } as const;
+    const view = render(<Brain {...props} events={[]} />);
+    // In steps, not one long run: React commits what a frame set in state only
+    // when `act` ends, and a commit can ask for a frame of its own (the legend
+    // appearing is a child added over the canvas).
+    for (let k = 0; k < 6; k += 1) await run(500);
+    return {
+      canvas: view.container.querySelector('canvas')!,
+      rerender: (next) => view.rerender(<Brain {...props} events={next} />),
+      unmount: view.unmount,
+    };
+  }
+
+  const pulse = (key: string): PulseEvent => {
+    const node = graph.nodes[graph.index.get(key)!]!;
+    return { at: Date.now(), kind: 'write', what: 'edit', path: node.path, who: 'jb', agent: false, owner: node.owner };
+  };
+
+  it('stops asking for frames once the brain is at rest', async () => {
+    // Mutation: `if (busy) ask()` as an unconditional `ask()`.
+    const { unmount } = await quiet();
+    expect(frames.pending.size).toBe(0);
+    const before = frames.requested;
+    await run(2000);
+    expect(frames.requested).toBe(before);
+    unmount();
+  });
+
+  it('starts again for a new event, and the note it names is warm afterwards', async () => {
+    // Mutations: `activity.record(events)` removed; `wake.current()` after it removed.
+    const build = vi.spyOn(SceneBuilder.prototype, 'build');
+    const { rerender, unmount } = await quiet();
+    expect(frames.pending.size).toBe(0);
+    const before = frames.requested;
+    const key = targets[2]!;
+    const note = graph.index.get(key)!;
+
+    rerender([pulse(key)]);
+    await run(100);
+
+    expect(frames.requested).toBeGreaterThan(before);
+    const activity = build.mock.calls.at(-1)![1] as Activity;
+    expect(activity.warm[note]).toBeGreaterThan(0);
+    expect(activity.fire[note]).toBeGreaterThan(0);
+    unmount();
+  });
+
+  it('keeps every note exactly where it is under reduced motion, frame after frame, while a note is held', async () => {
+    // Mutation: `if (!reduce)` around the step as `if (true)`.
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('reduce'),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const seen: Array<{ x: number[]; y: number[] }> = [];
+    let camera: Camera = home;
+    let layout: BrainLayout | null = null;
+    const real = SceneBuilder.prototype.build;
+    vi.spyOn(SceneBuilder.prototype, 'build').mockImplementation(function (this: SceneBuilder, ...args) {
+      layout = args[0];
+      camera = args[2];
+      seen.push({ x: Array.from(args[0].x), y: Array.from(args[0].y) });
+      return real.apply(this, args);
+    });
+    const { canvas, unmount } = await quiet();
+
+    // Held, not released: the dragged note's neighbours are free to move, and
+    // a loop that stepped the layout would move them on every frame.
+    const i = graph.index.get(targets[3]!)!;
+    const p = toScreen(camera, layout!.x[i]!, layout!.y[i]!);
+    fireEvent.pointerDown(canvas, { clientX: p.x, clientY: p.y, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: p.x + 40, clientY: p.y + 20, pointerId: 1 });
+    await run(16);
+    const from = seen.length;
+    await run(16 * 30);
+    const frozen = seen.slice(from);
+
+    // A drag keeps the loop running, so these are real frames, not one.
+    expect(frozen.length).toBeGreaterThanOrEqual(25);
+    const first = seen[from - 1]!;
+    for (const [n, frame] of frozen.entries()) {
+      expect(frame.x, `frame ${n}: x`).toEqual(first.x);
+      expect(frame.y, `frame ${n}: y`).toEqual(first.y);
+    }
+    fireEvent.pointerUp(window, { clientX: p.x + 40, clientY: p.y + 20, pointerId: 1 });
+    unmount();
+  });
+
+  it('asks for exactly one frame when Escape lets go of the selection', async () => {
+    // Mutation: the `ask()` in the key handler removed.
+    const { canvas, unmount } = await quiet();
+    expect(frames.pending.size).toBe(0);
+    const before = frames.requested;
+    fireEvent.keyDown(canvas, { key: 'Escape' });
+    await run(1000);
+    expect(frames.requested - before).toBe(1);
     unmount();
   });
 });
