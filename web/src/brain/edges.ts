@@ -446,6 +446,18 @@ const TRUNK_BOW = 0.28;
 const TRUNK_JITTER = 0.09;
 /** Where the branch to the leaf leaves the hub. */
 const BRANCH_AT = 0.35;
+/**
+ * How far a bundled route may be longer than the direct line before it is not
+ * worth bundling.
+ *
+ * Bundling only reads as white matter while the detour is small: the corridor
+ * is shared by many links and the branch is short. Two notes that happen to sit
+ * side by side across a region boundary would otherwise have their link thrown
+ * right across the brain and back for the sake of a corridor neither of them
+ * needs. Checked with the positions, in `traceEdge`, so the route itself stays a
+ * decision about structure and not about where anything currently is.
+ */
+const DETOUR_MAX = 2.2;
 
 /** How far a link inside one region bows, and one into another that is not bundled. */
 const BEND_WITHIN = 0.8;
@@ -590,7 +602,11 @@ export function traceEdge(
   const len = Math.hypot(dx, dy) || 1;
 
   const waypoint = plan.via[i]!;
-  if (geometry !== null && waypoint >= 0) {
+  const detour =
+    waypoint < 0
+      ? Infinity
+      : (Math.hypot(x[waypoint]! - x0, y[waypoint]! - y0) + Math.hypot(x3 - x[waypoint]!, y3 - y[waypoint]!)) / len;
+  if (geometry !== null && waypoint >= 0 && detour <= DETOUR_MAX) {
     const hx = x[waypoint]!;
     const hy = y[waypoint]!;
     const target = geometry.regionOf[leaf]!;
@@ -671,9 +687,11 @@ function catmull(
   x3: number,
   y3: number,
 ): number {
+  // Both ends doubled, so the curve starts and ends exactly on the notes. Six
+  // control points give three spans: 1→2, 2→3, 3→4. Four would read px[6].
   const px = [x0, x0, x1, x2, x3, x3];
   const py = [y0, y0, y1, y2, y3, y3];
-  const spans = 4;
+  const spans = 3;
   const per = Math.max(2, Math.round(CURVE_STEPS / spans));
   let n = 0;
   for (let s = 0; s < spans; s += 1) {

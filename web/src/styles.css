@@ -1833,6 +1833,8 @@ tbody tr[data-selected='true']:hover td {
 .braincard {
   position: absolute;
   z-index: 3;
+  /* Opens away from the edge it is near, so it never takes its own content off
+     the canvas. Which way is decided in `Brain.tsx`, where the size is known. */
   transform: translate(1.375rem, -1.5rem);
   min-width: 16rem;
   max-width: 20rem;
@@ -1845,6 +1847,18 @@ tbody tr[data-selected='true']:hover td {
   box-shadow: 0 0.5rem 1.875rem rgba(0, 0, 0, 0.35);
   color: rgba(231, 242, 244, 0.95);
   pointer-events: none;
+}
+
+.braincard[data-flip-x='true'] {
+  transform: translate(calc(-100% - 1.375rem), -1.5rem);
+}
+
+.braincard[data-flip-y='true'] {
+  transform: translate(1.375rem, calc(-100% + 1.5rem));
+}
+
+.braincard[data-flip-x='true'][data-flip-y='true'] {
+  transform: translate(calc(-100% - 1.375rem), calc(-100% + 1.5rem));
 }
 
 .braincard-title {
