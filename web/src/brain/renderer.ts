@@ -54,11 +54,13 @@ const PARALLAX_Y = 5;
 const TISSUE_PLANE = -0.7;
 /** The three planes' parallax factors. */
 const PLANE_Z: readonly number[] = [-1, 0, 1];
+/** How much room a region name keeps from the edge of the canvas, in CSS pixels. */
+const MARGIN = 10;
 /** Blur radius of a plane's bloom, in half-resolution pixels. */
 const PLANE_BLUR = 11;
 const TISSUE_BLUR = 9;
 /** How strongly a bloom is added back over its own layer. */
-const BLOOM_STRENGTH = 0.6;
+const BLOOM_STRENGTH = 0.3;
 const TISSUE_BLOOM = 0.5;
 
 const rgba = (c: Rgb, a: number): string => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
@@ -111,7 +113,16 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       outline[i * 4 + 3] = py - ny;
     }
 
-    const grad = g.createLinearGradient(e.pts[0]!, e.pts[1]!, e.pts[(n - 1) * 2]!, e.pts[(n - 1) * 2 + 1]!);
+    // A gradient refuses a non-finite coordinate by throwing, and a throw inside
+    // the frame kills the loop for good — the view would freeze rather than lose
+    // one line. One malformed curve is skipped instead.
+    const x0 = e.pts[0]!;
+    const y0 = e.pts[1]!;
+    const x1 = e.pts[(n - 1) * 2]!;
+    const y1 = e.pts[(n - 1) * 2 + 1]!;
+    if (!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)) return;
+
+    const grad = g.createLinearGradient(x0, y0, x1, y1);
     // The opacity itself is `globalAlpha`; the gradient only says how the far
     // end fades against the near one.
     grad.addColorStop(0, rgba(e.colour, 1));
@@ -128,9 +139,9 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
 
   /** The glowing body of one note: a sprite halo, a coloured disc, a white core. */
   const body = (g: CanvasRenderingContext2D, n: SceneNode): void => {
-    const halo = n.r * (2.4 + n.glow * 1.4);
+    const halo = n.r * (1.7 + n.glow * 0.9);
     const sprite = sprites.halo(n.warm ? 'warm' : 'cyan', halo);
-    g.globalAlpha = Math.min(1, (0.3 + 0.4 * n.glow) * n.alpha + n.heat * 0.4);
+    g.globalAlpha = Math.min(1, (0.14 + 0.17 * n.glow) * n.alpha + n.heat * 0.4);
     if (sprite !== null) g.drawImage(sprite, n.x - halo, n.y - halo, halo * 2, halo * 2);
     else {
       const grad = g.createRadialGradient(n.x, n.y, 0, n.x, n.y, halo);
@@ -149,9 +160,9 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     g.fill();
     const core = sprites.halo('core', n.r * 1.3);
     if (core !== null) g.drawImage(core, n.x - n.r * 1.3, n.y - n.r * 1.3, n.r * 2.6, n.r * 2.6);
-    g.fillStyle = `rgba(255,255,255,${0.85 * Math.min(1, n.alpha)})`;
+    g.fillStyle = `rgba(255,255,255,${0.72 * Math.min(1, n.alpha)})`;
     g.beginPath();
-    g.arc(n.x, n.y, n.r * 0.5, 0, Math.PI * 2);
+    g.arc(n.x, n.y, n.r * 0.42, 0, Math.PI * 2);
     g.fill();
     g.globalAlpha = 1;
   };
@@ -199,7 +210,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     for (let i = 0; i < deco.fogCount; i += 1) {
       const x = deco.fog[i * 3]!;
       const y = deco.fog[i * 3 + 1]!;
-      const a = 0.012 * dim * deco.fog[i * 3 + 2]!;
+      const a = deco.fogAlpha * dim * deco.fog[i * 3 + 2]!;
       if (a < 0.0005) continue;
       const grad = g.createRadialGradient(x, y, 0, x, y, r);
       grad.addColorStop(0, `rgba(22,120,135,${a})`);
@@ -234,7 +245,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       // A wide, very faint halo per grain. The bloom sums these into an even
       // shimmer over the whole area, and that is what makes the outline read
       // between the clusters instead of only around them.
-      g.fillStyle = `rgba(40,150,170,${a * 0.06})`;
+      g.fillStyle = `rgba(40,150,170,${a * 0.05})`;
       g.beginPath();
       g.arc(x, y, size * 7, 0, Math.PI * 2);
       g.fill();
@@ -244,7 +255,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       const d = deco.dendrites[i * 6 + 4]!;
       const warm = deco.dendrites[i * 6 + 5]! === 1;
       g.lineWidth = (1.3 + (0.4 - 1.3) * d) * grain;
-      const a = (0.66 + (0.18 - 0.66) * d) * dim;
+      const a = (0.48 + (0.12 - 0.48) * d) * dim;
       g.strokeStyle = warm ? `rgba(220,185,120,${a})` : `rgba(100,215,230,${a})`;
       g.beginPath();
       g.moveTo(deco.dendrites[i * 6]!, deco.dendrites[i * 6 + 1]!);
@@ -382,6 +393,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     const sy = (y: number): number => y * camera.scale + camera.y;
     const family = typeof getComputedStyle === 'function' ? getComputedStyle(document.body).fontFamily : 'sans-serif';
 
+    const taken: Array<{ x: number; y: number; w: number; h: number }> = [];
     if (scene.regionAlpha > 0.01) {
       g.font = `400 13px ${family}`;
       g.textBaseline = 'middle';
@@ -389,8 +401,27 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       for (const label of scene.regions) {
         const fx = sx(label.fromX);
         const fy = sy(label.fromY);
-        const lx = sx(label.x);
-        const ly = sy(label.y);
+        const lines = split(label.text);
+        const width =
+          typeof g.measureText === 'function'
+            ? Math.max(...lines.map((l) => g.measureText(l).width))
+            : Math.max(...lines.map((l) => l.length * 6.5));
+        const height = lines.length * 17;
+
+        // Names sit outside the outline, and the outline fills the view: a name
+        // near the rim would be written half off the canvas or over the app
+        // around it. So each one is pulled back inside the canvas — the leader
+        // still points at its region, which is what the name is for — and
+        // dropped when it would land on a name already written.
+        const room = MARGIN + width + 12;
+        const lx = Math.min(Math.max(sx(label.x), label.align === 'left' ? MARGIN : room), scene.width - (label.align === 'left' ? room : MARGIN));
+        const ly = Math.min(Math.max(sy(label.y), MARGIN + height), scene.height - MARGIN - height);
+        const left = label.align === 'center' ? lx - width / 2 : label.align === 'left' ? lx + 10 : lx - 10 - width;
+        const box = { x: left - 4, y: ly - height / 2 - 4, w: width + 8, h: height + 8 };
+        if (taken.some((b) => box.x < b.x + b.w && b.x < box.x + box.w && box.y < b.y + b.h && b.y < box.y + box.h)) {
+          continue;
+        }
+        taken.push(box);
         g.strokeStyle = `rgba(190,228,235,${0.38 * scene.regionAlpha})`;
         g.lineWidth = 0.8;
         g.beginPath();
@@ -399,7 +430,6 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
         if (label.align !== 'center') g.lineTo(lx + (label.align === 'left' ? 6 : -6), ly);
         g.stroke();
 
-        const lines = split(label.text);
         const tx = label.align === 'center' ? lx : lx + (label.align === 'left' ? 10 : -10);
         const ty =
           label.align === 'center'

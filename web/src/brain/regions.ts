@@ -290,6 +290,23 @@ export function regionLabels(view: RegionView, x: ArrayLike<number>, y: ArrayLik
     }
   }
 
+  // Pushing names apart can slide one back over the tissue — a name down the
+  // flank moves towards the middle of the hemisphere, not away from it. So each
+  // one is walked outwards until it is clear of the outline again. This is the
+  // rule the prototype did not have and the reason a region near the front used
+  // to have its name written across its own notes.
+  const clearance = view.unit * 0.05;
+  for (const l of out) {
+    const dirX = l.align === 'center' ? 0 : l.align === 'left' ? 1 : -1;
+    const dirY = l.align === 'center' ? (l.above ? -1 : 1) : 0;
+    let steps = 0;
+    while (steps < 80 && (view.inside(l.x, l.y) || view.inside(l.x + dirX * clearance, l.y + dirY * clearance))) {
+      (l as { x: number }).x = l.x + dirX * clearance;
+      (l as { y: number }).y = l.y + dirY * clearance;
+      steps += 1;
+    }
+  }
+
   // The swung leader: one quadratic, bowed away from the brain so it reads as a
   // pointer rather than as another tract.
   for (const l of out) {

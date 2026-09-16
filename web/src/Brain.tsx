@@ -124,6 +124,9 @@ const EDGE: Inset = { top: 12, right: 12, bottom: 12, left: 12 };
 
 /** How far the pointer has to travel before the card under it is moved again. */
 const CARD_STEP = 14;
+/** Roughly how much room the card needs. Enough to decide which way it opens. */
+const CARD_W = 320;
+const CARD_H = 230;
 /** A day, in milliseconds. */
 const DAY = 86_400_000;
 
@@ -139,6 +142,9 @@ interface Card {
   /** Where the card sits, in pixels inside the canvas's own box. */
   x: number;
   y: number;
+  /** Whether it has to open to the left of the pointer, or upwards. */
+  flipX: boolean;
+  flipY: boolean;
   title: string;
   kind: string;
   links: number;
@@ -549,15 +555,21 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       const node = e.graph.nodes[over]!;
       const left = x + canvas.offsetLeft;
       const top = y + canvas.offsetTop;
+      // Which way it opens, so it never runs off the canvas and takes its own
+      // content with it.
+      const flipX = x + CARD_W > e.width;
+      const flipY = y + CARD_H > e.height;
       setCard((held) => {
         if (held !== null && held.node === over && Math.hypot(held.x - left, held.y - top) < CARD_STEP) return held;
-        if (held !== null && held.node === over) return { ...held, x: left, y: top };
+        if (held !== null && held.node === over) return { ...held, x: left, y: top, flipX, flipY };
         const kind = noteKind(node.folder, node.title);
         const region = e.regions.regions[e.regions.regionOf[over] ?? -1];
         return {
           node: over,
           x: left,
           y: top,
+          flipX,
+          flipY,
           title: node.title,
           kind: kind.kind === 'folder' ? kind.label : copy.network.card.kind[kind.kind],
           links: node.degree,
@@ -772,7 +784,13 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         </p>
       )}
       {card !== null && (
-        <div className="braincard" style={{ left: card.x, top: card.y }} role="presentation">
+        <div
+          className="braincard"
+          data-flip-x={card.flipX}
+          data-flip-y={card.flipY}
+          style={{ left: card.x, top: card.y }}
+          role="presentation"
+        >
           <p className="braincard-title">{card.title}</p>
           <dl>
             <dt>{copy.network.card.type}</dt>

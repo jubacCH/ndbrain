@@ -178,6 +178,23 @@ export function bodyRadius(layoutRadius: number, depth: number): number {
   return layoutRadius * (0.8 + depth * 0.3);
 }
 
+/**
+ * How much of its world size a cell body keeps as the camera comes closer.
+ *
+ * A radius is a world length, so at eight times the overview a hub was drawn
+ * eight times as wide — a white sun filling a third of the screen, with the
+ * whole point of coming closer (reading the titles, seeing which link goes
+ * where) hidden behind it. On screen a body now grows like `0.8 + 0.2 · zoom`,
+ * the same sublinear rule the tracts already follow, which at the overview is
+ * exactly 1 and changes nothing about the resting picture.
+ *
+ * The hit test keeps the unscaled radius, so a magnified note stays at least as
+ * easy to hit as it looks — never harder.
+ */
+export function bodyScale(zoom: number): number {
+  return zoom <= 1 ? 1 : (0.8 + 0.2 * zoom) / zoom;
+}
+
 /** The overview the zoom is measured against: the fit, without the caller's inset. */
 const NO_INSET: Inset = { top: 0, right: 0, bottom: 0, left: 0 };
 
@@ -411,6 +428,14 @@ export class SceneBuilder {
     this.#tissue(layout, view);
     scene.deco = this.#deco;
 
+    // How far in the camera is, as a multiple of the fitted overview. Measured
+    // against a fit without the caller's inset, which the scene cannot see; the
+    // inset makes the real resting view a few percent smaller, still well below
+    // where held-back links start to return.
+    const overview = fit(layout.bounds, width, height, NO_INSET).scale;
+    const zoom = overview > 0 && Number.isFinite(overview) ? camera.scale / overview : 1;
+    const shrink = bodyScale(zoom);
+
     for (let i = 0; i < nodes.length; i += 1) {
       const node = nodes[i]!;
       const depth = node.depth;
@@ -422,7 +447,7 @@ export class SceneBuilder {
       const out = scene.nodes[i]!;
       out.x = layout.x[i]!;
       out.y = layout.y[i]!;
-      out.r = bodyRadius(layout.r[i]!, depth);
+      out.r = bodyRadius(layout.r[i]!, depth) * shrink;
       out.colour = heat > 0 ? PULSE_COLOUR[activity.kind[i]!] : base;
       out.alpha = (node.degree === 0 ? 0.24 : 0.72) * (0.55 + depth * 0.45) + heat * 0.5;
       out.heat = heat;
@@ -431,12 +456,6 @@ export class SceneBuilder {
       out.warm = warm;
     }
 
-    // How far in the camera is, as a multiple of the overview. Measured against
-    // a fit without the caller's inset, which the scene cannot see; the inset
-    // makes the real resting view a few percent smaller, still well below where
-    // held-back links start to return.
-    const overview = fit(layout.bounds, width, height, NO_INSET).scale;
-    const zoom = overview > 0 && Number.isFinite(overview) ? camera.scale / overview : 1;
     scene.zoom = zoom;
     const open = opening(zoom);
     const grow = growth(zoom);

@@ -48,6 +48,8 @@ export interface Decoration {
   readonly fogCount: number;
   /** Radius of one fog disc, world units. */
   readonly fogRadius: number;
+  /** Opacity of one fog disc at its centre, already divided by how many overlap. */
+  readonly fogAlpha: number;
   readonly folds: readonly DecoLine[];
   readonly sulci: readonly DecoLine[];
   /** Grains: x, y, radius, alpha, warm (0 or 1). */
@@ -63,6 +65,7 @@ export const NO_DECORATION: Decoration = {
   fog: new Float32Array(0),
   fogCount: 0,
   fogRadius: 1,
+  fogAlpha: 0,
   folds: [],
   sulci: [],
   dust: new Float32Array(0),
@@ -79,7 +82,7 @@ const RIM_BISECT = 12;
 /** Folds run from this fraction of the reach outwards, this far apart. */
 const FOLD_FROM = 0.2;
 const FOLD_TO = 0.985;
-const FOLD_STEP = 0.05;
+const FOLD_STEP = 0.04;
 /** Points along one fold. */
 const FOLD_POINTS = 280;
 /**
@@ -94,13 +97,24 @@ const FADE = 0.1;
 /** A dendrite stops here, short of the rim. */
 const DENDRITE_REACH = 0.96;
 
+/**
+ * The haze over the brain's area, and how it is spread.
+ *
+ * `FOG_GAIN` is the only brightness knob and is what the luminance measurement
+ * is tuned against; the step and the radius decide the texture. Measured
+ * against the target picture on 2026-09-16.
+ */
+const FOG_GAIN = 0.42;
+const FOG_STEP = 0.02;
+const FOG_RADIUS = 0.075;
+
 /** Grains per fold, and how many more the outer folds carry. */
-const GRAIN_BASE = 90;
-const GRAIN_REACH = 200;
+const GRAIN_BASE = 120;
+const GRAIN_REACH = 280;
 /** Attractor points per hemisphere, and how they grow with the vault. */
-const ATTRACT_BASE = 2600;
-const ATTRACT_PER_NOTE = 8;
-const ATTRACT_MAX = 4600;
+const ATTRACT_BASE = 3400;
+const ATTRACT_PER_NOTE = 10;
+const ATTRACT_MAX = 6000;
 
 /** Space colonisation: how far a note reaches, how far it steps, what it kills. */
 const GROW_STEPS = 26;
@@ -337,8 +351,14 @@ export function buildDecoration({ view, x, y, warm }: DecoInput): Decoration {
   // Fog: soft discs over the whole area, weighted down towards the rim. Summed
   // by the bloom they lift the brain's area above the sky without an outline
   // ever being drawn.
+  //
+  // The grid step decides how smooth the haze is and nothing else: a disc's
+  // opacity is divided by how many discs cover a point, so halving the step
+  // makes the fog finer, not brighter. Tuning the density and tuning the
+  // brightness used to be the same knob, and every change to one silently
+  // undid a measurement of the other.
   const fog: number[] = [];
-  const step = view.unit * 0.025;
+  const step = view.unit * FOG_STEP;
   const reachOf = (px: number, py: number): number => {
     const room = view.depthInside(px, py);
     return room <= 0 ? 1 : clamp(1 - room / (view.unit * 0.42), 0, 1);
@@ -351,10 +371,14 @@ export function buildDecoration({ view, x, y, warm }: DecoInput): Decoration {
     }
   }
 
+  const fogRadius = view.unit * FOG_RADIUS;
   return {
     fog: Float32Array.from(fog),
     fogCount: fog.length / 3,
-    fogRadius: view.unit * 0.075,
+    fogRadius,
+    // One disc's share of the haze: the total, divided by how many discs the
+    // grid puts over any one point.
+    fogAlpha: (FOG_GAIN * (step * step)) / (Math.PI * fogRadius * fogRadius),
     folds,
     sulci,
     dust: Float32Array.from(dust),
