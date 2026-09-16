@@ -320,6 +320,68 @@ export function planeOf(degree: number, key: string): Depth {
   return z < -0.33 ? 0 : z < 0.33 ? 1 : 2;
 }
 
+/**
+ * Stamps are counted across every builder, not per builder.
+ *
+ * A refetch makes a new builder while the renderer keeps its cached layers, and
+ * a layer is reused when its key, the stamp among it, matches. Two builders
+ * each counting from zero reach the same small stamp for different pictures, and
+ * the second one's first frames were then the first one's pixels: a note edited
+ * elsewhere kept its old colour until something else changed.
+ */
+let stamps = 0;
+const nextStamp = (): number => {
+  stamps += 1;
+  return stamps;
+};
+
+/**
+ * What a grown product was grown from: the layout's geometry and regions as one
+ * string, and the positions as they were.
+ */
+interface Grown<T> {
+  value: T;
+  shape: string;
+  x: Float64Array;
+  y: Float64Array;
+}
+
+/** A tissue, and the warmth it was grown with. */
+type WarmGrown = Grown<Decoration> & { warm: Float64Array };
+
+/** How far a note's warmth may drift before its branches are grown again: an invisible shade. */
+const WARM_DRIFT = 0.01;
+
+/**
+ * Everything the tissue and the region anchors read off a layout besides the
+ * positions, as one comparable string: the arrangement and its size, which note
+ * is which, and every region with its members.
+ */
+function shapeOf(layout: BrainLayout, graph: BrainGraph): string {
+  const b = layout.bounds;
+  const parts = [
+    layout.arrangement,
+    String(layout.unitLength),
+    `${b.minX},${b.minY},${b.maxX},${b.maxY}`,
+    graph.nodes.map((n) => n.key).join('\u0000'),
+    Array.from(layout.regionOf).join(','),
+    Array.from(layout.nodeSide).join(','),
+  ];
+  for (const r of layout.regions) {
+    parts.push(`${r.id}|${r.name}|${r.side}|${r.cx}|${r.cy}|${r.hub}|${r.members.join(',')}`);
+  }
+  return parts.join('\n');
+}
+
+/** True when every position is exactly what it was. */
+function samePlaces(grown: { x: Float64Array; y: Float64Array }, x: ArrayLike<number>, y: ArrayLike<number>): boolean {
+  if (grown.x.length !== x.length || grown.y.length !== y.length) return false;
+  for (let i = 0; i < x.length; i += 1) {
+    if (grown.x[i] !== x[i] || grown.y[i] !== y[i]) return false;
+  }
+  return true;
+}
+
 export class SceneBuilder {
   #graph: BrainGraph;
   #scene: Scene;
@@ -347,9 +409,16 @@ export class SceneBuilder {
   /** How warm each note is drawn, 0 to 1. Set by the caller from the data. */
   #recent: Float64Array;
   #deco: Decoration = NO_DECORATION;
+  /** What the current tissue and anchors were grown from, for `inherit`. */
+  #decoGrown: WarmGrown | null = null;
+  #anchorsGrown: Grown<RegionAnchor[]> | null = null;
+  /** A previous builder's products, offered to this one until its layout decides. */
+  #offered: { deco: WarmGrown | null; anchors: Grown<RegionAnchor[]> | null } | null = null;
+  /** `shapeOf` the planned layout, computed once per layout and only when needed. */
+  #shape: string | null = null;
   #decoFor: BrainLayout | null = null;
   #decoMoving = true;
-  #stamp = 0;
+  #stamp = nextStamp();
   /** What the last frame's cached layers were built from, to notice a change. */
   #lastPicked = -1;
   #lastZoom = -1;
@@ -432,13 +501,30 @@ export class SceneBuilder {
     if (heat.length !== this.#recent.length) return;
     this.#recent = heat;
     this.#curvesStale = true;
-    this.#stamp += 1;
+    this.#stamp = nextStamp();
+  }
+
+  /**
+   * Takes over the tissue and the region anchors of the builder this one
+   * replaces, for as long as they still fit.
+   *
+   * A refetch of the same view builds a new builder, and most refetches change
+   * nothing the tissue is grown from: an edit to a note's text, an agent's
+   * read. Growing it again is tens of milliseconds on the real vault and far
+   * more on a few thousand notes, a visible stutter for an identical picture.
+   * So the old products are offered, and each is taken only if its layout's
+   * shape and every position are exactly what it was grown from (and, for the
+   * tissue, every note's warmth within an invisible shade). Anything else grows
+   * them again, as before.
+   */
+  inherit(previous: SceneBuilder): void {
+    this.#offered = { deco: previous.#decoGrown, anchors: previous.#anchorsGrown };
   }
 
   /** The notes have moved: the curves and the cached layers are out of date. */
   moved(): void {
     this.#curvesStale = true;
-    this.#stamp += 1;
+    this.#stamp = nextStamp();
   }
 
   /** The tissue, once it exists. Exposed so a test can assert it is never empty by accident. */
@@ -478,12 +564,15 @@ export class SceneBuilder {
       geometry: this.#geometry,
     });
     this.#planned = layout;
+    this.#shape = null;
     this.#anchors = null;
+    this.#anchorsGrown = null;
+    this.#decoGrown = null;
     this.#curvesStale = true;
     this.#deco = NO_DECORATION;
     this.#decoFor = null;
     this.#decoMoving = true;
-    this.#stamp += 1;
+    this.#stamp = nextStamp();
     return { plan: this.#plan, routes: this.#routes, view };
   }
 
@@ -507,8 +596,41 @@ export class SceneBuilder {
     if (this.#decoFor === layout && !this.#decoMoving) return;
     this.#decoMoving = false;
     this.#decoFor = layout;
-    this.#deco = buildDecoration({ view, x: layout.x, y: layout.y, warm: this.#recent });
-    this.#stamp += 1;
+    const offered = this.#offered?.deco ?? null;
+    if (offered !== null && this.#fits(offered, layout) && this.#warmthFits(offered.warm)) {
+      this.#deco = offered.value;
+      this.#decoGrown = offered;
+    } else {
+      this.#deco = buildDecoration({ view, x: layout.x, y: layout.y, warm: this.#recent });
+      this.#decoGrown = { value: this.#deco, ...this.#grownFrom(layout), warm: this.#recent };
+    }
+    // Offered once: from here on the tissue follows this builder's own layout.
+    if (this.#offered !== null) this.#offered.deco = null;
+    this.#stamp = nextStamp();
+  }
+
+  /** The shape and positions a product grown now is grown from. */
+  #grownFrom(layout: BrainLayout): { shape: string; x: Float64Array; y: Float64Array } {
+    return { shape: this.#shapeFor(layout), x: Float64Array.from(layout.x), y: Float64Array.from(layout.y) };
+  }
+
+  #shapeFor(layout: BrainLayout): string {
+    this.#shape ??= shapeOf(layout, this.#graph);
+    return this.#shape;
+  }
+
+  /** True when a product was grown from exactly this layout's shape and positions. */
+  #fits(grown: Grown<unknown>, layout: BrainLayout): boolean {
+    return samePlaces(grown, layout.x, layout.y) && grown.shape === this.#shapeFor(layout);
+  }
+
+  /** True when no note's warmth has drifted further than `WARM_DRIFT` since the tissue was grown. */
+  #warmthFits(warm: Float64Array): boolean {
+    if (warm.length !== this.#recent.length) return false;
+    for (let i = 0; i < warm.length; i += 1) {
+      if (Math.abs(warm[i]! - this.#recent[i]!) > WARM_DRIFT) return false;
+    }
+    return true;
   }
 
   build(
@@ -692,7 +814,15 @@ export class SceneBuilder {
       // drag or a settle the names keep the anchors they had, which is invisible
       // for the moment it lasts and saves a ray search per frame.
       if (this.#anchors === null || (this.#anchorsStale && layout.settled)) {
-        this.#anchors = regionAnchors(view, layout.x, layout.y);
+        const offered = this.#offered?.anchors ?? null;
+        if (offered !== null && this.#fits(offered, layout)) {
+          this.#anchors = offered.value;
+          this.#anchorsGrown = offered;
+        } else {
+          this.#anchors = regionAnchors(view, layout.x, layout.y);
+          this.#anchorsGrown = { value: this.#anchors, ...this.#grownFrom(layout) };
+        }
+        if (this.#offered !== null) this.#offered.anchors = null;
         this.#anchorsStale = false;
       }
       scene.regions = this.#anchors;
@@ -706,7 +836,7 @@ export class SceneBuilder {
     if (restChanged || picked !== this.#lastPicked || Math.abs(zoom - this.#lastZoom) > 0.004) {
       this.#lastPicked = picked;
       this.#lastZoom = zoom;
-      this.#stamp += 1;
+      this.#stamp = nextStamp();
     }
     scene.stamp = this.#stamp;
 
