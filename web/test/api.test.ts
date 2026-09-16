@@ -15,7 +15,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiError, ContractError, api, encodePath, refKey } from '../src/api';
+import { ApiError, ContractError, api, encodePath, onUnauthenticated, refKey } from '../src/api';
 
 const original = globalThis.fetch;
 
@@ -119,6 +119,28 @@ describe('path encoding', () => {
 
   it('survives a name that is already percent-looking', () => {
     expect(encodePath('100%25 fertig.md')).toBe('100%2525%20fertig.md');
+  });
+});
+
+describe('a session that is gone', () => {
+  it('is reported once, centrally, when the server says nobody is signed in', async () => {
+    const heard = vi.fn();
+    const stop = onUnauthenticated(heard);
+    answerWith({ code: 'unauthenticated', message: 'sign in first' }, 401);
+    await expect(api.tree()).rejects.toBeInstanceOf(ApiError);
+    expect(heard).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it('is not what a wrong password is', async () => {
+    const heard = vi.fn();
+    const stop = onUnauthenticated(heard);
+    answerWith({ code: 'invalid_credentials', message: 'wrong name or password' }, 401);
+    await expect(api.login('julian', 'nope')).rejects.toBeInstanceOf(ApiError);
+    answerWith({ code: 'forbidden', message: 'no' }, 403);
+    await expect(api.tree()).rejects.toBeInstanceOf(ApiError);
+    expect(heard).not.toHaveBeenCalled();
+    stop();
   });
 });
 
