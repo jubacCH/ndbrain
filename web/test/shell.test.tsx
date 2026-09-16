@@ -619,4 +619,15 @@ describe('the shell, signed in', () => {
     expect(recentTitles()).toEqual([]);
     expect(stored()).not.toMatch(/julian/i);
   });
+
+  it('on the sign-in page, follows a sign-in in another tab', async () => {
+    mount(null);
+    await screen.findByLabelText(copy.login.name);
+    server.signedIn = { id: 'anna', displayName: 'anna', role: 'user' };
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'ndbrain.session', newValue: String(Date.now()) }));
+    });
+    expect(await screen.findByRole('button', { name: copy.shell.account })).toBeInTheDocument();
+    expect(screen.getAllByText('anna').length).toBeGreaterThan(0);
+  });
 });
