@@ -32,11 +32,15 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 
 import { Brain } from './Brain';
-import { RECENT_DAYS } from './brain/scene';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { copy } from './copy';
-import { applyPrefs, loadPrefs, savePrefs, type Prefs } from './prefs';
+import { applyPrefs, loadPrefs, savePrefs, type Prefs, type Theme } from './prefs';
+import { GearIcon, ShareIcon, ShieldIcon, SignOutIcon } from './icons';
+import { NetworkFrame } from './NetworkFrame';
+import { Sidebar } from './Sidebar';
+import { Topbar } from './Topbar';
+import type { MenuItem } from './Menu';
 import { SettingsView } from './Settings';
 import { AdminView } from './Admin';
 import { TopicsPanel } from './Topics';
@@ -98,6 +102,9 @@ type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
  */
 const RECENTS_KEY = 'ndbrain.recents';
 
+/** The most the settings page offers to show; see `LIMITS.recentCount` in prefs. */
+const RECENTS_KEPT = 20;
+
 interface Recent {
   owner: string;
   path: string;
@@ -115,54 +122,40 @@ function loadRecents(): Recent[] {
 function pushRecent(owner: string, path: string): void {
   try {
     const next = [{ owner, path }, ...loadRecents().filter((r) => !(r.owner === owner && r.path === path))];
-    window.localStorage.setItem(RECENTS_KEY, JSON.stringify(next.slice(0, 12)));
+    // As many as the settings page lets the sidebar show, so raising the number
+    // there shows more straight away rather than after twenty more opens.
+    window.localStorage.setItem(RECENTS_KEY, JSON.stringify(next.slice(0, RECENTS_KEPT)));
   } catch {
     // Private browsing, a full quota — none of it is worth an error message.
   }
 }
 
 
-/*
- * Two icons, drawn rather than imported.
+/**
+ * Whether a media query matches, kept current.
  *
- * `currentColor` and no fill, so they inherit the button's colour in both
- * themes and need no dark-mode variant. `aria-hidden` because the button beside
- * them already carries the name — announcing both would read the label twice.
+ * Read by the shell for two things CSS alone cannot decide: whether the sidebar
+ * is a drawer (a phone has no folded sidebar), and which theme is on screen when
+ * the choice is "system" — the header's theme button has to know which way to
+ * flip.
  */
-function NewNoteIcon(): React.JSX.Element {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M9 1.5H4a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 0 4 14.5h6a1.5 1.5 0 0 0 1.5-1.5V6"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M12.5 1.5v4M10.5 3.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  );
+function useMedia(query: string): boolean {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const list = window.matchMedia(query);
+    const onChange = (): void => setMatches(list.matches);
+    onChange();
+    list.addEventListener('change', onChange);
+    return () => list.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
 }
 
-function NewFolderIcon(): React.JSX.Element {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M1.5 12.5v-9A1 1 0 0 1 2.5 2.5h3l1.5 2h4.5a1 1 0 0 1 1 1V7"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M1.5 12.5a1 1 0 0 0 1 1h6"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
-      <path d="M12.5 9.5v4M10.5 11.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-    </svg>
-  );
+/** The same width at which `styles.css` turns the sidebar into a drawer. */
+const DRAWER_QUERY = '(max-width: 820px)';
+
+function isDark(theme: Theme, systemDark: boolean): boolean {
+  return theme === 'dark' || (theme === 'system' && systemDark);
 }
 
 export function App(): React.JSX.Element {
@@ -234,6 +227,10 @@ function Shell({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [treeFilter, setTreeFilter] = useState('');
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
+  const narrow = useMedia(DRAWER_QUERY);
+  const systemDark = useMedia('(prefers-color-scheme: dark)');
+  /** Which theme is on screen, whatever chose it — the header button flips from here. */
+  const dark = isDark(prefs.theme, systemDark);
   /**
    * The same preferences, reachable from a callback that must not be rebuilt.
    *
@@ -921,23 +918,15 @@ function Shell({
     for (const recent of recents) {
       const note = byKey.get(refKey(recent.owner, recent.path));
       if (note === undefined) continue;
-      // Hidden only while you are actually looking at it. With the "Write" entry
-      // gone from the menu — it did nothing that opening a note does not already
-      // do — this list is the way back to the note you stepped away from, and a
-      // list that hides exactly that note is no way back at all.
-      if (
-        view === 'note' &&
-        open !== null &&
-        open.owner === note.owner &&
-        open.note.path === note.path
-      ) {
-        continue;
-      }
+      // The open note stays in the list, marked with a point, rather than
+      // dropping out while you look at it. A list that reshuffles every time a
+      // note is opened is a list nobody can find their way around by position;
+      // this one only ever moves the note you just opened to the top.
       out.push(note);
       if (out.length >= prefs.recentCount) break;
     }
     return out;
-  }, [recents, notes, open, view, prefs.recentCount]);
+  }, [recents, notes, prefs.recentCount]);
 
   const local = useMemo((): GraphData | null => {
     if (graph === null || open === null) return null;
@@ -1093,97 +1082,107 @@ function Shell({
     onSignedOut();
   };
 
+  const accountItems: MenuItem[] = [
+    { key: 'settings', label: copy.nav.settings, icon: <GearIcon size={16} />, onSelect: () => void showView('settings') },
+    { key: 'shares', label: copy.nav.sharing, icon: <ShareIcon size={16} />, onSelect: () => void showView('shares') },
+    // Hidden for everybody else, and refused by the server regardless: a menu
+    // entry that is not rendered is not a permission.
+    ...(user.role === 'admin'
+      ? [{ key: 'admin', label: copy.nav.admin, icon: <ShieldIcon size={16} />, onSelect: () => void showView('admin') }]
+      : []),
+    { key: 'signout', label: copy.nav.signOut, icon: <SignOutIcon size={16} />, onSelect: () => void signOut() },
+  ];
+
+  const heading = headingOf();
+
+  /** The title and the line of numbers under it, for whatever view is on screen. */
+  function headingOf(): { title: string; subtitle: string } {
+    const sub = copy.shell.sub;
+    switch (view) {
+      case 'note':
+        return open === null
+          ? { title: copy.note.none, subtitle: '' }
+          : // The same de-prefixed reading as the tree. The literal path is not
+            // lost — it is shown in full under "File" in the right column, which
+            // is the one place that is *about* the file on disk.
+            { title: open.note.title, subtitle: displayPath(open.note.path, prefs.hidePrefixes) };
+      case 'overview':
+        return {
+          title: copy.nav.overview,
+          subtitle:
+            sub.overview(notes.length, folderCount(notes)) +
+            (overview !== null && overview.counts.attention > 0
+              ? ` · ${sub.attention(overview.counts.attention)}`
+              : ''),
+        };
+      case 'brain':
+        return {
+          title: copy.nav.network,
+          subtitle:
+            graph === null
+              ? sub.loading
+              : `${sub.network(graph.nodes.length, graph.edges.length)} · ${sub.loose(
+                  graph.nodes.filter((n) => n.links === 0).length,
+                )}`,
+        };
+      case 'tidy':
+        return {
+          title: copy.nav.tidy,
+          subtitle:
+            tidy === null ? sub.loading : sub.tidy(tidy.totals.orphans, tidy.totals.deadLinks, tidy.totals.stale),
+        };
+      case 'tasks':
+        return { title: copy.nav.tasks, subtitle: tasks === null ? sub.loading : sub.tasks(tasks.total) };
+      case 'search':
+        return {
+          title: copy.nav.search,
+          subtitle: query.trim() === '' ? sub.search(notes.length) : sub.results(hits.length, query.trim()),
+        };
+      case 'files':
+        return {
+          title: copy.nav.files,
+          subtitle: files === null ? sub.loading : sub.files(files.files.length, files.dirs.length),
+        };
+      case 'settings':
+        return { title: copy.nav.settings, subtitle: sub.settings };
+      case 'admin':
+        return { title: copy.nav.admin, subtitle: sub.admin(adminUsersQuery.data?.users.length ?? 0) };
+      case 'shares':
+        return { title: copy.nav.sharing, subtitle: sub.shares(granted.length, received.length) };
+      default:
+        return { title: '', subtitle: '' };
+    }
+  }
+
+  // Folding applies to the desktop sidebar only. On a phone the sidebar is a
+  // drawer, and a folded drawer would be a drawer with nothing in it.
+  const collapsed = prefs.sidebarCollapsed && !narrow;
+
   return (
-    <div className="app" data-drawer={drawerOpen} data-wide={view !== 'note'}>
-      {/*
-        Everything at once rather than one thing at a time. Tabs are a mode
-        switch: they hide most of the tool behind a click. Something that stays
-        open all day would rather show it all — on the left where, in the middle
-        what, on the right what it connects to.
-      */}
-      <nav className="nav" aria-label="Navigation">
-        <div className="nav-head">
-          <span className="nav-who">{user.displayName}</span>
-          <button type="button" className="nav-x" onClick={() => setDrawerOpen(false)} aria-label={copy.nav.closeMenu}>
-            ✕
-          </button>
-        </div>
-
-        {/*
-          No "Write" entry. Opening a note from the tree, the recents, the
-          palette or a search hit already switches to it, so the button only ever
-          did one thing nothing else did: show an empty pane telling you to pick
-          a note. The way back to a note you stepped away from is the recents
-          list above, which is why that list stops hiding the open note as soon
-          as you are looking at something else.
-        */}
-        <div className="nav-views" role="group" aria-label={copy.nav.view}>
-          <button type="button" aria-current={view === 'overview'} onClick={() => void showView('overview')}>
-            {copy.nav.overview}
-          </button>
-          <button type="button" aria-current={view === 'brain'} onClick={() => void showView('brain')}>
-            {copy.nav.network}
-          </button>
-          <button type="button" aria-current={view === 'tidy'} onClick={() => void showView('tidy')}>
-            {copy.nav.tidy}
-          </button>
-          <button type="button" aria-current={view === 'tasks'} onClick={() => void showView('tasks')}>
-            {copy.nav.tasks}
-          </button>
-          <button type="button" aria-current={view === 'search'} onClick={() => void showView('search')}>
-            {copy.nav.search}
-          </button>
-          <button type="button" aria-current={view === 'files'} onClick={() => void showView('files')}>
-            {copy.nav.files}
-          </button>
-        </div>
-
-        {/*
-          Filtering the tree, not searching the text — this only ever looks at
-          names, answers on every keystroke, and never leaves the sidebar. Full
-          text search is its own view, and ⌘K is for jumping. Three ways to find
-          something sounds like two too many, but they answer different
-          questions: where is it filed, where have I read this word, and take me
-          to the one I am already thinking of.
-        */}
-        <div className="nav-find">
-          <input
-            type="search"
-            value={treeFilter}
-            placeholder={copy.nav.filterPlaceholder}
-            aria-label={copy.nav.filterLabel}
-            onChange={(event) => setTreeFilter(event.target.value)}
-          />
-          {treeFilter !== '' && (
-            <button type="button" onClick={() => setTreeFilter('')} aria-label={copy.nav.clearFilter}>
-              ✕
-            </button>
-          )}
-        </div>
-
-        {/* Return traffic, not discovery — hidden while filtering, when the
-            answer on screen is the one you just typed for. */}
-        {treeFilter === '' && recentRows.length > 0 && (
-          <div className="nav-recent">
-            <p className="cap">{copy.nav.recent}</p>
-            <ul>
-              {recentRows.map((note) => (
-                <li key={refKey(note.owner, note.path)}>
-                  <button
-                    type="button"
-                    className="node"
-                    aria-current={open !== null && open.owner === note.owner && open.note.path === note.path}
-                    onClick={() => void openNote(note.owner, note.path)}
-                  >
-                    <span className="nm">{note.title}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="nav-tree">
+    <div
+      className="app"
+      data-drawer={drawerOpen}
+      data-wide={view !== 'note'}
+      data-collapsed={collapsed}
+      data-view={view}
+    >
+      <Sidebar
+        name={user.displayName}
+        view={view}
+        collapsed={collapsed}
+        onToggleCollapsed={() => setPrefs((current) => ({ ...current, sidebarCollapsed: !current.sidebarCollapsed }))}
+        onShowView={(next) => {
+          setDrawerOpen(false);
+          void showView(next);
+        }}
+        onClose={() => setDrawerOpen(false)}
+        filter={treeFilter}
+        onFilter={setTreeFilter}
+        onJump={() => setPaletteOpen(true)}
+        recents={recentRows}
+        current={view === 'note' && open !== null ? { owner: open.owner, path: open.note.path } : null}
+        onOpen={(owner, path) => void openNote(owner, path)}
+        tree={
           <Tree
             notes={notes}
             self={user.id}
@@ -1199,383 +1198,314 @@ function Shell({
             onRenameFolder={(path) => void renameFolder(path)}
             onCreateFirst={() => void createNote()}
           />
-        </div>
+        }
+        health={
+          tidy === null
+            ? null
+            : {
+                orphans: tidy.totals.orphans,
+                // Withheld while nothing is tagged — see Queries.tagsInUse. Read
+                // from the tag list rather than from the overview: it answers the
+                // same question, and it is already loaded and far cheaper.
+                untagged: tags.length > 0 ? tidy.totals.untagged : null,
+                broken: tidy.totals.deadLinks,
+              }
+        }
+        onHealth={() => {
+          setDrawerOpen(false);
+          void showView('tidy');
+        }}
+        onNewNote={() => void createNote()}
+        onNewFolder={() => void createFolder()}
+        onSettings={() => {
+          setDrawerOpen(false);
+          void showView('settings');
+        }}
+      />
 
-        {/*
-          The create actions, at the foot of the tree rather than above it.
-          Icons because the row is theirs alone and a label on each would make it
-          twice as tall for two words everybody already knows the shape of.
+      <div className="work">
+        <Topbar
+          title={heading.title}
+          subtitle={heading.subtitle}
+          extras={
+            view === 'note' ? (
+              <>
+                {open !== null && open.owner !== user.id && (
+                  <span className="pill p-info">
+                    {open.owner} · {open.canWrite ? copy.note.canWrite : copy.note.readOnly}
+                  </span>
+                )}
+                <SaveIndicator state={saveState} />
+              </>
+            ) : undefined
+          }
+          dark={dark}
+          accountName={user.displayName}
+          accountItems={accountItems}
+          onMenu={() => setDrawerOpen((o) => !o)}
+          onSearch={() => setPaletteOpen(true)}
+          onToggleTheme={() => setPrefs((current) => ({ ...current, theme: dark ? 'light' : 'dark' }))}
+        />
 
-          An icon button still carries its name three ways: aria-label for a
-          screen reader, title on hover, and a conventional shape. Two of those
-          three are invisible, and both of the invisible ones are needed.
-        */}
-        <div className="nav-make">
-          <button
-            type="button"
-            className="iconbtn"
-            aria-label={copy.nav.newNote}
-            title={copy.nav.newNote}
-            onClick={() => void createNote()}
-          >
-            <NewNoteIcon />
-          </button>
-          <button
-            type="button"
-            className="iconbtn"
-            aria-label={copy.nav.newFolder}
-            title={copy.nav.newFolder}
-            onClick={() => void createFolder()}
-          >
-            <NewFolderIcon />
-          </button>
-        </div>
-
-        {tidy !== null && (
-          <div className="nav-health">
-            <button type="button" onClick={() => void showView('tidy')}>
-              <i style={{ background: 'var(--crit)' }} />
-              {copy.nav.orphaned} <b>{tidy.orphans.length}</b>
-            </button>
-            {/* Withheld while nothing is tagged — see Queries.tagsInUse. Read
-                from the tag list rather than from the overview: it answers the
-                same question, and it is already loaded and far cheaper than the
-                overview, which runs four full scans to count what needs doing. */}
-            {tags.length > 0 && (
-              <button type="button" onClick={() => void showView('tidy')}>
-                <i style={{ background: 'var(--warn)' }} />
-                {copy.nav.untagged} <b>{tidy.untagged.length}</b>
-              </button>
-            )}
-            {tidy.deadLinks.length > 0 && (
-              <button type="button" onClick={() => void showView('tidy')}>
-                <i style={{ background: 'var(--crit)' }} />
-                {copy.nav.broken} <b>{tidy.deadLinks.length}</b>
-              </button>
-            )}
-          </div>
-        )}
-
-        <div className="nav-foot">
-          {/* Hidden for everybody else, and refused by the server regardless:
-              a menu entry that is not rendered is not a permission. */}
-          {user.role === 'admin' && (
-            <button type="button" onClick={() => void showView('admin')}>{copy.nav.admin}</button>
-          )}
-          <button type="button" onClick={() => void showView('settings')}>{copy.nav.settings}</button>
-          <button type="button" onClick={() => void showView('shares')}>{copy.nav.sharing}</button>
-          <button type="button" onClick={() => void signOut()}>{copy.nav.signOut}</button>
-        </div>
-      </nav>
-
-      <main className="main">
-        <div className="main-bar">
-          <button
-            type="button"
-            className="bar-menu"
-            onClick={() => setDrawerOpen((o) => !o)}
-            aria-label={copy.nav.menu}
-          >
-            ☰
-          </button>
-          {/* The same de-prefixed reading as the tree, and no longer marked
-              `mono`: a path here is a name, not code. The literal path is not
-              lost — it is shown in full under "File" in the right column, which
-              is the one place that is *about* the file on disk. */}
-          <span className="cur">
-            {view === 'note'
-              ? open === null
-                ? copy.note.none
-                : [displayPath(open.note.path, prefs.hidePrefixes), open.note.title]
-                    .filter((part) => part !== '')
-                    .join(' › ')
-              : titleOfView(view)}
-          </span>
-          {view === 'note' && open !== null && open.owner !== user.id && (
-            <span className="pill p-info">
-              {open.owner} · {open.canWrite ? 'schreiben' : 'nur lesen'}
-            </span>
-          )}
-          <button type="button" className="bar-k" onClick={() => setPaletteOpen(true)} title="Springen oder anlegen">
-            ⌘K
-          </button>
-          {view === 'note' && <SaveIndicator state={saveState} />}
-        </div>
-
-        {error !== null && (
-          <div className="floaterror" role="status">
-            <span>{error}</span>
-            <button type="button" onClick={() => setError(null)} aria-label={copy.errors.closeMessage}>
-              ✕
-            </button>
-          </div>
-        )}
-
-        <div className="main-body">
-          {view === 'note' &&
-            (open === null ? (
-              <p className="empty" style={{ padding: '2rem' }}>
-                Pick a note on the left, or press <kbd>⌘K</kbd> and type a title.
-              </p>
-            ) : (
-              <Editor
-                owner={open.owner}
-                path={open.note.path}
-                initialContent={open.note.content}
-                readOnly={!open.canWrite}
-                tags={registryQuery.data ?? null}
-                line={jumpLine ?? undefined}
-                onChange={(content) => scheduleSave(open.owner, open.note.path, content)}
-                onAttach={attachFile}
-              />
-            ))}
-
-          {view === 'overview' && overview === null && (
-            /* Shaped like what is coming. A skeleton that does not match the
-               final layout adds to the jank instead of covering it. */
-            <div className="pane padded" aria-busy="true" aria-label={copy.overview.title}>
-              <div className="skel skel-row" style={{ width: '9rem', height: 26 }} />
-              <div className="skel skel-row" style={{ width: '14rem' }} />
-              <div className="bento" style={{ marginTop: 'var(--s-4)' }}>
-                <div className="skel skel-tile tile-wide" />
-                <div className="skel skel-tile" />
-                <div className="skel skel-tile" />
-                <div className="skel skel-tile" />
+        <div className="stage">
+          <main className="main">
+            {error !== null && (
+              <div className="floaterror" role="status">
+                <span>{error}</span>
+                <button type="button" onClick={() => setError(null)} aria-label={copy.errors.closeMessage}>
+                  ✕
+                </button>
               </div>
-            </div>
-          )}
+            )}
 
-          {view === 'overview' && overview !== null && (
-            <OverviewView
-              data={overview}
-              onOpen={(owner, path) => void openNote(owner, path)}
-              onFindings={() => void showView('tidy')}
-              onTasks={() => void showView('tasks')}
-            />
-          )}
+            <div className="main-body">
+              {view === 'note' &&
+                (open === null ? (
+                  <p className="empty" style={{ padding: '2rem' }}>
+                    Pick a note on the left, or press <kbd>⌘K</kbd> and type a title.
+                  </p>
+                ) : (
+                  <Editor
+                    owner={open.owner}
+                    path={open.note.path}
+                    initialContent={open.note.content}
+                    readOnly={!open.canWrite}
+                    tags={registryQuery.data ?? null}
+                    line={jumpLine ?? undefined}
+                    onChange={(content) => scheduleSave(open.owner, open.note.path, content)}
+                    onAttach={attachFile}
+                  />
+                ))}
 
-          {view === 'brain' &&
-            (graph === null ? (
-              <p className="empty" style={{ padding: '2rem' }}>{copy.overview.loadingGraph}</p>
-            ) : (
-              <div className="brainwrap">
-                <Brain
-                  data={graph}
-                  events={pulse}
-                  onOpen={(owner, path) => void openNote(owner, path)}
-                  remember={{ account: user.id, store: 'network' }}
-                  view="network"
-                  arrangement="brain"
-                  inset={NETWORK_INSET}
-                />
-                <div className="brainlegend">
-                  <span><i style={{ background: '#7fe9f0' }} />{copy.network.read}</span>
-                  <span><i style={{ background: '#ffb86b' }} />{copy.network.written}</span>
-                  {/* The amber points, as opposed to the amber flash: what has
-                      been worked on lately, not what is being written now. */}
-                  <span><i style={{ background: '#f0cd8c' }} />{copy.network.recent(RECENT_DAYS)}</span>
+              {view === 'overview' && overview === null && (
+                /* Shaped like what is coming. A skeleton that does not match the
+                   final layout adds to the jank instead of covering it. */
+                <div className="pane padded" aria-busy="true" aria-label={copy.overview.title}>
+                  <div className="skel skel-row" style={{ width: '9rem', height: 26 }} />
+                  <div className="skel skel-row" style={{ width: '14rem' }} />
+                  <div className="bento" style={{ marginTop: 'var(--s-4)' }}>
+                    <div className="skel skel-tile tile-wide" />
+                    <div className="skel skel-tile" />
+                    <div className="skel skel-tile" />
+                    <div className="skel skel-tile" />
+                  </div>
                 </div>
-                <div className="brainfoot">
-                  {copy.network.stats(
-                    graph.nodes.length,
-                    graph.edges.length,
-                    graph.nodes.filter((n) => n.links === 0).length,
-                  )}
-                  <span className="sep" />
-                  {copy.network.doubleClick}
-                </div>
-              </div>
-            ))}
-
-          {view === 'tidy' && (
-            <>
-              {topicsDone !== null && (
-                <p className="warnline" role="status">{copy.topics.done(topicsDone)}</p>
               )}
-              <TopicsPanel
-                proposals={topicsQuery.data?.proposals ?? []}
-                busy={bulkBusy}
-                onApply={(paths) => void applyTopics(paths)}
-              />
-            </>
-          )}
 
-          {view === 'tidy' && tidy !== null && (
-            <TidyView
-              data={tidy}
-              selected={selection}
-              busy={bulkBusy}
-              tags={tags}
-              dirs={topLevelDirs(notes)}
-              onToggle={(path) =>
-                setSelection((current) => {
-                  const next = new Set(current);
-                  if (next.has(path)) next.delete(path);
-                  else next.add(path);
-                  return next;
-                })
-              }
-              onToggleAll={(paths) =>
-                setSelection((current) => (current.size === paths.length ? new Set() : new Set(paths)))
-              }
-              onOpen={(path) => void openNote(user.id, path)}
-              onBulk={(action) => void runBulk(action)}
-            />
-          )}
+              {view === 'overview' && overview !== null && (
+                <OverviewView
+                  data={overview}
+                  onOpen={(owner, path) => void openNote(owner, path)}
+                  onFindings={() => void showView('tidy')}
+                  onTasks={() => void showView('tasks')}
+                />
+              )}
 
-          {view === 'tasks' && tasks !== null && (
-            <TasksView
-              data={tasks}
-              dirs={topLevelDirs(notes)}
-              dir={taskDir}
-              includeDone={taskIncludeDone}
-              self={user.id}
-              busy={taskBusy}
-              onDir={setTaskDir}
-              onIncludeDone={setTaskIncludeDone}
-              onToggle={(task) => void toggleTask(task)}
-              onOpen={(owner, path, line) => void openNote(owner, path, line)}
-            />
-          )}
+              {view === 'brain' &&
+                (graph === null ? (
+                  <p className="empty" style={{ padding: '2rem' }}>{copy.overview.loadingGraph}</p>
+                ) : (
+                  <NetworkFrame
+                    graph={graph}
+                    events={pulse}
+                    account={user.id}
+                    view={prefs.networkView}
+                    onView={(networkView) => setPrefs((current) => ({ ...current, networkView }))}
+                    onOpen={(owner, path) => void openNote(owner, path)}
+                  />
+                ))}
 
-          {view === 'search' && (
-            <SearchView
-              query={query}
-              hits={hits}
-              filters={filters}
-              tags={tags}
-              dirs={topLevelDirs(notes)}
-              self={user.id}
-              props={props}
-              propValues={propValues}
-              onToggleFilter={toggleFilter}
-              onClearFilters={clearFilters}
-              onOpen={(owner, path) => void openNote(owner, path)}
-              onQuery={onQueryChange}
-            />
-          )}
+              {view === 'tidy' && (
+                <>
+                  {topicsDone !== null && (
+                    <p className="warnline" role="status">{copy.topics.done(topicsDone)}</p>
+                  )}
+                  <TopicsPanel
+                    proposals={topicsQuery.data?.proposals ?? []}
+                    busy={bulkBusy}
+                    onApply={(paths) => void applyTopics(paths)}
+                  />
+                </>
+              )}
 
-          {view === 'files' &&
-            (files === null ? (
-              <p className="empty" style={{ padding: '2rem' }}>Reading the vault…</p>
-            ) : (
-              <FilesView
-                files={files.files}
-                dirs={files.dirs}
-                truncated={files.truncated}
-                owner={user.id}
-                busy={filesBusy}
-                dir={filesDir}
-                onDir={setFilesDir}
-                onUpload={(picked, intoDir) => void uploadFiles(picked, intoDir)}
-                onReplace={(path, file) => void replaceFile(path, file)}
-                onDelete={(file) => void removeFile(file)}
-                onOpenNote={(path) => void openNote(user.id, path)}
-              />
-            ))}
+              {view === 'tidy' && tidy !== null && (
+                <TidyView
+                  data={tidy}
+                  selected={selection}
+                  busy={bulkBusy}
+                  tags={tags}
+                  dirs={topLevelDirs(notes)}
+                  onToggle={(path) =>
+                    setSelection((current) => {
+                      const next = new Set(current);
+                      if (next.has(path)) next.delete(path);
+                      else next.add(path);
+                      return next;
+                    })
+                  }
+                  onToggleAll={(paths) =>
+                    setSelection((current) => (current.size === paths.length ? new Set() : new Set(paths)))
+                  }
+                  onOpen={(path) => void openNote(user.id, path)}
+                  onBulk={(action) => void runBulk(action)}
+                />
+              )}
 
-          {view === 'admin' && (
-            <AdminView
-              users={adminUsersQuery.data?.users ?? []}
-              keys={adminKeysQuery.data?.keys ?? []}
-              self={user.id}
-              busy={adminBusy}
-              keyOwner={keyOwner}
-              onPickOwner={setKeyOwner}
-              onCreateUser={(id, password, displayName, admin) =>
-                adminAct(() => api.createUser(id, password, displayName, admin ? 'admin' : 'user')).then(
-                  () => undefined,
-                )
-              }
-              onResetPassword={(id, password) =>
-                adminAct(() => api.adminSetPassword(id, password)).then(() => undefined)
-              }
-              onSetDisabled={(id, disabled) =>
-                adminAct(() => api.adminSetDisabled(id, disabled)).then(() => undefined)
-              }
-              onCreateKey={(owner, name, scope, canWrite) =>
-                adminAct(() => api.createKey(owner, name, scope, canWrite))
-              }
-              onRevokeKey={(id) => adminAct(() => api.revokeKey(id)).then(() => undefined)}
-            />
-          )}
+              {view === 'tasks' && tasks !== null && (
+                <TasksView
+                  data={tasks}
+                  dirs={topLevelDirs(notes)}
+                  dir={taskDir}
+                  includeDone={taskIncludeDone}
+                  self={user.id}
+                  busy={taskBusy}
+                  onDir={setTaskDir}
+                  onIncludeDone={setTaskIncludeDone}
+                  onToggle={(task) => void toggleTask(task)}
+                  onOpen={(owner, path, line) => void openNote(owner, path, line)}
+                />
+              )}
 
-          {view === 'settings' && (
-            <SettingsView
-              prefs={prefs}
-              onPrefs={setPrefs}
-              staleDays={settingsQuery.data?.settings.staleDays ?? null}
-              onStaleDays={(days) => void saveStaleDays(days)}
-              user={user}
-              onSignedOutEverywhere={() => setError(null)}
-              onRenamed={() => {
-                // The sidebar greets you by this name, so it changes with it
-                // rather than at the next reload.
-                void api.me().then(({ user: me }) => onUserChanged(me)).catch(() => undefined);
-              }}
-            />
-          )}
+              {view === 'search' && (
+                <SearchView
+                  query={query}
+                  hits={hits}
+                  filters={filters}
+                  tags={tags}
+                  dirs={topLevelDirs(notes)}
+                  self={user.id}
+                  props={props}
+                  propValues={propValues}
+                  onToggleFilter={toggleFilter}
+                  onClearFilters={clearFilters}
+                  onOpen={(owner, path) => void openNote(owner, path)}
+                  onQuery={onQueryChange}
+                />
+              )}
 
-          {view === 'shares' && (
-            <SharesView
-              granted={granted}
-              received={received}
-              dirs={ownDirs}
-              busy={shareBusy}
-              onGrant={(grantee, prefix, canWrite) => void grantShare(grantee, prefix, canWrite)}
-              onRevoke={(share) => void revokeShare(share)}
-            />
+              {view === 'files' &&
+                (files === null ? (
+                  <p className="empty" style={{ padding: '2rem' }}>Reading the vault…</p>
+                ) : (
+                  <FilesView
+                    files={files.files}
+                    dirs={files.dirs}
+                    truncated={files.truncated}
+                    owner={user.id}
+                    busy={filesBusy}
+                    dir={filesDir}
+                    onDir={setFilesDir}
+                    onUpload={(picked, intoDir) => void uploadFiles(picked, intoDir)}
+                    onReplace={(path, file) => void replaceFile(path, file)}
+                    onDelete={(file) => void removeFile(file)}
+                    onOpenNote={(path) => void openNote(user.id, path)}
+                  />
+                ))}
+
+              {view === 'admin' && (
+                <AdminView
+                  users={adminUsersQuery.data?.users ?? []}
+                  keys={adminKeysQuery.data?.keys ?? []}
+                  self={user.id}
+                  busy={adminBusy}
+                  keyOwner={keyOwner}
+                  onPickOwner={setKeyOwner}
+                  onCreateUser={(id, password, displayName, admin) =>
+                    adminAct(() => api.createUser(id, password, displayName, admin ? 'admin' : 'user')).then(
+                      () => undefined,
+                    )
+                  }
+                  onResetPassword={(id, password) =>
+                    adminAct(() => api.adminSetPassword(id, password)).then(() => undefined)
+                  }
+                  onSetDisabled={(id, disabled) =>
+                    adminAct(() => api.adminSetDisabled(id, disabled)).then(() => undefined)
+                  }
+                  onCreateKey={(owner, name, scope, canWrite) =>
+                    adminAct(() => api.createKey(owner, name, scope, canWrite))
+                  }
+                  onRevokeKey={(id) => adminAct(() => api.revokeKey(id)).then(() => undefined)}
+                />
+              )}
+
+              {view === 'settings' && (
+                <SettingsView
+                  prefs={prefs}
+                  onPrefs={setPrefs}
+                  staleDays={settingsQuery.data?.settings.staleDays ?? null}
+                  onStaleDays={(days) => void saveStaleDays(days)}
+                  user={user}
+                  onSignedOutEverywhere={() => setError(null)}
+                  onRenamed={() => {
+                    // The sidebar greets you by this name, so it changes with it
+                    // rather than at the next reload.
+                    void api.me().then(({ user: me }) => onUserChanged(me)).catch(() => undefined);
+                  }}
+                />
+              )}
+
+              {view === 'shares' && (
+                <SharesView
+                  granted={granted}
+                  received={received}
+                  dirs={ownDirs}
+                  busy={shareBusy}
+                  onGrant={(grantee, prefix, canWrite) => void grantShare(grantee, prefix, canWrite)}
+                  onRevoke={(share) => void revokeShare(share)}
+                />
+              )}
+            </div>
+          </main>
+
+          {/*
+            The right column belongs to the open note and appears only with it.
+            Above, what this note is and what it hangs on; below, its neighbourhood
+            as a picture — not the whole network, which at this size would be a knot.
+          */}
+          {view === 'note' && open !== null && (
+            <aside
+              className="side"
+              aria-label={copy.note.aboutOpen}
+              data-graph={local === null || local.nodes.length <= 1 ? 'empty' : 'has'}
+            >
+              <div className="side-info">
+                <ContextPanel
+                  note={{ owner: open.owner, path: open.note.path }}
+                  self={user.id}
+                  canCreate={open.canWrite}
+                  onRestored={() => void reopenAfterRestore()}
+                  onOpen={(owner, path) => void openNote(owner, path)}
+                  onCreate={(target) => void createFromDeadLink(target)}
+                />
+              </div>
+
+              <div className="side-graph">
+                <div className="side-graph-head">
+                  <span>{copy.note.neighbourhood}</span>
+                  <button type="button" onClick={() => void showView('brain')} title={copy.note.showWholeNetwork}>
+                    {copy.note.wholeNetwork}
+                  </button>
+                </div>
+                {local === null ? (
+                  <p className="empty small">{copy.note.loadingNeighbourhood}</p>
+                ) : local.nodes.length <= 1 ? (
+                  <p className="empty small">
+                    No links yet. Type <code>[[</code> in the text to connect this note.
+                  </p>
+                ) : (
+                  <Brain
+                    data={local}
+                    events={pulse}
+                    onOpen={(owner, path) => void openNote(owner, path)}
+                    view={refKey(open.owner, open.note.path)}
+                    arrangement="loose"
+                  />
+                )}
+              </div>
+            </aside>
           )}
         </div>
-      </main>
-
-      {/*
-        The right column belongs to the open note and appears only with it.
-        Above, what this note is and what it hangs on; below, its neighbourhood
-        as a picture — not the whole network, which at this size would be a knot.
-      */}
-      {view === 'note' && open !== null && (
-        <aside
-          className="side"
-          aria-label={copy.note.aboutOpen}
-          data-graph={local === null || local.nodes.length <= 1 ? 'empty' : 'has'}
-        >
-          <div className="side-info">
-            <ContextPanel
-              note={{ owner: open.owner, path: open.note.path }}
-              self={user.id}
-              canCreate={open.canWrite}
-              onRestored={() => void reopenAfterRestore()}
-              onOpen={(owner, path) => void openNote(owner, path)}
-              onCreate={(target) => void createFromDeadLink(target)}
-            />
-          </div>
-
-          <div className="side-graph">
-            <div className="side-graph-head">
-              <span>{copy.note.neighbourhood}</span>
-              <button type="button" onClick={() => void showView('brain')} title={copy.note.showWholeNetwork}>
-                {copy.note.wholeNetwork}
-              </button>
-            </div>
-            {local === null ? (
-              <p className="empty small">{copy.note.loadingNeighbourhood}</p>
-            ) : local.nodes.length <= 1 ? (
-              <p className="empty small">
-                No links yet. Type <code>[[</code> in the text to connect this note.
-              </p>
-            ) : (
-              <Brain
-                data={local}
-                events={pulse}
-                onOpen={(owner, path) => void openNote(owner, path)}
-                view={refKey(open.owner, open.note.path)}
-                arrangement="loose"
-              />
-            )}
-          </div>
-        </aside>
-      )}
+      </div>
 
       <Palette
         open={paletteOpen}
@@ -1587,28 +1517,15 @@ function Shell({
   );
 }
 
-/**
- * Room the brain's resting view leaves for the controls laid over it: the
- * legend at the top right, the footer along the bottom. Screen pixels, and
- * nowhere near the simulation, which does not know either exists.
- */
-const NETWORK_INSET = { top: 20, right: 20, bottom: 56, left: 20 };
-
-/** Was in der Kopfzeile steht, wenn keine Notiz offen ist. */
-function titleOfView(view: string): string {
-  return (
-    {
-      overview: copy.nav.overview,
-      brain: copy.nav.network,
-      tidy: copy.nav.tidy,
-      tasks: copy.nav.tasks,
-      files: copy.nav.files,
-      settings: copy.nav.settings,
-      admin: copy.nav.admin,
-      search: copy.nav.search,
-      shares: copy.nav.sharing,
-    }[view] ?? ''
-  );
+/** How many distinct folders the notes live in, at any depth. */
+function folderCount(notes: NoteRow[]): number {
+  const dirs = new Set<string>();
+  for (const note of notes) {
+    const segments = note.path.split('/');
+    segments.pop();
+    for (let i = 1; i <= segments.length; i += 1) dirs.add(`${note.owner}\u0000${segments.slice(0, i).join('/')}`);
+  }
+  return dirs.size;
 }
 
 /** Top-level folders, for the folder filter. Derived, never hardcoded. */
