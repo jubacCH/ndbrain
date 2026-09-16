@@ -39,7 +39,7 @@ interface Row {
   updatedAt: number;
 }
 
-type SortKey = 'title' | 'folder' | 'links' | 'tags' | 'updatedAt';
+type SortKey = 'title' | 'owner' | 'folder' | 'links' | 'tags' | 'updatedAt';
 type SortDir = 'asc' | 'desc';
 
 interface Column {
@@ -51,6 +51,7 @@ interface Column {
 
 const COLUMNS: readonly Column[] = [
   { key: 'title', label: copy.network.list.title, defaultDir: 'asc' },
+  { key: 'owner', label: copy.network.list.owner, defaultDir: 'asc' },
   { key: 'folder', label: copy.network.list.folder, defaultDir: 'asc' },
   { key: 'links', label: copy.network.list.links, defaultDir: 'desc', numeric: true },
   { key: 'tags', label: copy.network.list.tags, defaultDir: 'desc' },
@@ -61,11 +62,11 @@ const COLUMNS: readonly Column[] = [
 const VIRTUALIZE_ABOVE = 500;
 const PAGE_SIZE = 200;
 
-function folderLabel(folder: string): string {
+function folderLabel(folder: string, hidePrefixes: boolean): string {
   if (folder === '') return copy.network.list.root;
   return folder
     .split('/')
-    .map((segment) => displayName(segment))
+    .map((segment) => displayName(segment, hidePrefixes))
     .join(' › ');
 }
 
@@ -73,6 +74,8 @@ function compare(a: Row, b: Row, key: SortKey): number {
   switch (key) {
     case 'title':
       return a.title.localeCompare(b.title);
+    case 'owner':
+      return a.owner.localeCompare(b.owner);
     case 'folder':
       return a.folderLabel.localeCompare(b.folderLabel);
     case 'links':
@@ -86,8 +89,13 @@ function compare(a: Row, b: Row, key: SortKey): number {
   }
 }
 
-export function ListView(props: { graph: GraphData; onOpen: (owner: string, path: string) => void }): React.JSX.Element {
-  const { graph, onOpen } = props;
+export function ListView(props: {
+  graph: GraphData;
+  onOpen: (owner: string, path: string) => void;
+  /** Show folder names without their sort prefixes, as the tree does. */
+  hidePrefixes?: boolean;
+}): React.JSX.Element {
+  const { graph, onOpen, hidePrefixes = true } = props;
 
   const rows = useMemo<Row[]>(
     () =>
@@ -101,12 +109,18 @@ export function ListView(props: { graph: GraphData; onOpen: (owner: string, path
         path: n.path,
         title: n.title,
         folder: n.folder,
-        folderLabel: folderLabel(n.folder),
+        folderLabel: folderLabel(n.folder, hidePrefixes),
         links: n.links,
         tags: n.tags,
         updatedAt: n.updatedAt,
       })),
-    [graph.nodes],
+    [graph.nodes, hidePrefixes],
+  );
+
+  // Whose note a row is only needs saying once there is more than one answer.
+  const columns = useMemo(
+    () => (new Set(rows.map((r) => r.owner)).size > 1 ? COLUMNS : COLUMNS.filter((c) => c.key !== 'owner')),
+    [rows],
   );
 
   const [filter, setFilter] = useState('');
@@ -146,6 +160,12 @@ export function ListView(props: { graph: GraphData; onOpen: (owner: string, path
   useEffect(() => {
     setPage(1);
   }, [filter, sortKey, sortDir]);
+  // The graph can shrink under the pager (a refetch, notes deleted elsewhere).
+  // The stored page is pulled back with it, or "previous" would step down from
+  // a page that no longer exists and seem to do nothing.
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
 
   const setSort = (key: SortKey): void => {
     if (key === sortKey) {
@@ -207,7 +227,7 @@ export function ListView(props: { graph: GraphData; onOpen: (owner: string, path
             <table className="nv-table">
               <thead>
                 <tr>
-                  {COLUMNS.map((col) => {
+                  {columns.map((col) => {
                     const active = col.key === sortKey;
                     const ariaSort = active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none';
                     return (
@@ -246,6 +266,7 @@ export function ListView(props: { graph: GraphData; onOpen: (owner: string, path
                     onClick={() => openRow(row)}
                   >
                     <td className="nv-title">{row.title}</td>
+                    {columns.some((c) => c.key === 'owner') && <td className="nv-owner">{row.owner}</td>}
                     <td className="nv-folder">{row.folderLabel}</td>
                     <td className="nv-num">{row.links}</td>
                     <td>
@@ -270,11 +291,11 @@ export function ListView(props: { graph: GraphData; onOpen: (owner: string, path
 
           {paginate && (
             <nav className="nv-pager" aria-label={copy.network.list.pageOf(clampedPage, pageCount)}>
-              <button type="button" disabled={clampedPage <= 1} onClick={() => setPage((p) => p - 1)}>
+              <button type="button" disabled={clampedPage <= 1} onClick={() => setPage(clampedPage - 1)}>
                 {copy.network.list.prevPage}
               </button>
               <span>{copy.network.list.pageOf(clampedPage, pageCount)}</span>
-              <button type="button" disabled={clampedPage >= pageCount} onClick={() => setPage((p) => p + 1)}>
+              <button type="button" disabled={clampedPage >= pageCount} onClick={() => setPage(clampedPage + 1)}>
                 {copy.network.list.nextPage}
               </button>
             </nav>

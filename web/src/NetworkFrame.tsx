@@ -51,6 +51,7 @@ export function NetworkFrame({
   onView,
   onOpen,
   onFullscreen,
+  hidePrefixes = true,
 }: {
   graph: GraphData;
   events: PulseEvent[];
@@ -68,6 +69,8 @@ export function NetworkFrame({
    * to step out before opening something that lives outside.
    */
   onFullscreen?: (frame: FullscreenFrame | null) => void;
+  /** Show folder names without their sort prefixes, as the tree does. */
+  hidePrefixes?: boolean;
 }): React.JSX.Element {
   const frame = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(false);
@@ -193,13 +196,20 @@ export function NetworkFrame({
             {/* The amber points, as opposed to the amber flash: what has been
                 worked on lately, not what is being written now. */}
             <span><i style={{ background: '#f0cd8c' }} />{copy.network.recent(RECENT_DAYS)}</span>
+            <span className="sep" />
+            {/* How to get from a point to its note, which the canvas cannot say. */}
+            <span className="brainfoot-hint">{copy.network.doubleClick}</span>
           </div>
         </div>
       ) : (
         <div className="netpane">
           {controls}
           <div className="netpane-body">
-            {view === 'list' ? <ListView graph={graph} onOpen={onOpen} /> : <MapView graph={graph} onOpen={onOpen} />}
+            {view === 'list' ? (
+              <ListView graph={graph} onOpen={onOpen} hidePrefixes={hidePrefixes} />
+            ) : (
+              <MapView graph={graph} onOpen={onOpen} self={account} hidePrefixes={hidePrefixes} />
+            )}
           </div>
         </div>
       )}

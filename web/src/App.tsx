@@ -1276,7 +1276,9 @@ function Shell({
               {view === 'note' &&
                 (open === null ? (
                   <p className="empty" style={{ padding: '2rem' }}>
-                    Pick a note on the left, or press <kbd>⌘K</kbd> and type a title.
+                    {copy.note.pickOne.before}
+                    <kbd>{copy.note.paletteKey}</kbd>
+                    {copy.note.pickOne.after}
                   </p>
                 ) : (
                   <Editor
@@ -1323,6 +1325,7 @@ function Shell({
                     graph={graph}
                     events={pulse}
                     account={user.id}
+                    hidePrefixes={prefs.hidePrefixes}
                     view={prefs.networkView}
                     onView={(networkView) => setPrefs((current) => ({ ...current, networkView }))}
                     onOpen={(owner, path) => void openNote(owner, path)}
@@ -1400,7 +1403,7 @@ function Shell({
 
               {view === 'files' &&
                 (files === null ? (
-                  <p className="empty" style={{ padding: '2rem' }}>Reading the vault…</p>
+                  <p className="empty" style={{ padding: '2rem' }}>{copy.files.reading}</p>
                 ) : (
                   <FilesView
                     files={files.files}
@@ -1505,7 +1508,9 @@ function Shell({
                   <p className="empty small">{copy.note.loadingNeighbourhood}</p>
                 ) : local.nodes.length <= 1 ? (
                   <p className="empty small">
-                    No links yet. Type <code>[[</code> in the text to connect this note.
+                    {copy.note.noLinksYet.before}
+                    <code>{copy.note.linkSyntax}</code>
+                    {copy.note.noLinksYet.after}
                   </p>
                 ) : (
                   <Brain

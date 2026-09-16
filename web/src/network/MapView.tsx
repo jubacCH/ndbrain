@@ -14,20 +14,24 @@
  * at the level where "where is work happening" is actually answered, rather
  * than averaged away across a folder's entire subtree.
  *
- * The layout itself (`./treemap`) is a pure function with no DOM in it, called
- * again for each folder's own children. What is here is the part that
- * genuinely needs React: measuring the real container, owning the zoom level,
- * drawing the rects it is handed, and turning pointer/keyboard input into a
- * zoom or an `onOpen`.
+ * Other people's vaults, where shares make them visible, are folders of their
+ * own under the root, named after their owner — never merged into a folder of
+ * yours that happens to have the same name.
+ *
+ * **What re-renders when.** The layout (both levels, every rect) is computed
+ * once per folder shown and container size, in `layoutMap`, and the SVG is a
+ * memoised child fed only that. Hovering writes to a small store the details
+ * panel alone subscribes to, so moving the pointer across a thousand cells
+ * repaints one panel and lays out nothing.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { GraphData } from '../api';
 import { copy } from '../copy';
 import { displayName } from '../Tree';
 import { absoluteTime } from './relativeTime';
-import type { FolderNode, MapNode, Rect, TreemapCell } from './treemap';
+import type { FolderNode, MapNode, Rect } from './treemap';
 import { buildFolderTree, findFolder, folderWarmth, layoutFolder, noteWarmth } from './treemap';
 import './network.css';
 
@@ -52,6 +56,9 @@ const MIN_NEST_H = 60;
  */
 const FALLBACK_SIZE = { w: 960, h: 600 };
 
+/** Above this warmth a cell is bright enough that its label turns dark. */
+const HOT = 0.55;
+
 function shrink(rect: Rect, by: number): Rect {
   const w = Math.max(0, rect.w - by * 2);
   const h = Math.max(0, rect.h - by * 2);
@@ -62,30 +69,29 @@ function shrink(rect: Rect, by: number): Rect {
  * The frame's actual rendered size in CSS pixels, kept live with a
  * `ResizeObserver`.
  *
- * This is the fix for a treemap that used to leave empty bars on the left and
- * right: it laid its rects out into a fixed 1000×620 box and let the SVG's
- * `viewBox` scale that box into the container, which is a *uniform* scale — it
- * preserves the box's aspect ratio and, wherever the container's actual aspect
- * ratio differs (almost always), letterboxes the gap in as empty space rather
- * than distorting the picture. `squarify` itself was always correct for
- * whatever rectangle it was given (see `network-treemap.test.ts`); the bug was
- * that it was never given the real one. Measuring the container and using that
- * exact size as both the layout bounds and the `viewBox` removes the mismatch
- * instead of compensating for it.
+ * Measuring the container and using that exact size as both the layout bounds
+ * and the `viewBox` is what keeps the treemap from letterboxing: a fixed box
+ * scaled uniformly into a container of another aspect ratio leaves empty bars.
+ *
+ * A callback ref rather than a ref object. The frame does not exist while the
+ * vault is empty, and an effect keyed on a ref object never runs again when
+ * the element behind it appears later — the map then stayed on the fallback
+ * size, letterboxed, until the next remount. Holding the element in state
+ * makes its arrival a change the effect sees.
  */
-function useContainerSize(ref: React.RefObject<HTMLElement | null>): { w: number; h: number } {
+function useContainerSize(): [(el: HTMLDivElement | null) => void, { w: number; h: number }] {
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
   const [size, setSize] = useState(FALLBACK_SIZE);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    if (el === null) return;
 
     const measure = (): void => {
       const w = el.clientWidth;
       const h = el.clientHeight;
       // A test environment with no layout engine reports 0 for everything;
       // keeping the fallback then is better than laying out into nothing.
-      if (w > 0 && h > 0) setSize({ w, h });
+      if (w > 0 && h > 0) setSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
     };
     measure();
 
@@ -93,32 +99,14 @@ function useContainerSize(ref: React.RefObject<HTMLElement | null>): { w: number
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [ref]);
+  }, [el]);
 
-  return size;
+  return [setEl, size];
 }
 
-/**
- * A cool, faintly cyan-tinted surface at 0 warmth, shifting toward the warm
- * accent as warmth rises toward 1 — resolved from CSS custom properties at
- * paint time, so it follows the current theme automatically.
- *
- * Warmth is most often somewhere in the middle (a folder is rarely either
- * fully dormant or fully just-written), and a plain linear blend made that
- * middle ground read as a flat, uniform tan across the whole map — nothing
- * stood out as "hot". The curve pushes the middle back toward cool and saves
- * the strong warm tint for cells genuinely concentrated with recent work, and
- * the 55% cap keeps even a fully warm cell readable as a tinted surface
- * rather than a block of solid accent colour.
- */
-function warmthColour(warmth: number): string {
-  const t = Math.max(0, Math.min(1, warmth)) ** 1.6;
-  const pct = Math.round(t * 55);
-  return `color-mix(in srgb, var(--nv-warm) ${pct}%, color-mix(in srgb, var(--nv-cyan) 12%, var(--nv-surface-2)))`;
-}
-
-function folderName(folder: FolderNode): string {
-  return folder.path === '' ? copy.network.mapView.root : displayName(folder.name);
+function folderName(folder: FolderNode, hidePrefixes: boolean): string {
+  if (folder.vault) return folder.owner;
+  return folder.path === '' ? copy.network.mapView.root : displayName(folder.name, hidePrefixes);
 }
 
 function truncate(label: string, max = 24): string {
@@ -132,19 +120,321 @@ interface HoverInfo {
   lastUpdated: number;
 }
 
-function folderHover(folder: FolderNode): HoverInfo {
-  return { title: folderName(folder), notes: folder.noteCount, links: folder.linkTotal, lastUpdated: folder.lastUpdated };
+/** Where a cell leads: into a folder, or to a note. */
+type Target = { kind: 'zoom'; owner: string; path: string } | { kind: 'open'; owner: string; path: string };
+
+/** One drawn cell, with everything the SVG needs and nothing it has to compute. */
+export interface MapCell {
+  key: string;
+  /** A frame holds nested cells drawn after it; a leaf is a single block. */
+  kind: 'frame' | 'leaf';
+  rect: Rect;
+  label: string;
+  /** Leaves only: 0 cool … 1 fully warm. */
+  warmth: number;
+  /** A leaf inside a frame, drawn with smaller labels. */
+  small: boolean;
+  a11yLabel: string;
+  hover: HoverInfo;
+  target: Target;
 }
 
-function noteHover(note: MapNode): HoverInfo {
-  return { title: note.title, notes: 1, links: note.links, lastUpdated: note.updatedAt };
+/**
+ * Both levels of the map for one folder, as a flat list in drawing order: a
+ * frame is followed by the cells nested inside it.
+ *
+ * Pure and exported so that what a hover must *not* cause — running this
+ * again — is something a test can count.
+ */
+export function layoutMap(current: FolderNode, w: number, h: number, hidePrefixes: boolean): MapCell[] {
+  const out: MapCell[] = [];
+  const now = Date.now();
+
+  const noteCell = (note: MapNode, rect: Rect, small: boolean): MapCell => ({
+    key: `n:${JSON.stringify([note.owner, note.path])}`,
+    kind: 'leaf',
+    rect,
+    label: note.title,
+    warmth: noteWarmth(note.updatedAt, now),
+    small,
+    a11yLabel: copy.network.mapView.noteLabel(note.title),
+    hover: { title: note.title, notes: 1, links: note.links, lastUpdated: note.updatedAt },
+    target: { kind: 'open', owner: note.owner, path: note.path },
+  });
+
+  const folderLeaf = (folder: FolderNode, rect: Rect, small: boolean): MapCell => {
+    const name = folderName(folder, hidePrefixes);
+    return {
+      key: `f:${folder.key}`,
+      kind: 'leaf',
+      rect,
+      label: name,
+      warmth: folderWarmth(folder),
+      small,
+      a11yLabel: copy.network.mapView.folderLabel(name, folder.noteCount),
+      hover: { title: name, notes: folder.noteCount, links: folder.linkTotal, lastUpdated: folder.lastUpdated },
+      target: { kind: 'zoom', owner: folder.owner, path: folder.path },
+    };
+  };
+
+  const top = layoutFolder(current, { x: 0, y: 0, w, h });
+  for (const cell of top) {
+    const rect = shrink(cell.rect, GAP / 2);
+    if (cell.kind === 'note') {
+      out.push(noteCell(cell.note, rect, false));
+      continue;
+    }
+    const folder = cell.folder;
+    const canNest =
+      rect.w >= MIN_NEST_W && rect.h >= MIN_NEST_H && folder.children.length + folder.notes.length > 0;
+    if (!canNest) {
+      out.push(folderLeaf(folder, rect, false));
+      continue;
+    }
+
+    // A second level, never a third: a grandchild folder is always a leaf.
+    // Frame and children are siblings in the SVG, not one inside the other's
+    // click target, so a click on a nested cell never also zooms the parent.
+    const frame = folderLeaf(folder, rect, false);
+    out.push({ ...frame, kind: 'frame', label: `${truncate(frame.label, 30)} · ${folder.noteCount}` });
+    const inner: Rect = {
+      x: rect.x + INNER_PAD,
+      y: rect.y + HEADER_H,
+      w: Math.max(0, rect.w - INNER_PAD * 2),
+      h: Math.max(0, rect.h - HEADER_H - INNER_PAD),
+    };
+    for (const child of layoutFolder(folder, inner)) {
+      const childRect = shrink(child.rect, GAP / 2);
+      out.push(child.kind === 'folder' ? folderLeaf(child.folder, childRect, true) : noteCell(child.note, childRect, true));
+    }
+  }
+  return out;
 }
 
-export function MapView(props: { graph: GraphData; onOpen: (owner: string, path: string) => void }): React.JSX.Element {
-  const { graph, onOpen } = props;
+/* ---- hover: a store only the panel listens to ---------------------------- */
 
-  const frameRef = useRef<HTMLDivElement>(null);
-  const { w: viewW, h: viewH } = useContainerSize(frameRef);
+interface HoverState {
+  info: HoverInfo | null;
+  /** Whether the change came from the keyboard, and so is worth saying out loud. */
+  announce: boolean;
+}
+
+interface HoverStore {
+  get: () => HoverState;
+  set: (info: HoverInfo | null, announce: boolean) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+function createHoverStore(): HoverStore {
+  let state: HoverState = { info: null, announce: false };
+  const listeners = new Set<() => void>();
+  return {
+    get: () => state,
+    set: (info, announce) => {
+      if (state.info === info && state.announce === announce) return;
+      state = { info, announce };
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+function HoverPanel({ store }: { store: HoverStore }): React.JSX.Element {
+  const { info, announce } = useSyncExternalStore(store.subscribe, store.get, store.get);
+  const details =
+    info === null
+      ? null
+      : [
+          copy.network.mapView.notes(info.notes),
+          copy.network.mapView.links(info.links),
+          `${copy.network.mapView.updated}: ${info.lastUpdated > 0 ? absoluteTime(info.lastUpdated) : copy.network.mapView.never}`,
+        ];
+
+  return (
+    <div className="nv-hover-panel">
+      {info !== null && details !== null ? (
+        <>
+          <span className="nv-hover-title">{info.title}</span>
+          <span className="nv-hover-stats">
+            {details.map((d) => (
+              <span key={d}>{d}</span>
+            ))}
+          </span>
+        </>
+      ) : (
+        <span>{copy.network.mapView.hoverHint}</span>
+      )}
+      {/* Spoken only for what the keyboard reached. A pointer sweeping across
+          the map would otherwise queue an announcement per cell it crossed. */}
+      <span className="nv-sr" aria-live="polite">
+        {announce && info !== null && details !== null ? `${info.title}. ${details.join(', ')}` : ''}
+      </span>
+    </div>
+  );
+}
+
+/* ---- the cells ------------------------------------------------------------ */
+
+type Direction = 'left' | 'right' | 'up' | 'down';
+
+const ARROWS: Record<string, Direction> = {
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+  ArrowUp: 'up',
+  ArrowDown: 'down',
+};
+
+/**
+ * The nearest cell in a direction, by centre.
+ *
+ * A treemap has no rows or columns to step through, so "right" means the
+ * closest cell whose centre lies to the right, with distance across the
+ * direction of travel weighing double — the cell straight ahead wins over one
+ * that is nearer but off to the side.
+ */
+export function neighbour(cells: readonly MapCell[], from: number, direction: Direction): number {
+  const here = cells[from];
+  if (here === undefined) return from;
+  const cx = here.rect.x + here.rect.w / 2;
+  const cy = here.rect.y + here.rect.h / 2;
+  let best = from;
+  let bestScore = Infinity;
+  cells.forEach((cell, index) => {
+    if (index === from) return;
+    const dx = cell.rect.x + cell.rect.w / 2 - cx;
+    const dy = cell.rect.y + cell.rect.h / 2 - cy;
+    const along = direction === 'right' ? dx : direction === 'left' ? -dx : direction === 'down' ? dy : -dy;
+    const across = direction === 'left' || direction === 'right' ? Math.abs(dy) : Math.abs(dx);
+    if (along <= 0.5) return;
+    const score = along + 2 * across;
+    if (score < bestScore) {
+      bestScore = score;
+      best = index;
+    }
+  });
+  return best;
+}
+
+/**
+ * The SVG body. Memoised: it changes when the layout does, and a hover is not
+ * a change to the layout.
+ *
+ * One tab stop for the whole map (roving tabindex): Tab enters on the last
+ * cell that had focus and leaves again, the arrows move between cells.
+ */
+const MapCells = memo(function MapCells({
+  cells,
+  hover,
+  onActivate,
+}: {
+  cells: readonly MapCell[];
+  hover: HoverStore;
+  onActivate: (target: Target) => void;
+}): React.JSX.Element {
+  const [active, setActive] = useState(0);
+  const refs = useRef<Array<SVGGElement | null>>([]);
+
+  // A new folder on screen starts at its first cell.
+  useEffect(() => {
+    setActive(0);
+  }, [cells]);
+
+  const stop = Math.min(active, Math.max(0, cells.length - 1));
+
+  const onKeyDown = (event: React.KeyboardEvent<SVGGElement>, index: number, cell: MapCell): void => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onActivate(cell.target);
+      return;
+    }
+    let next: number | null = null;
+    const direction = ARROWS[event.key];
+    if (direction !== undefined) next = neighbour(cells, index, direction);
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = cells.length - 1;
+    if (next === null) return;
+    event.preventDefault();
+    setActive(next);
+    refs.current[next]?.focus();
+  };
+
+  return (
+    <>
+      {cells.map((cell, index) => {
+        const { rect } = cell;
+        const t = Math.max(0, Math.min(1, cell.warmth));
+        const showLabel =
+          cell.kind === 'frame' || (cell.small ? rect.w > 30 && rect.h > 14 : rect.w > 42 && rect.h > 20);
+        return (
+          <g
+            key={cell.key}
+            ref={(el) => {
+              refs.current[index] = el;
+            }}
+            tabIndex={index === stop ? 0 : -1}
+            role="button"
+            aria-label={cell.a11yLabel}
+            onMouseEnter={() => hover.set(cell.hover, false)}
+            onMouseLeave={() => hover.set(null, false)}
+            onFocus={() => {
+              setActive(index);
+              hover.set(cell.hover, true);
+            }}
+            onBlur={() => hover.set(null, false)}
+            onClick={() => onActivate(cell.target)}
+            onKeyDown={(event) => onKeyDown(event, index, cell)}
+          >
+            {cell.kind === 'frame' ? (
+              <>
+                <rect className="nv-cell-frame" x={rect.x} y={rect.y} width={rect.w} height={rect.h} rx={4} />
+                <text className="nv-cell-header-label" x={rect.x + 8} y={rect.y + 14}>
+                  {cell.label}
+                </text>
+              </>
+            ) : (
+              <>
+                <rect
+                  className="nv-cell-rect"
+                  x={rect.x}
+                  y={rect.y}
+                  width={rect.w}
+                  height={rect.h}
+                  rx={3}
+                  data-warm={t > 0 ? '' : undefined}
+                  style={t > 0 ? ({ '--t': t.toFixed(3) } as React.CSSProperties) : undefined}
+                />
+                {showLabel && (
+                  <text
+                    className="nv-cell-label"
+                    data-hot={t >= HOT ? '' : undefined}
+                    x={rect.x + 6}
+                    y={rect.y + 14}
+                  >
+                    {truncate(cell.label, cell.small ? 16 : 24)}
+                  </text>
+                )}
+              </>
+            )}
+          </g>
+        );
+      })}
+    </>
+  );
+});
+
+export function MapView(props: {
+  graph: GraphData;
+  onOpen: (owner: string, path: string) => void;
+  /** The signed-in account: its vault is the root, every other owner a folder. */
+  self?: string;
+  hidePrefixes?: boolean;
+}): React.JSX.Element {
+  const { graph, onOpen, self, hidePrefixes = true } = props;
+
+  const [frameRef, { w: viewW, h: viewH }] = useContainerSize();
 
   const root = useMemo<FolderNode>(() => {
     const nodes: MapNode[] = graph.nodes.map((n) => ({
@@ -155,24 +445,44 @@ export function MapView(props: { graph: GraphData; onOpen: (owner: string, path:
       links: n.links,
       updatedAt: n.updatedAt,
     }));
-    return buildFolderTree(nodes);
-  }, [graph.nodes]);
+    return buildFolderTree(nodes, Date.now(), self);
+  }, [graph.nodes, self]);
 
-  const [zoomPath, setZoomPath] = useState('');
-  const [hover, setHover] = useState<HoverInfo | null>(null);
+  const [zoom, setZoom] = useState<{ owner: string; path: string } | null>(null);
+  const hover = useMemo(createHoverStore, []);
 
-  const current = findFolder(root, zoomPath) ?? root;
-  const bounds: Rect = { x: 0, y: 0, w: viewW, h: viewH };
+  const current = (zoom === null ? root : findFolder(root, zoom.path, zoom.owner)) ?? root;
   const cells = useMemo(
-    () => layoutFolder(current, bounds).map((cell) => ({ ...cell, rect: shrink(cell.rect, GAP / 2) })),
-    [current, viewW, viewH],
+    () => layoutMap(current, viewW, viewH, hidePrefixes),
+    [current, viewW, viewH, hidePrefixes],
+  );
+
+  // The latest `onOpen` without making every render of the parent a new
+  // callback for the memoised cells.
+  const openRef = useRef(onOpen);
+  useEffect(() => {
+    openRef.current = onOpen;
+  }, [onOpen]);
+
+  const onActivate = useCallback(
+    (target: Target): void => {
+      if (target.kind === 'open') {
+        openRef.current(target.owner, target.path);
+        return;
+      }
+      hover.set(null, false);
+      setZoom({ owner: target.owner, path: target.path });
+    },
+    [hover],
   );
 
   const crumbs: FolderNode[] = [root];
-  if (zoomPath !== '') {
-    const segments = zoomPath.split('/');
+  if (current !== root) {
+    const vault = current.owner === root.owner ? null : findFolder(root, '', current.owner);
+    if (vault) crumbs.push(vault);
+    const segments = current.path === '' ? [] : current.path.split('/');
     for (let i = 0; i < segments.length; i += 1) {
-      const found = findFolder(root, segments.slice(0, i + 1).join('/'));
+      const found = findFolder(root, segments.slice(0, i + 1).join('/'), current.owner);
       if (found) crumbs.push(found);
     }
   }
@@ -185,155 +495,23 @@ export function MapView(props: { graph: GraphData; onOpen: (owner: string, path:
     );
   }
 
-  /** A single warmth-coloured leaf: a note, or a folder too small to nest into. */
-  function leafCell(
-    key: string,
-    rect: Rect,
-    label: string,
-    warmth: number,
-    a11yLabel: string,
-    onHover: () => void,
-    onActivate: () => void,
-    small: boolean,
-  ): React.JSX.Element {
-    const showLabel = small ? rect.w > 30 && rect.h > 14 : rect.w > 42 && rect.h > 20;
-    return (
-      <g
-        key={key}
-        tabIndex={0}
-        role="button"
-        aria-label={a11yLabel}
-        onMouseEnter={onHover}
-        onFocus={onHover}
-        onMouseLeave={() => setHover(null)}
-        onBlur={() => setHover(null)}
-        onClick={onActivate}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onActivate();
-          }
-        }}
-      >
-        <rect
-          className="nv-cell-rect"
-          x={rect.x}
-          y={rect.y}
-          width={rect.w}
-          height={rect.h}
-          rx={3}
-          style={{ fill: warmthColour(warmth) }}
-        />
-        {showLabel && (
-          <text className="nv-cell-label" x={rect.x + 6} y={rect.y + 14}>
-            {truncate(label, small ? 16 : 24)}
-          </text>
-        )}
-      </g>
-    );
-  }
-
-  /** A note cell — always a leaf, at either level. */
-  function renderNote(note: MapNode, rect: Rect, small: boolean): React.JSX.Element {
-    return leafCell(
-      `n:${note.owner}/${note.path}`,
-      rect,
-      note.title,
-      noteWarmth(note.updatedAt),
-      copy.network.mapView.noteLabel(note.title),
-      () => setHover(noteHover(note)),
-      () => onOpen(note.owner, note.path),
-      small,
-    );
-  }
-
-  /**
-   * A folder cell. Big enough, it gets a frame, a header naming it, and its
-   * own children laid out again beneath — a second level, never a third: a
-   * grandchild folder previewed this way is always drawn as a plain leaf, so
-   * the map stays exactly two levels deep regardless of how far the vault
-   * actually nests. Every folder cell, at either level, zooms straight to
-   * itself on click; the two levels sit as siblings in the SVG, not one
-   * inside the other's click target, so a click on a nested preview never
-   * also fires its parent's.
-   */
-  function renderFolder(folder: FolderNode, rect: Rect, depth: 0 | 1): React.JSX.Element {
-    const a11yLabel = copy.network.mapView.folderLabel(folderName(folder), folder.noteCount);
-    const activate = (): void => setZoomPath(folder.path);
-    const showFolderHover = (): void => setHover(folderHover(folder));
-
-    const canNest =
-      depth === 0 && rect.w >= MIN_NEST_W && rect.h >= MIN_NEST_H && folder.children.length + folder.notes.length > 0;
-
-    if (!canNest) {
-      return leafCell(
-        `f:${folder.path}`,
-        rect,
-        folderName(folder),
-        folderWarmth(folder),
-        a11yLabel,
-        showFolderHover,
-        activate,
-        depth === 1,
-      );
-    }
-
-    const innerBounds: Rect = {
-      x: rect.x + INNER_PAD,
-      y: rect.y + HEADER_H,
-      w: Math.max(0, rect.w - INNER_PAD * 2),
-      h: Math.max(0, rect.h - HEADER_H - INNER_PAD),
-    };
-    const innerCells = layoutFolder(folder, innerBounds).map((cell) => ({ ...cell, rect: shrink(cell.rect, GAP / 2) }));
-
-    return (
-      <g key={`f:${folder.path}`}>
-        <g
-          tabIndex={0}
-          role="button"
-          aria-label={a11yLabel}
-          onMouseEnter={showFolderHover}
-          onFocus={showFolderHover}
-          onMouseLeave={() => setHover(null)}
-          onBlur={() => setHover(null)}
-          onClick={activate}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              activate();
-            }
-          }}
-        >
-          <rect className="nv-cell-frame" x={rect.x} y={rect.y} width={rect.w} height={rect.h} rx={4} />
-          <text className="nv-cell-header-label" x={rect.x + 8} y={rect.y + 14}>
-            {truncate(folderName(folder), 30)} · {folder.noteCount}
-          </text>
-        </g>
-        {innerCells.map((cell) =>
-          cell.kind === 'folder' ? renderFolder(cell.folder, cell.rect, 1) : renderNote(cell.note, cell.rect, true),
-        )}
-      </g>
-    );
-  }
-
-  function renderTop(cell: TreemapCell): React.JSX.Element {
-    return cell.kind === 'folder' ? renderFolder(cell.folder, cell.rect, 0) : renderNote(cell.note, cell.rect, false);
-  }
-
   return (
     <div className="network-view map-view">
       <nav className="nv-crumbs" aria-label={copy.network.mapView.breadcrumbLabel}>
         {crumbs.map((folder, i) => (
-          <span key={folder.path}>
+          <span key={folder.key}>
             {i > 0 && <span aria-hidden> › </span>}
             <button
               type="button"
               className="nv-crumb"
-              aria-current={folder.path === current.path ? 'true' : undefined}
-              disabled={folder.path === current.path}
-              onClick={() => setZoomPath(folder.path)}
+              aria-current={folder === current ? 'true' : undefined}
+              disabled={folder === current}
+              onClick={() => {
+                hover.set(null, false);
+                setZoom(folder === root ? null : { owner: folder.owner, path: folder.path });
+              }}
             >
-              {folderName(folder)}
+              {folderName(folder, hidePrefixes)}
             </button>
           </span>
         ))}
@@ -341,27 +519,12 @@ export function MapView(props: { graph: GraphData; onOpen: (owner: string, path:
 
       <div className="nv-map">
         <div className="nv-treemap-frame" ref={frameRef}>
-          <svg viewBox={`0 0 ${viewW} ${viewH}`} role="group" aria-label={folderName(current)}>
-            {cells.map((cell) => renderTop(cell))}
+          <svg viewBox={`0 0 ${viewW} ${viewH}`} role="group" aria-label={folderName(current, hidePrefixes)}>
+            <MapCells cells={cells} hover={hover} onActivate={onActivate} />
           </svg>
         </div>
 
-        <div className="nv-hover-panel" aria-live="polite">
-          {hover ? (
-            <>
-              <span className="nv-hover-title">{hover.title}</span>
-              <span className="nv-hover-stats">
-                <span>{copy.network.mapView.notes(hover.notes)}</span>
-                <span>{copy.network.mapView.links(hover.links)}</span>
-                <span>
-                  {copy.network.mapView.updated}: {hover.lastUpdated > 0 ? absoluteTime(hover.lastUpdated) : '—'}
-                </span>
-              </span>
-            </>
-          ) : (
-            <span>{copy.network.mapView.hoverHint}</span>
-          )}
-        </div>
+        <HoverPanel store={hover} />
       </div>
     </div>
   );

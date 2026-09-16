@@ -326,6 +326,88 @@ th button:focus-visible {
 
 /* Focus lands on the wrapping <g> (SVG shapes are not natively focusable),
    so the glow is selected from there rather than from the rect itself. */
+/*
+ * Warmth.
+ *
+ * A dormant cell is the petrol surface, faintly cyan. A warm one is amber of a
+ * single, fixed hue whose lightness and chroma rise with its warmth (`--t`, set
+ * per cell, 0…1) — computed in OKLCH, so every step is the same amber, only
+ * brighter.
+ *
+ * The first version mixed the warm accent into the petrol surface in sRGB. Teal
+ * carries more green than red, so every partial mix came out khaki to olive:
+ * nearly every project cell looked muddy rather than warm. Mixing *towards*
+ * amber in any space has the same problem somewhere along the way (straight
+ * lines through OKLab pass a greenish grey; the short way round the OKLCH hue
+ * circle passes green). Holding the hue and letting only lightness and chroma
+ * move is what keeps a half-warm cell a dim amber instead of a dirty one.
+ */
+.network-view {
+  --nv-cool: color-mix(in srgb, var(--nv-cyan) 12%, var(--nv-surface-2));
+  --nv-heat-h: 76;
+  --nv-heat-l0: 0.94;
+  --nv-heat-l1: 0.8;
+  --nv-heat-c0: 0.035;
+  --nv-heat-c1: 0.15;
+  --nv-heat-edge: oklch(0.62 0.13 var(--nv-heat-h));
+  --nv-heat-text: #2a1a05;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .network-view {
+    --nv-heat-l0: 0.36;
+    --nv-heat-l1: 0.78;
+    --nv-heat-c0: 0.05;
+    --nv-heat-c1: 0.155;
+    --nv-heat-edge: oklch(0.86 0.13 var(--nv-heat-h));
+  }
+}
+
+:root[data-theme='dark'] .network-view {
+  --nv-heat-l0: 0.36;
+  --nv-heat-l1: 0.78;
+  --nv-heat-c0: 0.05;
+  --nv-heat-c1: 0.155;
+  --nv-heat-edge: oklch(0.86 0.13 var(--nv-heat-h));
+}
+
+.nv-cell-rect {
+  fill: var(--nv-cool);
+}
+
+.nv-cell-rect[data-warm] {
+  fill: oklch(
+    calc(var(--nv-heat-l0) + (var(--nv-heat-l1) - var(--nv-heat-l0)) * var(--t, 0))
+      calc(var(--nv-heat-c0) + (var(--nv-heat-c1) - var(--nv-heat-c0)) * var(--t, 0)) var(--nv-heat-h)
+  );
+  /* The rim lights up with the cell, which is what reads as glow on the dark
+     ground without a filter per cell. */
+  stroke: color-mix(in oklch, var(--nv-heat-edge) calc(20% + 60% * var(--t, 0)), transparent);
+}
+
+/* On a bright amber the light label would vanish; hot cells carry dark text. */
+.nv-cell-label[data-hot] {
+  fill: var(--nv-heat-text);
+}
+
+.nv-owner {
+  color: var(--nv-text-2);
+  white-space: nowrap;
+}
+
+/* Present for a screen reader, absent from the screen. */
+.nv-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .nv-cell-rect:hover,
 .nv-cell-frame:hover,
 g:focus-visible > .nv-cell-rect,

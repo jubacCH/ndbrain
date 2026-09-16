@@ -84,7 +84,9 @@ export function ContextPanel({
               <h4>{copy.context.linksOut} · {live.length}</h4>
               {live.length === 0 && (
                 <p className="empty" style={{ padding: '.2rem 0' }}>
-                  No links yet. Type <code>[[</code> in the editor.
+                  {copy.context.noLinks.before}
+                  <code>{copy.note.linkSyntax}</code>
+                  {copy.context.noLinks.after}
                 </p>
               )}
               {live.map((link) => (
