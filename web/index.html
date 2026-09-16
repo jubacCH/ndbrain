@@ -7,8 +7,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <!-- Two values so the browser chrome matches whichever theme is active. -->
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fbfbfc" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0c0f" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f3f7f8" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#050b0e" />
+
+    <!--
+      The ground, before the stylesheet arrives.
+
+      A PWA launched from the home screen shows the document the moment it
+      exists; until the bundle's CSS has loaded that is the browser default,
+      which on a dark phone is a grey-black that is not this app's and on an
+      explicit dark choice under a light system is white. Same values as the
+      theme colour in `src/prefs.ts`.
+    -->
+    <style>
+      html { background: #f3f7f8; }
+      @media (prefers-color-scheme: dark) { html:not([data-theme='light']) { background: #050b0e; } }
+      html[data-theme='dark'] { background: #050b0e; }
+    </style>
 
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/favicon-32.png" sizes="32x32" />
@@ -37,6 +52,11 @@
           var choice = localStorage.getItem('ndbrain.theme');
           if (choice === 'dark' || choice === 'light') {
             document.documentElement.setAttribute('data-theme', choice);
+            // The chrome follows an explicit choice from the first frame too.
+            var metas = document.querySelectorAll('meta[name="theme-color"]');
+            for (var i = 0; i < metas.length; i += 1) {
+              metas[i].setAttribute('content', choice === 'dark' ? '#050b0e' : '#f3f7f8');
+            }
           }
           var size = localStorage.getItem('ndbrain.textSize');
           if (size) document.documentElement.style.setProperty('--text-scale', size);

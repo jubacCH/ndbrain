@@ -340,7 +340,7 @@ export function TidyView({
           </button>
           <button
             type="button"
-            className="btn btn-solid"
+            className="btn btn-danger"
             disabled={selected.size === 0 || busy}
             onClick={() => onBulk('delete')}
           >

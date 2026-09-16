@@ -79,6 +79,11 @@
   --warn-bg: #f6ecd5;
   --crit: #b12e22;
   --crit-bg: #f8e1dd;
+  /* Marks, not text: at a few pixels the text tones (dark amber, dark red)
+     both read as brown. Brighter and further apart in hue; text keeps the
+     tones above, which carry the contrast. */
+  --warn-dot: #e09a00;
+  --crit-dot: #e5372b;
   --info: #2b59c9;
   --info-bg: #e2e9fa;
 
@@ -137,6 +142,8 @@
     --warn-bg: rgba(234, 184, 93, 0.12);
     --crit: #ef6262;
     --crit-bg: rgba(239, 98, 98, 0.13);
+    --warn-dot: #eab85d;
+    --crit-dot: #ef6262;
     --info: #86a8ff;
     --info-bg: rgba(134, 168, 255, 0.13);
   }
@@ -177,6 +184,8 @@
   --warn-bg: rgba(234, 184, 93, 0.12);
   --crit: #ef6262;
   --crit-bg: rgba(239, 98, 98, 0.13);
+  --warn-dot: #eab85d;
+  --crit-dot: #ef6262;
   --info: #86a8ff;
   --info-bg: rgba(134, 168, 255, 0.13);
 }
@@ -369,10 +378,10 @@ input {
 }
 
 .st-crit {
-  background: var(--crit);
+  background: var(--crit-dot);
 }
 .st-warn {
-  background: var(--warn);
+  background: var(--warn-dot);
 }
 
 /* ---- main -------------------------------------------------------------- */
@@ -406,7 +415,7 @@ input {
 }
 
 .saved.dirty i {
-  background: var(--warn);
+  background: var(--warn-dot);
 }
 
 .saved.failed {
@@ -414,7 +423,7 @@ input {
 }
 
 .saved.failed i {
-  background: var(--crit);
+  background: var(--crit-dot);
 }
 
 .pane {
@@ -888,7 +897,7 @@ td.n {
   background: var(--surface);
 }
 
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: var(--surface-2);
   color: var(--text);
 }
@@ -900,7 +909,7 @@ td.n {
   border-color: var(--invert-bg);
 }
 
-.btn-solid:hover {
+.btn-solid:hover:not(:disabled) {
   background: var(--invert-bg);
   color: var(--invert-fg);
   opacity: 0.85;
@@ -3934,13 +3943,13 @@ kbd,
 }
 
 .dot-crit {
-  background: var(--crit);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--crit) 55%, transparent);
+  background: var(--crit-dot);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--crit-dot) 55%, transparent);
 }
 
 .dot-warn {
-  background: var(--warn);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--warn) 55%, transparent);
+  background: var(--warn-dot);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--warn-dot) 55%, transparent);
 }
 
 /* A zero is not news: the point stays, the glow does not. */
@@ -4505,7 +4514,8 @@ button.ref:hover {
   color: var(--text-2);
 }
 
-.btn:hover {
+/* A disabled button does not answer the pointer: no lift, no glow. */
+.btn:hover:not(:disabled) {
   background: var(--hover);
   color: var(--text);
   border-color: var(--accent-line);
@@ -4513,15 +4523,32 @@ button.ref:hover {
 
 /* The one filled button is the accent. */
 .btn-solid,
-.btn-solid:hover {
+.btn-solid:hover:not(:disabled) {
   background: var(--solid-bg);
   color: var(--solid-fg);
   border-color: var(--solid-bg);
 }
 
-.btn-solid:hover {
+.btn-solid:hover:not(:disabled) {
   opacity: 1;
   box-shadow: var(--glow);
+}
+
+/*
+ * The destructive button. Not the accent: cyan says "go ahead", and the one
+ * button that deletes notes must not look like the one that saves them.
+ */
+.btn-danger,
+.btn-danger:hover:not(:disabled) {
+  background: var(--crit-bg);
+  color: var(--crit);
+  border-color: color-mix(in srgb, var(--crit) 45%, transparent);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--crit) 20%, var(--crit-bg));
+  border-color: var(--crit);
+  box-shadow: 0 0 18px -6px color-mix(in srgb, var(--crit) 70%, transparent);
 }
 
 /* A pressed filter is a selection, and is drawn like every other one. */
