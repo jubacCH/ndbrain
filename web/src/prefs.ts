@@ -22,6 +22,11 @@ export type Theme = 'system' | 'light' | 'dark';
 export type StartView = 'overview' | 'note' | 'search' | 'files';
 /** How wide a line of prose may get before it wraps. */
 export type Measure = 'narrow' | 'medium' | 'wide';
+/** How the whole network is shown: the brain, a table, or a map of the folders. */
+export type NetworkView = 'graph' | 'list' | 'map';
+
+/** The views the network switcher offers, in the order it shows them. */
+export const NETWORK_VIEWS: readonly NetworkView[] = ['graph', 'list', 'map'];
 
 export interface Prefs {
   theme: Theme;
@@ -53,6 +58,16 @@ export interface Prefs {
   lastRecentCount: number;
   /** Poll interval for the live pulse in the network views, in milliseconds. */
   pulseMs: number;
+  /**
+   * Whether the sidebar is folded down to its icons.
+   *
+   * A property of this screen like the theme: a wide monitor wants the tree
+   * open, a laptop beside a second window may not. Ignored on a phone, where
+   * the sidebar is a drawer and has no folded state.
+   */
+  sidebarCollapsed: boolean;
+  /** Which of the network's three views was last chosen. */
+  networkView: NetworkView;
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -62,9 +77,11 @@ export const DEFAULT_PREFS: Prefs = {
   startView: 'overview',
   hidePrefixes: true,
   saveDelayMs: 500,
-  recentCount: 5,
-  lastRecentCount: 5,
+  recentCount: 6,
+  lastRecentCount: 6,
   pulseMs: 2000,
+  sidebarCollapsed: false,
+  networkView: 'graph',
 };
 
 const KEY = 'ndbrain.prefs';
@@ -121,6 +138,13 @@ export function loadPrefs(): Prefs {
         clamp(Number(stored.lastRecentCount), [1, 20], DEFAULT_PREFS.lastRecentCount),
       ),
       pulseMs: clamp(Number(stored.pulseMs), LIMITS.pulseMs, DEFAULT_PREFS.pulseMs),
+      sidebarCollapsed:
+        typeof stored.sidebarCollapsed === 'boolean'
+          ? stored.sidebarCollapsed
+          : DEFAULT_PREFS.sidebarCollapsed,
+      networkView: NETWORK_VIEWS.includes(stored.networkView as NetworkView)
+        ? (stored.networkView as NetworkView)
+        : DEFAULT_PREFS.networkView,
     };
   } catch {
     return { ...DEFAULT_PREFS };
@@ -166,6 +190,6 @@ export function applyPrefs(prefs: Prefs): void {
     prefs.theme === 'dark' ||
     (prefs.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   for (const tag of document.querySelectorAll('meta[name="theme-color"]')) {
-    tag.setAttribute('content', dark ? '#0b0c0f' : '#fbfbfc');
+    tag.setAttribute('content', dark ? '#050b0e' : '#f3f7f8');
   }
 }
