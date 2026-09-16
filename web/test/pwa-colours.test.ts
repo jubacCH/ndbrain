@@ -30,6 +30,12 @@ describe('the PWA colours', () => {
     expect([...literals].sort()).toEqual([THEME_COLOR.dark, THEME_COLOR.light].sort());
   });
 
+  it('lets iOS colour the status bar from the theme rather than forcing white text', () => {
+    // Read once at launch, so it cannot follow a theme switch; `default` takes
+    // its background from theme-color and picks a legible text colour.
+    expect(html).toMatch(/name="apple-mobile-web-app-status-bar-style" content="default"/);
+  });
+
   it('the manifest launches on the dark ground', () => {
     expect(manifest.theme_color).toBe(THEME_COLOR.dark);
     expect(manifest.background_color).toBe(THEME_COLOR.dark);

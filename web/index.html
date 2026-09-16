@@ -30,7 +30,18 @@
     <!-- iOS ignores the manifest icons and looks only for this. -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!--
+      `default`, not `black-translucent`.
+
+      iOS reads this once, when the app is launched from the home screen, and
+      ignores later changes, so it cannot follow the theme. `black-translucent`
+      draws the page under the status bar with white text, whatever the page
+      is: on the light theme the clock and battery were white on near-white.
+      `default` gives the status bar a strip of its own, coloured from the
+      `theme-color` tags above (kept in step with the theme by prefs.ts), and
+      iOS picks dark or light text for that background itself.
+    -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="ndBrain" />
 
     <title>ndBrain</title>
