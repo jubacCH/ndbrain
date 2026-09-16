@@ -97,6 +97,8 @@ const sceneWith = (edges: SceneEdge[]): Scene => ({
   sparks: [],
   labels: [],
   regions: [],
+  blocked: [],
+  inside: () => false,
   regionAlpha: 0,
   deco: NO_DECORATION,
   decoAlpha: 0,

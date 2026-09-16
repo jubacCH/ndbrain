@@ -25,14 +25,13 @@
  * What is left here is the small amount of work that is genuinely the picture's
  * and not the layout's: `RegionView` names the two geometric questions so that
  * `deco.ts` and `edges.ts` can be written against an interface rather than
- * against `BrainLayout`, and `regionLabels` decides where a name is written.
+ * against `BrainLayout`, and `regionAnchors` says, per region, which way is out.
  *
  * World units throughout, the layout's own: normalised outline coordinates
  * times `unitLength`. Callers never see the normalised ones.
  */
 
 import type { BrainLayout, Region } from './layout';
-import { centre, pointAt } from './shape';
 
 export type { Region };
 
@@ -49,6 +48,8 @@ export interface RegionView {
   depthInside(x: number, y: number): number;
   /** World length of one normalised outline unit. */
   readonly unit: number;
+  /** The world rectangle the brain fills. */
+  readonly bounds: { minX: number; minY: number; maxX: number; maxY: number };
   /** True when this is a brain, not the loose neighbourhood arrangement. */
   readonly shaped: boolean;
 }
@@ -69,52 +70,92 @@ export function regionView(layout: BrainLayout): RegionView {
     inside: (x, y) => layout.inside(x, y),
     depthInside: (x, y) => layout.depthInside(x, y),
     unit: layout.unitLength,
+    bounds: layout.bounds,
     shaped,
   };
 }
 
-/** Where a region's name is written, and the curve that ties it to the tissue. */
-export interface RegionLabel {
-  readonly region: number;
-  readonly text: string;
-  /** Where the text sits, world units. */
-  readonly x: number;
-  readonly y: number;
-  /** Where the leader starts: the member nearest the rim point. */
-  readonly fromX: number;
-  readonly fromY: number;
-  /** The leader's single control point. */
-  readonly cx: number;
-  readonly cy: number;
-  readonly align: 'left' | 'right' | 'center';
-  /** True when the text sits above its rim point: the second line goes up, not down. */
-  readonly above: boolean;
+/**
+ * What a region's name needs to know about the world: which way is out, where
+ * the rim is in that direction, and which of its notes the leader starts at.
+ *
+ * World units. Where the name is actually written is a screen question —
+ * text width, canvas size, controls over the canvas — and is `labels.ts`'s.
+ */
+export interface RegionAnchor {
+  region: number;
+  text: string;
+  side: -1 | 1;
+  /** Notes in the region: larger regions keep their name when room runs out. */
+  weight: number;
+  /** The member the leader starts at: the one nearest the rim point. */
+  anchorX: number;
+  anchorY: number;
+  rimX: number;
+  rimY: number;
+  /** Outward, a unit vector. */
+  dirX: number;
+  dirY: number;
+  /** True for a region against the fissure: named above or below the brain. */
+  medial: boolean;
+  /** World x of the fissure, the same for every region. */
+  fissureX: number;
+  /**
+   * The longest a leader may be, world units. Further than this from its notes a
+   * name no longer reads as theirs, and is better left out.
+   */
+  reach: number;
 }
 
-/** How far outside the rim a name sits, as a share of the rim radius. */
-const LABEL_OUT = 1.13;
-/** A name that has to go over or under the brain sits closer in. */
-const LABEL_OUT_CENTRED = 1.05;
-/** Vertical room between two names on the same flank, in world units per note-scale. */
-const LABEL_GAP = 0.16;
+/**
+ * How close to the fissure a region's centre may be, as a share of the way from
+ * the fissure to its hemisphere's centre, before it counts as medial.
+ */
+const MEDIAL_NEAR = 0.45;
+/** A leader may be at most this share of the brain's width. */
+const LEADER_REACH = 0.28;
+/** A medial name leans this much towards its own side as it goes up or down. */
+const MEDIAL_LEAN = 0.12;
+/** Walking out to the rim: march in these steps (share of a unit), then bisect. */
+const RIM_MARCH = 0.02;
+const RIM_MARCHES = 150;
+const RIM_STEPS = 10;
 
 /**
- * Places every region's name outside the silhouette.
+ * Per region, which way its name should go.
  *
- * Outward from the hemisphere's centre through the region's own centre of mass,
- * so a name sits on the side of the brain its notes are on. Two corrections stop
- * the obvious failures: a region against the fissure would point its name into
- * the gap between the halves, so it is labelled above or below instead; and
- * names on the same flank are pushed apart until they no longer overlap.
+ * Outward from the middle of its hemisphere through the middle of its notes —
+ * so a name sits at the edge next to the notes it names. Two things are
+ * measured rather than assumed, so that this follows whatever the layout does:
+ * the hemisphere's middle is the mean of its regions' centres, and the fissure
+ * is half way between the two hemispheres.
  *
- * Pure geometry over the region view and the positions — no canvas, so the
- * collision rule can be tested without one.
+ * A region against the fissure has no outer edge of its own; pointing its name
+ * outward from its hemisphere's middle sends it across the whole half to the
+ * far flank, which is how the maps of content, sitting at the fissure, came to
+ * be named at the top left. Such a region is named straight above or below the
+ * brain instead, leaning to its own side.
+ *
+ * Nothing here depends on what a region is called or how many there are.
  */
-export function regionLabels(view: RegionView, x: ArrayLike<number>, y: ArrayLike<number>): RegionLabel[] {
+export function regionAnchors(view: RegionView, x: ArrayLike<number>, y: ArrayLike<number>): RegionAnchor[] {
   if (!view.shaped) return [];
-  const u = view.unit;
-  const out: Array<RegionLabel & { ry: number; rx: number }> = [];
 
+  const middle = { [-1]: { x: 0, y: 0, n: 0 }, [1]: { x: 0, y: 0, n: 0 } };
+  for (const r of view.regions) {
+    const m = middle[r.side];
+    const w = Math.max(1, r.members.length);
+    m.x += r.cx * w;
+    m.y += r.cy * w;
+    m.n += w;
+  }
+  const hemi = (side: -1 | 1): { x: number; y: number } => {
+    const m = middle[side];
+    return m.n > 0 ? { x: m.x / m.n, y: m.y / m.n } : { x: side * view.unit * 0.6, y: 0 };
+  };
+  const fissure = (hemi(-1).x + hemi(1).x) / 2;
+
+  const out: RegionAnchor[] = [];
   for (const region of view.regions) {
     if (region.members.length === 0) continue;
     let mx = 0;
@@ -127,96 +168,114 @@ export function regionLabels(view: RegionView, x: ArrayLike<number>, y: ArrayLik
     my /= region.members.length;
 
     const side = region.side;
-    const home = centre(side);
-    let phi = Math.atan2(my / u - home.y, (mx / u - home.x) * side);
-    // Never into the fissure: a medial region is named above or below instead.
-    if (Math.cos(phi) < 0.1) phi = Math.sign(Math.sin(phi) || 1) * (Math.PI / 2 - 0.5);
-    // And never straight under the brain, where the footer is.
-    if (Math.sin(phi) > 0.6 && Math.cos(phi) > 0) phi = Math.min(phi, Math.PI / 2 - 0.5);
+    const h = hemi(side);
+    let dx = mx - h.x;
+    let dy = my - h.y;
+    const dl = Math.hypot(dx, dy);
+    if (dl > 1e-6) {
+      dx /= dl;
+      dy /= dl;
+    } else {
+      dx = side;
+      dy = 0;
+    }
 
-    const centred = Math.abs(Math.cos(phi)) < 0.3;
-    const rim = pointAt(side, phi, 1);
-    const seat = pointAt(side, phi, centred ? LABEL_OUT_CENTRED : LABEL_OUT);
-    const rimX = rim.x * u;
-    const rimY = rim.y * u;
-    const lx = seat.x * u;
-    const ly = seat.y * u;
+    // Medial: against the fissure, or pointing into it. A region whose outward
+    // direction is merely steep — one at the top or bottom of its hemisphere —
+    // is not medial; its own direction already goes up or down.
+    const towardFissure = Math.abs(mx - fissure) < MEDIAL_NEAR * Math.abs(h.x - fissure);
+    const medial = towardFissure || dx * side < 0;
+    const width = view.bounds.maxX - view.bounds.minX;
 
-    // The leader ends at the member nearest the rim point, not at the hub across
-    // the region: a line over the whole cell would read as a link.
-    let from = region.members[0]!;
-    let best = Infinity;
-    for (const i of region.members) {
-      const d = (x[i]! - rimX) ** 2 + (y[i]! - rimY) ** 2;
-      if (d < best) {
-        best = d;
-        from = i;
+    let anchor = region.members[0]!;
+    let rim: { x: number; y: number };
+    let reach = LEADER_REACH * width;
+    if (medial) {
+      // Up if the region sits in the upper half of its hemisphere, else down,
+      // leaning only a little to its own side: the leader runs along the
+      // fissure, in the dark, rather than across the neighbouring regions.
+      const up = my <= h.y;
+      dx = side * MEDIAL_LEAN;
+      dy = up ? -1 : 1;
+      const l = Math.hypot(dx, dy);
+      dx /= l;
+      dy /= l;
+      // The leader starts at the note furthest in that direction, nearest the
+      // fissure among those — and from there it is as far to the rim as it is.
+      let bestScore = -Infinity;
+      for (const i of region.members) {
+        const score = (up ? -y[i]! : y[i]!) - Math.abs(x[i]! - fissure) * 0.5;
+        if (score > bestScore) {
+          bestScore = score;
+          anchor = i;
+        }
+      }
+      rim = walkToRim(view, x[anchor]!, y[anchor]!, dx, dy);
+      reach += Math.hypot(rim.x - x[anchor]!, rim.y - y[anchor]!);
+    } else {
+      // Outward from the middle of the notes to the rim, and the leader starts
+      // at the note nearest that point: a line across the whole region would
+      // read as a link.
+      rim = walkToRim(view, mx, my, dx, dy);
+      let best = Infinity;
+      for (const i of region.members) {
+        const d = (x[i]! - rim.x) ** 2 + (y[i]! - rim.y) ** 2;
+        if (d < best) {
+          best = d;
+          anchor = i;
+        }
       }
     }
 
     out.push({
       region: region.id,
       text: region.name,
-      x: lx,
-      y: ly,
-      fromX: x[from]!,
-      fromY: y[from]!,
-      cx: 0,
-      cy: 0,
-      align: centred ? 'center' : lx >= 0 ? 'left' : 'right',
-      above: ly < rimY,
-      rx: rimX,
-      ry: rimY,
+      side,
+      weight: region.members.length,
+      anchorX: x[anchor]!,
+      anchorY: y[anchor]!,
+      rimX: rim.x,
+      rimY: rim.y,
+      dirX: dx,
+      dirY: dy,
+      medial,
+      fissureX: fissure,
+      reach,
     });
   }
+  return out;
+}
 
-  // Push apart names that would collide: down each flank, along each of the two
-  // ends. Sorted first, so the rule is the same however the regions arrived.
-  const gap = LABEL_GAP * u;
-  for (const align of ['left', 'right'] as const) {
-    const column = out.filter((l) => l.align === align).sort((a, b) => a.y - b.y);
-    for (let i = 1; i < column.length; i += 1) {
-      const prev = column[i - 1]!;
-      const here = column[i]!;
-      if (here.y - prev.y < gap) (here as { y: number }).y = prev.y + gap;
+/**
+ * The last point still inside the silhouette, going from (x, y) along (dx, dy).
+ *
+ * Marched first and bisected after, not bisected over the whole range: a ray
+ * can leave one hemisphere, cross the fissure and enter the other, and a plain
+ * bisection over that range would happily settle on the far side.
+ */
+function walkToRim(view: RegionView, x: number, y: number, dx: number, dy: number): { x: number; y: number } {
+  const step = view.unit * RIM_MARCH;
+  const inside = (t: number): boolean => view.inside(x + dx * t, y + dy * t);
+  // A note can sit just outside the rim; then the rim is behind it.
+  const dir = inside(0) ? 1 : -1;
+  let last = 0;
+  let found = false;
+  for (let k = 1; k <= RIM_MARCHES; k += 1) {
+    const t = dir * k * step;
+    if (inside(t) !== (dir === 1)) {
+      found = true;
+      break;
     }
+    last = t;
   }
-  for (const top of [true, false]) {
-    const row = out.filter((l) => l.align === 'center' && l.y < l.ry === top).sort((a, b) => a.x - b.x);
-    for (let i = 1; i < row.length; i += 1) {
-      const prev = row[i - 1]!;
-      const here = row[i]!;
-      if (here.x - prev.x < gap * 2.6) (here as { x: number }).x = prev.x + gap * 2.6;
-    }
+  if (!found) return { x: x + dx * last, y: y + dy * last };
+  let lo = last;
+  let hi = last + dir * step;
+  for (let k = 0; k < RIM_STEPS; k += 1) {
+    const mid = (lo + hi) / 2;
+    if (inside(mid) === (dir === 1)) lo = mid;
+    else hi = mid;
   }
-
-  // Pushing names apart can slide one back over the tissue — a name down the
-  // flank moves towards the middle of the hemisphere, not away from it. So each
-  // one is walked outwards until it is clear of the outline again. This is the
-  // rule the prototype did not have and the reason a region near the front used
-  // to have its name written across its own notes.
-  const clearance = view.unit * 0.05;
-  for (const l of out) {
-    const dirX = l.align === 'center' ? 0 : l.align === 'left' ? 1 : -1;
-    const dirY = l.align === 'center' ? (l.above ? -1 : 1) : 0;
-    let steps = 0;
-    while (steps < 80 && (view.inside(l.x, l.y) || view.inside(l.x + dirX * clearance, l.y + dirY * clearance))) {
-      (l as { x: number }).x = l.x + dirX * clearance;
-      (l as { y: number }).y = l.y + dirY * clearance;
-      steps += 1;
-    }
-  }
-
-  // The swung leader: one quadratic, bowed away from the brain so it reads as a
-  // pointer rather than as another tract.
-  for (const l of out) {
-    const dx = l.x - l.fromX;
-    const dy = l.y - l.fromY;
-    const d = Math.hypot(dx, dy) || 1;
-    const bow = (l.above ? -1 : 1) * (l.align === 'right' ? -1 : 1) * 0.18 * d;
-    (l as { cx: number }).cx = (l.fromX + l.x) / 2 - (dy / d) * bow;
-    (l as { cy: number }).cy = (l.fromY + l.y) / 2 + (dx / d) * bow;
-  }
-
-  return out.map(({ rx: _rx, ry: _ry, ...label }) => label);
+  const t = dir === 1 ? lo : hi;
+  return { x: x + dx * t, y: y + dy * t };
 }

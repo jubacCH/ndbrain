@@ -29,7 +29,7 @@ import {
 } from '../src/brain/edges';
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph } from '../src/brain/model';
-import { regionLabels, regionView } from '../src/brain/regions';
+import { regionView } from '../src/brain/regions';
 import { ACCENT, SceneBuilder, planeOf } from '../src/brain/scene';
 import { paraVault } from './fixtures/para-vault';
 
@@ -261,32 +261,6 @@ describe('the tissue', () => {
     });
     expect(nothing.dustCount).toBe(0);
     expect(nothing.dendriteCount).toBe(0);
-  });
-});
-
-describe('the names', () => {
-  it('writes every region’s name outside the outline, with a leader into it', () => {
-    const labels = regionLabels(view, layout.x, layout.y);
-    expect(labels.length).toBe(view.regions.length);
-    for (const label of labels) {
-      expect(view.inside(label.x, label.y), `${label.text} sits on the brain`).toBe(false);
-      // The leader starts at one of the region's own notes — the one nearest the
-      // rim, not the hub across the cell, which would read as a link.
-      const members = view.regions[label.region]!.members;
-      const from = members.find((i) => layout.x[i] === label.fromX && layout.y[i] === label.fromY);
-      expect(from, `${label.text} points at nothing`).toBeDefined();
-      expect(Number.isFinite(label.cx) && Number.isFinite(label.cy)).toBe(true);
-    }
-  });
-
-  it('pushes two names on the same flank apart', () => {
-    const labels = regionLabels(view, layout.x, layout.y);
-    for (const align of ['left', 'right'] as const) {
-      const column = labels.filter((l) => l.align === align).sort((a, b) => a.y - b.y);
-      for (let i = 1; i < column.length; i += 1) {
-        expect(column[i]!.y - column[i - 1]!.y).toBeGreaterThanOrEqual(0.16 * view.unit - 1e-6);
-      }
-    }
   });
 });
 
