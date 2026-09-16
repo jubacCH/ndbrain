@@ -89,15 +89,42 @@ export type EdgeKind = typeof WITHIN | typeof BRIDGE | typeof FURROW | typeof FI
  */
 export const VISIBLE = 0.05;
 
-/** Opacity of a quiet link inside a cluster (the old uniform value was 0.3). */
-export const TRACT = 0.16;
-/** Opacity of the one thread between two regions. Above `VISIBLE`, well below `TRACT`. */
-export const THREAD = 0.075;
 /**
- * Opacity of a thread across the fissure: a little quieter than one on the
- * same side, so the fissure still reads as the largest gap.
+ * **The tiers, since 2026-09-16.** Julian looked at the finished view beside
+ * the optics prototype and decided: stronger links. The damping of 2026-09-15
+ * asked for a calm picture with about 40 % of the links held back and hubs
+ * damped so they would not outshine their region; next to the prototype that
+ * read as a brain with no white matter. So the values below follow the
+ * prototype (`brain-proto/index.html`) instead, and the hierarchy is kept:
+ *
+ *   inside a cluster  0.34, rising to 0.46 at a hub   — the rays of a star
+ *   thread beside     0.18                            — a trunk's strongest fibre
+ *   furrow beside     0.12                            — the fibres that sum into a trunk
+ *   thread across     0.10                            — quieter than any trunk beside
+ *   map across        0.08                            — a map's spokes over the fissure
+ *   anything else across  0.012                       — a ghost, still
+ *
+ * The reason the furrows are lines now: a link into another region is bundled
+ * through that region's hub, and a bundle is only a bright trunk if its fibres
+ * are there to add up. At the old ghost opacity there was nothing to add.
  */
-export const SPAN_THREAD = 0.06;
+
+/** Opacity of a link inside a cluster, before the hub gain. The prototype's 0.34. */
+export const TRACT = 0.34;
+/** What a hub adds to its links inside a cluster, per link it has, up to `HUB_GAIN_DEGREE`. */
+const HUB_GAIN = 0.006;
+const HUB_GAIN_DEGREE = 20;
+/** Opacity of the one thread between two regions on the same side. */
+export const THREAD = 0.18;
+/** Opacity of any other link between two regions on the same side: a fibre of a trunk. */
+export const FIBRE = 0.12;
+/**
+ * Opacity of a thread across the fissure: quieter than any trunk on the same
+ * side, so the fissure still reads as the largest gap.
+ */
+export const SPAN_THREAD = 0.1;
+/** Opacity of a map's link across the fissure (see `MAP_DEGREE`): a spoke, quieter still. */
+export const HUB_SPOKE = 0.08;
 /**
  * Links two regions on opposite hemispheres need before they get a thread.
  *
@@ -115,13 +142,21 @@ export const SPAN_LINKS = 2;
  * or a hub project in a vault of a hundred notes and in one of thousands.
  */
 export const HUB_DEGREE = 12;
+/**
+ * A note with this many distinct neighbours is a map, whose links across the
+ * fissure are spokes rather than ghosts.
+ *
+ * Twice the hub threshold, on purpose. At a dozen, nearly every link across the
+ * fissure touched some well-connected note and only one ghost was left in the
+ * whole vault; the hierarchy's lowest tier would have been gone. The vault's
+ * structure has a gap here — two maps near forty links, the next note at
+ * seventeen — and two dozen falls in it.
+ */
+export const MAP_DEGREE = 24;
 /** Opacity of a link held back in the overview. Below `VISIBLE` on purpose. */
 export const GHOST = 0.012;
-/**
- * Links in the small neighbourhood beside an open note: a handful, so they keep
- * the old tract opacity. Only their width follows the new, finer tracts.
- */
-export const NEIGHBOURHOOD = 0.3;
+/** Links in the small neighbourhood beside an open note: a handful, all of them lines. */
+export const NEIGHBOURHOOD = 0.36;
 /**
  * Zoomed in, links between clusters come back at this share of a link inside
  * one — never below a thread, so every one of them is a line again.
@@ -129,19 +164,10 @@ export const NEIGHBOURHOOD = 0.3;
 const NEAR_FURROW = 0.7;
 const NEAR_FISSURE = 0.55;
 
-/** Opacity of every link of the picked note. */
-export const FOCUS = 0.6;
+/** Opacity of every link of the picked note: above the loudest ray, so a selection still stands out. */
+export const FOCUS = 0.85;
 /** Opacity a link is raised to while a spark is at its start; fades with the spark. */
-export const LIT = 0.5;
-
-/**
- * Hub damping: links fade with `sqrt(HUB_FREE / sqrt(degA · degB))`, not below
- * `HUB_FLOOR`. A link between two notes of degree four or less is unaffected; a
- * spoke of a forty-link map to a leaf keeps two thirds; two large hubs linked
- * to each other keep half — and half of `TRACT` is still above `VISIBLE`.
- */
-const HUB_FREE = 4;
-const HUB_FLOOR = 0.5;
+export const LIT = 0.85;
 
 /**
  * Tract half-width at the cell body, in world units at the design scale.
@@ -261,10 +287,12 @@ export function planEdges({ edges, keys, clusterOf, nodeSide }: EdgeInput): Edge
     if (mine && !theirs) carrier.set(pair, i);
   }
 
-  const hub = (a: number, b: number): number => {
-    const spread = Math.sqrt(Math.max(1, neighbours[a]!.size * neighbours[b]!.size));
-    return Math.min(1, Math.max(HUB_FLOOR, Math.sqrt(HUB_FREE / spread)));
-  };
+  // A hub's rays are louder, not quieter: the star radiates. By the degree of
+  // the better-connected end, capped, so the largest map is not a white sun.
+  const gain = (a: number, b: number): number =>
+    HUB_GAIN * Math.min(HUB_GAIN_DEGREE, Math.max(neighbours[a]!.size, neighbours[b]!.size));
+  const touchesMap = (a: number, b: number): boolean =>
+    neighbours[a]!.size >= MAP_DEGREE || neighbours[b]!.size >= MAP_DEGREE;
 
   // One thread per pair of linked regions: on the same side for any link
   // between them, across the fissure only where at least `SPAN_LINKS` links
@@ -319,11 +347,11 @@ export function planEdges({ edges, keys, clusterOf, nodeSide }: EdgeInput): Edge
       kind[i] = TWIN;
       continue;
     }
-    const damp = hub(e.a, e.b);
+    const ray = TRACT + gain(e.a, e.b);
 
     if (clusterOf === null || nodeSide === null) {
       kind[i] = WITHIN;
-      rest[i] = near[i] = NEIGHBOURHOOD * damp;
+      rest[i] = near[i] = NEIGHBOURHOOD;
       continue;
     }
 
@@ -333,24 +361,26 @@ export function planEdges({ edges, keys, clusterOf, nodeSide }: EdgeInput): Edge
     if (across && threads.has(i)) {
       kind[i] = SPAN;
       rest[i] = SPAN_THREAD;
-      near[i] = Math.max(THREAD, TRACT * NEAR_FISSURE * damp);
+      near[i] = Math.max(THREAD, TRACT * NEAR_FISSURE);
     } else if (across) {
       // Also a link inside one cluster whose note was left on the other side:
       // drawn as a tract it would be a bright line straight over the fissure.
+      // A hub's link across is a spoke of the map, drawn quietly; anything
+      // else across stays a ghost until zoomed in, selected or pulsed.
       kind[i] = FISSURE;
-      rest[i] = GHOST;
-      near[i] = Math.max(THREAD, TRACT * NEAR_FISSURE * damp);
+      rest[i] = touchesMap(e.a, e.b) && ca !== cb ? HUB_SPOKE : GHOST;
+      near[i] = Math.max(THREAD, TRACT * NEAR_FISSURE);
     } else if (ca === cb) {
       kind[i] = WITHIN;
-      rest[i] = near[i] = TRACT * damp;
+      rest[i] = near[i] = ray;
     } else if (threads.has(i)) {
       kind[i] = BRIDGE;
       rest[i] = THREAD;
-      near[i] = Math.max(THREAD, TRACT * NEAR_FURROW * damp);
+      near[i] = Math.max(THREAD, TRACT * NEAR_FURROW);
     } else {
       kind[i] = FURROW;
-      rest[i] = GHOST;
-      near[i] = Math.max(THREAD, TRACT * NEAR_FURROW * damp);
+      rest[i] = FIBRE;
+      near[i] = Math.max(FIBRE, TRACT * NEAR_FURROW);
     }
   }
 

@@ -112,16 +112,27 @@ describe('edge weighting', () => {
     expect(tractBase(1000, 1, false)).toBe(TRACT_BASE_MAX);
   });
 
-  it('does not let a hub outshine the notes around it: its links are no louder than anyone else’s', () => {
+  it('lets a hub radiate: its rays are louder than an ordinary link, and capped', () => {
+    // Reversed on 2026-09-16, deliberately. The rule used to be that a hub's
+    // links were damped below an ordinary link so that a forty-link map would not
+    // outshine its region. Beside the optics prototype that read as a brain with
+    // no white matter, and Julian asked for stronger links: a hub's links now
+    // gain with its degree, as in the prototype (0.34 + 0.012 per link, here 0.006
+    // per distinct neighbour), up to a cap so the largest map is not a sun.
     const { graph, plan } = fixture;
     const hub = graph.hub;
-    const loudest = (list: number[]): number => Math.max(...list.map((i) => plan.rest[i]!));
     const hubWithin = graph.touching[hub]!.filter((i) => plan.kind[i] === WITHIN);
     expect(hubWithin.length).toBeGreaterThan(0);
-    // Even the loudest spoke of a forty-link hub is quieter than an ordinary link...
-    expect(loudest(hubWithin)).toBeLessThan(TRACT);
-    // ...but still a visible line: damped, not hidden.
-    for (const i of hubWithin) expect(plan.rest[i]!).toBeGreaterThanOrEqual(VISIBLE);
+    const ordinary = drawnPairs(plan).filter(
+      (i) => plan.kind[i] === WITHIN && graph.edges[i]!.a !== hub && graph.edges[i]!.b !== hub,
+    );
+    const quietest = Math.min(...ordinary.map((i) => plan.rest[i]!));
+    for (const i of hubWithin) {
+      expect(plan.rest[i]!).toBeGreaterThan(quietest);
+      expect(plan.rest[i]!).toBeLessThanOrEqual(TRACT + 0.12 + 1e-9);
+    }
+    // And still below a selection, so picking the hub still stands out.
+    for (const i of hubWithin) expect(plan.rest[i]!).toBeLessThan(FOCUS);
   });
 
   it('draws links between clusters quieter than links inside one, in the overview', () => {
@@ -140,10 +151,18 @@ describe('edge weighting', () => {
     const bridge = between.find((i) => plan.kind[i] === BRIDGE)!;
     const span = between.find((i) => plan.kind[i] === SPAN)!;
     expect(plan.rest[span]!).toBeLessThan(plan.rest[bridge]!);
-    // Everything else across the fissure and the furrows is below a line.
-    for (const i of between.filter((j) => plan.kind[j] === FISSURE || plan.kind[j] === FURROW)) {
-      expect(edgeAlpha(plan, i, 0, false, 0)).toBeLessThan(VISIBLE);
-    }
+    // The fibres of a trunk (since 2026-09-16 lines, so bundles have something to
+    // add up) are quieter than the trunk's thread, and louder than anything across.
+    const furrow = between.find((i) => plan.kind[i] === FURROW)!;
+    expect(plan.rest[furrow]!).toBeGreaterThanOrEqual(VISIBLE);
+    expect(plan.rest[furrow]!).toBeLessThan(plan.rest[bridge]!);
+    expect(plan.rest[span]!).toBeLessThan(plan.rest[furrow]!);
+    // Across the fissure: a map's spokes are quiet lines, everything else a ghost —
+    // and there are still ghosts, the lowest tier did not go away.
+    const across = between.filter((j) => plan.kind[j] === FISSURE);
+    const ghosts = across.filter((i) => edgeAlpha(plan, i, 0, false, 0) < VISIBLE);
+    expect(ghosts.length).toBeGreaterThan(across.length / 4);
+    for (const i of across) expect(edgeAlpha(plan, i, 0, false, 0)).toBeLessThan(plan.rest[span]!);
   });
 
   it('gives every pair of linked regions one thread: always on one side, from two links across the fissure', () => {
@@ -346,17 +365,18 @@ describe('edge weighting', () => {
     expect(picked.edges[untouched]!.alpha).toBe(rest.edges[untouched]!.alpha);
   });
 
-  it('draws about 60 % of the links as lines in the overview', () => {
-    // Band: the briefing asks for about 40 % fewer visible links. Below 55 %,
-    // regions lose the links that make them regions. The upper bound is 72 %:
-    // the threads across the fissure (fix round 1) add about four points, and
-    // past that fewer than 28 % of the links would be held back, too far from
-    // the forty the briefing asks for. Measured with notes classified by their
-    // own hemisphere and regions anchored to folders: 68 % on this fixture
-    // (157 of 231 linked pairs), 63 % on the real vault's structure (171 of 270).
+  it('draws about nine in ten links as lines in the overview, and holds the rest back', () => {
+    // Changed on 2026-09-16. The band used to be 55 to 72 %, from a briefing
+    // that asked for about 40 % fewer visible links. Julian decided for stronger
+    // links after comparing with the optics prototype, which drew practically
+    // all of them. The fibres between regions on the same side are lines now,
+    // because a bundle is only a trunk if its fibres add up, and so are a map's
+    // spokes across the fissure. What stays held back are the other links across
+    // the fissure: 24 of 231 linked pairs on this fixture, 89.6 % drawn (it was
+    // 68.8 %). The lower bound keeps the new look; the upper keeps the ghosts.
     const share = visibleShare(fixture.plan);
-    expect(share).toBeGreaterThanOrEqual(0.55);
-    expect(share).toBeLessThanOrEqual(0.72);
+    expect(share).toBeGreaterThanOrEqual(0.82);
+    expect(share).toBeLessThanOrEqual(0.95);
     expect(visibleShare(fixture.plan, 1)).toBe(1);
 
     // Through the scene, at the overview: the same share.
@@ -375,7 +395,9 @@ describe('edge weighting', () => {
     expect(overview.scale).toBeLessThan(0.35);
     const cx = (layout.bounds.minX + layout.bounds.maxX) / 2;
     const cy = (layout.bounds.minY + layout.bounds.maxY) / 2;
-    const held = drawnPairs(plan).filter((i) => plan.kind[i] === FURROW || plan.kind[i] === FISSURE);
+    // Held back: resting below a line. (Before 2026-09-16 that was every furrow
+    // and fissure link; the furrows and a map's spokes are lines now.)
+    const held = drawnPairs(plan).filter((i) => plan.rest[i]! < VISIBLE);
 
     const atOverview = scene(-1, overview, undefined, w, h);
     for (const i of held) expect(atOverview.edges[i]!.alpha).toBeLessThan(VISIBLE);
@@ -389,7 +411,9 @@ describe('edge weighting', () => {
       const e = closer.edges[i]!;
       return inView(e.ax, e.ay) || inView(e.bx, e.by);
     });
-    expect(seen.length).toBeGreaterThan(10);
+    // Enough of them in view that the check says something. Fewer than before
+    // 2026-09-16, because there are fewer ghosts (24 instead of 72).
+    expect(seen.length).toBeGreaterThan(4);
     for (const i of seen) expect(closer.edges[i]!.alpha).toBeGreaterThanOrEqual(VISIBLE);
   });
 
@@ -419,7 +443,7 @@ describe('edge weighting', () => {
       if (seen) {
         expect(e.alpha).toBeGreaterThanOrEqual(VISIBLE);
         open += 1;
-      } else if (plan.kind[i] === FURROW || plan.kind[i] === FISSURE) {
+      } else if (plan.rest[i]! < VISIBLE) {
         expect(e.alpha).toBeLessThan(VISIBLE);
         passing += 1;
       }
