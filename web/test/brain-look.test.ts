@@ -358,3 +358,72 @@ describe('the warm accent', () => {
     for (const edge of scene.edges) expect(edge.colour).not.toEqual(ACCENT);
   });
 });
+
+describe('what the cached layers are painted from', () => {
+  /** The loop's own condition for stopping (`Brain.tsx`): nothing left moving. */
+  const cold = (activity: Activity): boolean =>
+    activity.sparks.length === 0 && !activity.fire.some((v) => v > 0) && !activity.warm.some((v) => v > 0);
+
+  /** Everything the picture is drawn from, copied out: the builder refills one object in place. */
+  const snapshot = (scene: ReturnType<SceneBuilder['build']>): unknown => ({
+    nodes: scene.nodes.map((n) => [n.colour, n.alpha, n.glow, n.heat, n.restColour, n.restAlpha, n.restGlow, n.r]),
+    edges: scene.edges.map((e) => [e.alpha, e.restAlpha, e.restTail, e.colour, e.w0, e.w1, e.strands]),
+    sparks: scene.sparks.length,
+    labels: scene.labels.map((l) => [l.text, l.alpha]),
+    decoAlpha: scene.decoAlpha,
+    regionAlpha: scene.regionAlpha,
+  });
+
+  const pulseOn = (activity: Activity, i: number): void => {
+    const n = graph.nodes[i]!;
+    activity.record([{ at: 0, kind: 'write', what: 'edit_note', path: n.path, who: 'jb', agent: true, owner: n.owner }]);
+  };
+
+  it('never lets a pulse into the resting values', () => {
+    const builder = new SceneBuilder(graph);
+    const calm = builder.build(layout, new Activity(graph), IDENTITY, -1, ROOM, ROOM);
+    const rest = {
+      nodes: calm.nodes.map((n) => [n.restColour, n.restAlpha, n.restGlow]),
+      edges: calm.edges.map((e) => [e.restAlpha, e.restTail, e.strands]),
+    };
+
+    const busy = new Activity(graph);
+    for (let i = 0; i < graph.nodes.length; i += 7) pulseOn(busy, i);
+    for (let k = 0; k < 12; k += 1) busy.advance();
+    const hot = builder.build(layout, busy, IDENTITY, -1, ROOM, ROOM);
+
+    // The pulse is on screen...
+    expect(hot.nodes.some((n) => n.heat > 0)).toBe(true);
+    expect(hot.edges.some((e) => e.alpha > e.restAlpha)).toBe(true);
+    // ...and not in anything a cached layer is painted from.
+    expect({
+      nodes: hot.nodes.map((n) => [n.restColour, n.restAlpha, n.restGlow]),
+      edges: hot.edges.map((e) => [e.restAlpha, e.restTail, e.strands]),
+    }).toEqual(rest);
+  });
+
+  it('brings every transition back to exactly its resting value before the loop would stop', () => {
+    const hub = graph.hub;
+    const builder = new SceneBuilder(graph);
+    const activity = new Activity(graph);
+    const before = snapshot(builder.build(layout, activity, IDENTITY, -1, ROOM, ROOM));
+
+    // A pulse, and while it is bright a note is selected and let go again —
+    // the sequence that used to leave a glow baked into the cached layers.
+    pulseOn(activity, hub);
+    activity.advance();
+    builder.build(layout, activity, IDENTITY, hub, ROOM, ROOM);
+    activity.advance();
+    builder.build(layout, activity, IDENTITY, -1, ROOM, ROOM);
+
+    let frames = 0;
+    while (!cold(activity)) {
+      activity.advance();
+      builder.build(layout, activity, IDENTITY, -1, ROOM, ROOM);
+      frames += 1;
+      expect(frames, 'the pulse never goes cold').toBeLessThan(5000);
+    }
+    // The frame the loop stops on shows exactly what it showed before.
+    expect(snapshot(builder.build(layout, activity, IDENTITY, -1, ROOM, ROOM))).toEqual(before);
+  });
+});

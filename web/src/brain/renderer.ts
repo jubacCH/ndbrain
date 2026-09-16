@@ -90,9 +90,9 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
   };
 
   /** A tapered polygon along the curve, filled with a gradient. */
-  const tract = (g: CanvasRenderingContext2D, e: SceneEdge): void => {
+  const tract = (g: CanvasRenderingContext2D, e: SceneEdge, alpha: number, tail: number): void => {
     const n = e.n;
-    if (n < 2 || e.alpha < INVISIBLE) return;
+    if (n < 2 || alpha < INVISIBLE) return;
     if (outline.length < n * 4) outline = new Float64Array(n * 4);
 
     for (let i = 0; i < n; i += 1) {
@@ -126,9 +126,9 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     // The opacity itself is `globalAlpha`; the gradient only says how the far
     // end fades against the near one.
     grad.addColorStop(0, rgba(e.colour, 1));
-    grad.addColorStop(1, rgba(e.colour, Math.min(1, e.tail / Math.max(1e-6, e.alpha))));
+    grad.addColorStop(1, rgba(e.colour, Math.min(1, tail / Math.max(1e-6, alpha))));
     g.fillStyle = grad;
-    g.globalAlpha = Math.min(1, e.alpha);
+    g.globalAlpha = Math.min(1, alpha);
     g.beginPath();
     g.moveTo(outline[0]!, outline[1]!);
     for (let i = 1; i < n; i += 1) g.lineTo(outline[i * 4]!, outline[i * 4 + 1]!);
@@ -139,28 +139,30 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
 
   /** The glowing body of one note: a sprite halo, a coloured disc, a white core. */
   const body = (g: CanvasRenderingContext2D, n: SceneNode): void => {
-    const halo = n.r * (1.5 + n.glow * 0.8);
+    // Resting values only. This is painted into a cached layer, and the cache
+    // does not know about pulses (see `SceneNode.restColour`).
+    const halo = n.r * (1.5 + n.restGlow * 0.8);
     const sprite = sprites.halo(n.warm >= 0.4 ? 'warm' : 'cyan', halo);
-    g.globalAlpha = Math.min(1, (0.11 + 0.13 * n.glow) * n.alpha + n.heat * 0.4);
+    g.globalAlpha = Math.min(1, (0.11 + 0.13 * n.restGlow) * n.restAlpha);
     if (sprite !== null) g.drawImage(sprite, n.x - halo, n.y - halo, halo * 2, halo * 2);
     else {
       const grad = g.createRadialGradient(n.x, n.y, 0, n.x, n.y, halo);
-      grad.addColorStop(0, rgba(n.colour, 0.5));
-      grad.addColorStop(1, rgba(n.colour, 0));
+      grad.addColorStop(0, rgba(n.restColour, 0.5));
+      grad.addColorStop(1, rgba(n.restColour, 0));
       g.fillStyle = grad;
       g.beginPath();
       g.arc(n.x, n.y, halo, 0, Math.PI * 2);
       g.fill();
     }
 
-    g.globalAlpha = Math.min(1, n.alpha);
-    g.fillStyle = rgba(n.colour, 0.85);
+    g.globalAlpha = Math.min(1, n.restAlpha);
+    g.fillStyle = rgba(n.restColour, 0.85);
     g.beginPath();
     g.arc(n.x, n.y, n.r, 0, Math.PI * 2);
     g.fill();
     const core = sprites.halo('core', n.r * 1.3);
     if (core !== null) g.drawImage(core, n.x - n.r * 1.3, n.y - n.r * 1.3, n.r * 2.6, n.r * 2.6);
-    g.fillStyle = `rgba(255,255,255,${0.66 * Math.min(1, n.alpha)})`;
+    g.fillStyle = `rgba(255,255,255,${0.66 * Math.min(1, n.restAlpha)})`;
     g.beginPath();
     g.arc(n.x, n.y, n.r * 0.42, 0, Math.PI * 2);
     g.fill();
@@ -173,11 +175,11 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     g.globalCompositeOperation = 'lighter';
     for (const e of scene.edges) {
       if (e.depth !== plane) continue;
-      tract(g, e);
+      tract(g, e, e.restAlpha, e.restTail);
       // The same link traced twice more, fainter and bent further: a hub's
       // tracts then read as a bundle of fibres rather than as one thick ribbon.
       if (!e.strands) continue;
-      g.globalAlpha = Math.min(1, e.alpha * 0.3);
+      g.globalAlpha = Math.min(1, e.restAlpha * 0.3);
       g.beginPath();
       for (let i = 0; i < e.n; i += 1) {
         const px = e.pts[i * 2]!;
@@ -340,8 +342,19 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     world(g, scene);
     g.globalCompositeOperation = 'lighter';
 
-    // The extra heat of a note that is firing, over the resting halo in the
-    // cached layer. Pulses have to stay loud, including on a quiet tract.
+    // What a spark adds to a link, over the resting link in the cached layer.
+    // Pulses have to stay loud, including on a tract held back to a ghost —
+    // and they have to leave nothing behind once they are gone, which they
+    // cannot if they are ever painted into a layer that is not repainted when
+    // they end.
+    for (const e of scene.edges) {
+      const extra = e.alpha - e.restAlpha;
+      if (extra < INVISIBLE) continue;
+      tract(g, e, extra, extra * 0.32);
+    }
+    g.globalAlpha = 1;
+
+    // The heat of a note that is firing, over its resting body and halo.
     for (const n of scene.nodes) {
       if (n.heat <= 0.01) continue;
       const reach = n.r * (3.4 + n.heat * 3);
@@ -352,6 +365,11 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       g.fillStyle = halo;
       g.beginPath();
       g.arc(n.x, n.y, reach, 0, Math.PI * 2);
+      g.fill();
+      // The body takes on the colour of what happened, as it used to in the layer.
+      g.fillStyle = rgba(n.colour, Math.min(1, 0.85 * n.heat));
+      g.beginPath();
+      g.arc(n.x, n.y, n.r, 0, Math.PI * 2);
       g.fill();
     }
 

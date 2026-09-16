@@ -93,6 +93,19 @@ export interface SceneNode {
    * pick the halo sprite.
    */
   warm: number;
+  /**
+   * The same note with no pulse on it: what the cached depth layers paint.
+   *
+   * `colour`, `alpha` and `glow` above are what is on screen this frame,
+   * pulse included. The cached layers must never see those, because the cache
+   * does not know about the pulse: a layer repainted while a note is still
+   * glowing — which selecting or letting go of a note does — would keep that
+   * glow after the pulse has died and the loop has stopped. What a pulse adds
+   * is drawn live, over the cached layers, every frame it lasts.
+   */
+  restColour: Rgb;
+  restAlpha: number;
+  restGlow: number;
 }
 
 export interface SceneEdge {
@@ -115,6 +128,12 @@ export interface SceneEdge {
   depth: Depth;
   /** Twice more, fainter and wider apart: a hub's link reads as a bundle of fibres. */
   strands: boolean;
+  /**
+   * The same link with no spark on it: what the cached depth layers paint.
+   * `alpha` above includes a passing spark; the difference is drawn live.
+   */
+  restAlpha: number;
+  restTail: number;
 }
 
 export interface SceneSpark {
@@ -316,6 +335,9 @@ export class SceneBuilder {
         glow: 0,
         depth: this.#plane[i] as Depth,
         warm: 0,
+        restColour: TISSUE,
+        restAlpha: 0,
+        restGlow: 0,
       })),
       order: graph.order,
       edges: graph.edges.map((_, i) => ({
@@ -332,6 +354,8 @@ export class SceneBuilder {
         colour: TISSUE,
         depth: 1,
         strands: false,
+        restAlpha: 0,
+        restTail: 0,
       })),
       sparks: [],
       labels: [],
@@ -489,10 +513,14 @@ export class SceneBuilder {
       out.x = layout.x[i]!;
       out.y = layout.y[i]!;
       out.r = bodyRadius(layout.r[i]!, depth) * shrink;
+      const restAlpha = (node.degree === 0 ? 0.24 : 0.72) * (0.55 + depth * 0.45);
       out.colour = heat > 0 ? PULSE_COLOUR[activity.kind[i]!] : base;
-      out.alpha = (node.degree === 0 ? 0.24 : 0.72) * (0.55 + depth * 0.45) + heat * 0.5;
+      out.alpha = restAlpha + heat * 0.5;
       out.heat = heat;
       out.glow = glow(heat);
+      out.restColour = base;
+      out.restAlpha = restAlpha;
+      out.restGlow = glow(0);
       out.depth = this.#plane[i] as Depth;
       out.warm = warm;
     }
@@ -536,6 +564,7 @@ export class SceneBuilder {
       this.#curvesStale = false;
     }
 
+    let restChanged = false;
     for (let i = 0; i < edges.length; i += 1) {
       const out = scene.edges[i]!;
       const thick = routes.hubEnd[i]!;
@@ -557,14 +586,22 @@ export class SceneBuilder {
         (ax >= left && ax <= right && ay >= top && ay <= bottom) ||
         (bx >= left && bx <= right && by >= top && by <= bottom);
       const alpha = edgeAlpha(plan, i, seen ? open : 0, focused, lit[i]!);
+      const resting = edgeAlpha(plan, i, seen ? open : 0, focused, 0);
       out.alpha = alpha;
+      // A link's resting opacity is part of the cached picture. It changes with
+      // the selection and the zoom, which bump the stamp themselves — and with
+      // a pan while zoomed in, which the layer cache would otherwise absorb by
+      // offsetting stale pixels. Whatever the cause, a change here repaints.
+      if (resting !== out.restAlpha) restChanged = true;
+      out.restAlpha = resting;
+      out.restTail = resting * 0.32;
       // The far end of a tract fades out: that is what makes a link grow out of
       // a note rather than lie between two of them.
       out.tail = alpha * 0.32;
       const heat = this.#recent[thick]!;
       out.colour = focused ? [230, 255, 255] : heat > 0 ? mix(TISSUE, ACCENT, heat) : TISSUE;
       out.depth = this.#plane[thick] as Depth;
-      out.strands = nodes[thick]!.degree >= 8 && alpha > 0.1;
+      out.strands = nodes[thick]!.degree >= 8 && resting > 0.1;
     }
 
     scene.sparks = [];
@@ -609,7 +646,7 @@ export class SceneBuilder {
     scene.regions = view.shaped && scene.regionAlpha > 0.01 ? regionAnchors(view, layout.x, layout.y) : [];
     scene.inside = view.inside;
 
-    if (picked !== this.#lastPicked || Math.abs(zoom - this.#lastZoom) > 0.004) {
+    if (restChanged || picked !== this.#lastPicked || Math.abs(zoom - this.#lastZoom) > 0.004) {
       this.#lastPicked = picked;
       this.#lastZoom = zoom;
       this.#stamp += 1;
