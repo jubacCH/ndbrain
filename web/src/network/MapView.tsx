@@ -33,6 +33,7 @@ import { displayName } from '../Tree';
 import { absoluteTime } from './relativeTime';
 import type { FolderNode, MapNode, Rect } from './treemap';
 import { buildFolderTree, findFolder, folderWarmth, layoutFolder, noteWarmth } from './treemap';
+import { paintCell, truncate } from './mapPaint';
 import './network.css';
 
 /** Gap between sibling cells, and padding between a folder's frame and its nested children. */
@@ -55,9 +56,6 @@ const MIN_NEST_H = 60;
  * than laying out into a zero-area rect.
  */
 const FALLBACK_SIZE = { w: 960, h: 600 };
-
-/** Above this warmth a cell is bright enough that its label turns dark. */
-const HOT = 0.55;
 
 function shrink(rect: Rect, by: number): Rect {
   const w = Math.max(0, rect.w - by * 2);
@@ -107,10 +105,6 @@ function useContainerSize(): [(el: HTMLDivElement | null) => void, { w: number; 
 function folderName(folder: FolderNode, hidePrefixes: boolean): string {
   if (folder.vault) return folder.owner;
   return folder.path === '' ? copy.network.mapView.root : displayName(folder.name, hidePrefixes);
-}
-
-function truncate(label: string, max = 24): string {
-  return label.length > max ? `${label.slice(0, max - 1)}…` : label;
 }
 
 interface HoverInfo {
@@ -214,25 +208,31 @@ export function layoutMap(current: FolderNode, w: number, h: number, hidePrefixe
 /* ---- hover: a store only the panel listens to ---------------------------- */
 
 interface HoverState {
-  info: HoverInfo | null;
+  /**
+   * Which cell, by its key, not a copy of its numbers. The panel looks the
+   * cell up in the current layout, so a refetch shows the new numbers and a
+   * cell that disappeared takes its details with it instead of leaving them
+   * hanging.
+   */
+  key: string | null;
   /** Whether the change came from the keyboard, and so is worth saying out loud. */
   announce: boolean;
 }
 
 interface HoverStore {
   get: () => HoverState;
-  set: (info: HoverInfo | null, announce: boolean) => void;
+  set: (key: string | null, announce: boolean) => void;
   subscribe: (listener: () => void) => () => void;
 }
 
 function createHoverStore(): HoverStore {
-  let state: HoverState = { info: null, announce: false };
+  let state: HoverState = { key: null, announce: false };
   const listeners = new Set<() => void>();
   return {
     get: () => state,
-    set: (info, announce) => {
-      if (state.info === info && state.announce === announce) return;
-      state = { info, announce };
+    set: (key, announce) => {
+      if (state.key === key && state.announce === announce) return;
+      state = { key, announce };
       for (const listener of listeners) listener();
     },
     subscribe: (listener) => {
@@ -242,8 +242,10 @@ function createHoverStore(): HoverStore {
   };
 }
 
-function HoverPanel({ store }: { store: HoverStore }): React.JSX.Element {
-  const { info, announce } = useSyncExternalStore(store.subscribe, store.get, store.get);
+function HoverPanel({ store, cells }: { store: HoverStore; cells: readonly MapCell[] }): React.JSX.Element {
+  const { key, announce } = useSyncExternalStore(store.subscribe, store.get, store.get);
+  const byKey = useMemo(() => new Map(cells.map((cell) => [cell.key, cell.hover])), [cells]);
+  const info = key === null ? null : (byKey.get(key) ?? null);
   const details =
     info === null
       ? null
@@ -319,11 +321,14 @@ export function neighbour(cells: readonly MapCell[], from: number, direction: Di
 }
 
 /**
- * The SVG body. Memoised: it changes when the layout does, and a hover is not
- * a change to the layout.
+ * The SVG body. Memoised: it changes when the layout does, and neither a hover
+ * nor a parent render that changed nothing is a change to the layout.
  *
  * One tab stop for the whole map (roving tabindex): Tab enters on the last
- * cell that had focus and leaves again, the arrows move between cells.
+ * cell that had focus and leaves again, the arrows move between cells. The
+ * stop is remembered by the cell's key, not its position, so a refetch that
+ * lays the same folder out again keeps it where it was; only when that cell is
+ * gone does it fall back to the first.
  */
 const MapCells = memo(function MapCells({
   cells,
@@ -334,15 +339,11 @@ const MapCells = memo(function MapCells({
   hover: HoverStore;
   onActivate: (target: Target) => void;
 }): React.JSX.Element {
-  const [active, setActive] = useState(0);
-  const refs = useRef<Array<SVGGElement | null>>([]);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const refs = useRef(new Map<string, SVGGElement>());
 
-  // A new folder on screen starts at its first cell.
-  useEffect(() => {
-    setActive(0);
-  }, [cells]);
-
-  const stop = Math.min(active, Math.max(0, cells.length - 1));
+  const found = activeKey === null ? -1 : cells.findIndex((cell) => cell.key === activeKey);
+  const stop = found === -1 ? 0 : found;
 
   const onKeyDown = (event: React.KeyboardEvent<SVGGElement>, index: number, cell: MapCell): void => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -355,33 +356,33 @@ const MapCells = memo(function MapCells({
     if (direction !== undefined) next = neighbour(cells, index, direction);
     else if (event.key === 'Home') next = 0;
     else if (event.key === 'End') next = cells.length - 1;
-    if (next === null) return;
+    const target = next === null ? undefined : cells[next];
+    if (target === undefined) return;
     event.preventDefault();
-    setActive(next);
-    refs.current[next]?.focus();
+    setActiveKey(target.key);
+    refs.current.get(target.key)?.focus();
   };
 
   return (
     <>
       {cells.map((cell, index) => {
         const { rect } = cell;
-        const t = Math.max(0, Math.min(1, cell.warmth));
-        const showLabel =
-          cell.kind === 'frame' || (cell.small ? rect.w > 30 && rect.h > 14 : rect.w > 42 && rect.h > 20);
+        const paint = paintCell(cell);
         return (
           <g
             key={cell.key}
             ref={(el) => {
-              refs.current[index] = el;
+              if (el === null) refs.current.delete(cell.key);
+              else refs.current.set(cell.key, el);
             }}
             tabIndex={index === stop ? 0 : -1}
             role="button"
             aria-label={cell.a11yLabel}
-            onMouseEnter={() => hover.set(cell.hover, false)}
+            onMouseEnter={() => hover.set(cell.key, false)}
             onMouseLeave={() => hover.set(null, false)}
             onFocus={() => {
-              setActive(index);
-              hover.set(cell.hover, true);
+              setActiveKey(cell.key);
+              hover.set(cell.key, true);
             }}
             onBlur={() => hover.set(null, false)}
             onClick={() => onActivate(cell.target)}
@@ -391,7 +392,7 @@ const MapCells = memo(function MapCells({
               <>
                 <rect className="nv-cell-frame" x={rect.x} y={rect.y} width={rect.w} height={rect.h} rx={4} />
                 <text className="nv-cell-header-label" x={rect.x + 8} y={rect.y + 14}>
-                  {cell.label}
+                  {paint.text}
                 </text>
               </>
             ) : (
@@ -403,17 +404,17 @@ const MapCells = memo(function MapCells({
                   width={rect.w}
                   height={rect.h}
                   rx={3}
-                  data-warm={t > 0 ? '' : undefined}
-                  style={t > 0 ? ({ '--t': t.toFixed(3) } as React.CSSProperties) : undefined}
+                  data-warm={paint.t > 0 ? '' : undefined}
+                  style={paint.t > 0 ? ({ '--t': paint.t.toFixed(3) } as React.CSSProperties) : undefined}
                 />
-                {showLabel && (
+                {paint.showLabel && (
                   <text
                     className="nv-cell-label"
-                    data-hot={t >= HOT ? '' : undefined}
+                    data-hot={paint.hot ? '' : undefined}
                     x={rect.x + 6}
                     y={rect.y + 14}
                   >
-                    {truncate(cell.label, cell.small ? 16 : 24)}
+                    {paint.text}
                   </text>
                 )}
               </>
@@ -524,7 +525,7 @@ export function MapView(props: {
           </svg>
         </div>
 
-        <HoverPanel store={hover} />
+        <HoverPanel store={hover} cells={cells} />
       </div>
     </div>
   );

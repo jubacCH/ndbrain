@@ -11,13 +11,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { copy } from '../src/copy';
 import { MapView } from '../src/network/MapView';
+import { paintCell } from '../src/network/mapPaint';
 import { layoutFolder } from '../src/network/treemap';
 import type { GraphData } from '../src/api';
 
-// The real layout, counted: a hover must not run it again.
+// The real layout and painting, counted: a hover or a render that changed
+// nothing must run neither again.
 vi.mock('../src/network/treemap', async (original) => {
   const real = await original<typeof import('../src/network/treemap')>();
   return { ...real, layoutFolder: vi.fn(real.layoutFolder) };
+});
+vi.mock('../src/network/mapPaint', async (original) => {
+  const real = await original<typeof import('../src/network/mapPaint')>();
+  return { ...real, paintCell: vi.fn(real.paintCell) };
 });
 
 type Node = GraphData['nodes'][number];
@@ -204,6 +210,61 @@ describe('MapView — hovering costs no layout', () => {
       screen.getByRole('button', { name: /Areas, 1 note/ }).focus();
     });
     expect(live).toHaveTextContent(/Areas/);
+  });
+});
+
+describe('MapView — a parent render that changes nothing', () => {
+  it('neither lays out nor repaints the cells again', () => {
+    const g = graph(nested());
+    const onOpen = vi.fn();
+    const { rerender } = render(<MapView graph={g} onOpen={onOpen} />);
+    const laidOut = vi.mocked(layoutFolder).mock.calls.length;
+    const painted = vi.mocked(paintCell).mock.calls.length;
+    expect(painted).toBeGreaterThan(0);
+
+    rerender(<MapView graph={g} onOpen={onOpen} />);
+    // A parent that re-renders with a fresh callback is the everyday case.
+    rerender(<MapView graph={g} onOpen={vi.fn()} />);
+
+    expect(vi.mocked(layoutFolder).mock.calls.length).toBe(laidOut);
+    expect(vi.mocked(paintCell).mock.calls.length).toBe(painted);
+  });
+});
+
+describe('MapView — after a refetch', () => {
+  function withAreas(count: number): Node[] {
+    const areas = Array.from({ length: count }, (_, i) =>
+      node({ path: `20_Areas/C${i}.md`, folder: '20_Areas', updatedAt: NOW }),
+    );
+    return [...nested().filter((n) => n.folder !== '20_Areas'), ...areas];
+  }
+
+  it('shows the new numbers for the hovered cell, and lets go of a cell that is gone', () => {
+    const { rerender, container } = render(<MapView graph={graph(withAreas(1))} onOpen={vi.fn()} />);
+    const panel = (): Element => container.querySelector('.nv-hover-panel')!;
+    fireEvent.mouseEnter(screen.getByRole('button', { name: /Areas, 1 note/ }));
+    expect(panel()).toHaveTextContent('1 note');
+
+    rerender(<MapView graph={graph(withAreas(3))} onOpen={vi.fn()} />);
+    expect(panel()).toHaveTextContent('Areas');
+    expect(panel()).toHaveTextContent('3 notes');
+
+    rerender(<MapView graph={graph(withAreas(0))} onOpen={vi.fn()} />);
+    expect(panel()).not.toHaveTextContent('Areas');
+    expect(panel()).toHaveTextContent(copy.network.mapView.hoverHint);
+  });
+
+  it('keeps the tab stop on the same cell when the same folder is laid out again', () => {
+    const { rerender } = render(<MapView graph={graph(nested())} onOpen={vi.fn()} />);
+    const areas = screen.getByRole('button', { name: /Areas, 1 note/ });
+    act(() => areas.focus());
+    expect(areas).toHaveAttribute('tabindex', '0');
+
+    // Same content, new objects: what every refetch hands over.
+    rerender(<MapView graph={graph(nested().map((n) => ({ ...n })))} onOpen={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /Areas, 1 note/ })).toHaveAttribute('tabindex', '0');
+    const stops = screen.getAllByRole('button').filter((b) => b.getAttribute('tabindex') === '0');
+    expect(stops).toHaveLength(1);
   });
 });
 

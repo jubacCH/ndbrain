@@ -61,8 +61,10 @@ const server = vi.hoisted(() => ({
 
 vi.mock('../src/api', async (original) => {
   const real = await original<typeof import('../src/api')>();
-  // What `request` does with a 401: tell the listeners, then fail.
-  const unauthenticated = (): never => {
+  // What `request` does with a 401: tell the listeners, then fail — and, like
+  // `request`, only after the call has returned, never inside it.
+  const unauthenticated = async (): Promise<never> => {
+    await Promise.resolve();
     real.reportUnauthenticated();
     throw new real.ApiError(401, 'unauthenticated', 'sign in first');
   };
@@ -70,7 +72,7 @@ vi.mock('../src/api', async (original) => {
     server.notes.filter((n) => server.signedIn !== null && (n.owner === server.signedIn.id || n.path.startsWith('Shared/')));
   const fake: Record<string, (...args: never[]) => Promise<unknown>> = {
     me: async () => {
-      if (server.signedIn === null) unauthenticated();
+      if (server.signedIn === null) await unauthenticated();
       return { user: server.signedIn };
     },
     login: async (name: string) => {
@@ -82,7 +84,7 @@ vi.mock('../src/api', async (original) => {
       return { ok: true };
     },
     tree: async () => {
-      if (server.signedIn === null) unauthenticated();
+      if (server.signedIn === null) await unauthenticated();
       return { notes: seen(), dirs: [] };
     },
     tidy: async () => ({
