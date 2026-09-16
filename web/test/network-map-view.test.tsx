@@ -103,6 +103,45 @@ describe('MapView — zoom, breadcrumb and opening a note', () => {
   });
 });
 
+describe('MapView — two levels at once', () => {
+  function nestedVault(): Node[] {
+    return [
+      node({ path: '10_Projects/11_Active/A.md', folder: '10_Projects/11_Active', updatedAt: NOW }),
+      node({ path: '10_Projects/11_Active/B.md', folder: '10_Projects/11_Active', updatedAt: NOW }),
+      node({ path: '10_Projects/Overview.md', folder: '10_Projects', updatedAt: NOW }),
+      node({ path: '20_Areas/C.md', folder: '20_Areas', updatedAt: NOW }),
+    ];
+  }
+
+  it('shows a subfolder and a loose note nested inside their parent, unclicked', () => {
+    render(<MapView graph={graph(nestedVault())} onOpen={vi.fn()} />);
+    // The root level: "Projects" is a folder cell.
+    expect(screen.getByRole('button', { name: /Projects, 3 notes/ })).toBeInTheDocument();
+    // Nested one level inside it, without having clicked anything: its
+    // subfolder "Active" and its loose note "Overview", both visible at once.
+    expect(screen.getByRole('button', { name: /Active, 2 notes/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Overview — open note/ })).toBeInTheDocument();
+  });
+
+  it('zooms straight to a nested subfolder on click, skipping the intermediate view', () => {
+    render(<MapView graph={graph(nestedVault())} onOpen={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Active, 2 notes/ }));
+    // Now inside 10_Projects/11_Active: its own two notes are the cells.
+    expect(screen.getByRole('button', { name: /A — open note/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /B — open note/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Active$/ })).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('opens a note nested inside a parent folder without also zooming the parent', () => {
+    const onOpen = vi.fn();
+    render(<MapView graph={graph(nestedVault())} onOpen={onOpen} />);
+    fireEvent.click(screen.getByRole('button', { name: /Overview — open note/ }));
+    expect(onOpen).toHaveBeenCalledWith('jb', '10_Projects/Overview.md');
+    // Still at the root: the parent folder cell is unchanged, not zoomed into.
+    expect(screen.getByRole('button', { name: /Projects, 3 notes/ })).toBeInTheDocument();
+  });
+});
+
 describe('MapView — a large synthetic vault (2000 notes)', () => {
   it('builds and renders the root level without error', () => {
     const folders = ['10_Projects/11_Active', '10_Projects/19_Done', '20_Areas', '30_Resources'];
