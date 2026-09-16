@@ -76,19 +76,11 @@ export function regionView(layout: BrainLayout): RegionView {
 }
 
 /**
- * What a region's name needs to know about the world: which way is out, where
- * the rim is in that direction, and which of its notes the leader starts at.
- *
- * World units. Where the name is actually written is a screen question —
- * text width, canvas size, controls over the canvas — and is `labels.ts`'s.
+ * One way a region's name can go: where its leader starts, which way is out,
+ * and where the rim is in that direction. World units.
  */
-export interface RegionAnchor {
-  region: number;
-  text: string;
-  side: -1 | 1;
-  /** Notes in the region: larger regions keep their name when room runs out. */
-  weight: number;
-  /** The member the leader starts at: the one nearest the rim point. */
+export interface LabelWay {
+  /** Where the leader starts: a note of the region, or the middle of its largest cluster. */
   anchorX: number;
   anchorY: number;
   rimX: number;
@@ -96,7 +88,20 @@ export interface RegionAnchor {
   /** Outward, a unit vector. */
   dirX: number;
   dirY: number;
-  /** True for a region against the fissure: named above or below the brain. */
+}
+
+/**
+ * What a region's name needs to know about the world. Where the name is actually
+ * written is a screen question — text width, canvas size, controls over the
+ * canvas — and is `labels.ts`'s.
+ */
+export interface RegionAnchor {
+  region: number;
+  text: string;
+  side: -1 | 1;
+  /** Notes in the region: larger regions keep their name when room runs out. */
+  weight: number;
+  /** True for a region against the fissure: one of its ways goes above or below the brain. */
   medial: boolean;
   /** World x of the fissure, the same for every region. */
   fissureX: number;
@@ -106,10 +111,10 @@ export interface RegionAnchor {
    */
   reach: number;
   /**
-   * For a medial region, the ordinary outward placement, tried when there is no
-   * room above or below. Null for every other region.
+   * The ways the name may go, at least one. Placement takes whichever gives the
+   * shortest leader that keeps every rule — not the first that fits.
    */
-  alternate: Omit<RegionAnchor, 'region' | 'text' | 'side' | 'weight' | 'medial' | 'fissureX' | 'alternate'> | null;
+  ways: readonly LabelWay[];
 }
 
 /**
@@ -117,37 +122,50 @@ export interface RegionAnchor {
  * the fissure to its hemisphere's centre, before it counts as medial.
  */
 const MEDIAL_NEAR = 0.45;
-/** A leader may be at most this share of the brain's width. */
-const LEADER_REACH = 0.28;
 /**
- * A medial leader may additionally cross this share of the brain's width of
- * tissue on its way to the top or bottom rim. A region buried deeper than that
- * is not named from above or below — its leader would read as a tract.
+ * A leader may be at most this share of the brain's width.
+ *
+ * 18 % since 2026-09-16, down from 28 %. At 28 % every name kept the rules, and
+ * still the eye did not join "Networking" at the bottom to notes half way up
+ * the hemisphere. Julian asked for names visibly beside their regions; a name
+ * that cannot be placed that near is left out.
  */
-const MEDIAL_DEPTH = 0.12;
+const LEADER_REACH = 0.18;
 /** A medial name leans this much towards its own side as it goes up or down. */
 const MEDIAL_LEAN = 0.12;
 /** Walking out to the rim: march in these steps (share of a unit), then bisect. */
 const RIM_MARCH = 0.02;
 const RIM_MARCHES = 150;
 const RIM_STEPS = 10;
+/**
+ * Two notes of a region belong to the same cluster when they are within this
+ * many times the region's median nearest-neighbour distance, directly or
+ * through other notes. The layout draws notes as star clusters around a few
+ * cores; this finds those clusters from the positions alone.
+ */
+const CLUSTER_LINK = 2.4;
 
 /**
- * Per region, which way its name should go.
+ * Per region, the ways its name may go.
  *
- * Outward from the middle of its hemisphere through the middle of its notes —
- * so a name sits at the edge next to the notes it names. Two things are
- * measured rather than assumed, so that this follows whatever the layout does:
- * the hemisphere's middle is the mean of its regions' centres, and the fissure
- * is half way between the two hemispheres.
+ * **From its largest cluster.** Since the layout draws regions as star clusters,
+ * the middle of a region's notes can lie in the empty space between two of its
+ * clusters, and a leader to it points at nothing. The middle of its largest
+ * cluster is where the eye already is. Outward from there to the rim.
  *
- * A region against the fissure has no outer edge of its own; pointing its name
- * outward from its hemisphere's middle sends it across the whole half to the
- * far flank, which is how the maps of content, sitting at the fissure, came to
- * be named at the top left. Such a region is named straight above or below the
- * brain instead, leaning to its own side.
+ * **From its outermost note.** Outward from the middle of the region, starting
+ * at the member nearest that rim point: the rule this file had before, kept as
+ * a way because it is often the shorter one.
  *
- * Nothing here depends on what a region is called or how many there are.
+ * **Above or below, for a region against the fissure.** Pointing outward from its
+ * hemisphere's middle would send its name across the whole half to the far
+ * flank. Up or down instead, whichever rim is nearer, leaning a little to its
+ * own side.
+ *
+ * Two things are measured rather than assumed, so that this follows whatever the
+ * layout does: a hemisphere's middle is the mean of its regions' centres, and
+ * the fissure is half way between the two. Nothing here depends on what a region
+ * is called or how many there are.
  */
 export function regionAnchors(view: RegionView, x: ArrayLike<number>, y: ArrayLike<number>): RegionAnchor[] {
   if (!view.shaped) return [];
@@ -165,10 +183,14 @@ export function regionAnchors(view: RegionView, x: ArrayLike<number>, y: ArrayLi
     return m.n > 0 ? { x: m.x / m.n, y: m.y / m.n } : { x: side * view.unit * 0.6, y: 0 };
   };
   const fissure = (hemi(-1).x + hemi(1).x) / 2;
+  const width = view.bounds.maxX - view.bounds.minX;
 
   const out: RegionAnchor[] = [];
   for (const region of view.regions) {
     if (region.members.length === 0) continue;
+    const side = region.side;
+    const h = hemi(side);
+
     let mx = 0;
     let my = 0;
     for (const i of region.members) {
@@ -178,59 +200,39 @@ export function regionAnchors(view: RegionView, x: ArrayLike<number>, y: ArrayLi
     mx /= region.members.length;
     my /= region.members.length;
 
-    const side = region.side;
-    const h = hemi(side);
-    let dx = mx - h.x;
-    let dy = my - h.y;
-    const dl = Math.hypot(dx, dy);
-    if (dl > 1e-6) {
-      dx /= dl;
-      dy /= dl;
-    } else {
-      dx = side;
-      dy = 0;
+    /** Outward from the hemisphere's middle through (px, py); sideways if they coincide. */
+    const outward = (px: number, py: number): { dx: number; dy: number } => {
+      const dx = px - h.x;
+      const dy = py - h.y;
+      const l = Math.hypot(dx, dy);
+      return l > 1e-6 ? { dx: dx / l, dy: dy / l } : { dx: side, dy: 0 };
+    };
+
+    const towardFissure = Math.abs(mx - fissure) < MEDIAL_NEAR * Math.abs(h.x - fissure);
+    const regionOut = outward(mx, my);
+    const medial = towardFissure || regionOut.dx * side < 0;
+
+    const ways: LabelWay[] = [];
+
+    // From the largest cluster.
+    const cluster = largestCluster(region.members, x, y);
+    if (cluster !== null) {
+      const dir = outward(cluster.x, cluster.y);
+      if (dir.dx * side >= 0) {
+        const rim = walkToRim(view, cluster.x, cluster.y, dir.dx, dir.dy);
+        ways.push({ anchorX: cluster.x, anchorY: cluster.y, rimX: rim.x, rimY: rim.y, dirX: dir.dx, dirY: dir.dy });
+      }
     }
 
-    // Medial: against the fissure, or pointing into it. A region whose outward
-    // direction is merely steep — one at the top or bottom of its hemisphere —
-    // is not medial; its own direction already goes up or down.
-    const towardFissure = Math.abs(mx - fissure) < MEDIAL_NEAR * Math.abs(h.x - fissure);
-    const medial = towardFissure || dx * side < 0;
-    const width = view.bounds.maxX - view.bounds.minX;
+    // From the outermost note.
+    if (!medial) {
+      const rim = walkToRim(view, mx, my, regionOut.dx, regionOut.dy);
+      const pick = nearest(region.members, x, y, rim.x, rim.y);
+      ways.push({ anchorX: x[pick]!, anchorY: y[pick]!, rimX: rim.x, rimY: rim.y, dirX: regionOut.dx, dirY: regionOut.dy });
+    }
 
-    // The ordinary placement: outward from the middle of the notes to the rim,
-    // the leader starting at the note nearest that point — a line across the
-    // whole region would read as a link.
-    const outward = (() => {
-      const end = walkToRim(view, mx, my, dx, dy);
-      let pick = region.members[0]!;
-      let best = Infinity;
-      for (const i of region.members) {
-        const d = (x[i]! - end.x) ** 2 + (y[i]! - end.y) ** 2;
-        if (d < best) {
-          best = d;
-          pick = i;
-        }
-      }
-      return {
-        anchorX: x[pick]!,
-        anchorY: y[pick]!,
-        rimX: end.x,
-        rimY: end.y,
-        dirX: dx,
-        dirY: dy,
-        reach: LEADER_REACH * width,
-      };
-    })();
-
-    let primary = outward;
-    let alternate: RegionAnchor['alternate'] = null;
+    // Above or below, for a region against the fissure.
     if (medial) {
-      // Up or down, whichever rim is nearer the region's notes, leaning only a
-      // little to its own side: the leader then runs along the fissure, in the
-      // dark, over as little of the neighbouring regions as possible.
-      let bestGap = Infinity;
-      let vertical: typeof outward | null = null;
       for (const up of [true, false]) {
         let ux = side * MEDIAL_LEAN;
         let uy = up ? -1 : 1;
@@ -247,49 +249,105 @@ export function regionAnchors(view: RegionView, x: ArrayLike<number>, y: ArrayLi
             pick = i;
           }
         }
-        const end = walkToRim(view, x[pick]!, y[pick]!, ux, uy);
-        const gap = Math.hypot(end.x - x[pick]!, end.y - y[pick]!);
-        // Ties go up, so the choice does not flip on a rounding error.
-        if (gap < bestGap - 1e-6) {
-          bestGap = gap;
-          vertical = {
-            anchorX: x[pick]!,
-            anchorY: y[pick]!,
-            rimX: end.x,
-            rimY: end.y,
-            dirX: ux,
-            dirY: uy,
-            reach: LEADER_REACH * width + Math.min(gap, MEDIAL_DEPTH * width),
-          };
-        }
-      }
-      if (vertical !== null) {
-        primary = vertical;
-        alternate = outward;
+        const rim = walkToRim(view, x[pick]!, y[pick]!, ux, uy);
+        ways.push({ anchorX: x[pick]!, anchorY: y[pick]!, rimX: rim.x, rimY: rim.y, dirX: ux, dirY: uy });
       }
     }
-    const { anchorX, anchorY, rimX, rimY, reach } = primary;
-    dx = primary.dirX;
-    dy = primary.dirY;
+
+    // Never none: a region whose every way pointed inward still has its outward one.
+    if (ways.length === 0) {
+      const rim = walkToRim(view, mx, my, regionOut.dx, regionOut.dy);
+      const pick = nearest(region.members, x, y, rim.x, rim.y);
+      ways.push({ anchorX: x[pick]!, anchorY: y[pick]!, rimX: rim.x, rimY: rim.y, dirX: regionOut.dx, dirY: regionOut.dy });
+    }
 
     out.push({
       region: region.id,
       text: region.name,
       side,
       weight: region.members.length,
-      anchorX,
-      anchorY,
-      rimX,
-      rimY,
-      dirX: dx,
-      dirY: dy,
       medial,
       fissureX: fissure,
-      reach,
-      alternate,
+      reach: LEADER_REACH * width,
+      ways,
     });
   }
   return out;
+}
+
+function nearest(members: readonly number[], x: ArrayLike<number>, y: ArrayLike<number>, px: number, py: number): number {
+  let pick = members[0]!;
+  let best = Infinity;
+  for (const i of members) {
+    const d = (x[i]! - px) ** 2 + (y[i]! - py) ** 2;
+    if (d < best) {
+      best = d;
+      pick = i;
+    }
+  }
+  return pick;
+}
+
+/**
+ * The middle of a region's largest cluster of notes, by proximity alone.
+ *
+ * Single linkage over the members: two notes are in the same cluster when a
+ * chain of notes connects them with no step longer than `CLUSTER_LINK` times
+ * the region's median nearest-neighbour distance. Null for a region too small
+ * to have clusters.
+ */
+export function largestCluster(
+  members: readonly number[],
+  x: ArrayLike<number>,
+  y: ArrayLike<number>,
+): { x: number; y: number; size: number } | null {
+  const k = members.length;
+  if (k < 3) return null;
+  const nn: number[] = [];
+  for (let a = 0; a < k; a += 1) {
+    let best = Infinity;
+    for (let b = 0; b < k; b += 1) {
+      if (a === b) continue;
+      best = Math.min(best, Math.hypot(x[members[a]!]! - x[members[b]!]!, y[members[a]!]! - y[members[b]!]!));
+    }
+    nn.push(best);
+  }
+  nn.sort((p, q) => p - q);
+  const link = (nn[Math.floor(k / 2)] ?? 0) * CLUSTER_LINK;
+
+  const group = new Int32Array(k).fill(-1);
+  let groups = 0;
+  for (let start = 0; start < k; start += 1) {
+    if (group[start] !== -1) continue;
+    const stack = [start];
+    group[start] = groups;
+    while (stack.length > 0) {
+      const a = stack.pop()!;
+      for (let b = 0; b < k; b += 1) {
+        if (group[b] !== -1) continue;
+        if (Math.hypot(x[members[a]!]! - x[members[b]!]!, y[members[a]!]! - y[members[b]!]!) <= link) {
+          group[b] = groups;
+          stack.push(b);
+        }
+      }
+    }
+    groups += 1;
+  }
+
+  // Largest group; ties go to the lower group number, which is member order.
+  const sizes = new Array<number>(groups).fill(0);
+  for (let a = 0; a < k; a += 1) sizes[group[a]!] = sizes[group[a]!]! + 1;
+  let largest = 0;
+  for (let g = 1; g < groups; g += 1) if (sizes[g]! > sizes[largest]!) largest = g;
+
+  let cx = 0;
+  let cy = 0;
+  for (let a = 0; a < k; a += 1) {
+    if (group[a] !== largest) continue;
+    cx += x[members[a]!]!;
+    cy += y[members[a]!]!;
+  }
+  return { x: cx / sizes[largest]!, y: cy / sizes[largest]!, size: sizes[largest]! };
 }
 
 /**

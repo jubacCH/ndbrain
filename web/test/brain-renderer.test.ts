@@ -101,6 +101,8 @@ const sceneWith = (edges: SceneEdge[]): Scene => ({
   regions: [],
   blocked: [],
   inside: () => false,
+  depthInside: () => -1,
+  brainWidth: 1,
   regionAlpha: 0,
   deco: NO_DECORATION,
   decoAlpha: 0,
