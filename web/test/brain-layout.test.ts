@@ -281,6 +281,24 @@ describe('remembering across sessions', () => {
     expect(window.localStorage.getItem('ndbrain.prefs')).not.toBeNull();
   });
 
+  it('throws away every stored version below this one, and leaves a newer one alone', () => {
+    // Phase 4 changed the outline and put the notes on places inside cells of
+    // it. A position written before that is a point in a brain that no longer
+    // exists — outside the silhouette, or in another region's cell — and a
+    // remembered note is never moved by the simulation, so it would stay there.
+    // Reading them is worse than laying the brain out again.
+    const stale = ['ndbrain.brain.v1/julian/network', 'ndbrain.brain.v2/julian/network'];
+    for (const key of stale) window.localStorage.setItem(key, '{"jb\\u0000a.md":[512,384]}');
+    // A build newer than this one keeps what only it can read.
+    window.localStorage.setItem('ndbrain.brain.v9/julian/network', '{"jb\\u0000a.md":[1,2]}');
+
+    expect(loadPositions(mine).size).toBe(0);
+    for (const key of stale) expect(window.localStorage.getItem(key), key).toBeNull();
+    expect(window.localStorage.getItem('ndbrain.brain.v9/julian/network')).not.toBeNull();
+    // And this build's own key is a third one again.
+    expect(positionsKey(mine)).toBe('ndbrain.brain.v3/julian/network');
+  });
+
   it('forgets notes that are gone rather than growing forever', () => {
     savePositions(mine, laid(vault(12)).positions());
     savePositions(mine, laid(vault(3)).positions());
