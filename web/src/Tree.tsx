@@ -34,6 +34,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { copy } from './copy';
 
 import { refKey, type NoteRow, type Share } from './api';
+import { ChevronIcon, FileIcon, FolderIcon } from './icons';
 
 export type Finding = 'crit' | 'warn';
 
@@ -338,6 +339,7 @@ export function Tree({
         >
           {finding !== undefined && <span className={`st st-${finding}`} />}
           {!showPath && <span className="tw" />}
+          {!showPath && <FileIcon size={15} className="node-icon" />}
           <span className="nm">{note.title}</span>
           {showPath && where !== '' && <span className="where">{where}</span>}
         </button>
@@ -360,7 +362,10 @@ export function Tree({
               onClick={() => toggle(key)}
               aria-expanded={isOpen}
             >
-              <span className="tw">{isOpen ? '▾' : '▸'}</span>
+              <span className="tw" data-open={isOpen}>
+                <ChevronIcon size={12} />
+              </span>
+              <FolderIcon size={15} className="node-icon" />
               <span className="nm">{displayName(child.name, hidePrefixes)}</span>
               {/* Shown only while shut: once it is open you can see them. */}
               {!isOpen && <span className="cnt">{count}</span>}

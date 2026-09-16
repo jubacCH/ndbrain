@@ -48,6 +48,57 @@ export const copy = {
     orphaned: 'orphaned',
     untagged: 'untagged',
     broken: 'broken',
+    /** The health dots in the footer, named in full for a folded sidebar and a screen reader. */
+    orphanedCount: (n: number) => `${n} orphaned ${n === 1 ? 'note' : 'notes'}`,
+    untaggedCount: (n: number) => `${n} untagged ${n === 1 ? 'note' : 'notes'}`,
+    brokenCount: (n: number) => `${n} broken ${n === 1 ? 'link' : 'links'}`,
+    tagline: 'My Second Brain',
+    collapse: 'Collapse sidebar',
+    expand: 'Expand sidebar',
+    open: 'open',
+    filterShortcut: 'Filter the tree',
+    /** Which entry of the recents list is the note on screen. */
+    openNow: 'open now',
+  },
+
+  /** The frame around every view: the header bar and its menus. */
+  shell: {
+    searchPlaceholder: 'Search notes, ideas, people…',
+    searchLabel: 'Search notes',
+    lightTheme: 'Switch to light theme',
+    darkTheme: 'Switch to dark theme',
+    account: 'Account',
+    signedInAs: (name: string) => `Signed in as ${name}`,
+    /** The line under each view's title — real numbers, never a slogan. */
+    sub: {
+      overview: (notes: number, folders: number) =>
+        `${notes} ${notes === 1 ? 'note' : 'notes'} · ${folders} ${folders === 1 ? 'folder' : 'folders'}`,
+      attention: (n: number) => `${n} need attention`,
+      network: (notes: number, links: number) =>
+        `${notes} ${notes === 1 ? 'note' : 'notes'} · ${links} ${links === 1 ? 'connection' : 'connections'}`,
+      loose: (n: number) => `${n} without a connection`,
+      tidy: (orphans: number, broken: number, stale: number) =>
+        `${orphans} orphaned · ${broken} broken ${broken === 1 ? 'link' : 'links'} · ${stale} untouched`,
+      tasks: (open: number) => `${open} open ${open === 1 ? 'task' : 'tasks'}`,
+      search: (notes: number) => `Full text across ${notes} ${notes === 1 ? 'note' : 'notes'}`,
+      results: (n: number, q: string) => `${n} ${n === 1 ? 'result' : 'results'} for “${q}”`,
+      files: (files: number, dirs: number) =>
+        `${files} ${files === 1 ? 'file' : 'files'} · ${dirs} ${dirs === 1 ? 'folder' : 'folders'}`,
+      settings: 'This browser, and your account',
+      admin: (accounts: number) => `${accounts} ${accounts === 1 ? 'account' : 'accounts'}`,
+      shares: (out: number, inbound: number) => `${out} shared by you · ${inbound} shared with you`,
+      loading: 'Loading…',
+    },
+    network: {
+      switcher: 'How to show the network',
+      graph: 'Graph',
+      list: 'List',
+      map: 'Map',
+      fullscreen: 'Full screen',
+      exitFullscreen: 'Leave full screen',
+      /** Only until the list and map views arrive; see `network/ListView.tsx`. */
+      notYet: (what: string) => `The ${what} view is on its way.`,
+    },
   },
 
   save: {
