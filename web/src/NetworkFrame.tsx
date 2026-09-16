@@ -60,7 +60,7 @@ export function NetworkFrame({
   // control — so the state follows the document rather than the click.
   useEffect(() => {
     const sync = (): void => {
-      if (document.fullscreenElement === null) setFull(false);
+      if (!document.fullscreenElement) setFull(false);
     };
     document.addEventListener('fullscreenchange', sync);
     return () => document.removeEventListener('fullscreenchange', sync);
@@ -72,7 +72,7 @@ export function NetworkFrame({
   useEffect(() => {
     if (!full) return;
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && document.fullscreenElement === null) setFull(false);
+      if (event.key === 'Escape' && !document.fullscreenElement) setFull(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -81,7 +81,7 @@ export function NetworkFrame({
   const toggleFull = useCallback((): void => {
     const el = frame.current;
     if (full) {
-      if (document.fullscreenElement !== null) void document.exitFullscreen().catch(() => undefined);
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
       setFull(false);
       return;
     }
@@ -117,6 +117,8 @@ export function NetworkFrame({
             role="radio"
             data-view={option}
             aria-checked={view === option}
+            aria-label={LABELS[option].label}
+            title={LABELS[option].label}
             tabIndex={view === option ? 0 : -1}
             onClick={() => onView(option)}
           >
