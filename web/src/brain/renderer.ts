@@ -36,6 +36,7 @@
 
 import { CachedLayer, Sprites } from './bloom';
 import type { Decoration } from './deco';
+import { LINE_HEIGHT, placeRegionNames } from './labels';
 import { DENDRITE_ALPHA, DENDRITE_TIP_ALPHA, DENDRITE_TIP_WIDTH, DENDRITE_WIDTH } from './deco';
 import type { Depth, Rgb, Scene, SceneEdge, SceneNode } from './scene';
 
@@ -55,8 +56,6 @@ const PARALLAX_Y = 5;
 const TISSUE_PLANE = -0.7;
 /** The three planes' parallax factors. */
 const PLANE_Z: readonly number[] = [-1, 0, 1];
-/** How much room a region name keeps from the edge of the canvas, in CSS pixels. */
-const MARGIN = 10;
 /** Blur radius of a plane's bloom, in half-resolution pixels. */
 const PLANE_BLUR = 11;
 const TISSUE_BLUR = 9;
@@ -397,51 +396,37 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     const sy = (y: number): number => y * camera.scale + camera.y;
     const family = typeof getComputedStyle === 'function' ? getComputedStyle(document.body).fontFamily : 'sans-serif';
 
-    const taken: Array<{ x: number; y: number; w: number; h: number }> = [];
-    if (scene.regionAlpha > 0.01) {
+    if (scene.regionAlpha > 0.01 && scene.regions.length > 0) {
       g.font = `400 13px ${family}`;
       g.textBaseline = 'middle';
       g.lineJoin = 'round';
-      for (const label of scene.regions) {
-        const fx = sx(label.fromX);
-        const fy = sy(label.fromY);
-        const lines = split(label.text);
-        const width =
-          typeof g.measureText === 'function'
-            ? Math.max(...lines.map((l) => g.measureText(l).width))
-            : Math.max(...lines.map((l) => l.length * 6.5));
-        const height = lines.length * 17;
-
-        // Names sit outside the outline, and the outline fills the view: a name
-        // near the rim would be written half off the canvas or over the app
-        // around it. So each one is pulled back inside the canvas — the leader
-        // still points at its region, which is what the name is for — and
-        // dropped when it would land on a name already written.
-        const room = MARGIN + width + 12;
-        const lx = Math.min(Math.max(sx(label.x), label.align === 'left' ? MARGIN : room), scene.width - (label.align === 'left' ? room : MARGIN));
-        const ly = Math.min(Math.max(sy(label.y), MARGIN + height), scene.height - MARGIN - height);
-        const left = label.align === 'center' ? lx - width / 2 : label.align === 'left' ? lx + 10 : lx - 10 - width;
-        const box = { x: left - 4, y: ly - height / 2 - 4, w: width + 8, h: height + 8 };
-        if (taken.some((b) => box.x < b.x + b.w && b.x < box.x + box.w && box.y < b.y + b.h && b.y < box.y + box.h)) {
-          continue;
-        }
-        taken.push(box);
+      const measure = (text: string): number =>
+        typeof g.measureText === 'function' ? g.measureText(text).width : text.length * 6.5;
+      // Where each name goes is decided in `labels.ts`: next to its own region,
+      // on the canvas, off the tissue, clear of the controls and of each other —
+      // or not at all.
+      const names = placeRegionNames(
+        scene.regions,
+        camera,
+        scene.width,
+        scene.height,
+        scene.blocked,
+        scene.inside,
+        measure,
+      );
+      for (const label of names) {
         g.strokeStyle = `rgba(190,228,235,${0.38 * scene.regionAlpha})`;
         g.lineWidth = 0.8;
         g.beginPath();
-        g.moveTo(fx, fy);
-        g.quadraticCurveTo(sx(label.cx), sy(label.cy), lx, ly);
-        if (label.align !== 'center') g.lineTo(lx + (label.align === 'left' ? 6 : -6), ly);
+        g.moveTo(label.fromX, label.fromY);
+        g.quadraticCurveTo(label.cx, label.cy, label.toX, label.toY);
         g.stroke();
 
-        const tx = label.align === 'center' ? lx : lx + (label.align === 'left' ? 10 : -10);
-        const ty =
-          label.align === 'center'
-            ? ly + (label.above ? -12 - (lines.length - 1) * 17 : 12)
-            : ly - (lines.length - 1) * 8.5;
+        const { box } = label;
         g.textAlign = label.align;
+        const tx = label.align === 'center' ? box.x + box.w / 2 : label.align === 'left' ? box.x : box.x + box.w;
         g.fillStyle = `rgba(212,230,234,${0.92 * scene.regionAlpha})`;
-        lines.forEach((line, k) => g.fillText(line, tx, ty + k * 17));
+        label.lines.forEach((line, k) => g.fillText(line, tx, box.y + LINE_HEIGHT * (k + 0.5)));
       }
     }
 
@@ -498,13 +483,4 @@ function polyline(g: CanvasRenderingContext2D, pts: Float64Array, n: number): vo
     } else g.lineTo(x, y);
   }
   g.stroke();
-}
-
-/** A region name over two lines, broken where it reads naturally. */
-function split(text: string): string[] {
-  const amp = text.indexOf(' & ');
-  if (amp > 0) return [text.slice(0, amp), text.slice(amp + 1)];
-  const space = text.lastIndexOf(' ');
-  if (text.length > 12 && space > 0) return [text.slice(0, space), text.slice(space + 1)];
-  return [text];
 }

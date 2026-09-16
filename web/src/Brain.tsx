@@ -42,6 +42,7 @@ import { copy } from './copy';
 import { Activity } from './brain/activity';
 import type { Camera, Inset } from './brain/camera';
 import { between, ease, fit, limitsFor, panBy, toWorld, zoomAt } from './brain/camera';
+import { blockedAround } from './brain/blocked';
 import { HitIndex } from './brain/hit';
 import { noteKind } from './brain/kind';
 import type { Arrangement } from './brain/layout';
@@ -393,6 +394,9 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
 
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const paint = createCanvasRenderer(canvas);
+    // Narrowed once for the hoisted frame function, which TypeScript does not
+    // see the null check above from.
+    const surface: HTMLCanvasElement = canvas;
     let frame = 0;
 
     /**
@@ -432,6 +436,28 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     // Still needed alongside it — moving the window to a second display changes
     // the device-pixel ratio without changing the element's size.
     window.addEventListener('resize', measure);
+
+    // The controls laid over the canvas — legend, footer, reset, the note on
+    // the decoration — are areas no region name may cover (`brain/blocked.ts`).
+    // They are measured every frame, which costs nothing because frames only
+    // run when something changed; these observers are what makes something
+    // changing *count*: one of them appearing, disappearing or changing size
+    // asks for a frame, so the names move out of its way even at rest.
+    const overlays = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => ask());
+    const watchOverlays = (): void => {
+      if (overlays === null || canvas.parentElement === null) return;
+      overlays.disconnect();
+      for (const el of Array.from(canvas.parentElement.children)) if (el !== canvas) overlays.observe(el);
+    };
+    const arrivals =
+      typeof MutationObserver === 'undefined' || canvas.parentElement === null
+        ? null
+        : new MutationObserver(() => {
+            watchOverlays();
+            ask();
+          });
+    arrivals?.observe(canvas.parentElement!, { childList: true });
+    watchOverlays();
 
     const persist = (e: Engine, now: number, force: boolean): void => {
       if (e.store === null || !e.dirty) return;
@@ -483,7 +509,16 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       }
       persist(e, now, false);
 
-      const scene = e.builder.build(e.layout, e.activity, e.camera, e.picked, e.width, e.height, e.pointer);
+      const scene = e.builder.build(
+        e.layout,
+        e.activity,
+        e.camera,
+        e.picked,
+        e.width,
+        e.height,
+        e.pointer,
+        blockedAround(surface),
+      );
       paint.draw(scene);
 
       const away = !e.homed;
@@ -746,6 +781,8 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       frame = 0;
       onLeaving();
       observer?.disconnect();
+      overlays?.disconnect();
+      arrivals?.disconnect();
       window.removeEventListener('resize', measure);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);

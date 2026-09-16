@@ -1814,6 +1814,18 @@ tbody tr[data-selected='true']:hover td {
   pointer-events: none;
 }
 
+/*
+ * In a view narrower than the footer and this note side by side, the note moves
+ * up above the footer rather than running under it. A container query, not a
+ * media query: what decides it is how wide the network view is, and the sidebar
+ * and the note panel take their share of the window first.
+ */
+@container brain (max-width: 1080px) {
+  .braindeco {
+    bottom: calc(var(--s-3) + 2.75rem);
+  }
+}
+
 .braindeco i {
   width: 0.5rem;
   height: 0.5rem;
@@ -2815,6 +2827,8 @@ body {
   position: absolute;
   inset: 0;
   border-radius: 0;
+  /* Named, so the overlays inside can respond to the view's width, not the window's. */
+  container: brain / inline-size;
 }
 
 /*
