@@ -165,10 +165,18 @@ describe('the shape', () => {
   });
 
   it('reaches out to the outline instead of huddling in the middle', () => {
-    // The notes span at least four fifths of the outline in both directions
-    // (this vault: all of it in both directions).
-    expect(form.reachX).toBeGreaterThan(0.8);
-    expect(form.reachY).toBeGreaterThan(0.8);
+    // Three quarters of the outline in both directions; measured on this vault:
+    // 0.86 across and 0.79 down.
+    //
+    // It was four fifths while the repulsion was what spread the notes: it
+    // reached across a region and pressed them into the rim, so they ended up
+    // against it everywhere. Since phase 4 a note sits on a place of its cell,
+    // the outermost places of a cell are often left free — a leaf takes the free
+    // place nearest its core — and at the top and bottom of the outline the rim
+    // is a ripple peak that a grid of places rarely lands on. The last tenth is
+    // drawn by the decoration, which has the outline itself (`depthInside`).
+    expect(form.reachX).toBeGreaterThan(0.75);
+    expect(form.reachY).toBeGreaterThan(0.75);
   });
 
   it('puts every note inside the silhouette, by the test the decoration clips against', () => {
