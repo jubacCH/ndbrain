@@ -155,28 +155,27 @@ describe('the shape', () => {
 
   it('is wider than tall, in about the proportion of the outline', () => {
     // The outline is 1.11 : 1 since phase 4 (it was 1.42 : 1); this vault's
-    // notes span 1.35 : 1. A little wider than the outline, and it has to be:
-    // the medial rim is nearly vertical, so the cells reach the full width of
-    // the brain, while at the top and bottom the rim curves away and the
-    // outermost place is short of it. The bound allows a quarter over.
+    // notes span 1.44 : 1. Wider than the outline, and it has to be: the notes
+    // gather into star clusters, the clusters sit across their cells, and a
+    // cell is wider than it is tall wherever the medial rim runs straight down
+    // the fissure. The bound allows a third over; the outline itself is drawn
+    // by the tissue, which has `inside` and `depthInside`.
     const outline = (OUTLINE.maxX - OUTLINE.minX) / (OUTLINE.maxY - OUTLINE.minY);
     expect(form.aspect).toBeGreaterThan(outline * 0.85);
-    expect(form.aspect).toBeLessThan(outline * 1.25);
+    expect(form.aspect).toBeLessThan(outline * 1.35);
   });
 
-  it('reaches out to the outline instead of huddling in the middle', () => {
-    // Three quarters of the outline in both directions; measured on this vault:
-    // 0.86 across and 0.79 down.
+  it('spreads the star clusters over the brain instead of huddling in the middle', () => {
+    // More than half the outline in both directions; measured on this vault:
+    // 0.84 across and 0.62 down.
     //
-    // It was four fifths while the repulsion was what spread the notes: it
-    // reached across a region and pressed them into the rim, so they ended up
-    // against it everywhere. Since phase 4 a note sits on a place of its cell,
-    // the outermost places of a cell are often left free — a leaf takes the free
-    // place nearest its core — and at the top and bottom of the outline the rim
-    // is a ripple peak that a grid of places rarely lands on. The last tenth is
-    // drawn by the decoration, which has the outline itself (`depthInside`).
-    expect(form.reachX).toBeGreaterThan(0.75);
-    expect(form.reachY).toBeGreaterThan(0.75);
+    // It was three quarters while every note had a place of its own over the
+    // whole cell. Since the notes gather into star clusters, the outermost
+    // notes are the leaves of the knots nearest the rim, and a knot is kept
+    // clear of the rim by its own radius. The tissue draws the rest of the
+    // outline, and a note is never needed there to carry it.
+    expect(form.reachX).toBeGreaterThan(0.55);
+    expect(form.reachY).toBeGreaterThan(0.55);
   });
 
   it('puts every note inside the silhouette, by the test the decoration clips against', () => {
@@ -208,12 +207,17 @@ describe('the shape', () => {
     expect(layout.depthInside(-0.575 * u, 0)).toBeGreaterThan(REST_OF_A_SPRING);
   });
 
-  it('spreads the notes over the whole outline rather than over a part of it', () => {
-    // The evenness of the fill, as the share of empty cells in a grid over the
-    // inside of the outline whose cells are about one note's worth of area.
-    // Measured on this vault: 14 %. Well under a third means the notes are
-    // spread over the shape; the gaps that remain are the dark space between
-    // the star clusters, which is what the decoration is drawn into.
+  it('leaves dark room between the star clusters, as the prototype does', () => {
+    // The share of empty cells in a grid over the inside of the outline whose
+    // cells are about one note's worth of area.
+    //
+    // This measured evenness until the galaxies came back, and asked for less
+    // than a third empty. Side by side with the target that was the problem: an
+    // even scatter of notes has no contrast and no region an eye can find. The
+    // optics prototype, measured the same way on its own positions, leaves 41 %
+    // of the cells empty; this vault now leaves 39 % (it left 18 % with a place
+    // per note over the whole cell). Between a third and three fifths means the
+    // clusters are clusters and the brain is still full of them.
     const layout = settled(data);
     const step = Math.sqrt(4200) * 1.6;
     const { minX, minY, maxX, maxY } = layout.bounds;
@@ -230,7 +234,24 @@ describe('the shape', () => {
     let empty = 0;
     for (const cell of all) if (!taken.has(cell)) empty += 1;
     expect(all.size).toBeGreaterThan(30);
-    expect(empty / all.size).toBeLessThan(1 / 3);
+    expect(empty / all.size).toBeGreaterThan(1 / 3);
+    expect(empty / all.size).toBeLessThan(3 / 5);
+  });
+
+  it('gathers each region into one to three dense star clusters', () => {
+    // The nearest neighbour of a note is a step of its galaxy, not a step of
+    // an even scatter over the cell: half the notes have another within 30
+    // units (measured: 21), where the even placement put it at 44.
+    const layout = settled(data);
+    const near: number[] = [];
+    for (let i = 0; i < layout.x.length; i += 1) {
+      let best = Infinity;
+      for (let j = 0; j < layout.x.length; j += 1) {
+        if (i !== j) best = Math.min(best, Math.hypot(layout.x[i]! - layout.x[j]!, layout.y[i]! - layout.y[j]!));
+      }
+      near.push(best);
+    }
+    expect(quantile(near, 0.5)).toBeLessThan(30);
   });
 
   it('is made of clusters, not of dots scattered inside a silhouette', () => {
@@ -426,7 +447,10 @@ describe('a capture on a device that remembers nothing', () => {
     }
     // Zero to the last bit the arithmetic can carry: the same cell computed in a
     // brain one note bigger comes out at the same normalised point.
-    expect(steady.length).toBeGreaterThan(clean.length * 0.8);
+    // Most clean captures are steady too. Not all: a region of fifteen notes is
+    // one capture away from a doubling, and every capture into it widens its
+    // cell by design. Measured on this vault: 66 of 86.
+    expect(steady.length).toBeGreaterThan(clean.length * 0.7);
     expect(Math.max(...drift)).toBeLessThan(1e-12);
     // And their notes: half move less than 5 units (under a cell body), nine in
     // ten less than 25 (a third of a spring), none more than 400. Measured on
