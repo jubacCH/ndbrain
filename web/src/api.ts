@@ -115,6 +115,26 @@ export class ContractError extends Error {
   }
 }
 
+const unauthenticatedListeners = new Set<() => void>();
+
+/**
+ * Called whenever the server answers that nobody is signed in.
+ *
+ * The listener decides what that means: before sign-in it is the login page
+ * asking `/auth/me`, and nothing should happen. Returns the unsubscribe.
+ */
+export function onUnauthenticated(listener: () => void): () => void {
+  unauthenticatedListeners.add(listener);
+  return () => {
+    unauthenticatedListeners.delete(listener);
+  };
+}
+
+/** Tells every listener the session is gone. Exported for tests that stand in for `request`. */
+export function reportUnauthenticated(): void {
+  for (const listener of [...unauthenticatedListeners]) listener();
+}
+
 /**
  * One request, with the answer checked rather than assumed.
  *
@@ -151,6 +171,13 @@ async function request<T>(path: string, schema: ZodType<T>, init: RequestInit = 
   // reload for a newer version when in fact the server was simply not there.
   if (!response.ok) {
     const problem = json ? (parsed as { code?: string; message?: string }) : {};
+    // The session is gone (expired, revoked, signed out in another tab). Said
+    // once, centrally, so the shell can end it instead of every caller
+    // showing its own error over a screen full of the old account's data.
+    // A wrong password is `invalid_credentials` and does not count.
+    if (response.status === 401 && problem.code === 'unauthenticated') {
+      reportUnauthenticated();
+    }
     throw new ApiError(
       response.status,
       problem.code ?? 'unknown',

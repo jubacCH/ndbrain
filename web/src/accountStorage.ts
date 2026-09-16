@@ -13,6 +13,7 @@
  */
 
 import { forgetPositions } from './brain/positions';
+import { mayWrite } from './session';
 
 /** The first shapes, shared by every account on the browser. Removed on sight. */
 const LEGACY_KEYS = ['ndbrain.recents', 'ndbrain.openFolders'];
@@ -70,6 +71,7 @@ export function loadRecents(account: string): Recent[] {
 }
 
 export function pushRecent(account: string, owner: string, path: string): void {
+  if (!mayWrite(account)) return;
   try {
     const next = [{ owner, path }, ...loadRecents(account).filter((r) => !(r.owner === owner && r.path === path))];
     // As many as the settings page lets the sidebar show, so raising the number
@@ -91,6 +93,7 @@ export function loadOpenFolders(account: string): Set<string> {
 }
 
 export function saveOpenFolders(account: string, open: ReadonlySet<string>): void {
+  if (!mayWrite(account)) return;
   try {
     window.localStorage.setItem(openFoldersKey(account), JSON.stringify([...open]));
   } catch {

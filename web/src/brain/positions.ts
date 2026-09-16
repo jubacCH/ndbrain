@@ -30,6 +30,7 @@
  * stay exactly where they were (`BrainLayout.mobile`).
  */
 
+import { mayWrite } from '../session';
 import type { Place } from './layout';
 
 /**
@@ -154,6 +155,8 @@ export function forgetPositions(account: string): void {
 /** Replaces the remembered arrangement. Notes that are gone go with it. */
 export function savePositions(where: PositionStore, positions: ReadonlyMap<string, Place>): void {
   if (positions.size > MAX_ENTRIES) return;
+  // After sign-out: a view saving on its way out must not recreate the entry.
+  if (!mayWrite(where.account)) return;
   try {
     const flat: Record<string, number[]> = {};
     for (const [key, at] of positions) {

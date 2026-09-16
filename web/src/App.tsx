@@ -15,11 +15,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 
 import {
   ApiError,
   api,
+  onUnauthenticated,
   refKey,
   type NoteRow,
   type SearchHit,
@@ -37,6 +38,7 @@ import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { copy } from './copy';
 import { discardLegacy, forgetAccount, loadRecents, pushRecent, type Recent } from './accountStorage';
+import { SESSION_SIGNAL_KEY, announceSessionChange, closeSession, openSession } from './session';
 import { applyPrefs, loadPrefs, savePrefs, type Prefs, type Theme } from './prefs';
 import { GearIcon, ShareIcon, ShieldIcon, SignOutIcon } from './icons';
 import { NetworkFrame, type FullscreenFrame } from './NetworkFrame';
@@ -134,18 +136,83 @@ function isDark(theme: Theme, systemDark: boolean): boolean {
 export function App(): React.JSX.Element {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
+  const client = useQueryClient();
+  /** The signed-in account as of now, for listeners registered once. */
+  const userRef = useRef<User | null>(null);
+
+  const begin = useCallback((next: User): void => {
+    openSession(next.id);
+    userRef.current = next;
+    setUser(next);
+  }, []);
+
+  /**
+   * Ends the session in this tab, whatever ended it: the sign-out button, an
+   * expired session, another tab.
+   *
+   * The order is the point. The shell is unmounted first and synchronously,
+   * so everything that saves on its way out (the brain's arrangement, and
+   * whatever comes later) has done so. Only then are the writes closed and
+   * the account's entries removed. Forgetting first, as the first version
+   * did, let the brain's unmount write its positions straight back.
+   */
+  const end = useCallback(
+    (announce: boolean): void => {
+      const previous = userRef.current;
+      if (previous === null) return;
+      userRef.current = null;
+      flushSync(() => setUser(null));
+      closeSession();
+      forgetAccount(previous.id);
+      // Every answer in the cache belongs to the account that just left.
+      client.clear();
+      if (announce) announceSessionChange();
+    },
+    [client],
+  );
 
   useEffect(() => {
     api
       .me()
-      .then(({ user: me }) => setUser(me))
+      .then(({ user: me }) => begin(me))
       .catch(() => setUser(null))
       .finally(() => setReady(true));
-  }, []);
+  }, [begin]);
+
+  // A 401 while signed in means the session is gone. Before sign-in it is the
+  // login page's own `/auth/me`, and `end` does nothing without a user.
+  useEffect(() => onUnauthenticated(() => end(false)), [end]);
+
+  // Another tab signed out or in. Cookies are shared, so this tab's session is
+  // whatever the server says now: nobody, somebody else, or still the same.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key !== SESSION_SIGNAL_KEY || userRef.current === null) return;
+      const was = userRef.current.id;
+      api
+        .me()
+        .then(({ user: me }) => {
+          if (me.id === was) return;
+          end(false);
+          begin(me);
+        })
+        .catch(() => end(false));
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [begin, end]);
 
   if (!ready) return <div className="login" />;
-  if (user === null) return <Login onSignedIn={setUser} />;
-  return <Shell user={user} onUserChanged={setUser} onSignedOut={() => setUser(null)} />;
+  if (user === null)
+    return (
+      <Login
+        onSignedIn={(next) => {
+          begin(next);
+          announceSessionChange();
+        }}
+      />
+    );
+  return <Shell user={user} onUserChanged={begin} onSignedOut={() => end(true)} />;
 }
 
 function Shell({
@@ -1082,11 +1149,8 @@ function Shell({
   const signOut = async (): Promise<void> => {
     if (pending.current !== null) await flush();
     await api.logout();
-    // What this browser kept about the account goes with it: the recents, the
-    // open folders, the brain's arrangement — and every answer in the cache,
-    // which would otherwise be on screen for the next account until refetched.
-    forgetAccount(user.id);
-    client.clear();
+    // What this browser kept about the account goes with it — see `end` in
+    // `App`, which unmounts this shell before forgetting anything.
     onSignedOut();
   };
 

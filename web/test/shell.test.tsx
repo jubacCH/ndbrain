@@ -26,11 +26,26 @@ import { NetworkFrame } from '../src/NetworkFrame';
 import { DEFAULT_PREFS, loadPrefs, savePrefs } from '../src/prefs';
 import { Sidebar, type SidebarProps } from '../src/Sidebar';
 import { Topbar } from '../src/Topbar';
+import { pushRecent, saveOpenFolders } from '../src/accountStorage';
+import { savePositions } from '../src/brain/positions';
 
 // The canvas has nothing to draw in jsdom; the frame is what is under test.
-vi.mock('../src/Brain', () => ({
-  Brain: () => <canvas className="brain" data-testid="brain" />,
-}));
+// Like the real one, it saves its arrangement as it unmounts.
+vi.mock('../src/Brain', async () => {
+  const { useEffect } = await import('react');
+  const { savePositions } = await import('../src/brain/positions');
+  return {
+    Brain: (props: { remember?: { account: string; store: string } }) => {
+      useEffect(() => {
+        const where = props.remember;
+        return () => {
+          if (where !== undefined) savePositions(where, new Map([['julian Private/Secret plan.md', { x: 1, y: 2 }]]));
+        };
+      }, []);
+      return <canvas className="brain" data-testid="brain" />;
+    },
+  };
+});
 
 // The whole shell, over a server that is a handful of functions. The editor and
 // the context panel have their own tests and nothing to show here.
@@ -46,11 +61,16 @@ const server = vi.hoisted(() => ({
 
 vi.mock('../src/api', async (original) => {
   const real = await original<typeof import('../src/api')>();
+  // What `request` does with a 401: tell the listeners, then fail.
+  const unauthenticated = (): never => {
+    real.reportUnauthenticated();
+    throw new real.ApiError(401, 'unauthenticated', 'sign in first');
+  };
   const seen = (): NoteRow[] =>
     server.notes.filter((n) => server.signedIn !== null && (n.owner === server.signedIn.id || n.path.startsWith('Shared/')));
   const fake: Record<string, (...args: never[]) => Promise<unknown>> = {
     me: async () => {
-      if (server.signedIn === null) throw new real.ApiError(401, 'unauthorized', 'signed out');
+      if (server.signedIn === null) unauthenticated();
       return { user: server.signedIn };
     },
     login: async (name: string) => {
@@ -61,7 +81,10 @@ vi.mock('../src/api', async (original) => {
       server.signedIn = null;
       return { ok: true };
     },
-    tree: async () => ({ notes: seen(), dirs: [] }),
+    tree: async () => {
+      if (server.signedIn === null) unauthenticated();
+      return { notes: seen(), dirs: [] };
+    },
     tidy: async () => ({
       orphans: [],
       untagged: [],
@@ -395,11 +418,13 @@ describe('the shell, signed in', () => {
     return { owner, path, title: path.split('/').pop()!.replace(/\.md$/, ''), size: 1, mtimeMs: 0 };
   }
 
+  let client: QueryClient | null = null;
+
   function mount(user: User | null): void {
     server.signedIn = user;
     server.failOpen = false;
     server.notes = [row('anna', 'Shared/Salary review.md'), row('anna', 'Anna only.md'), row('julian', 'Julian only.md')];
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
         <App />
@@ -514,5 +539,82 @@ describe('the shell, signed in', () => {
     });
     const message = await screen.findByText(copy.errors.noteGone);
     expect(frame).toContainElement(message);
+  });
+
+  /** Everything in the storage, as one string to search. */
+  function stored(): string {
+    return Object.keys(window.localStorage)
+      .map((key) => `${key}=${window.localStorage.getItem(key)}`)
+      .join('\n');
+  }
+
+  async function onTheNetwork(): Promise<void> {
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await userEvent.click(await screen.findByRole('button', { name: copy.nav.network }));
+    await screen.findByTestId('brain');
+  }
+
+  it('forgets the brain arrangement even though the brain saves it as it unmounts', async () => {
+    await onTheNetwork();
+    await signOut();
+    await screen.findByLabelText(copy.login.name);
+    expect(stored()).not.toMatch(/Secret plan/);
+    expect(stored()).not.toMatch(/julian/i);
+  });
+
+  it('ends the session when the server says it is gone, and forgets the account', async () => {
+    await onTheNetwork();
+    await openFromPalette('Julian only');
+    expect(stored()).toMatch(/Julian only/);
+
+    // The session expires on the server; the next request finds out.
+    server.signedIn = null;
+    await act(async () => {
+      await client?.invalidateQueries();
+    });
+
+    expect(await screen.findByLabelText(copy.login.name)).toBeInTheDocument();
+    expect(screen.queryByText('Julian only')).toBeNull();
+    expect(stored()).not.toMatch(/julian/i);
+  });
+
+  it('does not treat the login page asking who is signed in as a session ending', async () => {
+    const prior = JSON.stringify([{ owner: 'x', path: 'y.md' }]);
+    window.localStorage.setItem('ndbrain.recents.anna', prior);
+    mount(null);
+    expect(await screen.findByLabelText(copy.login.name)).toBeInTheDocument();
+    // Nothing was forgotten, because nobody was signed in to forget.
+    expect(window.localStorage.getItem('ndbrain.recents.anna')).toBe(prior);
+  });
+
+  it('follows a sign-out in another tab, and writes nothing for the old account afterwards', async () => {
+    await onTheNetwork();
+    await openFromPalette('Julian only');
+
+    // Tab 2 signs out; this tab hears it through the storage event.
+    server.signedIn = null;
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'ndbrain.session', newValue: String(Date.now()) }));
+    });
+    expect(await screen.findByLabelText(copy.login.name)).toBeInTheDocument();
+    expect(stored()).not.toMatch(/julian/i);
+
+    // Anything still holding the old account cannot write its entries back.
+    pushRecent('julian', 'julian', 'Julian only.md');
+    saveOpenFolders('julian', new Set(['julian Private']));
+    savePositions({ account: 'julian', store: 'network' }, new Map([['a', { x: 1, y: 1 }]]));
+    expect(stored()).not.toMatch(/julian/i);
+  });
+
+  it('switches to the account another tab signed in as', async () => {
+    await onTheNetwork();
+    await openFromPalette('Julian only');
+    server.signedIn = { id: 'anna', displayName: 'anna', role: 'user' };
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'ndbrain.session', newValue: String(Date.now()) }));
+    });
+    await waitFor(() => expect(screen.getAllByText('anna').length).toBeGreaterThan(0));
+    expect(recentTitles()).toEqual([]);
+    expect(stored()).not.toMatch(/julian/i);
   });
 });
