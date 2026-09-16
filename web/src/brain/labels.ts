@@ -18,8 +18,10 @@
  * **The rule.** Regions are placed in order of how many notes they hold, so when
  * there is not room for everybody it is the smallest region's name that goes.
  * For each, positions are tried outward from the rim along the region's own
- * direction, then fanned a little either side of it, nearest first. The first
- * position that passes every check is taken:
+ * direction, then fanned a little either side of it, nearest first. A region
+ * may offer more than one way out — a medial one first above or below the
+ * brain, then outward — and those are tried in order. The first position that
+ * passes every check is taken:
  *
  *  1. the whole text box is on the canvas — nothing is ever clipped;
  *  2. it covers no blocked area (legend, footer, controls: real DOM rectangles);
@@ -117,15 +119,26 @@ const LEADER_SAMPLES = 12;
  * so a name does not flicker between two equally good places from frame to frame.
  */
 export function placeLabels(candidates: readonly LabelCandidate[], screen: Placement): PlacedLabel[] {
-  const order = [...candidates].sort((a, b) => b.weight - a.weight || a.region - b.region);
+  // Grouped by region, keeping each region's own order of alternatives; the
+  // regions themselves largest first.
+  const byRegion = new Map<number, LabelCandidate[]>();
+  for (const c of candidates) {
+    const list = byRegion.get(c.region);
+    if (list === undefined) byRegion.set(c.region, [c]);
+    else list.push(c);
+  }
+  const regions = [...byRegion.values()].sort((a, b) => b[0]!.weight - a[0]!.weight || a[0]!.region - b[0]!.region);
+
   const placed: PlacedLabel[] = [];
   const leaders: Array<Array<{ x: number; y: number }>> = [];
-
-  for (const c of order) {
-    const found = firstFit(c, screen, placed, leaders);
-    if (found === null) continue;
-    placed.push(found);
-    leaders.push(sampleLeader(found));
+  for (const ways of regions) {
+    for (const c of ways) {
+      const found = firstFit(c, screen, placed, leaders);
+      if (found === null) continue;
+      placed.push(found);
+      leaders.push(sampleLeader(found));
+      break;
+    }
   }
   return placed;
 }
@@ -353,23 +366,24 @@ export function placeRegionNames(
   if (anchors.length === 0) return [];
   const sx = (x: number): number => x * camera.scale + camera.x;
   const sy = (y: number): number => y * camera.scale + camera.y;
-  const candidates: LabelCandidate[] = anchors.map((a) => {
+  const candidates: LabelCandidate[] = anchors.flatMap((a) => {
     const lines = breakName(a.text, measure, SINGLE_LINE);
-    return {
+    const ways = a.alternate === null ? [a] : [a, a.alternate];
+    return ways.map((w) => ({
       region: a.region,
       lines,
       width: Math.ceil(Math.max(...lines.map(measure))),
       height: lines.length * LINE_HEIGHT,
       side: a.side,
       weight: a.weight,
-      anchorX: sx(a.anchorX),
-      anchorY: sy(a.anchorY),
-      rimX: sx(a.rimX),
-      rimY: sy(a.rimY),
-      dirX: a.dirX,
-      dirY: a.dirY,
-      reach: a.reach * camera.scale,
-    };
+      anchorX: sx(w.anchorX),
+      anchorY: sy(w.anchorY),
+      rimX: sx(w.rimX),
+      rimY: sy(w.rimY),
+      dirX: w.dirX,
+      dirY: w.dirY,
+      reach: w.reach * camera.scale,
+    }));
   });
   return placeLabels(candidates, {
     width,
