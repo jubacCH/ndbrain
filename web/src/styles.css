@@ -1,13 +1,30 @@
 /*
- * The rule this interface is built on: colour is reserved for meaning.
+ * The rule this interface is built on: colour carries meaning first.
  *
- * There is no brand colour. Navigation, buttons, links and headings are neutral,
- * and hierarchy comes from contrast, weight and spacing. The four semantic
- * colours below are the only chromatic elements, and each one says something:
- * orphaned or broken, untagged or stale, written by an agent, fine.
+ * **Changed 2026-09-16.** The rule used to read "colour is reserved for meaning
+ * — there is no brand colour", and it ruled out cyan and glow outright. Julian
+ * dropped that half of it after four rounds of optics prototype on the network
+ * view: the whole network is the one screen in this app that is not a document
+ * but an observation, and holding it to the same grey as the file tree made it
+ * look like a diagram of a vault rather than a thing worth leaving open. Depth,
+ * glow and cyan are wanted there. See `plans/2026-07-27-ndbrain-v2-design.md`
+ * and the brain-phase-4 brief.
  *
- * Light and dark are tuned separately rather than inverted — a flipped red
- * shouts on a dark ground.
+ * What did *not* change, and is the half worth keeping:
+ *
+ *  - **In the document views — tree, editor, tables, dialogs — colour still only
+ *    ever says something.** The four semantic colours below are still the only
+ *    chromatic elements there: orphaned or broken, untagged or stale, written by
+ *    an agent, fine. Nothing in this file paints a heading, a button or a panel
+ *    for decoration.
+ *  - **Hierarchy still comes from contrast, weight and spacing**, not from hue.
+ *  - **Light and dark are tuned separately** rather than inverted — a flipped
+ *    red shouts on a dark ground.
+ *
+ * The network view (`.brainwrap` and everything under it, plus `brain/*.ts`) is
+ * the deliberate exception: it is on its own dark ground, its palette is cyan
+ * with a warm accent, and what it draws it draws to glow. That exception is
+ * scoped to that view and does not leak into the rest of the app.
  */
 
 :root {
@@ -1773,6 +1790,129 @@ tbody tr[data-selected='true']:hover td {
   width: 1px;
   height: 0.8rem;
   background: rgba(140, 220, 235, 0.25);
+}
+
+/*
+ * The tissue, named as what it is.
+ *
+ * Two thirds of what fills the outline is grown, not linked: fog, folds, grain
+ * and branches around the real notes. It is never clickable and fades out as the
+ * camera comes closer, and this line is the condition under which it exists at
+ * all — nobody should have to wonder which points on the canvas are their notes.
+ */
+.braindeco {
+  position: absolute;
+  z-index: 2;
+  left: var(--s-3);
+  bottom: var(--s-3);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-xs);
+  color: rgba(150, 190, 200, 0.75);
+  pointer-events: none;
+}
+
+.braindeco i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #1d5c66;
+  flex: none;
+}
+
+/*
+ * The card under the pointer.
+ *
+ * DOM rather than canvas: it is a table with a wrapping path in it, it has to be
+ * selectable, and a canvas cannot lay any of that out. Positioned from the
+ * pointer and never interactive — the pointer has to keep reaching the canvas
+ * under it, so nothing here may take a hit.
+ */
+.braincard {
+  position: absolute;
+  z-index: 3;
+  /* Opens away from the edge it is near, so it never takes its own content off
+     the canvas. Which way is decided in `Brain.tsx`, where the size is known. */
+  transform: translate(1.375rem, -1.5rem);
+  min-width: 16rem;
+  max-width: 20rem;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-md);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 26, 34, 0.86);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 0.5rem 1.875rem rgba(0, 0, 0, 0.35);
+  color: rgba(231, 242, 244, 0.95);
+  pointer-events: none;
+}
+
+.braincard[data-flip-x='true'] {
+  transform: translate(calc(-100% - 1.375rem), -1.5rem);
+}
+
+.braincard[data-flip-y='true'] {
+  transform: translate(1.375rem, calc(-100% + 1.5rem));
+}
+
+.braincard[data-flip-x='true'][data-flip-y='true'] {
+  transform: translate(calc(-100% - 1.375rem), calc(-100% + 1.5rem));
+}
+
+.braincard-title {
+  margin: 0 0 var(--s-2);
+  font-size: var(--t-md);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.braincard dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s-0) var(--s-4);
+  margin: 0;
+  font-size: var(--t-xs);
+}
+
+.braincard dt {
+  color: rgba(160, 200, 210, 0.8);
+  white-space: nowrap;
+}
+
+.braincard dd {
+  margin: 0;
+  min-width: 0;
+}
+
+/* The path carries slashes and would otherwise count as one unbreakable word. */
+.braincard-path {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.braincard-none {
+  color: rgba(140, 175, 185, 0.7);
+  font-style: italic;
+}
+
+.braincard-tag {
+  display: inline-block;
+  margin: 0 var(--s-1) var(--s-0) 0;
+  padding: 0 var(--s-1);
+  border-radius: var(--r-sm);
+  background: rgba(57, 220, 235, 0.1);
+  color: #a9dfe7;
+  font-family: var(--mono);
+}
+
+.braincard-open {
+  margin: var(--s-2) 0 0;
+  padding-top: var(--s-2);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: var(--t-xs);
+  color: rgba(127, 233, 240, 0.85);
 }
 
 

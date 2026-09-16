@@ -97,14 +97,16 @@ describe('edge weighting', () => {
     // X: the full width where a tract leaves the cell body, in world units at
     // the design scale. The old tracts were 0.55 + 0.9 · 0.42 · r wide per side,
     // about 20 units across at this hub. 5.4 is two capped half-widths plus the
-    // 1px line; 7 leaves room for the focus widening.
+    // 1px line; 7 leaves room for the focus widening. A tract is a tapered
+    // polygon now, so the widest it ever gets is twice its half-width at the
+    // thicker of its two ends.
     const rest = scene();
     const focused = scene(hub);
     for (const i of graph.touching[hub]!) {
       const e = rest.edges[i]!;
-      expect(2 * (e.mw + Math.max(e.aw, e.bw))).toBeLessThanOrEqual(5.4 + 1e-9);
+      expect(2 * Math.max(e.w0, e.w1)).toBeLessThanOrEqual(5.4 + 1e-9);
       const f = focused.edges[i]!;
-      expect(2 * (f.mw + Math.max(f.aw, f.bw))).toBeLessThanOrEqual(7);
+      expect(2 * Math.max(f.w0, f.w1)).toBeLessThanOrEqual(7);
     }
     expect(tractBase(layout.r[hub]!, 1, false)).toBe(TRACT_BASE_MAX);
     expect(tractBase(1000, 1, false)).toBe(TRACT_BASE_MAX);

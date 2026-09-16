@@ -9,8 +9,10 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { NO_DECORATION } from '../src/brain/deco';
 import { createCanvasRenderer } from '../src/brain/renderer';
 import type { Scene, SceneEdge } from '../src/brain/scene';
+import { TISSUE } from '../src/brain/scene';
 
 interface Fill {
   alpha: number;
@@ -41,6 +43,10 @@ function recorder(): { canvas: HTMLCanvasElement; fills: Fill[]; alpha: () => nu
     strokeText: () => {},
     fillText: () => {},
     createRadialGradient: () => gradient,
+    createLinearGradient: () => gradient,
+    quadraticCurveTo: () => {},
+    stroke: () => {},
+    measureText: (text: string) => ({ width: text.length * 6 }),
     save(): void {
       this.stack.push({ alpha: this.globalAlpha, composite: this.globalCompositeOperation });
     },
@@ -59,18 +65,30 @@ function recorder(): { canvas: HTMLCanvasElement; fills: Fill[]; alpha: () => nu
   return { canvas, fills, alpha: () => ctx.globalAlpha };
 }
 
-const edge = (alpha: number, y: number): SceneEdge => ({
-  ax: 10,
-  ay: y,
-  bx: 200,
-  by: y,
-  cx: 105,
-  cy: y + 10,
-  aw: 1.5,
-  bw: 1.5,
-  mw: 0.5,
-  alpha,
-});
+/** A straight tract from (10, y) to (200, y), sampled the way the scene samples one. */
+const edge = (alpha: number, y: number): SceneEdge => {
+  const n = 8;
+  const pts = new Float64Array(n * 2);
+  for (let i = 0; i < n; i += 1) {
+    pts[i * 2] = 10 + (190 * i) / (n - 1);
+    pts[i * 2 + 1] = y;
+  }
+  return {
+    pts,
+    n,
+    ax: 10,
+    ay: y,
+    bx: 200,
+    by: y,
+    w0: 1.5,
+    w1: 0.5,
+    alpha,
+    tail: alpha * 0.32,
+    colour: TISSUE,
+    depth: 1,
+    strands: false,
+  };
+};
 
 const sceneWith = (edges: SceneEdge[]): Scene => ({
   nodes: [],
@@ -78,9 +96,18 @@ const sceneWith = (edges: SceneEdge[]): Scene => ({
   edges,
   sparks: [],
   labels: [],
+  regions: [],
+  regionAlpha: 0,
+  deco: NO_DECORATION,
+  decoAlpha: 0,
   camera: { scale: 1, x: 0, y: 0 },
+  zoom: 1,
   width: 400,
   height: 300,
+  parallaxX: 0,
+  parallaxY: 0,
+  hovered: -1,
+  stamp: 1,
 });
 
 describe('the canvas renderer', () => {

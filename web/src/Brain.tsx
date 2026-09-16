@@ -43,14 +43,17 @@ import { Activity } from './brain/activity';
 import type { Camera, Inset } from './brain/camera';
 import { between, ease, fit, limitsFor, panBy, toWorld, zoomAt } from './brain/camera';
 import { HitIndex } from './brain/hit';
+import { noteKind } from './brain/kind';
 import type { Arrangement } from './brain/layout';
 import { BrainLayout } from './brain/layout';
 import type { BrainGraph } from './brain/model';
 import { buildGraph } from './brain/model';
 import type { PositionStore } from './brain/positions';
 import { loadPositions, savePositions } from './brain/positions';
+import type { RegionView } from './brain/regions';
+import { regionView } from './brain/regions';
 import { createCanvasRenderer } from './brain/renderer';
-import { SceneBuilder } from './brain/scene';
+import { RECENT_DAYS, SceneBuilder } from './brain/scene';
 
 export interface BrainProps {
   data: GraphData;
@@ -119,6 +122,92 @@ const DRAG_SLOP = 4;
 /** Breathing room around the fitted world when the caller asks for none. */
 const EDGE: Inset = { top: 12, right: 12, bottom: 12, left: 12 };
 
+/** How far the pointer has to travel before the card under it is moved again. */
+const CARD_STEP = 14;
+/** Roughly how much room the card needs. Enough to decide which way it opens. */
+const CARD_W = 320;
+const CARD_H = 230;
+/** A day, in milliseconds. */
+const DAY = 86_400_000;
+
+/**
+ * What the card under the pointer says about one note.
+ *
+ * Built in the pointer handler and held in React state, because it is DOM: a
+ * canvas cannot lay out a table, wrap a folder path or let the text be selected
+ * by a screen reader, and this is the one place in the view where those matter.
+ */
+interface Card {
+  node: number;
+  /** Where the card sits, in pixels inside the canvas's own box. */
+  x: number;
+  y: number;
+  /** Whether it has to open to the left of the pointer, or upwards. */
+  flipX: boolean;
+  flipY: boolean;
+  title: string;
+  kind: string;
+  links: number;
+  folder: string;
+  region: string;
+  topics: string[];
+  /** Null until the graph endpoint carries a timestamp. */
+  edited: string | null;
+}
+
+/**
+ * When a note was last written, from the graph reply — if it says.
+ *
+ * The endpoint does not carry a timestamp yet. Rather than guess, everything
+ * that wants one asks here and gets null, and both the warm accent and the
+ * "last edited" line simply appear the day the field arrives. Accepts either
+ * epoch milliseconds or anything `Date.parse` understands, so whichever spelling
+ * the server settles on works without a change here.
+ */
+function editedAt(node: unknown): number | null {
+  const raw = (node as { edited?: unknown; modified?: unknown }).edited ?? (node as { modified?: unknown }).modified;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string') {
+    const at = Date.parse(raw);
+    return Number.isNaN(at) ? null : at;
+  }
+  return null;
+}
+
+/** "today", "yesterday", "12 days ago" — or null when there is no timestamp. */
+function edited(node: unknown, now: number): string | null {
+  const at = editedAt(node);
+  if (at === null) return null;
+  const days = Math.max(0, Math.floor((now - at) / DAY));
+  if (days === 0) return copy.network.card.today;
+  if (days === 1) return copy.network.card.yesterday;
+  return copy.network.card.daysAgo(days);
+}
+
+/**
+ * Which notes carry the warm accent: the ones worked on in the last fortnight.
+ *
+ * The target picture scatters warm points through the cyan, and what they mean
+ * is "this is what is being worked on". With no timestamp in the reply, nothing
+ * is warm — which is honest, and better than colouring a whole folder warm and
+ * calling it recency.
+ */
+function recentNotes(data: GraphData): Uint8Array {
+  const flags = new Uint8Array(data.nodes.length);
+  const now = Date.now();
+  data.nodes.forEach((node, i) => {
+    const at = editedAt(node);
+    if (at !== null && now - at <= RECENT_DAYS * DAY) flags[i] = 1;
+  });
+  return flags;
+}
+
+/** Tags of a note, when the reply carries them. */
+function topicsOf(node: unknown): string[] {
+  const raw = (node as { tags?: unknown }).tags;
+  return Array.isArray(raw) ? raw.filter((t): t is string => typeof t === 'string') : [];
+}
+
 interface Engine {
   graph: BrainGraph;
   layout: BrainLayout;
@@ -154,6 +243,14 @@ interface Engine {
   pan: { x: number; y: number; fromX: number; fromY: number } | null;
   /** Which node is under a point. Rebuilt on demand, not per frame. */
   hits: HitIndex;
+  /** The regions and the outline, read off the layout once (see `brain/regions.ts`). */
+  regions: RegionView;
+  /**
+   * Where the pointer is, as a deflection from the middle of the canvas, and
+   * which note it is over. The parallax and the hover ring read it; neither is
+   * worth a React render.
+   */
+  pointer: { x: number; y: number; over: number };
   width: number;
   height: number;
   savedAt: number;
@@ -180,9 +277,35 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
   useEffect(() => {
     open.current = onOpen;
   });
+  /**
+   * The server's rows, for the card under the pointer.
+   *
+   * The model keeps only what the picture needs; the card also wants whatever
+   * else the reply happened to carry — topics today, a timestamp once the graph
+   * endpoint sends one. A ref, for the same reason as `onOpen`: the frame effect
+   * runs once and must not be torn down because a refetch returned a new array.
+   */
+  const rows = useRef(data.nodes);
+  useEffect(() => {
+    rows.current = data.nodes;
+  });
 
   /** Drives the reset control, which stays hidden until there is somewhere to return from. */
   const [adrift, setAdrift] = useState(false);
+  /** The card under the pointer, or null. */
+  const [card, setCard] = useState<Card | null>(null);
+  /** True once the tissue exists, so the legend only names what is on screen. */
+  const [tissue, setTissue] = useState(false);
+  /**
+   * Asks for a frame.
+   *
+   * The loop stops when there is nothing left to compute — the layout is at
+   * rest, no pulse is running, the camera is still. Everything that can change
+   * any of that calls this. Set by the frame effect; a no-op before it runs and
+   * after it is torn down, which is what keeps a view that has been left from
+   * ever scheduling another frame.
+   */
+  const wake = useRef<() => void>(() => {});
   /** Read by the frame loop; a ref so a new object literal per render restarts nothing. */
   const margin = useRef<Inset>(inset ?? EDGE);
   useEffect(() => {
@@ -229,11 +352,14 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         ? -1
         : (graph.index.get(same.graph.nodes[same.picked]!.key) ?? -1);
 
+    const builder = new SceneBuilder(graph);
+    builder.recent(recentNotes(data));
+
     engine.current = {
       graph,
       layout,
       activity: new Activity(graph),
-      builder: new SceneBuilder(graph),
+      builder,
       camera: same?.camera ?? fit(layout.bounds, rect.width, rect.height, margin.current),
       homed: same?.homed ?? true,
       glide: null,
@@ -244,18 +370,24 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       dirty: !(same === null && layout.rememberedShare === 1 && layout.settled),
       pan: null,
       hits: new HitIndex(layout),
+      regions: regionView(layout),
+      pointer: { x: 0, y: 0, over: -1 },
       width: rect.width,
       height: rect.height,
       savedAt: performance.now(),
       store,
       view,
     };
+    setCard(null);
+    wake.current();
   // `remember` is an object from the caller; its contents are what matter.
   }, [data, remember?.account, remember?.store, view, arrangement]);
 
   /** Fire new events — a flash at the place, sparks along its tracts. */
   useEffect(() => {
+    if (events.length === 0) return;
     engine.current?.activity.record(events);
+    wake.current();
   }, [events]);
 
   // The frame, the pointer and the camera.
@@ -267,14 +399,31 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     const paint = createCanvasRenderer(canvas);
     let frame = 0;
 
+    /**
+     * The loop only runs while there is something to compute.
+     *
+     * A settled brain with no pulse on it and a camera nobody is moving paints
+     * the same picture sixty times a second, which on a fanless machine is a
+     * warm lap for nothing. So the frame is scheduled rather than standing:
+     * `ask` puts one in the queue if none is queued, `loop` asks for the next
+     * only while something is still moving, and every input asks for one.
+     */
+    let stopped = false;
+    const ask = (): void => {
+      if (frame === 0 && !stopped) frame = requestAnimationFrame(loop);
+    };
+    wake.current = ask;
+
     const measure = (): void => {
       const e = engine.current;
       const rect = canvas.getBoundingClientRect();
       paint.resize(rect.width, rect.height);
-      if (e === null) return;
-      // Only the mapping changes. The layout has no idea how big the window is.
-      e.width = rect.width;
-      e.height = rect.height;
+      if (e !== null) {
+        // Only the mapping changes. The layout has no idea how big the window is.
+        e.width = rect.width;
+        e.height = rect.height;
+      }
+      ask();
     };
     measure();
 
@@ -300,47 +449,73 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     // A `setState` per frame would make the shell re-render sixty times a
     // second to decide the same thing again.
     let shown = false;
+    let grown = false;
 
-    const loop = (): void => {
+    // A declaration, not a const: `measure` asks for the first frame before
+    // this line is reached, and a const would still be in its dead zone.
+    function loop(): void {
+      frame = 0;
       const e = engine.current;
-      if (e !== null) {
-        const now = performance.now();
+      if (e === null) return;
+      const now = performance.now();
 
-        const home = fit(e.layout.bounds, e.width, e.height, margin.current);
-        if (e.glide !== null) {
-          const t = reduce ? 1 : (now - e.glide.at) / GLIDE_MS;
-          if (t >= 1) {
-            e.glide = null;
-            e.homed = true;
-          } else {
-            // Towards where home is now, not where it was when the glide began:
-            // the panel may be changing width at the same moment.
-            e.camera = between(e.glide.from, home, ease(t));
-          }
-        }
-        if (e.homed) e.camera = home;
-
-        if (!reduce) {
-          // Nothing to compute once it has come to rest; the frame still draws,
-          // because pulses still fire.
-          if (e.layout.step()) {
-            e.hits.invalidate();
-            e.dirty = true;
-          }
-          e.activity.advance();
-        }
-        persist(e, now, false);
-
-        paint.draw(e.builder.build(e.layout, e.activity, e.camera, e.picked, e.width, e.height));
-        const away = !e.homed;
-        if (away !== shown) {
-          shown = away;
-          setAdrift(away);
+      const home = fit(e.layout.bounds, e.width, e.height, margin.current);
+      if (e.glide !== null) {
+        const t = reduce ? 1 : (now - e.glide.at) / GLIDE_MS;
+        if (t >= 1) {
+          e.glide = null;
+          e.homed = true;
+        } else {
+          // Towards where home is now, not where it was when the glide began:
+          // the panel may be changing width at the same moment.
+          e.camera = between(e.glide.from, home, ease(t));
         }
       }
-      frame = requestAnimationFrame(loop);
-    };
-    frame = requestAnimationFrame(loop);
+      if (e.homed) e.camera = home;
+
+      let moving = false;
+      if (!reduce) {
+        // Nothing to compute once it has come to rest; the frame still draws,
+        // because pulses still fire.
+        if (e.layout.step()) {
+          e.hits.invalidate();
+          e.builder.moved();
+          e.dirty = true;
+          moving = true;
+        }
+        e.activity.advance();
+      }
+      persist(e, now, false);
+
+      const scene = e.builder.build(e.layout, e.activity, e.camera, e.picked, e.width, e.height, e.pointer);
+      paint.draw(scene);
+
+      const away = !e.homed;
+      if (away !== shown) {
+        shown = away;
+        setAdrift(away);
+      }
+      const has = scene.deco.dustCount > 0;
+      if (has !== grown) {
+        grown = has;
+        setTissue(has);
+      }
+
+      // What is left to do: the layout still settling, a camera move under way,
+      // a note being dragged, or a pulse still on screen. Anything else that
+      // changes the picture — the pointer, the wheel, a new event, a resize —
+      // asks for a frame of its own.
+      const busy =
+        moving ||
+        e.glide !== null ||
+        e.drag >= 0 ||
+        (!reduce &&
+          (e.activity.sparks.length > 0 ||
+            e.activity.fire.some((v) => v > 0) ||
+            e.activity.warm.some((v) => v > 0)));
+      if (busy) ask();
+    }
+    ask();
 
     /** The node under a screen point, or -1. */
     const locate = (event: { clientX: number; clientY: number }): number => {
@@ -355,8 +530,56 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       const e = engine.current;
       if (e === null || e.homed || e.glide !== null) return;
       e.glide = { from: e.camera, at: performance.now() };
+      ask();
     };
     home.current = goHome;
+
+    /**
+     * The card under the pointer.
+     *
+     * Two rules keep it from flickering. It is only rebuilt when the note under
+     * the pointer changes, or when the pointer has travelled far enough that the
+     * card would visibly lag behind it; and it is moved, never re-created, for
+     * the same note. A `setState` per pointer event would re-render the shell
+     * some hundred times a second for the same table.
+     */
+    const hover = (e: Engine, x: number, y: number): void => {
+      const at = toWorld(e.camera, x, y);
+      const over = e.hits.at(at.x, at.y, e.camera.scale);
+      e.pointer.over = over;
+      canvas.style.cursor = over >= 0 ? 'pointer' : '';
+      if (over < 0) {
+        setCard((held) => (held === null ? held : null));
+        return;
+      }
+      const node = e.graph.nodes[over]!;
+      const left = x + canvas.offsetLeft;
+      const top = y + canvas.offsetTop;
+      // Which way it opens, so it never runs off the canvas and takes its own
+      // content with it.
+      const flipX = x + CARD_W > e.width;
+      const flipY = y + CARD_H > e.height;
+      setCard((held) => {
+        if (held !== null && held.node === over && Math.hypot(held.x - left, held.y - top) < CARD_STEP) return held;
+        if (held !== null && held.node === over) return { ...held, x: left, y: top, flipX, flipY };
+        const kind = noteKind(node.folder, node.title);
+        const region = e.regions.regions[e.regions.regionOf[over] ?? -1];
+        return {
+          node: over,
+          x: left,
+          y: top,
+          flipX,
+          flipY,
+          title: node.title,
+          kind: kind.kind === 'folder' ? kind.label : copy.network.card.kind[kind.kind],
+          links: node.degree,
+          folder: node.folder,
+          region: region?.name ?? '',
+          topics: topicsOf(rows.current[over]),
+          edited: edited(rows.current[over], Date.now()),
+        };
+      });
+    };
 
     /**
      * Wheel and pinch, both anchored on the pointer.
@@ -384,6 +607,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       );
       if (next !== e.camera) e.homed = false;
       e.camera = next;
+      ask();
     };
 
     /**
@@ -411,22 +635,32 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       } else {
         e.pan = { x: event.clientX, y: event.clientY, fromX: event.clientX, fromY: event.clientY };
       }
+      ask();
     };
 
     const onMove = (event: PointerEvent): void => {
       const e = engine.current;
       if (e === null) return;
+      const rect = canvas.getBoundingClientRect();
+      // The parallax deflection. Kept on the engine rather than in React state:
+      // it moves with every pixel of pointer travel and changes nothing but
+      // three drawImage offsets.
+      e.pointer.x = e.width > 0 ? ((event.clientX - rect.left) / e.width - 0.5) * 2 : 0;
+      e.pointer.y = e.height > 0 ? ((event.clientY - rect.top) / e.height - 0.5) * 2 : 0;
+
       if (e.press !== null && e.drag < 0) {
         if (Math.hypot(event.clientX - e.press.x, event.clientY - e.press.y) <= DRAG_SLOP) return;
         e.drag = e.press.node;
         e.layout.hold(e.drag);
+        setCard(null);
       }
       if (e.drag >= 0) {
-        const rect = canvas.getBoundingClientRect();
         const at = toWorld(e.camera, event.clientX - rect.left, event.clientY - rect.top);
         e.layout.place(e.drag, at.x, at.y);
         e.hits.invalidate();
+        e.builder.moved();
         e.dirty = true;
+        ask();
         return;
       }
       if (e.pan !== null) {
@@ -434,7 +668,11 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         e.homed = false;
         e.camera = panBy(e.camera, event.clientX - e.pan.x, event.clientY - e.pan.y);
         e.pan = { ...e.pan, x: event.clientX, y: event.clientY };
+        ask();
+        return;
       }
+      hover(e, event.clientX - rect.left, event.clientY - rect.top);
+      ask();
     };
 
     const onUp = (event: PointerEvent): void => {
@@ -454,9 +692,11 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
           e.hits.invalidate();
         }
       }
+      if (e.drag >= 0) e.builder.moved();
       e.drag = -1;
       e.press = null;
       e.pan = null;
+      ask();
     };
 
     const onDouble = (event: MouseEvent): void => {
@@ -465,8 +705,22 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       if (e !== null && hit >= 0) open.current(e.graph.nodes[hit]!.owner, e.graph.nodes[hit]!.path);
     };
 
+    const onLeave = (): void => {
+      const e = engine.current;
+      if (e === null) return;
+      e.pointer.over = -1;
+      e.pointer.x = 0;
+      e.pointer.y = 0;
+      setCard(null);
+      ask();
+    };
+
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && engine.current !== null) engine.current.picked = -1;
+      if (event.key === 'Escape' && engine.current !== null) {
+        engine.current.picked = -1;
+        setCard(null);
+      }
+      ask();
       if (event.key === '0' || event.key === 'Escape') goHome();
     };
 
@@ -480,12 +734,19 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     canvas.addEventListener('pointermove', onMove);
     canvas.addEventListener('dblclick', onDouble);
     canvas.addEventListener('keydown', onKey);
+    canvas.addEventListener('pointerleave', onLeave);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
     window.addEventListener('pagehide', onLeaving);
 
     return () => {
+      // No frame may outlive the view. `stopped` closes the door behind the
+      // cancel: a listener that fires while React is tearing down would
+      // otherwise queue one more.
+      stopped = true;
+      wake.current = () => {};
       cancelAnimationFrame(frame);
+      frame = 0;
       onLeaving();
       observer?.disconnect();
       window.removeEventListener('resize', measure);
@@ -497,6 +758,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('dblclick', onDouble);
       canvas.removeEventListener('keydown', onKey);
+      canvas.removeEventListener('pointerleave', onLeave);
       home.current = () => {};
       paint.dispose();
     };
@@ -513,6 +775,62 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         >
           {copy.network.resetView}
         </button>
+      )}
+      {/* The tissue is named as decoration wherever it is on screen. */}
+      {tissue && (
+        <p className="braindeco">
+          <i />
+          {copy.network.decoration}
+        </p>
+      )}
+      {card !== null && (
+        <div
+          className="braincard"
+          data-flip-x={card.flipX}
+          data-flip-y={card.flipY}
+          style={{ left: card.x, top: card.y }}
+          role="presentation"
+        >
+          <p className="braincard-title">{card.title}</p>
+          <dl>
+            <dt>{copy.network.card.type}</dt>
+            <dd>{card.kind}</dd>
+            <dt>{copy.network.card.linksLabel}</dt>
+            <dd>{copy.network.card.links(card.links)}</dd>
+            {card.folder !== '' && (
+              <>
+                <dt>{copy.network.card.folder}</dt>
+                <dd className="braincard-path">{card.folder}</dd>
+              </>
+            )}
+            {card.region !== '' && (
+              <>
+                <dt>{copy.network.card.region}</dt>
+                <dd>{card.region}</dd>
+              </>
+            )}
+            {/* Appears the day the graph endpoint carries a timestamp. */}
+            {card.edited !== null && (
+              <>
+                <dt>{copy.network.card.edited}</dt>
+                <dd>{card.edited}</dd>
+              </>
+            )}
+            <dt>{copy.network.card.topics}</dt>
+            <dd>
+              {card.topics.length === 0 ? (
+                <span className="braincard-none">{copy.network.card.noTopics}</span>
+              ) : (
+                card.topics.map((t) => (
+                  <span className="braincard-tag" key={t}>
+                    #{t}
+                  </span>
+                ))
+              )}
+            </dd>
+          </dl>
+          <p className="braincard-open">{copy.network.card.open}</p>
+        </div>
       )}
     </>
   );

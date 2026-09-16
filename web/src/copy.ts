@@ -308,6 +308,42 @@ export const copy = {
       `${notes} notes · ${links} links · ${loose} without a connection`,
     doubleClick: 'Double-click opens the note',
     loading: 'Relationships are loading…',
+    /**
+     * The tissue is decoration and says so, in the legend, in as many words.
+     *
+     * Two thirds of what fills the outline is fog, folds, grain and branches
+     * grown procedurally around the real notes. It is never clickable and it
+     * fades out as you come closer. Naming it here is the condition under which
+     * it is allowed to exist at all: nobody should have to wonder which of the
+     * points on this canvas are their notes.
+     */
+    decoration: 'cortex tissue (decoration, not notes)',
+    /** The card under the pointer. */
+    card: {
+      type: 'Type',
+      links: (count: number) => `${count} linked ${count === 1 ? 'note' : 'notes'}`,
+      linksLabel: 'Links',
+      folder: 'Folder',
+      region: 'Region',
+      topics: 'Topics',
+      noTopics: 'none',
+      edited: 'Last edited',
+      open: 'Double-click to open',
+      today: 'today',
+      yesterday: 'yesterday',
+      daysAgo: (days: number) => `${days} days ago`,
+      /** What a note is, from its folder (see `brain/kind.ts`). */
+      kind: {
+        project: 'Project',
+        client: 'Client project',
+        archived: 'Archived project',
+        area: 'Area',
+        resource: 'Resource',
+        map: 'Map of content',
+        rules: 'Rules',
+        note: 'Note',
+      },
+    },
   },
 
   settings: {
