@@ -446,12 +446,19 @@ export interface RegionGrouping {
 }
 
 /**
- * A group with fewer notes than this is a fragment beside regions of twenty,
- * and joins the group it links to most.
+ * A region with fewer notes than this is a fragment beside regions of twenty,
+ * and joins the group it links to most; a cut that would leave a half this
+ * small is not made.
+ *
+ * Eight rather than the five it started at. A region of five is a cell of the
+ * silhouette with one small knot in it, and next to its neighbours it reads as
+ * empty — "Tech Knowledge" with five notes did, in the first integrated build.
  */
-const MERGE_BELOW = 5;
+const MERGE_BELOW = 8;
 /** A group well over this is cut in two. The prototype's number. */
 const SPLIT_ABOVE = 20;
+/** Where a cut group's first half ends, as a share of its notes. */
+const CUT_AT = 0.375;
 /** Never more cells than this: past nine the labels stop fitting round the rim. */
 const MAX_REGIONS = 9;
 /**
@@ -495,6 +502,12 @@ interface Draft {
   clusters: number[];
   notes: number;
   name: string;
+  /**
+   * Whether the name is a top-level folder's ("Projects") rather than a
+   * subfolder's ("Homelab"). A top-level name is a kind of note, a subfolder's a
+   * topic, and the half of a cut group is named differently for each.
+   */
+  kind: 'kind' | 'topic';
 }
 
 export function groupRegions(
@@ -549,6 +562,7 @@ export function groupRegions(
       clusters: list,
       notes: list.reduce((sum, c) => sum + clusters[c]!.members.length, 0),
       name: '',
+      kind: 'topic' as const,
     }));
 
   // Fragments join the group they link to most; a sibling under the same
@@ -587,10 +601,10 @@ export function groupRegions(
     drafts.splice(small, 1);
   }
 
-  // Named before the cut, so both halves of a split group carry the group's
-  // name — "Projects" twice, rather than one half named after whatever tag
-  // happened to land in it.
-  for (const draft of drafts) draft.name = groupName(draft, clusters, nodes, place, topTotals);
+  // Named before the cut: the group's name is what a half falls back to, and
+  // what a half's own name must not collide with.
+  for (const draft of drafts) Object.assign(draft, groupName(draft, clusters, nodes, place, topTotals));
+  const taken = new Set(drafts.map((draft) => draft.name.toLowerCase()));
 
   // One cut per group, never a cut of a cut. Splitting a half again would let a
   // group of forty end up as one region of twenty-three and four of four, and
@@ -608,16 +622,18 @@ export function groupRegions(
     const [first, second] = splitAlongClusters(draft.clusters, clusters, between, pairKey);
     const notesIn = (list: number[]): number => list.reduce((sum, c) => sum + clusters[c]!.members.length, 0);
     if (first.length === 0 || second.length === 0) continue;
+    if (Math.min(notesIn(first), notesIn(second)) < MERGE_BELOW) continue;
     const halves: Draft[] = [first, second].map((list, k) => ({
       key: draft.key,
       half: k,
       clusters: list,
       notes: notesIn(list),
       name: draft.name,
+      kind: draft.kind,
     }));
     halves.forEach((half, k) => {
       const tag = distinguishingTag(memberKeys(half.clusters), memberKeys(halves[1 - k]!.clusters), tags);
-      if (tag !== null) half.name = `${draft.name}: ${prettyTag(tag)}`;
+      if (tag !== null) half.name = halfName(draft, prettyTag(tag), taken);
     });
     cut.set(draft, halves);
   }
@@ -675,17 +691,40 @@ function groupName(
   nodes: BrainGraph['nodes'],
   place: Array<{ top: string; group: string }>,
   topTotals: Map<string, number>,
-): string {
+): { name: string; kind: 'kind' | 'topic' } {
   const members = draft.clusters.flatMap((c) => clusters[c]!.members);
   const top = dominant(members.map((i) => place[i]!.top)).value;
   const held = members.filter((i) => place[i]!.top === top).length;
   const topName = prettyFolder(top.slice(top.indexOf('\u0000') + 1));
-  if (topName !== '' && held / (topTotals.get(top) ?? held) >= TOP_FOLDER_SHARE) return topName;
+  if (topName !== '' && held / (topTotals.get(top) ?? held) >= TOP_FOLDER_SHARE) return { name: topName, kind: 'kind' };
   const sub = dominant(members.filter((i) => place[i]!.top === top).map((i) => place[i]!.group)).value;
   const subName = prettyFolder(sub.slice(sub.lastIndexOf('\u0000') + 1));
-  if (subName !== '') return subName;
-  if (topName !== '') return topName;
-  return nodes[hubOf(members, nodes)]!.title;
+  if (subName !== '') return { name: subName, kind: 'topic' };
+  if (topName !== '') return { name: topName, kind: 'kind' };
+  return { name: nodes[hubOf(members, nodes)]!.title, kind: 'topic' };
+}
+
+/**
+ * What to call the half of a cut group that a tag tells apart: a name that
+ * stands on its own, without the "Group: tag" pattern of a file system.
+ *
+ *  - The half of a *topic* is named after its tag alone. The halves of
+ *    "Homelab" are "Proxmox" and "Networking"; nobody needs to be told those are
+ *    homelab things.
+ *  - The half of a *kind* of note names the tag and the kind: "AI Projects",
+ *    "Homelab Projects". "AI" alone does not say what is in the cell.
+ *  - So does a short acronym, for the same reason: "AI Services", not "AI".
+ *  - A tag that is already the name of another region cannot stand alone —
+ *    "Homelab" next to "Homelab" says two different things with one word — so it
+ *    names the kind of note too, with the group's last word: "Homelab Services".
+ */
+function halfName(group: Draft, tag: string, taken: ReadonlySet<string>): string {
+  const words = group.name.split(/\s+/);
+  const noun = words[words.length - 1]!;
+  // An acronym of two or three letters is a qualifier, not a name: "AI" alone
+  // does not say what is in the cell, "AI Services" does.
+  if (group.kind === 'kind' || tag.length <= 3 || taken.has(tag.toLowerCase())) return `${tag} ${noun}`;
+  return tag;
 }
 
 /**
@@ -744,16 +783,20 @@ function splitAlongClusters(
   order.unshift(seedA);
   order.push(seedB);
 
+  // The cut goes after the first cluster that brings the first half to three
+  // eighths of the notes — not at the most even point. The most even point is
+  // exactly where one more note tips the balance: a capture anywhere in the
+  // group moved it past a two-note cluster for one in six captures on the real
+  // vault. A threshold only moves when the running count crosses it, and it
+  // still leaves both halves between three and five eighths.
   const total = order.reduce((sum, c) => sum + size(c), 0);
   let running = 0;
-  let cut = 1;
-  let best = Infinity;
+  let cut = order.length - 1;
   for (let k = 1; k < order.length; k += 1) {
     running += size(order[k - 1]!);
-    const gap = Math.abs(running * 2 - total);
-    if (gap < best) {
-      best = gap;
+    if (running >= total * CUT_AT) {
       cut = k;
+      break;
     }
   }
   return [order.slice(0, cut), order.slice(cut)];

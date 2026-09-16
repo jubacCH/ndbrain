@@ -31,16 +31,14 @@
  *     the halves carry a similar number of notes; the region that is mostly
  *     connective tissue — the one whose notes link outwards more than any
  *     other's — is pinned at the fissure, because that is what it is.
- *  2. *Places.* Each cell is filled with a Poisson-disk sample of its own
- *     points, at the largest spacing that still yields about a third more places
- *     than the region has notes. The places therefore cover the **whole** cell,
- *     out to the rim, rather than a disc around a centre.
- *  3. *Notes.* The region's hub takes the place nearest the cell's centre;
- *     about one note in four and a half with two or more links inside the region
- *     becomes a secondary core and takes the free place furthest from the cores
- *     already set; every other note takes the free place nearest the core or
- *     neighbour it is most strongly linked to. That is what makes the dense
- *     knots that read as star clusters.
+ *  2. *Cores.* Each region gets its hub and at most two secondary cores, its
+ *     best-linked notes, spread over its cell: the hub nearest the cell's
+ *     middle, every further core as far from the others as the cell allows.
+ *  3. *Galaxies.* Every other note belongs to the core its strongest links lead
+ *     to and is laid out round it on a sunflower whose radius grows with the
+ *     square root of its leaves. Dense star clusters with dark tissue between
+ *     them — the first version of this phase spread one note per place over the
+ *     whole cell, which carried the outline and read as an even scatter.
  *
  * The simulation is then a **fine correction**, not the placement: it loosens
  * overlaps, lets the springs between regions pull, and keeps a note inside its
@@ -178,23 +176,35 @@ const LLOYD_STEPS = 40;
 const LLOYD_RATE = 0.7;
 /** Where the connective region sits, measured out from the fissure. */
 const FISSURE_CELL = 0.22;
-/** How many more places than notes a cell is filled with. */
-const SITE_SURPLUS = 1.35;
-/** The search for the Poisson spacing, and how finely it is resolved. */
-const SPACING_MIN = 0.02;
-const SPACING_MAX = 0.6;
-const SPACING_STEPS = 14;
-/** The step the spacing is rounded down to: about one note's worth of it. */
-const SPACING_QUANT = 0.004;
 /**
- * A region whose notes hardly link each other gathers round its core instead of
- * spreading over the whole cell; the dendrites and the fog fill the rest.
+ * How many cores a region gets: about one per this many notes with at least
+ * `CORE_MIN_LINKS` links inside the region, and never more than `MAX_CORES`.
+ *
+ * One to three. Every core is a star cluster of its own, and the picture reads
+ * as regions only when a region is one to three bright knots with tissue
+ * between them; at one core per four and a half notes and no ceiling a region
+ * of twenty-three got five, and five small knots in one cell are an even
+ * scatter again.
  */
-const SPARSE_LINKS = 0.7;
-const SPARSE_CELL = 0.66;
-/** About one core per this many notes, each with at least this many links inside the region. */
 const NOTES_PER_CORE = 4.5;
 const CORE_MIN_LINKS = 2;
+const MAX_CORES = 3;
+/**
+ * The step of the sunflower a core's leaves are laid out in, world units: the
+ * k-th leaf sits `LEAF_STEP · √(k + 1)` from its core, so a knot's radius grows
+ * with the square root of its leaves and its density stays the same. About two
+ * cell bodies — close enough to read as one star cluster, far enough apart that
+ * the bodies do not merge into a blob.
+ */
+const LEAF_STEP = 15;
+/** The golden angle: consecutive leaves never line up in spokes. */
+const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+/**
+ * How far out of the middle of its cell a core may sit, as a share of the cell's
+ * reach. The knots spread over the cell, but a knot centred on the rim would
+ * have half its leaves pulled back in and look cut off.
+ */
+const CORE_REACH = 0.7;
 
 /**
  * Repulsion between two notes at distance d is REPULSION / d², out to CUTOFF.
@@ -213,8 +223,8 @@ const CORE_MIN_LINKS = 2;
  */
 const REPULSION = 1600;
 const CUTOFF = 230;
-const BRAIN_REPULSION = 500;
-const BRAIN_CUTOFF = 90;
+const BRAIN_REPULSION = 150;
+const BRAIN_CUTOFF = 45;
 /**
  * Notes of different clusters push a little harder, which opens a furrow
  * between regions. Only a little: much harder, and linked regions end up far
@@ -225,11 +235,11 @@ const APART = 2;
 const SPRING = 0.012;
 const REST = 70;
 /**
- * A link inside a region rests at this share of a step between the places of
- * its cell, rather than at the fixed `REST`. Under one: linked notes sit a
- * little closer than two unrelated ones, which is what makes a galaxy.
+ * Where a link inside a region comes to rest, world units: a little over a step
+ * of a galaxy's sunflower. Not the fixed `REST`, which is four times that and
+ * would prise every knot open as fast as it formed.
  */
-const WITHIN_REGION_REST = 0.75;
+const KNOT_REST = LEAF_STEP * 1.6;
 /**
  * A link between clusters pulls less than one inside a cluster, and one across
  * the fissure much less. It is still drawn at full strength; but at full pull a
@@ -292,7 +302,7 @@ const FROZEN = 0.004;
  * temperature the notes drifted off their places within a few dozen steps and
  * the cells stopped reading as cells.
  */
-const JOIN = 0.4;
+const JOIN = 0.12;
 const JOIN_INERTIA = 0.45;
 /**
  * The pull back towards its remembered place on a remembered note that may move
@@ -404,10 +414,6 @@ export class BrainLayout {
   #cellY: Float64Array;
   #cellW: Float64Array;
   #cellR: Float64Array;
-  /** Per region: the hash of its identity, for the Poisson sample's order. */
-  #regionSeed = new Uint32Array(0);
-  /** Per region: the distance between neighbouring places in its cell, world units. */
-  #spacing = new Float64Array(0);
   /**
    * The grid points inside the outline, normalised, and the region each fell to.
    *
@@ -450,7 +456,6 @@ export class BrainLayout {
     this.#cellY = new Float64Array(k);
     this.#cellW = new Float64Array(k);
     this.#cellR = new Float64Array(k);
-    this.#spacing = new Float64Array(k);
     this.nodeSide = new Int8Array(n);
     this.#ax = new Float64Array(n);
     this.#ay = new Float64Array(n);
@@ -550,15 +555,14 @@ export class BrainLayout {
       if (this.nodeSide[e.a] !== this.nodeSide[e.b]) return SPRING * ACROSS_FISSURE;
       return of[e.a] === of[e.b] ? SPRING : SPRING * ACROSS_CLUSTERS;
     }));
-    // Where a link comes to rest. Inside a region that is a step across its own
-    // cell, not a fixed length: the places are what decide how dense a region
-    // is, and a spring that wanted seventy units between two notes standing
-    // forty apart pushed every galaxy back open as fast as it formed.
+    // Where a link comes to rest. Inside a region that is a step of a galaxy,
+    // not a fixed length: a spring that wanted seventy units between two notes
+    // of one star cluster pushed every cluster back open as fast as it formed.
     this.#springRest = Float64Array.from(edges.map(({ e }) => {
       if (this.arrangement !== 'brain') return REST;
       const of = this.regionOf;
       if (of[e.a] !== of[e.b] || this.nodeSide[e.a] !== this.nodeSide[e.b]) return REST;
-      return Math.min(REST, this.#spacing[of[e.a]!]! * WITHIN_REGION_REST);
+      return KNOT_REST;
     }));
 
     this.#seed(remembered);
@@ -829,16 +833,7 @@ export class BrainLayout {
     for (let r = 0; r < k; r += 1) {
       const covered = Math.max(area[r]!, 1) * SAMPLE_STEP * SAMPLE_STEP;
       this.#cellR[r] = Math.sqrt(covered / Math.PI) * u;
-      // How far apart the places in this cell will be: its area shared between
-      // the notes and the surplus of free places. Worked out rather than taken
-      // from the Poisson search, because a remembered brain never runs that
-      // search and the springs still have to know what a step across the cell is.
-      const places = Math.max(1, groups[r]!.members.length) * SITE_SURPLUS;
-      this.#spacing[r] = Math.sqrt((covered * u * u) / places);
     }
-    // Seeded from the folder group, for the same reason the ring is ordered by
-    // it: a region re-draws every place in its cell when its seed changes.
-    this.#regionSeed = Uint32Array.from(groups, (group) => hash32(`${group.group}#${group.half}`));
     return regions;
   }
 
@@ -916,15 +911,23 @@ export class BrainLayout {
   }
 
   /**
-   * Fills every cell with places and puts its notes on them.
+   * Gathers every region's notes into one to three dense star clusters.
    *
-   * The prototype's galaxies, and the step that replaced "lay each cluster out
-   * on its own and let the shape emerge". A Poisson-disk sample of the cell's
-   * own points at the largest spacing that still gives about a third more places
-   * than notes; the hub takes the place nearest the cell's middle; every core
-   * takes the free place furthest from the cores already set, which is what
-   * spreads the knots over the cell instead of stacking them; and every leaf
-   * takes the free place nearest the core it hangs off.
+   * The first version of this put every note on a Poisson-disk place over the
+   * whole cell. That carried the outline, but side by side with the target it
+   * was an even scatter: no knot anywhere, no dark tissue between them, and no
+   * region an eye could pick out. Since the renderer draws the outline itself
+   * now (the cortex tissue clips against `inside`), the notes are free to
+   * gather, which is where the contrast of the target picture comes from.
+   *
+   * So a region gets a hub and at most two secondary cores — its best-linked
+   * notes — spread over its cell: the hub at the point of the cell nearest its
+   * middle, every further core at the point furthest from the cores already
+   * set. Every other note belongs to the core its chain of strongest links leads
+   * to, and is laid out round it on a sunflower: the k-th leaf at
+   * `LEAF_STEP · √(k + 1)`, turned by the golden angle, so a knot keeps the same
+   * density whatever its size. A leaf the sunflower would put outside the
+   * silhouette or into the fissure is drawn in towards its core until it is not.
    *
    * Only for a brain nobody has seen. A remembered one has its positions, and
    * whatever is new is dropped beside what it links to (`#seed`).
@@ -937,7 +940,6 @@ export class BrainLayout {
       const m = members.length;
       if (m === 0) continue;
       const r = region.id;
-      const seed = this.#regionSeed[r]!;
       const inRegion = new Set(members);
       // Members arrive in hash order; their position in that list is the only
       // tie-break used below, so nothing depends on the server's order.
@@ -957,7 +959,7 @@ export class BrainLayout {
       }
 
       const hub = region.hub;
-      const coreCount = Math.max(1, Math.round(m / NOTES_PER_CORE));
+      const coreCount = Math.min(MAX_CORES, Math.max(1, Math.round(m / NOTES_PER_CORE)));
       const cores = members
         .filter((i) => i !== hub && inDegree.get(i)! >= CORE_MIN_LINKS)
         .sort(
@@ -1016,100 +1018,84 @@ export class BrainLayout {
         rest = rest.filter((i) => !down.has(i));
       }
 
-      let cell: number[] = [];
+      // Which core each note's galaxy is: follow the chain of parents to the
+      // first core on it. A leaf of a leaf belongs to the same star cluster as
+      // the leaf it hangs off.
+      const galaxyOf = new Map<number, number>();
+      for (const i of members) {
+        let at = i;
+        for (let guard = 0; guard <= m && !isCore.has(at); guard += 1) at = parent.get(at) ?? hub;
+        galaxyOf.set(i, isCore.has(at) ? at : hub);
+      }
+      const leaves = new Map<number, number[]>([...isCore].map((c) => [c, []]));
+      // In placement order, which already puts the best-connected first: the
+      // notes nearest a core are the ones most tied to it.
+      for (const i of order) if (!isCore.has(i)) leaves.get(galaxyOf.get(i)!)!.push(i);
+      const knot = (c: number): number => LEAF_STEP * Math.sqrt(leaves.get(c)!.length + 1);
+
+      const cell: number[] = [];
       for (let p = 0; p < this.#sampleOf.length; p += 1) if (this.#sampleOf[p] === r) cell.push(p);
-      if (cell.length === 0) {
-        // No cell at all — a region alone in a half too small to sample. A ring
-        // around its centre is honest and never a divide by zero.
-        order.forEach((i, p) => {
-          const phi = (p / m) * Math.PI * 2 + 0.6;
-          this.x[i] = region.cx + Math.cos(phi) * this.#cellR[r]! * 0.6;
-          this.y[i] = region.cy + Math.sin(phi) * this.#cellR[r]! * 0.6;
-        });
-        continue;
-      }
+      let far = 0;
+      for (const p of cell) far = Math.max(far, Math.hypot(this.#sampleX[p]! * u - region.cx, this.#sampleY[p]! * u - region.cy));
 
-      // A region whose notes hardly link each other gathers round its core.
-      let internal = 0;
-      for (const i of members) internal += inDegree.get(i)!;
-      if (internal / 2 < SPARSE_LINKS * m) {
-        let far = 0;
-        for (const p of cell) far = Math.max(far, Math.hypot(this.#sampleX[p]! * u - region.cx, this.#sampleY[p]! * u - region.cy));
-        const inner = cell.filter(
-          (p) => Math.hypot(this.#sampleX[p]! * u - region.cx, this.#sampleY[p]! * u - region.cy) < SPARSE_CELL * far,
-        );
-        if (inner.length >= m) cell = inner;
-      }
-
-      let lo = SPACING_MIN;
-      let hi = SPACING_MAX;
-      for (let step = 0; step < SPACING_STEPS; step += 1) {
-        const mid = (lo + hi) / 2;
-        if (poissonPick(this.#sampleX, this.#sampleY, cell, mid, seed).length >= m * SITE_SURPLUS) lo = mid;
-        else hi = mid;
-      }
-      // Rounded down to a step, so a capture usually leaves the spacing — and
-      // with it every place in the cell — exactly where it was. The search
-      // resolves far finer than one note's worth of spacing, and without this
-      // one more note in a region re-drew every place in it.
-      lo = Math.max(SPACING_MIN, Math.floor(lo / SPACING_QUANT) * SPACING_QUANT);
-      let sites = poissonPick(this.#sampleX, this.#sampleY, cell, lo, seed);
-      if (sites.length < m) sites = cell;
-
-      const freeX = sites.map((p) => this.#sampleX[p]! * u);
-      const freeY = sites.map((p) => this.#sampleY[p]! * u);
+      // Where the cores go. Points of the cell well inside it, and deep enough in
+      // the silhouette that the knot fits; failing that, any point of the cell;
+      // failing even that, the cell's centre.
       const coreX: number[] = [];
       const coreY: number[] = [];
-      for (const i of order) {
-        if (freeX.length === 0) {
-          // More notes than places: stack the rest just off their parent, where
-          // the repulsion will open them out.
-          const from = parent.get(i) ?? hub;
-          const phi = unit(nodes[i]!.key, 'spill') * Math.PI * 2;
-          this.x[i] = this.x[from]! + Math.cos(phi) * NUDGE * 0.4;
-          this.y[i] = this.y[from]! + Math.sin(phi) * NUDGE * 0.4;
-          continue;
-        }
-        let pick = 0;
+      for (const c of [hub, ...cores]) {
+        const need = knot(c) * 0.8;
+        let candidates = cell.filter(
+          (p) =>
+            Math.hypot(this.#sampleX[p]! * u - region.cx, this.#sampleY[p]! * u - region.cy) <= CORE_REACH * far &&
+            outlineDepth(this.#sampleX[p]!, this.#sampleY[p]!) * u >= need &&
+            Math.abs(this.#sampleX[p]!) * u >= FISSURE * MEDIAL_CLEAR * u + need,
+        );
+        if (candidates.length === 0) candidates = cell;
+        let px = region.cx;
+        let py = region.cy;
         let best = -Infinity;
-        if (i === hub) {
-          for (let s = 0; s < freeX.length; s += 1) {
-            const v = -((freeX[s]! - region.cx) ** 2 + (freeY[s]! - region.cy) ** 2);
-            if (v > best) {
-              best = v;
-              pick = s;
-            }
+        for (const p of candidates) {
+          const x = this.#sampleX[p]! * u;
+          const y = this.#sampleY[p]! * u;
+          let score: number;
+          if (coreX.length === 0) {
+            score = -((x - region.cx) ** 2 + (y - region.cy) ** 2);
+          } else {
+            score = Infinity;
+            for (let k = 0; k < coreX.length; k += 1) score = Math.min(score, (x - coreX[k]!) ** 2 + (y - coreY[k]!) ** 2);
           }
-        } else if (isCore.has(i) && coreX.length > 0 && freeX.length > 1) {
-          for (let s = 0; s < freeX.length; s += 1) {
-            let nearest = Infinity;
-            for (let c = 0; c < coreX.length; c += 1) {
-              const d = (freeX[s]! - coreX[c]!) ** 2 + (freeY[s]! - coreY[c]!) ** 2;
-              if (d < nearest) nearest = d;
-            }
-            if (nearest > best) {
-              best = nearest;
-              pick = s;
-            }
-          }
-        } else {
-          const from = parent.get(i) ?? hub;
-          for (let s = 0; s < freeX.length; s += 1) {
-            const v = -((freeX[s]! - this.x[from]!) ** 2 + (freeY[s]! - this.y[from]!) ** 2);
-            if (v > best) {
-              best = v;
-              pick = s;
-            }
+          if (score > best) {
+            best = score;
+            px = x;
+            py = y;
           }
         }
-        this.x[i] = freeX[pick]!;
-        this.y[i] = freeY[pick]!;
-        if (isCore.has(i)) {
-          coreX.push(freeX[pick]!);
-          coreY.push(freeY[pick]!);
-        }
-        freeX.splice(pick, 1);
-        freeY.splice(pick, 1);
+        coreX.push(px);
+        coreY.push(py);
+        this.x[c] = px;
+        this.y[c] = py;
+      }
+
+      // The leaves, on a sunflower round their core.
+      for (const c of [hub, ...cores]) {
+        const phase = (hash32(nodes[c]!.key) / 0x1_0000_0000) * Math.PI * 2;
+        leaves.get(c)!.forEach((i, k) => {
+          const radius = LEAF_STEP * Math.sqrt(k + 1);
+          const angle = phase + k * GOLDEN;
+          let dx = Math.cos(angle) * radius;
+          let dy = Math.sin(angle) * radius;
+          for (let pull = 0; pull < 12; pull += 1) {
+            const x = this.x[c]! + dx;
+            const y = this.y[c]! + dy;
+            const clear = Math.abs(x) >= FISSURE * MEDIAL_CLEAR * u && Math.sign(x) === Math.sign(this.x[c]!);
+            if (clear && withinOutline(x / u, y / u, WALL)) break;
+            dx *= 0.8;
+            dy *= 0.8;
+          }
+          this.x[i] = this.x[c]! + dx;
+          this.y[i] = this.y[c]! + dy;
+        });
       }
     }
   }
@@ -1461,68 +1447,6 @@ function nearestCell(regions: readonly Region[], weight: Float64Array, x: number
     }
   }
   return best;
-}
-
-/**
- * A Poisson-disk sample of a cell: the points of it that are at least `spacing`
- * apart, taken in an order that depends only on the region's identity.
- *
- * The naive version compared each candidate against every point accepted so far
- * and cost a few million comparisons per layout; this buckets the accepted
- * points by `spacing`, so a candidate only looks at the nine buckets around it.
- * The two give the same answer for the same order.
- */
-function poissonPick(
-  px: Float64Array,
-  py: Float64Array,
-  points: readonly number[],
-  spacing: number,
-  seed: number,
-): number[] {
-  const order = points.slice();
-  let state = seed >>> 0 || 1;
-  for (let i = order.length - 1; i > 0; i -= 1) {
-    state ^= state << 13;
-    state >>>= 0;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    state >>>= 0;
-    const j = state % (i + 1);
-    const swap = order[i]!;
-    order[i] = order[j]!;
-    order[j] = swap;
-  }
-  const inv = 1 / spacing;
-  const buckets = new Map<number, number[]>();
-  // The grid runs over normalised coordinates, well inside ±2, so a bucket
-  // index fits in a few bits either way; the offset keeps it non-negative.
-  const key = (gx: number, gy: number): number => (gx + 4096) * 8192 + (gy + 4096);
-  const out: number[] = [];
-  for (const p of order) {
-    const gx = Math.floor(px[p]! * inv);
-    const gy = Math.floor(py[p]! * inv);
-    let ok = true;
-    for (let a = -1; a <= 1 && ok; a += 1) {
-      for (let b = -1; b <= 1 && ok; b += 1) {
-        const bucket = buckets.get(key(gx + a, gy + b));
-        if (bucket === undefined) continue;
-        for (const q of bucket) {
-          const dx = px[p]! - px[q]!;
-          const dy = py[p]! - py[q]!;
-          if (dx * dx + dy * dy < spacing * spacing) {
-            ok = false;
-            break;
-          }
-        }
-      }
-    }
-    if (!ok) continue;
-    out.push(p);
-    const bucket = buckets.get(key(gx, gy));
-    if (bucket === undefined) buckets.set(key(gx, gy), [p]);
-    else bucket.push(p);
-  }
-  return out;
 }
 
 /**
