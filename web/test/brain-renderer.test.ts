@@ -84,6 +84,8 @@ const edge = (alpha: number, y: number): SceneEdge => {
     w1: 0.5,
     alpha,
     tail: alpha * 0.32,
+    restAlpha: alpha,
+    restTail: alpha * 0.32,
     colour: TISSUE,
     depth: 1,
     strands: false,
@@ -113,6 +115,18 @@ const sceneWith = (edges: SceneEdge[]): Scene => ({
 });
 
 describe('the canvas renderer', () => {
+  it('paints a link at rest into the layer, and what a spark adds over it, live', () => {
+    const { canvas, fills } = recorder();
+    const paint = createCanvasRenderer(canvas);
+    paint.resize(400, 300);
+    // A held-back link with a spark on it: resting at a ghost, lit to 0.5.
+    const lit = { ...edge(0.012, 20), alpha: 0.5, tail: 0.16 };
+    paint.draw(sceneWith([lit]));
+    // Two fills: the resting link, then the spark's share on top. Never the lit
+    // value in the layer, which would outlive the spark.
+    expect(fills.map((f) => f.alpha)).toEqual([0.012, 0.5 - 0.012]);
+  });
+
   it('fills each tract at the opacity the scene gave it, ghosts included', () => {
     const { canvas, fills, alpha } = recorder();
     const paint = createCanvasRenderer(canvas);
