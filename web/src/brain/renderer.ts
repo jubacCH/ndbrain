@@ -36,6 +36,7 @@
 
 import { CachedLayer, Sprites } from './bloom';
 import type { Decoration } from './deco';
+import { DENDRITE_ALPHA, DENDRITE_TIP_ALPHA, DENDRITE_TIP_WIDTH, DENDRITE_WIDTH } from './deco';
 import type { Depth, Rgb, Scene, SceneEdge, SceneNode } from './scene';
 
 export interface BrainRenderer {
@@ -254,8 +255,8 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     for (let i = 0; i < deco.dendriteCount; i += 1) {
       const d = deco.dendrites[i * 6 + 4]!;
       const warm = deco.dendrites[i * 6 + 5]! === 1;
-      g.lineWidth = (1.3 + (0.4 - 1.3) * d) * grain;
-      const a = (0.48 + (0.12 - 0.48) * d) * dim;
+      g.lineWidth = (DENDRITE_WIDTH + (DENDRITE_TIP_WIDTH - DENDRITE_WIDTH) * d) * grain;
+      const a = (DENDRITE_ALPHA + (DENDRITE_TIP_ALPHA - DENDRITE_ALPHA) * d) * dim;
       g.strokeStyle = warm ? `rgba(220,185,120,${a})` : `rgba(100,215,230,${a})`;
       g.beginPath();
       g.moveTo(deco.dendrites[i * 6]!, deco.dendrites[i * 6 + 1]!);

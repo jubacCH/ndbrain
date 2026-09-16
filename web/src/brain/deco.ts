@@ -12,8 +12,12 @@
  * Four rules keep it honest, and they are the reason Julian agreed to have it at
  * all:
  *
- *  1. **Never brighter than a note.** The brightest dendrite at the cell body is
- *     dimmer than the faintest real link, and no grain has a white core.
+ *  1. **Never mistakable for a link or a note.** No grain has a white core, and
+ *     no branch is drawn wider than the thinnest tract or longer than a note's
+ *     own radius before it fades out. Its opacity at the cell body sits between
+ *     a held-back link and a quiet one — the separation that matters is width,
+ *     length and which layer it is in, and those are checked in the test rather
+ *     than asserted here.
  *  2. **Never clickable.** It lives in its own layer and the hit index never
  *     sees it. There is no path from a pixel of dust to a note.
  *  3. **Always inside.** Every point is clipped against the layout's
@@ -96,6 +100,18 @@ const WOBBLE_RANGE = 0.03;
 const FADE = 0.1;
 /** A dendrite stops here, short of the rim. */
 const DENDRITE_REACH = 0.96;
+
+/**
+ * How a branch is drawn: width and opacity at the cell body, and at the tip.
+ *
+ * Here rather than in the renderer because they are what keeps decoration from
+ * reading as data, and the test that fixes that compares them against the tract
+ * widths in `edges.ts`. The renderer only obeys them.
+ */
+export const DENDRITE_WIDTH = 1.2;
+export const DENDRITE_TIP_WIDTH = 0.4;
+export const DENDRITE_ALPHA = 0.38;
+export const DENDRITE_TIP_ALPHA = 0.1;
 
 /**
  * The haze over the brain's area, and how it is spread.

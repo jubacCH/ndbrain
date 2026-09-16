@@ -13,8 +13,20 @@ import { describe, expect, it } from 'vitest';
 
 import { Activity } from '../src/brain/activity';
 import type { Camera } from '../src/brain/camera';
-import { buildDecoration } from '../src/brain/deco';
-import { CURVE_STEPS, TRACT, keepInside, planRoutes, traceEdge } from '../src/brain/edges';
+import {
+  DENDRITE_ALPHA,
+  DENDRITE_TIP_WIDTH,
+  DENDRITE_WIDTH,
+  buildDecoration,
+} from '../src/brain/deco';
+import {
+  CURVE_STEPS,
+  GHOST,
+  TRACT_BASE_MIN,
+  keepInside,
+  planRoutes,
+  traceEdge,
+} from '../src/brain/edges';
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph } from '../src/brain/model';
 import { regionLabels, regionView } from '../src/brain/regions';
@@ -214,8 +226,26 @@ describe('the tissue', () => {
     expect(loudest).toBeLessThanOrEqual(0.7);
     const smallest = Math.min(...Array.from(layout.r));
     expect(widest).toBeLessThan(smallest);
-    // A branch is at its faintest at the tip, where two of them meet.
-    expect(TRACT).toBeGreaterThan(0.1);
+  });
+
+  it('draws no branch as wide as the thinnest tract, or as long as its note is wide', () => {
+    // Width is what keeps a branch from reading as a link: the narrowest tract
+    // is `TRACT_BASE_MIN` per side, so twice that across, and a branch is under
+    // a third of it at the cell body and a tenth at the tip.
+    expect(DENDRITE_WIDTH).toBeLessThan(TRACT_BASE_MIN * 2);
+    expect(DENDRITE_TIP_WIDTH).toBeLessThan(DENDRITE_WIDTH);
+    // Its opacity sits between a held-back link and a quiet one, and the tissue
+    // layer is dimmed again by `decoAlpha` on top of that.
+    expect(DENDRITE_ALPHA).toBeGreaterThan(GHOST);
+    // And a branch is short: no segment reaches further than a cell body is wide.
+    const widest = Math.max(...Array.from(layout.r));
+    for (let i = 0; i < deco.dendriteCount; i += 1) {
+      const length = Math.hypot(
+        deco.dendrites[i * 6 + 2]! - deco.dendrites[i * 6]!,
+        deco.dendrites[i * 6 + 3]! - deco.dendrites[i * 6 + 1]!,
+      );
+      expect(length).toBeLessThan(widest * 2);
+    }
   });
 
   it('is not grown at all for the loose neighbourhood arrangement', () => {
