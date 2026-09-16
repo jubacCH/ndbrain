@@ -187,14 +187,17 @@ export function App(): React.JSX.Element {
   // whatever the server says now: nobody, somebody else, or still the same.
   useEffect(() => {
     const onStorage = (event: StorageEvent): void => {
-      if (event.key !== SESSION_SIGNAL_KEY || userRef.current === null) return;
-      const was = userRef.current.id;
+      if (event.key !== SESSION_SIGNAL_KEY) return;
+      const was = userRef.current?.id ?? null;
       api
         .me()
         .then(({ user: me }) => {
           if (me.id === was) return;
+          // On the sign-in page there is nothing to end; this tab simply
+          // follows the sign-in that happened in the other one.
           end(false);
           begin(me);
+          setReady(true);
         })
         .catch(() => end(false));
     };
