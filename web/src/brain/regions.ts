@@ -105,6 +105,11 @@ export interface RegionAnchor {
    * name no longer reads as theirs, and is better left out.
    */
   reach: number;
+  /**
+   * For a medial region, the ordinary outward placement, tried when there is no
+   * room above or below. Null for every other region.
+   */
+  alternate: Omit<RegionAnchor, 'region' | 'text' | 'side' | 'weight' | 'medial' | 'fissureX' | 'alternate'> | null;
 }
 
 /**
@@ -114,6 +119,12 @@ export interface RegionAnchor {
 const MEDIAL_NEAR = 0.45;
 /** A leader may be at most this share of the brain's width. */
 const LEADER_REACH = 0.28;
+/**
+ * A medial leader may additionally cross this share of the brain's width of
+ * tissue on its way to the top or bottom rim. A region buried deeper than that
+ * is not named from above or below — its leader would read as a tract.
+ */
+const MEDIAL_DEPTH = 0.12;
 /** A medial name leans this much towards its own side as it goes up or down. */
 const MEDIAL_LEAN = 0.12;
 /** Walking out to the rim: march in these steps (share of a unit), then bisect. */
@@ -187,60 +198,95 @@ export function regionAnchors(view: RegionView, x: ArrayLike<number>, y: ArrayLi
     const medial = towardFissure || dx * side < 0;
     const width = view.bounds.maxX - view.bounds.minX;
 
-    let anchor = region.members[0]!;
-    let rim: { x: number; y: number };
-    let reach = LEADER_REACH * width;
-    if (medial) {
-      // Up if the region sits in the upper half of its hemisphere, else down,
-      // leaning only a little to its own side: the leader runs along the
-      // fissure, in the dark, rather than across the neighbouring regions.
-      const up = my <= h.y;
-      dx = side * MEDIAL_LEAN;
-      dy = up ? -1 : 1;
-      const l = Math.hypot(dx, dy);
-      dx /= l;
-      dy /= l;
-      // The leader starts at the note furthest in that direction, nearest the
-      // fissure among those — and from there it is as far to the rim as it is.
-      let bestScore = -Infinity;
-      for (const i of region.members) {
-        const score = (up ? -y[i]! : y[i]!) - Math.abs(x[i]! - fissure) * 0.5;
-        if (score > bestScore) {
-          bestScore = score;
-          anchor = i;
-        }
-      }
-      rim = walkToRim(view, x[anchor]!, y[anchor]!, dx, dy);
-      reach += Math.hypot(rim.x - x[anchor]!, rim.y - y[anchor]!);
-    } else {
-      // Outward from the middle of the notes to the rim, and the leader starts
-      // at the note nearest that point: a line across the whole region would
-      // read as a link.
-      rim = walkToRim(view, mx, my, dx, dy);
+    // The ordinary placement: outward from the middle of the notes to the rim,
+    // the leader starting at the note nearest that point — a line across the
+    // whole region would read as a link.
+    const outward = (() => {
+      const end = walkToRim(view, mx, my, dx, dy);
+      let pick = region.members[0]!;
       let best = Infinity;
       for (const i of region.members) {
-        const d = (x[i]! - rim.x) ** 2 + (y[i]! - rim.y) ** 2;
+        const d = (x[i]! - end.x) ** 2 + (y[i]! - end.y) ** 2;
         if (d < best) {
           best = d;
-          anchor = i;
+          pick = i;
         }
       }
+      return {
+        anchorX: x[pick]!,
+        anchorY: y[pick]!,
+        rimX: end.x,
+        rimY: end.y,
+        dirX: dx,
+        dirY: dy,
+        reach: LEADER_REACH * width,
+      };
+    })();
+
+    let primary = outward;
+    let alternate: RegionAnchor['alternate'] = null;
+    if (medial) {
+      // Up or down, whichever rim is nearer the region's notes, leaning only a
+      // little to its own side: the leader then runs along the fissure, in the
+      // dark, over as little of the neighbouring regions as possible.
+      let bestGap = Infinity;
+      let vertical: typeof outward | null = null;
+      for (const up of [true, false]) {
+        let ux = side * MEDIAL_LEAN;
+        let uy = up ? -1 : 1;
+        const l = Math.hypot(ux, uy);
+        ux /= l;
+        uy /= l;
+        // The note furthest in that direction, nearest the fissure among those.
+        let pick = region.members[0]!;
+        let bestScore = -Infinity;
+        for (const i of region.members) {
+          const score = (up ? -y[i]! : y[i]!) - Math.abs(x[i]! - fissure) * 0.5;
+          if (score > bestScore) {
+            bestScore = score;
+            pick = i;
+          }
+        }
+        const end = walkToRim(view, x[pick]!, y[pick]!, ux, uy);
+        const gap = Math.hypot(end.x - x[pick]!, end.y - y[pick]!);
+        // Ties go up, so the choice does not flip on a rounding error.
+        if (gap < bestGap - 1e-6) {
+          bestGap = gap;
+          vertical = {
+            anchorX: x[pick]!,
+            anchorY: y[pick]!,
+            rimX: end.x,
+            rimY: end.y,
+            dirX: ux,
+            dirY: uy,
+            reach: LEADER_REACH * width + Math.min(gap, MEDIAL_DEPTH * width),
+          };
+        }
+      }
+      if (vertical !== null) {
+        primary = vertical;
+        alternate = outward;
+      }
     }
+    const { anchorX, anchorY, rimX, rimY, reach } = primary;
+    dx = primary.dirX;
+    dy = primary.dirY;
 
     out.push({
       region: region.id,
       text: region.name,
       side,
       weight: region.members.length,
-      anchorX: x[anchor]!,
-      anchorY: y[anchor]!,
-      rimX: rim.x,
-      rimY: rim.y,
+      anchorX,
+      anchorY,
+      rimX,
+      rimY,
       dirX: dx,
       dirY: dy,
       medial,
       fissureX: fissure,
       reach,
+      alternate,
     });
   }
   return out;
