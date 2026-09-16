@@ -1014,13 +1014,13 @@ export class Queries {
       `SELECT t.owner, t.path, t.tag FROM tags t WHERE ${tagScope.sql} ORDER BY t.path, t.tag`,
       ...tagScope.params,
     )) {
-      const key = `${row['owner']} ${row['path']}`;
+      const key = `${row['owner']}\u0000${row['path']}`;
       const list = tagsByNode.get(key);
       if (list) list.push(String(row['tag']));
       else tagsByNode.set(key, [String(row['tag'])]);
     }
     for (const node of nodes) {
-      node.tags = tagsByNode.get(`${node.owner} ${node.path}`) ?? [];
+      node.tags = tagsByNode.get(`${node.owner}\u0000${node.path}`) ?? [];
     }
 
     // Both ends, not just the source. An edge whose target lies outside the
