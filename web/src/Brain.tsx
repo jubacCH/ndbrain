@@ -353,6 +353,9 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
 
     const builder = new SceneBuilder(graph);
     builder.recent(warmth(data));
+    // The tissue and the region anchors are grown from positions and regions;
+    // a refetch that changed neither keeps them instead of growing them again.
+    if (same !== null) builder.inherit(same.builder);
 
     engine.current = {
       graph,
