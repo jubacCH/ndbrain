@@ -163,6 +163,16 @@ const LOOSE_MIN_NOTES = 8;
  */
 const SAMPLE_STEP = 0.03;
 const SAMPLE_MARGIN = 0.98;
+/**
+ * How far the cells keep clear of the fissure, as a multiple of its half-width.
+ *
+ * Wider than `inside` calls the fissure, and deliberately so. `inside` is the
+ * contract the renderer clips against and has to allow the tissue right up to
+ * the edge of the gap; the *places* have to leave a gap for it to be a gap. At
+ * the contract's own 1.05 the notes of the two halves came within a cell body
+ * of each other in the middle and the eye stopped seeing two hemispheres.
+ */
+const MEDIAL_CLEAR = 2.5;
 /** Lloyd: how many rounds, and how far a centre moves towards its cell each round. */
 const LLOYD_STEPS = 40;
 const LLOYD_RATE = 0.7;
@@ -728,7 +738,7 @@ export class BrainLayout {
       const px = OUTLINE.minX + a * SAMPLE_STEP;
       for (let b = 0; b <= rows; b += 1) {
         const py = OUTLINE.minY + b * SAMPLE_STEP;
-        if (withinOutline(px, py, SAMPLE_MARGIN)) {
+        if (withinOutline(px, py, SAMPLE_MARGIN) && Math.abs(px) > FISSURE * MEDIAL_CLEAR) {
           sx.push(px);
           sy.push(py);
         }
