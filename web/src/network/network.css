@@ -1,0 +1,377 @@
+/**
+ * List and map views: the same petrol-and-cyan direction as the zielbild
+ * (`design/brain/zielbild.jpg`), tuned separately for light and dark rather
+ * than inverted.
+ *
+ * These are local tokens (`--nv-*`), not a rewrite of `styles.css` — that file
+ * belongs to another strand of this phase and is still on the old, plainer
+ * palette while this is being built. Each token chains through `var(--global,
+ * fallback)`: `--nv-surface` reads the app's own `--surface` where that
+ * already exists (it does, and is already tuned close to this direction for
+ * dark mode) and falls back to a value in this same spirit otherwise. Once the
+ * shell's own redesign lands its glow/accent tokens on `main`, giving them the
+ * same names here (`--accent-cyan`, `--accent-warm`, `--radius-md`) lets this
+ * view pick them up on the next merge with no change to this file. The two
+ * accent tokens have no site-wide equivalent yet, so for now they simply carry
+ * their fallback.
+ */
+
+.network-view {
+  --nv-bg: var(--bg, #fbfbfc);
+  --nv-surface: var(--surface, #ffffff);
+  --nv-surface-2: var(--surface-2, #f4f5f7);
+  --nv-line: var(--line, rgba(16, 32, 42, 0.12));
+  --nv-line-strong: var(--line-2, rgba(16, 32, 42, 0.22));
+  --nv-text: var(--text, #10202a);
+  --nv-text-2: var(--text-2, #47606e);
+  --nv-text-3: var(--text-3, #5d7683);
+  --nv-cyan: var(--accent-cyan, #1897a4);
+  --nv-cyan-glow: var(--accent-cyan-glow, rgba(24, 151, 164, 0.22));
+  --nv-warm: var(--accent-warm, #b8712a);
+  --nv-warm-glow: var(--accent-warm-glow, rgba(184, 113, 42, 0.22));
+  --nv-radius: var(--radius-md, 10px);
+  --nv-radius-sm: var(--radius-sm, 6px);
+  --nv-focus: var(--accent-cyan, #1897a4);
+
+  color: var(--nv-text);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .network-view {
+    --nv-bg: var(--bg, #05090d);
+    --nv-surface: var(--surface, #101a22);
+    --nv-surface-2: var(--surface-2, #16232b);
+    --nv-line: var(--line, rgba(140, 210, 225, 0.14));
+    --nv-line-strong: var(--line-2, rgba(140, 210, 225, 0.28));
+    --nv-text: var(--text, #e8f2f5);
+    --nv-text-2: var(--text-2, #9fb6c0);
+    --nv-text-3: var(--text-3, #74909c);
+    --nv-cyan: var(--accent-cyan, #7fe9f0);
+    --nv-cyan-glow: var(--accent-cyan-glow, rgba(127, 233, 240, 0.35));
+    --nv-warm: var(--accent-warm, #f0cd8c);
+    --nv-warm-glow: var(--accent-warm-glow, rgba(240, 205, 140, 0.32));
+    --nv-focus: var(--accent-cyan, #7fe9f0);
+  }
+}
+
+:root[data-theme='dark'] .network-view {
+  --nv-bg: var(--bg, #05090d);
+  --nv-surface: var(--surface, #101a22);
+  --nv-surface-2: var(--surface-2, #16232b);
+  --nv-line: var(--line, rgba(140, 210, 225, 0.14));
+  --nv-line-strong: var(--line-2, rgba(140, 210, 225, 0.28));
+  --nv-text: var(--text, #e8f2f5);
+  --nv-text-2: var(--text-2, #9fb6c0);
+  --nv-text-3: var(--text-3, #74909c);
+  --nv-cyan: var(--accent-cyan, #7fe9f0);
+  --nv-cyan-glow: var(--accent-cyan-glow, rgba(127, 233, 240, 0.35));
+  --nv-warm: var(--accent-warm, #f0cd8c);
+  --nv-warm-glow: var(--accent-warm-glow, rgba(240, 205, 140, 0.32));
+  --nv-focus: var(--accent-cyan, #7fe9f0);
+}
+
+/* ---- shared chrome: filter bar, empty state -------------------------- */
+
+.network-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  height: 100%;
+  min-height: 0;
+  padding: 1rem;
+  box-sizing: border-box;
+  background: var(--nv-bg);
+  border-radius: var(--nv-radius);
+}
+
+.nv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.nv-filter {
+  flex: 1 1 16rem;
+  min-width: 10rem;
+  /* 16px, never smaller — a smaller field zooms the page on iOS Safari. */
+  font-size: 16px;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--nv-radius-sm);
+  border: 1px solid var(--nv-line);
+  background: var(--nv-surface);
+  color: var(--nv-text);
+}
+
+.nv-filter::placeholder {
+  color: var(--nv-text-3);
+}
+
+.nv-filter:focus-visible,
+.nv-row:focus-visible,
+.nv-cell:focus-visible,
+.nv-crumb:focus-visible,
+th button:focus-visible {
+  outline: 2px solid var(--nv-focus);
+  outline-offset: 2px;
+}
+
+.nv-count {
+  color: var(--nv-text-3);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.nv-empty {
+  margin: auto;
+  color: var(--nv-text-3);
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+/* ---- list view ---------------------------------------------------------- */
+
+.nv-tablewrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--nv-line);
+  border-radius: var(--nv-radius);
+  background: var(--nv-surface);
+}
+
+.nv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.nv-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--nv-surface-2);
+  text-align: left;
+  padding: 0;
+  border-bottom: 1px solid var(--nv-line-strong);
+}
+
+.nv-table th button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.55rem 0.75rem;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--nv-text-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.nv-table th button:hover {
+  color: var(--nv-text);
+}
+
+.nv-table th[aria-sort='ascending'] button,
+.nv-table th[aria-sort='descending'] button {
+  color: var(--nv-cyan);
+}
+
+.nv-sort-arrow {
+  font-size: 0.7em;
+  opacity: 0.8;
+}
+
+.nv-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--nv-line);
+  vertical-align: top;
+}
+
+.nv-row {
+  cursor: pointer;
+}
+
+.nv-row:hover td {
+  background: var(--nv-surface-2);
+}
+
+.nv-row[data-current='true'] td {
+  background: var(--nv-cyan-glow);
+}
+
+.nv-title {
+  color: var(--nv-text);
+  font-weight: 500;
+}
+
+.nv-folder,
+.nv-num {
+  color: var(--nv-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.nv-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.nv-tag {
+  font-size: 0.78rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--nv-line-strong);
+  color: var(--nv-text-2);
+  white-space: nowrap;
+}
+
+.nv-time {
+  color: var(--nv-text-2);
+  white-space: nowrap;
+}
+
+.nv-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+}
+
+.nv-pager button {
+  padding: 0.3rem 0.8rem;
+  border-radius: var(--nv-radius-sm);
+  border: 1px solid var(--nv-line);
+  background: var(--nv-surface);
+  color: var(--nv-text);
+  cursor: pointer;
+}
+
+.nv-pager button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---- map view ------------------------------------------------------------ */
+
+.nv-map {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.nv-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--nv-text-2);
+}
+
+.nv-crumb {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0.1rem 0.3rem;
+  border-radius: var(--nv-radius-sm);
+  cursor: pointer;
+}
+
+.nv-crumb:hover,
+.nv-crumb[aria-current='true'] {
+  color: var(--nv-cyan);
+}
+
+.nv-crumb[aria-current='true'] {
+  cursor: default;
+}
+
+.nv-treemap-frame {
+  flex: 1;
+  min-height: 16rem;
+  border: 1px solid var(--nv-line);
+  border-radius: var(--nv-radius);
+  background: var(--nv-surface);
+  overflow: hidden;
+}
+
+.nv-treemap-frame svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.nv-cell-rect,
+.nv-cell-frame {
+  stroke: var(--nv-line-strong);
+  stroke-width: 1;
+  cursor: pointer;
+  transition: stroke 0.1s ease, filter 0.1s ease;
+}
+
+/* The frame behind a nested folder's header + children: structural, not
+   warmth-tinted — warmth is reserved for the leaves nested inside it, which
+   is the level "where is work happening" actually answers. */
+.nv-cell-frame {
+  fill: var(--nv-surface-2);
+}
+
+/* Focus lands on the wrapping <g> (SVG shapes are not natively focusable),
+   so the glow is selected from there rather than from the rect itself. */
+.nv-cell-rect:hover,
+.nv-cell-frame:hover,
+g:focus-visible > .nv-cell-rect,
+g:focus-visible > .nv-cell-frame {
+  stroke: var(--nv-cyan);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px var(--nv-cyan-glow));
+}
+
+.nv-cell-label,
+.nv-cell-header-label {
+  fill: var(--nv-text);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.nv-cell-header-label {
+  font-weight: 600;
+}
+
+.nv-cell-sub {
+  fill: var(--nv-text-3);
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.nv-hover-panel {
+  min-height: 3.4rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--nv-line);
+  border-radius: var(--nv-radius-sm);
+  background: var(--nv-surface);
+  font-size: 0.85rem;
+  color: var(--nv-text-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.nv-hover-panel .nv-hover-title {
+  color: var(--nv-text);
+  font-weight: 600;
+}
+
+.nv-hover-panel .nv-hover-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}

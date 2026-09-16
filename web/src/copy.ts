@@ -404,6 +404,46 @@ export const copy = {
         note: 'Note',
       },
     },
+
+    /* The List switcher mode — see web/src/network/ListView.tsx. Appended by
+       the strand that owns list and map; the rest of `network` above belongs
+       to the graph canvas and is another strand's. */
+    list: {
+      filterPlaceholder: 'Filter by title or tag…',
+      filterLabel: 'Filter the list by title or tag',
+      title: 'Title',
+      folder: 'Folder',
+      links: 'Links',
+      tags: 'Tags',
+      updated: 'Updated',
+      root: '(vault root)',
+      noTags: '—',
+      moreTags: (n: number) => `+${n}`,
+      empty: 'No notes match.',
+      emptyVault: 'This vault has no notes yet.',
+      resultCount: (shown: number, total: number) =>
+        shown === total ? `${total} notes` : `${shown} of ${total} notes`,
+      pageOf: (page: number, pages: number) => `Page ${page} of ${pages}`,
+      prevPage: 'Previous page',
+      nextPage: 'Next page',
+      sortAscending: (column: string) => `Sorted by ${column}, ascending`,
+      sortDescending: (column: string) => `Sorted by ${column}, descending`,
+      openNote: (title: string) => `Open ${title}`,
+    },
+
+    /* The Map switcher mode — see web/src/network/MapView.tsx. */
+    mapView: {
+      root: 'Vault',
+      empty: 'This vault has no notes yet.',
+      breadcrumbLabel: 'Folder path',
+      folderLabel: (name: string, notes: number) =>
+        `${name}, ${notes === 1 ? '1 note' : `${notes} notes`} — open`,
+      noteLabel: (title: string) => `${title} — open note`,
+      notes: (n: number) => (n === 1 ? '1 note' : `${n} notes`),
+      links: (n: number) => (n === 1 ? '1 link' : `${n} links`),
+      updated: 'Last edited',
+      hoverHint: 'Hover or focus a folder or note to see details. Click a folder to zoom in.',
+    },
   },
 
   settings: {
