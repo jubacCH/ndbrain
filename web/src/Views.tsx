@@ -11,7 +11,7 @@ import { copy } from './copy';
 
 import { refKey, type ConflictRow, type LinkRow, type NoteRow, type Overview, type SearchHit, type Share, type TaskRow, type Tasks, type Tidy } from './api';
 
-const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+const RELATIVE = new Intl.RelativeTimeFormat(copy.locale, { numeric: 'auto' });
 
 export function ago(mtimeMs: number, now = Date.now()): string {
   const minutes = Math.round((mtimeMs - now) / 60_000);

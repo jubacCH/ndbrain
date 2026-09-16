@@ -24,7 +24,16 @@
  */
 
 export const copy = {
+  /**
+   * The language dates and relative times are formatted in. Part of the copy
+   * because it has to change with it: English sentences around German dates
+   * read as a bug.
+   */
+  locale: 'en',
+
   nav: {
+    /** The sidebar landmark, for a screen reader's list of regions. */
+    label: 'Navigation',
     newNote: 'New note',
     folder: 'Folder',
     newFolder: 'New folder',
@@ -110,14 +119,18 @@ export const copy = {
 
   note: {
     none: 'No note open',
-    pickOne: 'Pick a note on the left, or press ⌘K and type a title.',
+    /** Around a key shown as a keycap; the key itself is `paletteKey`. */
+    pickOne: { before: 'Pick a note on the left, or press ', after: ' and type a title.' },
+    paletteKey: '⌘K',
     readOnly: 'read only',
     canWrite: 'write',
     aboutOpen: 'About the open note',
     neighbourhood: 'Neighbourhood',
     wholeNetwork: 'whole network',
     showWholeNetwork: 'Show the whole network',
-    noLinksYet: 'No links yet. Type [[ in the text to connect this note.',
+    /** Around the link syntax, which is shown as code. */
+    noLinksYet: { before: 'No links yet. Type ', after: ' in the text to connect this note.' },
+    linkSyntax: '[[',
     loading: 'Loading…',
     loadingNeighbourhood: 'Loading…',
   },
@@ -322,7 +335,7 @@ export const copy = {
     linksHere: 'Links here',
     orphanedNote: 'Nobody — this note is orphaned.',
     linksOut: 'Links out',
-    noLinks: 'No links yet. Type [[ in the editor.',
+    noLinks: { before: 'No links yet. Type ', after: ' in the editor.' },
     pointsNowhere: 'Points nowhere',
     file: 'File',
     vaultOf: (owner: string) => `${owner}'s vault`,
@@ -365,9 +378,9 @@ export const copy = {
      */
     recent: (days: number) => `edited in the last ${days} days`,
     resetView: 'Reset view',
-    stats: (notes: number, links: number, loose: number) =>
-      `${notes} notes · ${links} links · ${loose} without a connection`,
     doubleClick: 'Double-click opens the note',
+    /** Relative times shorter than a minute. */
+    justNow: 'just now',
     loading: 'Relationships are loading…',
     /**
      * The tissue is decoration and says so, in the legend, in as many words.
@@ -418,6 +431,8 @@ export const copy = {
       tags: 'Tags',
       updated: 'Updated',
       root: '(vault root)',
+      /** Shown only when the graph holds more than one owner's notes. */
+      owner: 'Owner',
       noTags: '—',
       moreTags: (n: number) => `+${n}`,
       empty: 'No notes match.',
@@ -443,6 +458,8 @@ export const copy = {
       notes: (n: number) => (n === 1 ? '1 note' : `${n} notes`),
       links: (n: number) => (n === 1 ? '1 link' : `${n} links`),
       updated: 'Last edited',
+      /** In place of a date for a folder with no edited note in it. */
+      never: '—',
       hoverHint: 'Hover or focus a folder or note to see details. Click a folder to zoom in.',
     },
   },

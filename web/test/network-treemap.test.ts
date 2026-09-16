@@ -90,6 +90,36 @@ describe('buildFolderTree', () => {
   });
 });
 
+describe('buildFolderTree — several vaults', () => {
+  const mine = note('10_Projects/A.md', '10_Projects');
+  const hers = { ...note('10_Projects/B.md', '10_Projects'), owner: 'anna' };
+
+  it('keeps folders of the same path in different vaults apart', () => {
+    const root = buildFolderTree([mine, hers], NOW, 'jb');
+    expect(root.owner).toBe('jb');
+    const projects = findFolder(root, '10_Projects')!;
+    expect(projects.noteCount).toBe(1);
+    const annasProjects = findFolder(root, '10_Projects', 'anna')!;
+    expect(annasProjects.noteCount).toBe(1);
+    expect(annasProjects.key).not.toBe(projects.key);
+  });
+
+  it("puts another owner's vault under the root, named after the owner, after your own folders", () => {
+    const root = buildFolderTree([hers, mine], NOW, 'jb');
+    expect(root.children.map((c) => [c.name, c.vault])).toEqual([
+      ['10_Projects', false],
+      ['anna', true],
+    ]);
+    expect(root.noteCount).toBe(2);
+  });
+
+  it('without a self, one owner is the root and several are all folders', () => {
+    expect(buildFolderTree([mine], NOW).owner).toBe('jb');
+    const both = buildFolderTree([mine, hers], NOW);
+    expect(both.children.every((c) => c.vault)).toBe(true);
+  });
+});
+
 describe('findFolder', () => {
   const root = buildFolderTree(
     [note('10_Projects/11_Active/A.md', '10_Projects/11_Active')],

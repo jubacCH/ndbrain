@@ -8,6 +8,8 @@
  * browser this app targets, so neither needs a dependency.
  */
 
+import { copy } from '../copy';
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -15,7 +17,7 @@ const WEEK = 7 * DAY;
 const MONTH = 30 * DAY;
 const YEAR = 365 * DAY;
 
-const relFormatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+const relFormatter = new Intl.RelativeTimeFormat(copy.locale, { numeric: 'auto' });
 
 /**
  * "2 days ago", "just now", "in 3 hours" (clock skew is possible, so the
@@ -25,7 +27,7 @@ export function relativeTime(ms: number, now: number = Date.now()): string {
   const diff = ms - now;
   const abs = Math.abs(diff);
 
-  if (abs < MINUTE) return diff <= 0 ? 'just now' : relFormatter.format(1, 'minute');
+  if (abs < MINUTE) return diff <= 0 ? copy.network.justNow : relFormatter.format(1, 'minute');
 
   const units: Array<[number, Intl.RelativeTimeFormatUnit]> = [
     [YEAR, 'year'],
@@ -43,10 +45,10 @@ export function relativeTime(ms: number, now: number = Date.now()): string {
       if (value !== 0) return relFormatter.format(value, unit);
     }
   }
-  return 'just now';
+  return copy.network.justNow;
 }
 
-const absFormatter = new Intl.DateTimeFormat('en', {
+const absFormatter = new Intl.DateTimeFormat(copy.locale, {
   dateStyle: 'medium',
   timeStyle: 'short',
 });

@@ -358,6 +358,11 @@ describe('the network frame', () => {
     expect(screen.getByRole('radio', { name: copy.shell.network.graph })).toHaveAttribute('aria-checked', 'true');
   });
 
+  it('says in the legend how a point becomes an open note', () => {
+    renderFrame('graph');
+    expect(document.querySelector('.brainfoot')).toHaveTextContent(copy.network.doubleClick);
+  });
+
   it('shows list and map in place of the brain', () => {
     renderFrame('list');
     expect(screen.queryByTestId('brain')).toBeNull();

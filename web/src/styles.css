@@ -1708,6 +1708,12 @@ tbody tr[data-selected='true']:hover td {
   background: rgba(140, 220, 235, 0.25);
 }
 
+/* A hint, not a legend entry: quieter than the three it follows, and the first
+   thing the ellipsis takes when the pill runs out of room. */
+.brainfoot-hint {
+  color: rgba(200, 232, 240, 0.6);
+}
+
 /*
  * The tissue, named as what it is.
  *

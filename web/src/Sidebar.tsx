@@ -110,7 +110,7 @@ export function Sidebar({
   };
 
   return (
-    <nav className="nav" aria-label="Navigation" data-collapsed={collapsed}>
+    <nav className="nav" aria-label={copy.nav.label} data-collapsed={collapsed}>
       {/*
         Everything at once rather than one thing at a time. Tabs are a mode
         switch: they hide most of the tool behind a click. Something that stays

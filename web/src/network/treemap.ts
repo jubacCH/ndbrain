@@ -26,10 +26,19 @@ export interface MapNode {
 
 /** One folder, with every note beneath it rolled up into its totals. */
 export interface FolderNode {
-  /** Full path, `''` for the vault root. */
+  /** Whose vault the folder is in. */
+  owner: string;
+  /** Path inside that vault, `''` for a vault's root. */
   path: string;
-  /** The last segment of `path`, `''` at the root. */
+  /** The last segment of `path`; at a vault's root, `''` for your own and the owner for another's. */
   name: string;
+  /**
+   * The identity across vaults — see `folderKey`. Two owners can each have a
+   * `10_Projects`, and those are two folders, not one.
+   */
+  key: string;
+  /** True for the root of somebody else's vault, shown as a folder of its own. */
+  vault: boolean;
   children: FolderNode[];
   /** Notes directly in this folder — not in any child folder. */
   notes: MapNode[];
@@ -46,11 +55,19 @@ export interface FolderNode {
 /** Same window the brain view warms a note's halo over — see `brain/scene.ts`. */
 export const RECENT_DAYS = 14;
 
-function emptyFolder(path: string): FolderNode {
+/** A folder's identity: owner and path together, joined so that neither can forge the other. */
+export function folderKey(owner: string, path: string): string {
+  return JSON.stringify([owner, path]);
+}
+
+function emptyFolder(owner: string, path: string, vault = false): FolderNode {
   const cut = path.lastIndexOf('/');
   return {
+    owner,
     path,
-    name: cut === -1 ? path : path.slice(cut + 1),
+    name: vault ? owner : cut === -1 ? path : path.slice(cut + 1),
+    key: folderKey(owner, path),
+    vault,
     children: [],
     notes: [],
     noteCount: 0,
@@ -68,30 +85,48 @@ function emptyFolder(path: string): FolderNode {
  * subfolder — `10_Projects` above `10_Projects/11_Active` — are created too,
  * so the nesting in the map matches the nesting on disk rather than skipping
  * straight to the first folder with a note in it.
+ *
+ * `self` is the vault the root stands for. Every other owner's notes sit in a
+ * folder of their own directly under the root, named after the owner, so a
+ * shared `10_Projects` never merges with yours. Left out, a graph with a
+ * single owner is that owner's vault, and one with several has no root vault
+ * and shows every owner as a folder.
  */
-export function buildFolderTree(nodes: readonly MapNode[], now: number = Date.now()): FolderNode {
-  const byPath = new Map<string, FolderNode>();
-  const root = emptyFolder('');
-  byPath.set('', root);
+export function buildFolderTree(nodes: readonly MapNode[], now: number = Date.now(), self?: string): FolderNode {
+  const owners = new Set(nodes.map((n) => n.owner));
+  const me = self ?? (owners.size === 1 ? [...owners][0]! : '');
+  const root = emptyFolder(me, '');
+  const byKey = new Map<string, FolderNode>([[root.key, root]]);
 
-  const folderOf = (path: string): FolderNode => {
-    const existing = byPath.get(path);
+  const vaultOf = (owner: string): FolderNode => {
+    if (owner === me) return root;
+    const existing = byKey.get(folderKey(owner, ''));
+    if (existing) return existing;
+    const node = emptyFolder(owner, '', true);
+    root.children.push(node);
+    byKey.set(node.key, node);
+    return node;
+  };
+
+  const folderOf = (owner: string, path: string): FolderNode => {
+    if (path === '') return vaultOf(owner);
+    const existing = byKey.get(folderKey(owner, path));
     if (existing) return existing;
     const cut = path.lastIndexOf('/');
-    const parentPath = cut === -1 ? '' : path.slice(0, cut);
-    const parent = folderOf(parentPath);
-    const node = emptyFolder(path);
+    const parent = folderOf(owner, cut === -1 ? '' : path.slice(0, cut));
+    const node = emptyFolder(owner, path);
     parent.children.push(node);
-    byPath.set(path, node);
+    byKey.set(node.key, node);
     return node;
   };
 
   for (const note of nodes) {
-    folderOf(note.folder).notes.push(note);
+    folderOf(note.owner, note.folder).notes.push(note);
   }
 
   const rollUp = (folder: FolderNode): void => {
-    folder.children.sort((a, b) => a.name.localeCompare(b.name));
+    // Your own folders first, then the other vaults; each group by name.
+    folder.children.sort((a, b) => Number(a.vault) - Number(b.vault) || a.name.localeCompare(b.name));
     folder.notes.sort((a, b) => a.title.localeCompare(b.title));
     let count = folder.notes.length;
     let links = folder.notes.reduce((sum, n) => sum + n.links, 0);
@@ -113,14 +148,20 @@ export function buildFolderTree(nodes: readonly MapNode[], now: number = Date.no
   return root;
 }
 
-/** A folder in the path from the root down to the folder currently shown. */
-export function findFolder(root: FolderNode, path: string): FolderNode | undefined {
-  if (path === '') return root;
+/**
+ * A folder by path and owner, walking down from the root.
+ *
+ * `owner` defaults to the root's own vault; another owner's folders are found
+ * under that owner's vault folder.
+ */
+export function findFolder(root: FolderNode, path: string, owner: string = root.owner): FolderNode | undefined {
+  let node: FolderNode | undefined =
+    owner === root.owner ? root : root.children.find((c) => c.vault && c.owner === owner);
+  if (node === undefined || path === '') return node;
   const segments = path.split('/');
-  let node = root;
   for (let i = 0; i < segments.length; i += 1) {
     const want = segments.slice(0, i + 1).join('/');
-    const next = node.children.find((c) => c.path === want);
+    const next: FolderNode | undefined = node.children.find((c) => !c.vault && c.path === want);
     if (!next) return undefined;
     node = next;
   }

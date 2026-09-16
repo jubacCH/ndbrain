@@ -6,6 +6,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { copy } from '../src/copy';
 import { ListView } from '../src/network/ListView';
 import type { GraphData } from '../src/api';
 
@@ -113,6 +114,33 @@ describe('ListView — sorting, filtering, opening', () => {
   });
 });
 
+describe('ListView — owners and folder names', () => {
+  it('has no owner column while every note is from one vault', () => {
+    render(<ListView graph={graph([node({ path: 'A.md' }), node({ path: 'B.md' })])} onOpen={vi.fn()} />);
+    expect(screen.queryByRole('columnheader', { name: copy.network.list.owner })).toBeNull();
+  });
+
+  it('names the owner of every row once a second vault is in the graph', () => {
+    render(
+      <ListView
+        graph={graph([node({ path: 'A.md', title: 'Mine' }), node({ path: 'A.md', title: 'Theirs', owner: 'anna' })])}
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('columnheader', { name: copy.network.list.owner })).toBeInTheDocument();
+    const theirs = screen.getByText('Theirs').closest('tr')!;
+    expect(within(theirs).getByText('anna')).toBeInTheDocument();
+  });
+
+  it('keeps sort prefixes in folder names when the preference says so', () => {
+    const notes = [node({ path: '10_Projects/A.md', folder: '10_Projects' })];
+    const { rerender } = render(<ListView graph={graph(notes)} onOpen={vi.fn()} />);
+    expect(screen.getByText('Projects')).toBeInTheDocument();
+    rerender(<ListView graph={graph(notes)} onOpen={vi.fn()} hidePrefixes={false} />);
+    expect(screen.getByText('10_Projects')).toBeInTheDocument();
+  });
+});
+
 describe('ListView — a large synthetic vault (2000 notes)', () => {
   function manyNotes(): Node[] {
     return Array.from({ length: 2000 }, (_, i) =>
@@ -125,6 +153,18 @@ describe('ListView — a large synthetic vault (2000 notes)', () => {
     // One header row plus at most PAGE_SIZE data rows, never all 2000.
     expect(screen.getAllByRole('row').length).toBeLessThan(500);
     expect(screen.getByText(/page 1 of/i)).toBeInTheDocument();
+  });
+
+  it('pulls the page back when the graph shrinks under it, so "previous" still steps back', () => {
+    const { rerender } = render(<ListView graph={graph(manyNotes())} onOpen={vi.fn()} />);
+    for (let i = 0; i < 4; i += 1) fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    expect(screen.getByText('Page 5 of 10')).toBeInTheDocument();
+
+    // A refetch with fewer notes: four pages left.
+    rerender(<ListView graph={graph(manyNotes().slice(0, 700))} onOpen={vi.fn()} />);
+    expect(screen.getByText('Page 4 of 4')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /previous page/i }));
+    expect(screen.getByText('Page 3 of 4')).toBeInTheDocument();
   });
 
   it('moves to the next page', () => {
