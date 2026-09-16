@@ -335,6 +335,13 @@ export class SceneBuilder {
   #curves: Float64Array[];
   #curveLength: Int32Array;
   #curvesStale = true;
+  /**
+   * The region names' anchors, found when the notes last moved. Finding the
+   * nearest edge walks rays from every note; that is a question about positions,
+   * so it is asked when they change, not every frame.
+   */
+  #anchors: RegionAnchor[] | null = null;
+  #anchorsStale = true;
   /** Which plane each note is in. Fixed per graph. */
   #plane: Uint8Array;
   /** How warm each note is drawn, 0 to 1. Set by the caller from the data. */
@@ -471,6 +478,7 @@ export class SceneBuilder {
       geometry: this.#geometry,
     });
     this.#planned = layout;
+    this.#anchors = null;
     this.#curvesStale = true;
     this.#deco = NO_DECORATION;
     this.#decoFor = null;
@@ -597,6 +605,7 @@ export class SceneBuilder {
         this.#curveLength[i] = traceEdge(this.#curves[i]!, routes, i, layout.x, layout.y, this.#geometry);
       }
       this.#curvesStale = false;
+      this.#anchorsStale = true;
     }
 
     let restChanged = false;
@@ -678,7 +687,18 @@ export class SceneBuilder {
     }
 
     this.#names(layout, activity, picked, zoom);
-    scene.regions = view.shaped && scene.regionAlpha > 0.01 ? regionAnchors(view, layout.x, layout.y) : [];
+    if (view.shaped && scene.regionAlpha > 0.01) {
+      // Recomputed once the notes come to rest, not while they move: during a
+      // drag or a settle the names keep the anchors they had, which is invisible
+      // for the moment it lasts and saves a ray search per frame.
+      if (this.#anchors === null || (this.#anchorsStale && layout.settled)) {
+        this.#anchors = regionAnchors(view, layout.x, layout.y);
+        this.#anchorsStale = false;
+      }
+      scene.regions = this.#anchors;
+    } else {
+      scene.regions = [];
+    }
     scene.inside = view.inside;
     scene.depthInside = view.depthInside;
     scene.brainWidth = view.bounds.maxX - view.bounds.minX;
