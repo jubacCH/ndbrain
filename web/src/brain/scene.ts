@@ -70,6 +70,17 @@ export const PULSE_COLOUR: Record<PulseKind, Rgb> = {
 /** The tissue's cyan, and the warm accent for a note worked on recently. */
 export const TISSUE: Rgb = [140, 240, 250];
 export const ACCENT: Rgb = [240, 205, 140];
+/** A link of the selected note. */
+export const FOCUSED: Rgb = [230, 255, 255];
+/**
+ * Cell bodies: a hub, an ordinary note, a note nothing links to.
+ *
+ * Brighter since 2026-09-16, towards the prototype's near-white cores; the note
+ * with no links stays the dim one, because that is what it says.
+ */
+export const HUB_BODY: Rgb = [150, 240, 250];
+export const NOTE_BODY: Rgb = [110, 220, 235];
+export const LONELY_BODY: Rgb = [58, 96, 110];
 
 /** Three depth planes: back, middle, front. */
 export type Depth = 0 | 1 | 2;
@@ -87,6 +98,8 @@ export interface SceneNode {
   glow: number;
   /** Which of the three planes this note is painted into. */
   depth: Depth;
+  /** How much of a hub this note is, 0 to 1: its degree against a large map's. */
+  hub: number;
   /**
    * How warm this note is drawn, 0 to 1: 1 the day it was written, 0 a
    * fortnight later. Already folded into `colour`; the renderer reads it to
@@ -206,7 +219,8 @@ export interface Scene {
  * magnified node where a press panned the camera instead of grabbing the node.
  */
 export function bodyRadius(layoutRadius: number, depth: number): number {
-  return layoutRadius * BODY * (0.8 + depth * 0.3);
+  const grow = Math.min(BODY_MAX, Math.max(BODY_MIN, BODY * Math.pow(layoutRadius / BODY_REFERENCE, BODY_CURVE)));
+  return layoutRadius * grow * (0.8 + depth * 0.3);
 }
 
 /**
@@ -237,7 +251,19 @@ export function bodyScale(zoom: number): number {
  * The spacing is right and stays; what is painted inside it does not have to
  * fill it.
  */
-const BODY = 0.62;
+const BODY = 0.7;
+/**
+ * Since 2026-09-16 the share grows with the radius itself: a hub's core is
+ * drawn at up to nine tenths of its room, a leaf at about two thirds. In the
+ * prototype the hubs are what radiates, and a flat share made them look like
+ * slightly larger leaves. The layout radius already grows with the degree, so
+ * this needs nothing but the radius — and the hit test, which uses this same
+ * function, keeps matching what is drawn.
+ */
+const BODY_REFERENCE = 11;
+const BODY_CURVE = 0.3;
+const BODY_MIN = 0.62;
+const BODY_MAX = 0.95;
 
 /** The overview the zoom is measured against: the fit, without the caller's inset. */
 const NO_INSET: Inset = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -261,6 +287,8 @@ const TITLE_HUB_DEGREE = 8;
 /** Zoom over which the tissue and the region names fade out. */
 const TISSUE_FROM = 1.3;
 const TISSUE_TO = 2.4;
+/** A note with this many links is drawn as fully a hub: the widest halo. */
+const HUB_FULL = 40;
 /** A note worked on within this many days carries the warm accent. */
 export const RECENT_DAYS = 14;
 
@@ -334,6 +362,7 @@ export class SceneBuilder {
         heat: 0,
         glow: 0,
         depth: this.#plane[i] as Depth,
+        hub: 0,
         warm: 0,
         restColour: TISSUE,
         restAlpha: 0,
@@ -505,8 +534,7 @@ export class SceneBuilder {
       const depth = node.depth;
       const heat = Math.max(activity.fire[i]!, activity.warm[i]! * 0.42);
       const warm = this.#recent[i]!;
-      const cool: Rgb =
-        node.degree === 0 ? [58, 96, 110] : node.degree >= 8 ? [79, 216, 224] : [64, 158, 178];
+      const cool: Rgb = node.degree === 0 ? LONELY_BODY : node.degree >= 8 ? HUB_BODY : NOTE_BODY;
       const base = warm > 0 ? mix(cool, ACCENT, warm) : cool;
 
       const out = scene.nodes[i]!;
@@ -522,6 +550,7 @@ export class SceneBuilder {
       out.restAlpha = restAlpha;
       out.restGlow = glow(0);
       out.depth = this.#plane[i] as Depth;
+      out.hub = Math.min(1, node.degree / HUB_FULL);
       out.warm = warm;
     }
 
@@ -599,7 +628,7 @@ export class SceneBuilder {
       // a note rather than lie between two of them.
       out.tail = alpha * 0.32;
       const heat = this.#recent[thick]!;
-      out.colour = focused ? [230, 255, 255] : heat > 0 ? mix(TISSUE, ACCENT, heat) : TISSUE;
+      out.colour = focused ? FOCUSED : heat > 0 ? mix(TISSUE, ACCENT, heat) : TISSUE;
       out.depth = this.#plane[thick] as Depth;
       out.strands = nodes[thick]!.degree >= 8 && resting > 0.1;
     }

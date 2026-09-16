@@ -17,7 +17,7 @@ import { Activity } from '../src/brain/activity';
 import { IDENTITY } from '../src/brain/camera';
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph, nodeKey } from '../src/brain/model';
-import { PULSE_COLOUR, SceneBuilder } from '../src/brain/scene';
+import { HUB_BODY, LONELY_BODY, PULSE_COLOUR, SceneBuilder } from '../src/brain/scene';
 
 const VAULT: GraphData = {
   nodes: [
@@ -137,7 +137,11 @@ describe('the render model', () => {
     const lonely = scene.nodes[g.index.get(nodeKey('jb', '20_Areas/lonely.md'))!]!;
     const hub = scene.nodes[g.hub]!;
     expect(lonely.alpha).toBeLessThan(hub.alpha);
-    expect(hub.colour).toEqual([79, 216, 224]);
+    // The colour itself is named rather than spelled out: it was raised on
+    // 2026-09-16 towards the prototype's bright cores, and what this test
+    // guards is the relation — a hub drawn in the hub colour, a lonely note dim.
+    expect(hub.colour).toEqual(HUB_BODY);
+    expect(lonely.colour).toEqual(LONELY_BODY);
   });
 
   it('turns an access into the colour of what happened, then lets it cool', () => {

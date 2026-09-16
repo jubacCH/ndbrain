@@ -111,6 +111,15 @@ const DENDRITE_REACH = 0.96;
 export const DENDRITE_WIDTH = 1.2;
 export const DENDRITE_TIP_WIDTH = 0.4;
 export const DENDRITE_ALPHA = 0.38;
+/**
+ * How loud the grain, the folds and the branches are drawn, as one share.
+ *
+ * Since 2026-09-16 the notes are brighter and the links are trunks, and the
+ * picture's overall brightness was measured to stay where it was — so the
+ * tissue gives way, not the notes. The notes are to be the brightest thing on
+ * screen; the tissue only carries the outline between them.
+ */
+export const TISSUE_LEVEL = 0.85;
 export const DENDRITE_TIP_ALPHA = 0.1;
 
 /**
@@ -120,7 +129,7 @@ export const DENDRITE_TIP_ALPHA = 0.1;
  * is tuned against; the step and the radius decide the texture. Measured
  * against the target picture on 2026-09-16.
  */
-const FOG_GAIN = 0.33;
+const FOG_GAIN = 0.28;
 const FOG_STEP = 0.02;
 const FOG_RADIUS = 0.075;
 

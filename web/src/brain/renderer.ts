@@ -37,8 +37,9 @@
 import { CachedLayer, Sprites } from './bloom';
 import type { Decoration } from './deco';
 import { LINE_HEIGHT, placeRegionNames } from './labels';
-import { DENDRITE_ALPHA, DENDRITE_TIP_ALPHA, DENDRITE_TIP_WIDTH, DENDRITE_WIDTH } from './deco';
+import { DENDRITE_ALPHA, DENDRITE_TIP_ALPHA, DENDRITE_TIP_WIDTH, DENDRITE_WIDTH, TISSUE_LEVEL } from './deco';
 import type { Depth, Rgb, Scene, SceneEdge, SceneNode } from './scene';
+import { FOCUSED } from './scene';
 
 export interface BrainRenderer {
   /** CSS pixels; the backing store is sized from this and the display's ratio. */
@@ -60,10 +61,18 @@ const PLANE_Z: readonly number[] = [-1, 0, 1];
 const PLANE_BLUR = 11;
 const TISSUE_BLUR = 9;
 /** How strongly a bloom is added back over its own layer. */
-const BLOOM_STRENGTH = 0.38;
-const TISSUE_BLOOM = 0.42;
+const BLOOM_STRENGTH = 0.32;
+const TISSUE_BLOOM = 0.4;
 
 const rgba = (c: Rgb, a: number): string => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+/** Where a tract cools to at its far end, and a selected one. The prototype's colours. */
+const TAIL: Rgb = [60, 200, 215];
+const FOCUS_TAIL: Rgb = [120, 230, 245];
+/** How far a hub's parallel fibres bow away from the ray, as a share of its length. */
+const FIBRE_BOW = 0.06;
+/** A note this much of a hub (see `SceneNode.hub`) gets the wide second halo. */
+const HUB_HALO = 0.25;
 
 export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
   const ctx = canvas.getContext('2d');
@@ -89,22 +98,37 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     g.setTransform(dpr * camera.scale, 0, 0, dpr * camera.scale, dpr * camera.x, dpr * camera.y);
   };
 
-  /** A tapered polygon along the curve, filled with a gradient. */
-  const tract = (g: CanvasRenderingContext2D, e: SceneEdge, alpha: number, tail: number): void => {
+  /**
+   * A tapered polygon along the curve, filled with a gradient.
+   *
+   * `bow` bends a copy of the curve sideways — zero at both ends, most in the
+   * middle, as a share of the link's length — and `thin` narrows it: that is
+   * how a hub's ray gets its parallel fibres without tracing the curve again.
+   */
+  const tract = (
+    g: CanvasRenderingContext2D,
+    e: SceneEdge,
+    alpha: number,
+    tail: number,
+    bow = 0,
+    thin = 1,
+  ): void => {
     const n = e.n;
     if (n < 2 || alpha < INVISIBLE) return;
     if (outline.length < n * 4) outline = new Float64Array(n * 4);
+    const chord = bow === 0 ? 0 : Math.hypot(e.pts[(n - 1) * 2]! - e.pts[0]!, e.pts[(n - 1) * 2 + 1]! - e.pts[1]!);
 
     for (let i = 0; i < n; i += 1) {
-      const px = e.pts[i * 2]!;
-      const py = e.pts[i * 2 + 1]!;
       const ahead = Math.min(n - 1, i + 1);
       const behind = Math.max(0, i - 1);
       const tx = e.pts[ahead * 2]! - e.pts[behind * 2]!;
       const ty = e.pts[ahead * 2 + 1]! - e.pts[behind * 2 + 1]!;
       const tl = Math.hypot(tx, ty) || 1;
       const t = i / (n - 1);
-      const w = e.w0 + (e.w1 - e.w0) * t;
+      const lean = bow * chord * 4 * t * (1 - t);
+      const px = e.pts[i * 2]! + (-ty / tl) * lean;
+      const py = e.pts[i * 2 + 1]! + (tx / tl) * lean;
+      const w = (e.w0 + (e.w1 - e.w0) * t) * thin;
       const nx = (-ty / tl) * w;
       const ny = (tx / tl) * w;
       outline[i * 4] = px + nx;
@@ -123,10 +147,12 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     if (!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)) return;
 
     const grad = g.createLinearGradient(x0, y0, x1, y1);
-    // The opacity itself is `globalAlpha`; the gradient only says how the far
-    // end fades against the near one.
+    // The opacity itself is `globalAlpha`; the gradient says how the far end
+    // fades against the near one, and cools as it goes — bright where the link
+    // leaves the better-connected note, a deeper teal at the leaf, as in the
+    // optics prototype.
     grad.addColorStop(0, rgba(e.colour, 1));
-    grad.addColorStop(1, rgba(e.colour, Math.min(1, tail / Math.max(1e-6, alpha))));
+    grad.addColorStop(1, rgba(e.colour === FOCUSED ? FOCUS_TAIL : TAIL, Math.min(1, tail / Math.max(1e-6, alpha))));
     g.fillStyle = grad;
     g.globalAlpha = Math.min(1, alpha);
     g.beginPath();
@@ -137,13 +163,18 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     g.fill();
   };
 
-  /** The glowing body of one note: a sprite halo, a coloured disc, a white core. */
+  /**
+   * The glowing body of one note: a sprite halo, a coloured disc, a white core —
+   * and for a hub one more halo, wide and faint: a star that radiates, not a sun
+   * that drowns its region.
+   */
   const body = (g: CanvasRenderingContext2D, n: SceneNode): void => {
     // Resting values only. This is painted into a cached layer, and the cache
     // does not know about pulses (see `SceneNode.restColour`).
-    const halo = n.r * (1.5 + n.restGlow * 0.8);
+    const halo = n.r * (1.7 + n.restGlow * 0.9 + n.hub * 1.4);
     const sprite = sprites.halo(n.warm >= 0.4 ? 'warm' : 'cyan', halo);
-    g.globalAlpha = Math.min(1, (0.11 + 0.13 * n.restGlow) * n.restAlpha);
+    const haloAlpha = Math.min(1, (0.2 + 0.24 * n.restGlow) * n.restAlpha);
+    g.globalAlpha = haloAlpha;
     if (sprite !== null) g.drawImage(sprite, n.x - halo, n.y - halo, halo * 2, halo * 2);
     else {
       const grad = g.createRadialGradient(n.x, n.y, 0, n.x, n.y, halo);
@@ -154,6 +185,11 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       g.arc(n.x, n.y, halo, 0, Math.PI * 2);
       g.fill();
     }
+    if (sprite !== null && n.hub >= HUB_HALO) {
+      const wide = halo * 2.6;
+      g.globalAlpha = haloAlpha * 0.2;
+      g.drawImage(sprite, n.x - wide, n.y - wide, wide * 2, wide * 2);
+    }
 
     g.globalAlpha = Math.min(1, n.restAlpha);
     g.fillStyle = rgba(n.restColour, 0.85);
@@ -162,9 +198,11 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     g.fill();
     const core = sprites.halo('core', n.r * 1.3);
     if (core !== null) g.drawImage(core, n.x - n.r * 1.3, n.y - n.r * 1.3, n.r * 2.6, n.r * 2.6);
-    g.fillStyle = `rgba(255,255,255,${0.66 * Math.min(1, n.restAlpha)})`;
+    // The white core: what makes a note the brightest thing in the picture.
+    g.globalAlpha = 1;
+    g.fillStyle = `rgba(255,255,255,${Math.min(1, 0.55 + 0.45 * n.restAlpha)})`;
     g.beginPath();
-    g.arc(n.x, n.y, n.r * 0.42, 0, Math.PI * 2);
+    g.arc(n.x, n.y, n.r * 0.5, 0, Math.PI * 2);
     g.fill();
     g.globalAlpha = 1;
   };
@@ -176,20 +214,13 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     for (const e of scene.edges) {
       if (e.depth !== plane) continue;
       tract(g, e, e.restAlpha, e.restTail);
-      // The same link traced twice more, fainter and bent further: a hub's
-      // tracts then read as a bundle of fibres rather than as one thick ribbon.
+      // The same link twice more, fainter, narrower and bent either side: a
+      // hub's rays then read as bundles of fibres rather than single ribbons.
+      // The prototype's values: 45 % and 35 % of the width, 35 % and 25 % of
+      // the opacity, fading out entirely before the leaf.
       if (!e.strands) continue;
-      g.globalAlpha = Math.min(1, e.restAlpha * 0.3);
-      g.beginPath();
-      for (let i = 0; i < e.n; i += 1) {
-        const px = e.pts[i * 2]!;
-        const py = e.pts[i * 2 + 1]!;
-        if (i === 0) g.moveTo(px, py);
-        else g.lineTo(px, py);
-      }
-      g.strokeStyle = rgba(e.colour, 0.5);
-      g.lineWidth = e.w0 * 0.35;
-      g.stroke();
+      tract(g, e, e.restAlpha * 0.35, 0, FIBRE_BOW, 0.45);
+      tract(g, e, e.restAlpha * 0.25, 0, -FIBRE_BOW * 0.6, 0.35);
     }
     g.globalAlpha = 1;
     for (const i of scene.order) {
@@ -224,12 +255,12 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     g.lineCap = 'round';
     g.lineWidth = 0.6 / scene.camera.scale;
     for (const fold of deco.folds) {
-      g.strokeStyle = `rgba(60,180,195,${fold.alpha * 1.6 * dim})`;
+      g.strokeStyle = `rgba(60,180,195,${fold.alpha * 1.6 * dim * TISSUE_LEVEL})`;
       polyline(g, fold.pts, fold.n);
     }
     g.lineWidth = 1.1 / scene.camera.scale;
     for (const sulcus of deco.sulci) {
-      g.strokeStyle = `rgba(45,140,155,${sulcus.alpha * dim})`;
+      g.strokeStyle = `rgba(45,140,155,${sulcus.alpha * dim * TISSUE_LEVEL})`;
       polyline(g, sulcus.pts, sulcus.n);
     }
 
@@ -238,7 +269,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       const x = deco.dust[i * 5]!;
       const y = deco.dust[i * 5 + 1]!;
       const size = deco.dust[i * 5 + 2]! * grain;
-      const a = deco.dust[i * 5 + 3]! * dim;
+      const a = deco.dust[i * 5 + 3]! * dim * TISSUE_LEVEL;
       const warm = deco.dust[i * 5 + 4]! === 1;
       g.fillStyle = warm ? `rgba(200,160,100,${a * 0.8})` : `rgba(80,195,210,${a})`;
       g.beginPath();
@@ -257,7 +288,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       const d = deco.dendrites[i * 6 + 4]!;
       const warm = deco.dendrites[i * 6 + 5]!;
       g.lineWidth = (DENDRITE_WIDTH + (DENDRITE_TIP_WIDTH - DENDRITE_WIDTH) * d) * grain;
-      const a = (DENDRITE_ALPHA + (DENDRITE_TIP_ALPHA - DENDRITE_ALPHA) * d) * dim;
+      const a = (DENDRITE_ALPHA + (DENDRITE_TIP_ALPHA - DENDRITE_ALPHA) * d) * dim * TISSUE_LEVEL;
       // The branches of a note being worked on warm with it, by the same amount.
       g.strokeStyle = warm > 0
         ? `rgba(${Math.round(100 + 120 * warm)},${Math.round(215 - 30 * warm)},${Math.round(230 - 110 * warm)},${a})`
