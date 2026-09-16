@@ -13,7 +13,7 @@ import { blockedAround } from '../src/brain/blocked';
 import type { Camera } from '../src/brain/camera';
 import { fit } from '../src/brain/camera';
 import type { PlacedLabel, Rect } from '../src/brain/labels';
-import { breakName, overlaps, placeRegionNames, polylinesCross, sampleLeader } from '../src/brain/labels';
+import { breakName, overlaps, placeLabels, placeRegionNames, polylinesCross, sampleLeader } from '../src/brain/labels';
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph } from '../src/brain/model';
 import type { RegionAnchor } from '../src/brain/regions';
@@ -104,15 +104,28 @@ function expectValid(
     // On its region's side of the fissure.
     expect((cx - fissure) * a.side, `${name} is on the other hemisphere`).toBeGreaterThan(0);
 
-    // Next to its region: outward from the note its leader starts at, and not
-    // further than a third of the brain away from it.
-    const anchor = toScreen(camera, a.anchorX, a.anchorY);
-    expect((cx - anchor.x) * a.dirX + (cy - anchor.y) * a.dirY, `${name} points back into the brain`).toBeGreaterThan(0);
+    // The leader starts at the anchor of whichever way the name was placed by.
+    // A medial region offers two — above or below the brain first, outward
+    // second — each from its own note. An earlier version of this check knew
+    // only the first, and passed only for as long as no layout made a region
+    // fall back to the second.
+    const ways = a.alternate === null ? [a] : [a, a.alternate];
+    const used = ways.find((w) => {
+      const p = toScreen(camera, w.anchorX, w.anchorY);
+      return Math.abs(label.fromX - p.x) < 1e-6 && Math.abs(label.fromY - p.y) < 1e-6;
+    });
+    expect(used, `${name}'s leader starts at none of its region's anchors`).toBeDefined();
+    const anchor = toScreen(camera, used!.anchorX, used!.anchorY);
+
+    // Next to its region: outward from that note, along that way's direction,
+    // and not further than a third of the brain away from it.
+    expect(
+      (cx - anchor.x) * used!.dirX + (cy - anchor.y) * used!.dirY,
+      `${name} points back into the brain`,
+    ).toBeGreaterThan(0);
     expect(Math.hypot(label.toX - anchor.x, label.toY - anchor.y), `${name} is far from its region`).toBeLessThan(
       brainWidth / 3,
     );
-    expect(label.fromX).toBeCloseTo(anchor.x, 6);
-    expect(label.fromY).toBeCloseTo(anchor.y, 6);
   }
 
   // No two names overlap, and no two leaders cross.
@@ -149,6 +162,10 @@ describe('where a region is named', () => {
     for (const a of medial) {
       const label = names.find((n) => n.region === a.region);
       if (label === undefined) continue;
+      // Placed by its outward fallback — no room above or below — it is beside
+      // its notes on purpose; the rule is about the first way.
+      const first = toScreen(camera, a.anchorX, a.anchorY);
+      if (Math.abs(label.fromX - first.x) > 1e-6 || Math.abs(label.fromY - first.y) > 1e-6) continue;
       const region = view.regions.find((r) => r.id === a.region)!;
       let top = Infinity;
       let bottom = -Infinity;
@@ -172,6 +189,39 @@ describe('where a region is named', () => {
     expectValid(names, camera, size, blocked);
     const moved = names.find((n) => n.region === first.region);
     if (moved !== undefined) expect(overlaps(moved.box, control)).toBe(false);
+  });
+
+  it('tries a region’s second way only when the first has no room, and leads from the second way’s note', () => {
+    // Hand-built, so the first way can be made impossible outright: a reach of
+    // zero admits no position. On a real layout the fan usually finds the first
+    // way somewhere, which is right, and is exactly why a test on one cannot
+    // force the fallback.
+    const base = {
+      region: 1,
+      lines: ['Name'],
+      width: 40,
+      height: 17,
+      side: 1 as const,
+      weight: 10,
+      rimX: 600,
+      rimY: 300,
+      dirX: 1,
+      dirY: 0,
+    };
+    const first = { ...base, anchorX: 560, anchorY: 300, reach: 0 };
+    const second = { ...base, anchorX: 570, anchorY: 320, reach: 400 };
+    const screen = { width: 1000, height: 700, fissureX: 400, blocked: [], onTissue: () => false };
+
+    const [placed] = placeLabels([first, second], screen);
+    expect(placed).toBeDefined();
+    expect(placed!.fromX).toBe(570);
+    expect(placed!.fromY).toBe(320);
+
+    // With room for the first way, the second is never used.
+    const [preferred] = placeLabels([{ ...first, reach: 400 }, second], screen);
+    expect(preferred!.fromX).toBe(560);
+    // And a region is written once, however many ways it offers.
+    expect(placeLabels([{ ...first, reach: 400 }, second], screen)).toHaveLength(1);
   });
 
   it('leaves a name out rather than squeeze it into a canvas with no room for it', () => {
