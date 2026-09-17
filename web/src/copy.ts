@@ -175,6 +175,8 @@ export const copy = {
     noteGone: 'That note is gone.',
     noWriteHere: (space: string) => `You cannot write there in ${space}. Pick a folder you may write in.`,
     saveFailed: 'Could not save. Your text stays in the editor.',
+    noteMovedWhileSaving:
+      'Not saved: this note was renamed, moved or deleted while you were writing. Your text stays in the editor — copy it before you open another note.',
     createFailed: 'Could not create that.',
     createFolderFailed: 'Could not create that folder.',
     renameFailed: 'Could not rename that.',
@@ -313,6 +315,9 @@ export const copy = {
     delete: 'Delete',
     dropInto: (where: string) => `Drop to upload into ${where}`,
     theVault: 'the vault',
+    vaultPicker: 'Showing',
+    ownVault: 'My vault',
+    spaceOption: (space: string) => `Space ${space}`,
   },
 
   shares: {

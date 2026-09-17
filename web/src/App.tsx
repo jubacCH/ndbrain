@@ -46,7 +46,7 @@ import { NetworkFrame, type FullscreenFrame } from './NetworkFrame';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { MenuButton, type MenuItem } from './Menu';
-import { mayChange, mayShare } from './rights';
+import { mayChange, mayChangeFolder, mayShare } from './rights';
 import { OwnersContext, ownerDirectory, ownerKind, ownerLabel } from './owners';
 import { ShareDialog, type ShareTarget } from './ShareDialog';
 import { SettingsView } from './Settings';
@@ -341,6 +341,8 @@ function Shell({
    */
   const prefsRef = useRef(prefs);
   const [filesDir, setFilesDir] = useState('');
+  /** Whose files the browser shows: the caller's own vault, or a space's. */
+  const [filesOwner, setFilesOwner] = useState(user.id);
   /** Which account's keys the admin view is showing. */
   const [keyOwner, setKeyOwner] = useState(user.id);
   const [adminBusy, setAdminBusy] = useState(false);
@@ -416,7 +418,7 @@ function Shell({
   // The graph feeds both the big network view and the neighbourhood panel beside
   // an open note, so it is wanted in exactly those two places and nowhere else.
   const graphQuery = useGraph(view === 'brain' || view === 'note');
-  const filesQuery = useFiles(view === 'files');
+  const filesQuery = useFiles(view === 'files', filesOwner === user.id ? undefined : filesOwner);
   const settingsQuery = useSettings(view === 'settings');
   const topicsQuery = useTopics(view === 'tidy');
   const isAdmin = user.role === 'admin';
@@ -424,7 +426,7 @@ function Shell({
   // administrator can ask the server who has an account.
   const adminUsersQuery = useAdminUsers(isAdmin && (view === 'admin' || shareTarget !== null));
   const adminSpacesQuery = useAdminSpaces(isAdmin && view === 'admin');
-  const adminKeysQuery = useAdminKeys(keyOwner, view === 'admin');
+  const adminKeysQuery = useAdminKeys(keyOwner, isAdmin && view === 'admin');
   // Built rather than spread with `dir: taskDir` directly: the filter type is
   // properly optional (`dir?: string`), and `exactOptionalPropertyTypes` draws
   // a line between "absent" and "present but undefined" that a plain object
@@ -548,6 +550,18 @@ function Shell({
           if (result.created || result.conflictCopy !== undefined) invalidate.afterStructure(client);
         } catch (caught) {
           if (isOpen()) setSaveState('failed');
+          if (caught instanceof ApiError && caught.status === 404) {
+            // The note is no longer at this path: renamed, moved or deleted
+            // while this text was being typed. The server does not bring it
+            // back into being at the old name (a save names its version), so
+            // this text has nowhere to go — said plainly, kept in the editor
+            // and in the crash box's slot, and the tree refreshed so the new
+            // name is there to paste it into.
+            window.__ndbrainPending = { path: outstanding.path, content: outstanding.content };
+            setError(copy.errors.noteMovedWhileSaving);
+            invalidate.afterStructure(client);
+            return;
+          }
           setError(caught instanceof ApiError ? caught.message : copy.errors.saveFailed);
         }
       })();
@@ -1039,6 +1053,25 @@ function Shell({
     [client, settle, write, user.id, setOpenRef],
   );
 
+  /**
+   * The vaults the file browser offers: the caller's own, then every space the
+   * caller holds a membership in, by display name. A space that has gone (a
+   * membership withdrawn, the space disabled) sends the browser back home.
+   */
+  const filesVaults = useMemo(
+    () => [
+      { id: user.id, label: user.id, space: false },
+      ...[...owners.values()]
+        .filter((owner) => owner.kind === 'space')
+        .map((owner) => ({ id: owner.id, label: ownerLabel(owners, owner.id), space: true }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    ],
+    [owners, user.id],
+  );
+  useEffect(() => {
+    if (treeQuery.data !== undefined && !filesVaults.some((vault) => vault.id === filesOwner)) setFilesOwner(user.id);
+  }, [filesVaults, filesOwner, user.id, treeQuery.data]);
+
   /** Whether the caller may open the share dialog on notes of this vault. */
   const mayShareNote = useCallback(
     (owner: string): boolean => mayShare(user, owner, ownerKind(owners, owner)),
@@ -1289,7 +1322,7 @@ function Shell({
         for (const file of picked) {
           const target = intoDir === '' ? file.name : `${intoDir}/${file.name}`;
           try {
-            await api.uploadFile(user.id, target, file);
+            await api.uploadFile(filesOwner, target, file);
           } catch (caught) {
             failed.push(`${file.name}: ${caught instanceof ApiError ? caught.message : 'failed'}`);
           }
@@ -1302,14 +1335,14 @@ function Shell({
         setFilesBusy(false);
       }
     },
-    [refreshFiles, refreshTree, user.id],
+    [refreshFiles, refreshTree, filesOwner],
   );
 
   const replaceFile = useCallback(
     async (path: string, file: File): Promise<void> => {
       setFilesBusy(true);
       try {
-        await api.uploadFile(user.id, path, file);
+        await api.uploadFile(filesOwner, path, file);
         await refreshFiles();
         if (path.toLowerCase().endsWith('.md')) await refreshTree();
         setError(null);
@@ -1319,7 +1352,7 @@ function Shell({
         setFilesBusy(false);
       }
     },
-    [refreshFiles, refreshTree, user.id],
+    [refreshFiles, refreshTree, filesOwner],
   );
 
   const removeFile = useCallback(
@@ -1329,12 +1362,12 @@ function Shell({
 
       setFilesBusy(true);
       try {
-        await api.deleteFile(user.id, file.path);
+        await api.deleteFile(filesOwner, file.path);
         await refreshFiles();
         if (file.isNote) {
           await refreshTree();
           // The open note may be the one just deleted.
-          if (open !== null && open.note.path === file.path) setOpenRef(null);
+          if (open !== null && open.owner === filesOwner && open.note.path === file.path) setOpenRef(null);
         }
         setError(null);
       } catch (caught) {
@@ -1343,7 +1376,7 @@ function Shell({
         setFilesBusy(false);
       }
     },
-    [refreshFiles, refreshTree, user.id, open],
+    [refreshFiles, refreshTree, filesOwner, open, setOpenRef],
   );
 
   /**
@@ -1998,14 +2031,18 @@ function Shell({
                     files={files.files}
                     dirs={files.dirs}
                     truncated={files.truncated}
-                    owner={user.id}
+                    owner={filesOwner}
+                    vaults={filesVaults}
+                    onVault={setFilesOwner}
+                    mayWrite={(path) => mayChange(user.id, received, filesOwner, path)}
+                    mayAddTo={(dir) => mayChangeFolder(user.id, received, filesOwner, dir)}
                     busy={filesBusy}
                     dir={filesDir}
                     onDir={setFilesDir}
                     onUpload={(picked, intoDir) => void uploadFiles(picked, intoDir)}
                     onReplace={(path, file) => void replaceFile(path, file)}
                     onDelete={(file) => void removeFile(file)}
-                    onOpenNote={(path) => void openNote(user.id, path)}
+                    onOpenNote={(path) => void openNote(filesOwner, path)}
                   />
                 ))}
 

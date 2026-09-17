@@ -162,14 +162,19 @@ export function useGraph(enabled: boolean): UseQueryResult<GraphData> {
   });
 }
 
-export function useFiles(enabled: boolean): UseQueryResult<{
+/**
+ * The files of one vault: the caller's own when `owner` is omitted, otherwise
+ * the part of somebody else's (a space) the caller's shares reach.
+ */
+export function useFiles(enabled: boolean, owner?: string): UseQueryResult<{
   files: FileRow[];
   dirs: string[];
   truncated: boolean;
 }> {
   return useQuery({
-    queryKey: keys.files,
-    queryFn: () => api.files(),
+    // Under the one `files` prefix, so every invalidation of files reaches all vaults.
+    queryKey: [...keys.files, owner ?? ''],
+    queryFn: () => api.files(owner),
     // The disk is the truth here and it can change under us — an agent writing,
     // a file dropped in over the share. Short, but not zero.
     staleTime: 5_000,

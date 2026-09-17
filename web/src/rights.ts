@@ -41,6 +41,24 @@ export function mayChange(self: string, received: readonly Share[], owner: strin
 }
 
 /**
+ * Whether the caller may put files into this folder (`''` is the vault root).
+ *
+ * Only a vault share, or a writable folder share at or above the folder: a
+ * note share names one note and never a folder, however its path is spelled.
+ */
+export function mayChangeFolder(self: string, received: readonly Share[], owner: string, dir: string): boolean {
+  if (owner === self) return true;
+  const inside = dir === '' ? '' : `${dir}/`;
+  return received.some(
+    (share) =>
+      share.owner === owner &&
+      share.canWrite &&
+      share.kind !== 'note' &&
+      (share.prefix === '' || (inside !== '' && inside.startsWith(share.prefix))),
+  );
+}
+
+/**
  * Whether the caller may hand this note on to somebody else.
  *
  * Your own notes, always. A held share is never yours to pass on, write access

@@ -15,7 +15,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -67,6 +67,8 @@ const server = vi.hoisted(() => ({
   deleteFails: false,
   /** How long a save takes to answer. */
   putDelayMs: 0,
+  /** Whether the note being saved is gone from its path by the time the save arrives. */
+  putMissing: false,
   /** Every note's version on the server, by path; a save moves it on. */
   versions: new Map<string, number>(),
   /** Each write with the version it said it started from. */
@@ -145,6 +147,7 @@ vi.mock('../src/api', async (original) => {
       server.written.push([owner, path]);
       server.writes.push({ path, base });
       if (server.putDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, server.putDelayMs));
+      if (server.putMissing) throw new real.ApiError(404, 'not_found', 'note does not exist');
       const version = (server.versions.get(path) ?? 0) + 1000;
       server.versions.set(path, version);
       server.log.push(`put-end ${path}`);
@@ -172,6 +175,24 @@ const PLAN = 'Projects/Deep/Plan.md';
 
 let confirm: ReturnType<typeof vi.fn>;
 
+/*
+ * Time is the test's, not the machine's. The fake server answers after set
+ * delays, and the races below are about which answer comes first; on real
+ * timers a busy machine could stretch one delay past another and turn a
+ * correct order into a failure. On fake timers every delay is exactly as long
+ * as written, however loaded the machine is.
+ *
+ * Testing Library advances fake timers while it waits once it can see a
+ * `jest`-style clock, and user-event is told to advance them between its steps.
+ */
+let user: ReturnType<typeof userEvent.setup>;
+
+async function advance(ms: number): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
 function narrowScreen(narrow: boolean): void {
   vi.stubGlobal('matchMedia', (query: string) => ({
     matches: narrow && query.includes('max-width'),
@@ -182,6 +203,9 @@ function narrowScreen(narrow: boolean): void {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: false });
+  vi.stubGlobal('jest', { advanceTimersByTime: (ms: number) => vi.advanceTimersByTime(ms) });
+  user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) });
   window.localStorage.clear();
   Element.prototype.scrollIntoView = () => {};
   narrowScreen(false);
@@ -209,6 +233,7 @@ beforeEach(() => {
   server.deleteDelayMs = 0;
   server.deleteFails = false;
   server.putDelayMs = 0;
+  server.putMissing = false;
   server.versions = new Map([[PLAN, 111], ['Loose.md', 222]]);
   server.writes = [];
   server.log = [];
@@ -217,6 +242,7 @@ beforeEach(() => {
 afterEach(() => {
   window.localStorage.clear();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 function mount(): void {
@@ -230,22 +256,22 @@ function mount(): void {
 
 async function openFromPalette(title: string): Promise<void> {
   await screen.findByRole('button', { name: copy.shell.account });
-  await userEvent.keyboard('{Control>}k{/Control}');
+  await user.keyboard('{Control>}k{/Control}');
   const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
-  await userEvent.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
+  await user.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
   await screen.findByTestId('editor');
 }
 
 /** Opens a note by title and waits until the editor shows that one. */
 async function switchTo(title: string, path: string): Promise<void> {
-  await userEvent.keyboard('{Control>}k{/Control}');
+  await user.keyboard('{Control>}k{/Control}');
   const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
-  await userEvent.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
+  await user.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
   await waitFor(() => expect(screen.getByTestId('editor')).toHaveTextContent(path), { timeout: 3000 });
 }
 
 async function toNetwork(): Promise<void> {
-  await userEvent.click(await screen.findByRole('button', { name: copy.nav.network }));
+  await user.click(await screen.findByRole('button', { name: copy.nav.network }));
   await screen.findByTestId('brain');
 }
 
@@ -262,8 +288,8 @@ describe("deleting from the note's header", () => {
     await waitFor(() => expect(storedRecents()).toContain(PLAN));
     const treeBefore = server.calls.tree;
 
-    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
-    await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+    await user.click(screen.getByRole('button', { name: copy.note.actions }));
+    await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
 
     await waitFor(() => expect(server.deleted).toEqual([['julian', PLAN]]));
     // Distinct notes other than itself: Index (twice) and Log.
@@ -283,15 +309,15 @@ describe("deleting from the note's header", () => {
   it('drops unsaved text in the deleted note, so no late save brings it back', async () => {
     mount();
     await openFromPalette('Plan');
-    await userEvent.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
+    await user.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
 
-    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
-    await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+    await user.click(screen.getByRole('button', { name: copy.note.actions }));
+    await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
     await waitFor(() => expect(server.deleted).toEqual([['julian', PLAN]]));
 
     // Longer than the save delay, and then a switch, which writes whatever is
     // still pending before it opens anything.
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await advance(700);
     await openFromPalette('Loose');
     expect(server.written).toEqual([]);
   });
@@ -302,22 +328,22 @@ describe("deleting from the note's header", () => {
     server.linksDelayMs = 700;
     mount();
     await openFromPalette('Plan');
-    await userEvent.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
-    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
-    await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+    await user.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
+    await user.click(screen.getByRole('button', { name: copy.note.actions }));
+    await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
     await waitFor(() => expect(server.deleted).toEqual([['julian', PLAN]]), { timeout: 2000 });
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await advance(600);
     expect(server.written).toEqual([]);
   });
 
   describe('nothing written while the delete is under way', () => {
     const typeInEditor = (): Promise<void> =>
-      userEvent.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
+      user.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
     const askToDelete = async (): Promise<void> => {
-      await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
-      await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+      await user.click(screen.getByRole('button', { name: copy.note.actions }));
+      await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
     };
-    const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+    const settle = advance;
 
     it('typing while the links are counted', async () => {
       server.linksDelayMs = 200;
@@ -416,9 +442,9 @@ describe("deleting from the note's header", () => {
     confirm.mockReturnValue(false);
     mount();
     await openFromPalette('Plan');
-    await userEvent.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
-    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
-    await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+    await user.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
+    await user.click(screen.getByRole('button', { name: copy.note.actions }));
+    await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     await waitFor(() => expect(server.written).toEqual([['julian', PLAN]]));
   });
@@ -428,8 +454,8 @@ describe("deleting from the note's header", () => {
     mount();
     await openFromPalette('Plan');
 
-    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
-    await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+    await user.click(screen.getByRole('button', { name: copy.note.actions }));
+    await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
 
     await waitFor(() => expect(confirm).toHaveBeenCalledWith(QUESTION_PLAN));
     expect(server.deleted).toEqual([]);
@@ -440,8 +466,8 @@ describe("deleting from the note's header", () => {
   it('asks without a count where nothing links to the note', async () => {
     mount();
     await openFromPalette('Loose');
-    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
-    await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+    await user.click(screen.getByRole('button', { name: copy.note.actions }));
+    await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
     await waitFor(() => expect(server.deleted).toEqual([['julian', 'Loose.md']]));
     expect(confirm).toHaveBeenCalledWith(copy.ask.deleteNote('Loose'));
   });
@@ -452,8 +478,8 @@ describe("deleting from the note's header", () => {
     expect(screen.queryByRole('button', { name: copy.note.actions })).toBeNull();
 
     await openFromPalette('Gemeinsam');
-    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
-    await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+    await user.click(await screen.findByRole('button', { name: copy.note.actions }));
+    await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
     await waitFor(() => expect(server.deleted).toEqual([['anna', 'Team/Gemeinsam.md']]));
   });
 });
@@ -463,7 +489,7 @@ describe('deleting from the tree', () => {
     mount();
     await openFromPalette('Plan');
 
-    await userEvent.click(await screen.findByRole('button', { name: copy.tree.deleteNoteLabel('Loose') }));
+    await user.click(await screen.findByRole('button', { name: copy.tree.deleteNoteLabel('Loose') }));
 
     await waitFor(() => expect(server.deleted).toEqual([['julian', 'Loose.md']]));
     expect(confirm).toHaveBeenCalledWith(copy.ask.deleteNote('Loose'));
@@ -474,7 +500,7 @@ describe('deleting from the tree', () => {
     mount();
     await openFromPalette('Plan');
     // The tree has opened the folders down to the open note.
-    await userEvent.click(await screen.findByRole('button', { name: copy.tree.deleteNoteLabel('Plan') }));
+    await user.click(await screen.findByRole('button', { name: copy.tree.deleteNoteLabel('Plan') }));
     await waitFor(() => expect(server.deleted).toEqual([['julian', PLAN]]));
     await waitFor(() => expect(screen.queryByTestId('editor')).toBeNull());
   });
@@ -482,7 +508,7 @@ describe('deleting from the tree', () => {
   it('deletes nothing when cancelled', async () => {
     confirm.mockReturnValue(false);
     mount();
-    await userEvent.click(await screen.findByRole('button', { name: copy.tree.deleteNoteLabel('Loose') }));
+    await user.click(await screen.findByRole('button', { name: copy.tree.deleteNoteLabel('Loose') }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     expect(server.deleted).toEqual([]);
     expect(screen.getByText('Loose')).toBeInTheDocument();
@@ -494,7 +520,7 @@ describe('deleting from the tree', () => {
     expect(screen.getAllByText('Nur lesen').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: copy.tree.deleteNoteLabel('Nur lesen') })).toBeNull();
     await openFromPalette('Gemeinsam');
-    expect(screen.getByRole('button', { name: copy.tree.deleteNoteLabel('Gemeinsam') })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: copy.tree.deleteNoteLabel('Gemeinsam') })).toBeInTheDocument();
   });
 });
 
@@ -502,10 +528,10 @@ describe('the inspector', () => {
   it('deletes the focused note after asking, and the focus ends', async () => {
     mount();
     await toNetwork();
-    await userEvent.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
+    await user.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
     const card = await screen.findByRole('region', { name: copy.inspector.label('Plan') });
 
-    await userEvent.click(within(card).getByRole('button', { name: copy.tree.deleteNoteLabel('Plan') }));
+    await user.click(within(card).getByRole('button', { name: copy.tree.deleteNoteLabel('Plan') }));
 
     await waitFor(() => expect(server.deleted).toEqual([['julian', PLAN]]));
     expect(confirm).toHaveBeenCalledWith(QUESTION_PLAN);
@@ -519,9 +545,9 @@ describe('the inspector', () => {
     confirm.mockReturnValue(false);
     mount();
     await toNetwork();
-    await userEvent.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
+    await user.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
     const card = await screen.findByRole('region', { name: copy.inspector.label('Plan') });
-    await userEvent.click(within(card).getByRole('button', { name: copy.tree.deleteNoteLabel('Plan') }));
+    await user.click(within(card).getByRole('button', { name: copy.tree.deleteNoteLabel('Plan') }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     expect(server.deleted).toEqual([]);
     expect(screen.getByRole('region', { name: copy.inspector.label('Plan') })).toBeInTheDocument();
@@ -530,12 +556,12 @@ describe('the inspector', () => {
   it('offers no delete on a note shared read-only, and offers it on one shared writable', async () => {
     mount();
     await toNetwork();
-    await userEvent.click(screen.getByRole('button', { name: 'pick anna/Lesen/Nur lesen.md' }));
+    await user.click(screen.getByRole('button', { name: 'pick anna/Lesen/Nur lesen.md' }));
     const card = await screen.findByRole('region', { name: copy.inspector.label('Nur lesen') });
     expect(within(card).getByRole('button', { name: copy.inspector.open })).toBeInTheDocument();
     expect(within(card).queryByRole('button', { name: /^Delete / })).toBeNull();
 
-    await userEvent.click(screen.getByRole('button', { name: 'pick anna/Team/Gemeinsam.md' }));
+    await user.click(screen.getByRole('button', { name: 'pick anna/Team/Gemeinsam.md' }));
     const other = await screen.findByRole('region', { name: copy.inspector.label('Gemeinsam') });
     expect(within(other).getByRole('button', { name: copy.tree.deleteNoteLabel('Gemeinsam') })).toBeInTheDocument();
   });
@@ -548,9 +574,9 @@ describe('show in tree', () => {
     const tree = screen.getByRole('tree', { name: 'Notes' });
     expect(within(tree).queryByText('Plan')).toBeNull();
 
-    await userEvent.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
+    await user.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
     const card = await screen.findByRole('region', { name: copy.inspector.label('Plan') });
-    await userEvent.click(within(card).getByRole('button', { name: copy.inspector.reveal }));
+    await user.click(within(card).getByRole('button', { name: copy.inspector.reveal }));
 
     const row = (await within(tree).findByText('Plan')).closest('button')!;
     expect(row).toHaveAttribute('data-revealed', 'true');
@@ -564,12 +590,12 @@ describe('show in tree', () => {
     mount();
     await toNetwork();
     const filter = screen.getByLabelText(copy.nav.filterLabel);
-    await userEvent.type(filter, 'Loose');
+    await user.type(filter, 'Loose');
     const tree = screen.getByRole('tree', { name: 'Notes' });
     expect(within(tree).queryByText('Plan')).toBeNull();
 
-    await userEvent.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
-    await userEvent.click(await screen.findByRole('button', { name: copy.inspector.reveal }));
+    await user.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
+    await user.click(await screen.findByRole('button', { name: copy.inspector.reveal }));
 
     expect(filter).toHaveValue('');
     expect((await within(tree).findByText('Plan')).closest('button')).toHaveAttribute('data-revealed', 'true');
@@ -581,8 +607,8 @@ describe('show in tree', () => {
     await toNetwork();
     expect(document.querySelector('.app')).toHaveAttribute('data-collapsed', 'true');
 
-    await userEvent.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
-    await userEvent.click(await screen.findByRole('button', { name: copy.inspector.reveal }));
+    await user.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
+    await user.click(await screen.findByRole('button', { name: copy.inspector.reveal }));
 
     await waitFor(() => expect(document.querySelector('.app')).toHaveAttribute('data-collapsed', 'false'));
     const tree = await screen.findByRole('tree', { name: 'Notes' });
@@ -595,8 +621,8 @@ describe('show in tree', () => {
     await toNetwork();
     expect(document.querySelector('.app')).toHaveAttribute('data-drawer', 'false');
 
-    await userEvent.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
-    await userEvent.click(await screen.findByRole('button', { name: copy.inspector.reveal }));
+    await user.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
+    await user.click(await screen.findByRole('button', { name: copy.inspector.reveal }));
 
     expect(document.querySelector('.app')).toHaveAttribute('data-drawer', 'true');
     const tree = screen.getByRole('tree', { name: 'Notes' });
@@ -606,25 +632,25 @@ describe('show in tree', () => {
   it('lets go of the mark once a note is opened', async () => {
     mount();
     await toNetwork();
-    await userEvent.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
-    await userEvent.click(await screen.findByRole('button', { name: copy.inspector.reveal }));
+    await user.click(screen.getByRole('button', { name: `pick julian/${PLAN}` }));
+    await user.click(await screen.findByRole('button', { name: copy.inspector.reveal }));
     const tree = screen.getByRole('tree', { name: 'Notes' });
     await within(tree).findByText('Plan');
     expect(tree.querySelector('[data-revealed]')).not.toBeNull();
 
-    await userEvent.click(within(tree).getByText('Loose'));
+    await user.click(within(tree).getByText('Loose'));
     await screen.findByTestId('editor');
     expect(tree.querySelector('[data-revealed]')).toBeNull();
   });
 });
 
 describe('races around saving and deleting', () => {
-  const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+  const settle = advance;
   const typeInEditor = (): Promise<void> =>
-    userEvent.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
+    user.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
   const askToDelete = async (): Promise<void> => {
-    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
-    await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+    await user.click(screen.getByRole('button', { name: copy.note.actions }));
+    await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
   };
   /** The log, for a failure message that shows the order things happened in. */
   const order = (): string => server.log.join(' → ');
@@ -774,5 +800,22 @@ describe('races around saving and deleting', () => {
     await waitFor(() => expect(server.log).toContain(`delete-start ${PLAN}`), { timeout: 4000 });
     await waitFor(() => expect(server.log).toContain(`put-end ${PLAN}`), { timeout: 4000 });
     expect(server.log.indexOf(`put-end ${PLAN}`), order()).toBeLessThan(server.log.indexOf(`delete-start ${PLAN}`));
+  });
+});
+
+describe('a save of a note that was renamed meanwhile', () => {
+  it('says what happened and keeps the text, rather than failing with the server’s words', async () => {
+    mount();
+    await openFromPalette('Plan');
+    server.putMissing = true;
+    await user.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
+    await waitFor(() => expect(server.writes).toHaveLength(1));
+
+    expect(await screen.findByText(copy.errors.noteMovedWhileSaving)).toBeInTheDocument();
+    expect(screen.queryByText('note does not exist')).toBeNull();
+    expect(screen.getByText(copy.save.failed)).toBeInTheDocument();
+    // Still open, and the text is where the crash box would find it.
+    expect(screen.getByTestId('editor')).toHaveTextContent(PLAN);
+    expect(window.__ndbrainPending).toEqual({ path: PLAN, content: 'typed, not yet saved' });
   });
 });
