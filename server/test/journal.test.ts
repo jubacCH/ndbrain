@@ -253,6 +253,15 @@ describe('creating a note only if it is absent', () => {
     expect(response.json().code).toBe('case_collision');
   });
 
+  it('refuses a name no link could reach, and writes nothing', async () => {
+    for (const name of ['Plan [alt]', 'Nr #3']) {
+      const response = await ensure(julian, `50_Journal/2026/09/${encodeURIComponent(name)}.md`, 'x');
+      expect(response.statusCode).toBe(400);
+      expect(response.json().code).toBe('unlinkable_name');
+    }
+    expect(await vaultFiles('julian')).toEqual([]);
+  });
+
   it('is held to the same permission as any other write', async () => {
     // Read-only share: the grantee may look, not create.
     runtime.shares.grant('julian', '50_Journal', 'ramona', false);
