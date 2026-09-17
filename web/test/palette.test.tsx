@@ -191,7 +191,11 @@ describe('two halves', () => {
 describe('asking the server', () => {
   it('waits for a pause in typing, then asks once for the whole word', async () => {
     renderPalette();
-    for (const words of ['p', 'pr', 'pro', 'prox']) fireEvent.change(box(), { target: { value: words } });
+    // Typed at an ordinary pace: each key well inside the pause.
+    for (const words of ['p', 'pr', 'pro', 'prox']) {
+      fireEvent.change(box(), { target: { value: words } });
+      await new Promise((resolve) => setTimeout(resolve, TEXT_SEARCH_DELAY_MS / 3));
+    }
     expect(server.searches).toHaveLength(0);
     await new Promise((resolve) => setTimeout(resolve, TEXT_SEARCH_DELAY_MS + 80));
     expect(server.searches.map((s) => s.q)).toEqual(['prox']);
