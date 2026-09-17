@@ -4865,3 +4865,339 @@ th.pick input,
 .cm-editor .cm-task {
   accent-color: var(--accent);
 }
+
+/* ---- The inspector beside a focused note ---- */
+
+/*
+ * The card from the target image's popover, docked at the right edge of the
+ * brain rather than floating at the note: it holds lists and actions, and a
+ * card that followed the camera would move away from the pointer reaching for
+ * them.
+ *
+ * Laid over the canvas, which is dark in both themes, so it uses the same
+ * literal palette as the hover card, the legend and the switcher. It sits below
+ * the switcher and above the legend, so both stay free; the brain keeps its
+ * region names clear of it by measuring it (`brain/blocked.ts`).
+ */
+.inspector {
+  position: absolute;
+  z-index: 3;
+  top: 4.25rem;
+  right: var(--s-4);
+  width: min(21rem, calc(100% - 2 * var(--s-4)));
+  max-height: calc(100% - 9rem);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  border: 1px solid rgba(93, 210, 220, 0.2);
+  background: rgba(8, 26, 34, 0.88);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  box-shadow:
+    0 18px 48px -18px rgba(0, 0, 0, 0.6),
+    0 0 28px -14px rgba(57, 220, 235, 0.35);
+  color: rgba(231, 242, 244, 0.95);
+  font-size: var(--t-sm);
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-3) var(--s-2) var(--s-4);
+  flex: none;
+}
+
+.inspector-head > svg {
+  flex: none;
+  color: rgba(160, 220, 230, 0.8);
+}
+
+.inspector-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.inspector-title:focus-visible {
+  outline: 2px solid rgba(127, 233, 240, 0.7);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.inspector-close {
+  flex: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: rgba(200, 232, 240, 0.7);
+  cursor: pointer;
+}
+
+.inspector-close:hover {
+  background: rgba(93, 210, 220, 0.1);
+  color: #eafaff;
+}
+
+.inspector-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--s-4) var(--s-3);
+}
+
+.inspector-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s-1) var(--s-4);
+  margin: 0;
+  font-size: var(--t-xs);
+}
+
+.inspector-facts dt {
+  color: rgba(160, 200, 210, 0.8);
+  white-space: nowrap;
+}
+
+.inspector-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.inspector-tag {
+  display: inline-block;
+  margin: 0 var(--s-1) var(--s-0) 0;
+  padding: 0 var(--s-2);
+  border-radius: var(--r-full);
+  background: rgba(57, 220, 235, 0.1);
+  color: #a9dfe7;
+  font-family: var(--mono);
+}
+
+.inspector-quiet {
+  color: rgba(150, 190, 200, 0.75);
+}
+
+.inspector-section {
+  padding-top: var(--s-3);
+  margin-top: var(--s-3);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.inspector-section h3,
+.inspector-links h4 {
+  margin: 0 0 var(--s-2);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(160, 205, 215, 0.75);
+}
+
+.inspector-section p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.inspector-summary {
+  color: rgba(214, 234, 238, 0.92);
+}
+
+.inspector-links + .inspector-links {
+  margin-top: var(--s-3);
+}
+
+.inspector-links h4 {
+  margin-bottom: var(--s-1);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.inspector-count {
+  margin-left: var(--s-1);
+  color: rgba(150, 190, 200, 0.6);
+  font-weight: 400;
+}
+
+.inspector-links ul,
+.inspector-activity {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.inspector-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.inspector-neighbour {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 4px var(--s-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspector-neighbour:hover,
+.inspector-why:hover,
+.inspector-more:hover {
+  background: rgba(93, 210, 220, 0.09);
+}
+
+.inspector-neighbour-title,
+.inspector-neighbour-folder {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-neighbour-folder {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: rgba(150, 190, 200, 0.65);
+}
+
+.inspector-why {
+  flex: none;
+  padding: 2px var(--s-2);
+  border: 1px solid rgba(93, 210, 220, 0.18);
+  border-radius: var(--r-full);
+  background: transparent;
+  color: rgba(170, 215, 225, 0.8);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.inspector-why[aria-expanded='true'] {
+  border-color: rgba(57, 220, 235, 0.45);
+  background: rgba(57, 220, 235, 0.12);
+  color: #e7f2f4;
+}
+
+.inspector-section .inspector-reason {
+  margin: var(--s-1) 0 var(--s-2) var(--s-2);
+  padding: var(--s-1) var(--s-2);
+  border-left: 2px solid rgba(57, 220, 235, 0.45);
+  font-size: var(--t-xs);
+  color: rgba(214, 234, 238, 0.9);
+}
+
+.inspector-reason code {
+  font-family: var(--mono);
+  color: #a9dfe7;
+}
+
+.inspector-dot {
+  color: rgba(150, 190, 200, 0.6);
+}
+
+.inspector-more {
+  margin-top: var(--s-1);
+  padding: 2px var(--s-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: rgba(127, 233, 240, 0.85);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.inspector-activity li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: 2px 0;
+  font-size: var(--t-xs);
+  color: rgba(190, 220, 228, 0.85);
+}
+
+.inspector-activity time {
+  color: rgba(150, 190, 200, 0.8);
+}
+
+.inspector-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.inspector-open,
+.inspector-reveal {
+  padding: 5px var(--s-3);
+  border-radius: var(--r-md);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.inspector-open {
+  border: 1px solid rgba(57, 220, 235, 0.45);
+  background: rgba(57, 220, 235, 0.16);
+  color: #e7f7fa;
+}
+
+.inspector-open:hover {
+  background: rgba(57, 220, 235, 0.26);
+}
+
+.inspector-reveal {
+  border: 1px solid rgba(93, 210, 220, 0.18);
+  background: transparent;
+  color: rgba(200, 232, 240, 0.85);
+}
+
+.inspector-reveal:hover {
+  background: rgba(93, 210, 220, 0.09);
+}
+
+.inspector button:focus-visible {
+  outline: 2px solid rgba(127, 233, 240, 0.8);
+  outline-offset: 1px;
+}
+
+/*
+ * A narrow brain — a phone, or a small window: a sheet along the bottom instead
+ * of a column on the right. It stops above the legend, so the legend stays
+ * readable, and takes a little under half the view, so the focused notes keep
+ * room above it. A container query: what decides it is the view's width.
+ */
+@container brain (max-width: 640px) {
+  .inspector {
+    top: auto;
+    left: var(--s-2);
+    right: var(--s-2);
+    bottom: 3.75rem;
+    width: auto;
+    max-height: 46%;
+  }
+
+  .inspector-actions {
+    padding: var(--s-2) var(--s-4);
+  }
+}
