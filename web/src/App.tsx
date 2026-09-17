@@ -523,10 +523,18 @@ function Shell({
         // answer for the note you had already left could overwrite the one you
         // were looking at. Now a late answer updates its own entry and changes
         // nothing on screen.
+        //
+        // Always read afresh. The entry outlives the editor by the cache's
+        // garbage-collection time, and saves never write back into it, so with
+        // `staleTime: Infinity` a note reopened within those minutes came back
+        // as the text it had when it was *first* opened — without what was
+        // typed since — and the next keystroke saved that old text over the
+        // newer file, which the server then had to keep as a conflict copy.
+        // Pending text is flushed above, so what the server has is the latest.
         const opened = await client.fetchQuery({
           queryKey: keys.note(owner, path),
           queryFn: () => api.getNote(owner, path),
-          staleTime: Infinity,
+          staleTime: 0,
         });
         setOpenRef({ owner, path });
         baseMtime.current = opened.note.mtimeMs;
@@ -581,10 +589,6 @@ function Shell({
         if (!known) {
           try {
             const result = await api.ensureNote(user.id, path, dailyNoteTemplate(date));
-            // What the server holds now — the fresh template, or a note another
-            // tab already wrote into — so the editor opens on that and not on
-            // anything this tab cached earlier.
-            client.setQueryData(keys.note(user.id, path), { note: result.note, owner: user.id, canWrite: true });
             if (result.created) invalidate.afterStructure(client);
           } catch (caught) {
             setError(caught instanceof ApiError ? caught.message : copy.journal.failed);
