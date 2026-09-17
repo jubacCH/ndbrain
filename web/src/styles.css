@@ -5201,3 +5201,462 @@ th.pick input,
     padding: var(--s-2) var(--s-4);
   }
 }
+
+
+/* ---- Home ----------------------------------------------------------------
+ *
+ * Three columns on a wide screen: what to pick up and how the vault is doing
+ * side by side, then today beside the tasks, then the way into the network
+ * beside the tags. One column on a phone, in the same order. */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-4);
+  margin-top: var(--s-4);
+}
+
+/* On a phone the two stacks are not boxes at all: their tiles join the grid
+   and are ordered continue, health, today, tasks, network, tags. */
+.home-stack {
+  display: contents;
+}
+
+.home-grid .tile {
+  min-width: 0;
+  padding: var(--s-4) var(--s-4) var(--s-3);
+}
+
+.home-continue { order: 1; }
+.health-card { order: 2; }
+.home-today { order: 3; }
+.home-tasks { order: 4; }
+.home-brain { order: 5; }
+.home-tags { order: 6; }
+
+@media (min-width: 60rem) {
+  .home-grid {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .home-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    min-width: 0;
+  }
+}
+
+.home-sub {
+  margin: 0 0 var(--s-2);
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+.home-note-small {
+  margin: var(--s-2) 0 0;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+/* Continue: two lists of notes, each row a title over folder and time. */
+.home-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-4);
+}
+
+@media (min-width: 40rem) {
+  .home-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.home-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  text-align: left;
+  color: var(--text);
+}
+
+.home-note:hover {
+  background: var(--hover);
+}
+
+.home-note:focus-visible,
+.health-part:focus-visible,
+.health-link:focus-visible,
+.home-brain-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.home-note-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-note-meta {
+  display: flex;
+  gap: var(--s-2);
+  min-width: 0;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.home-note-folder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-note-when {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--mono);
+}
+
+/* Today: plain counts, a zero in the faint ink. */
+.home-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-3);
+  margin: 0;
+}
+
+@media (min-width: 40rem) {
+  .home-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.home-stats > div {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+  border: 1px solid var(--line);
+}
+
+.home-stats dt {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.home-stats dd {
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.home-stats > div[data-zero='true'] dd {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.home-trace {
+  margin: var(--s-4) 0 var(--s-3);
+}
+
+.home-trace svg {
+  display: block;
+  width: 100%;
+  height: 2.4rem;
+}
+
+.home-trace rect {
+  fill: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.home-trace rect[data-zero='true'] {
+  fill: var(--line-2);
+}
+
+.home-trace rect[data-today='true'] {
+  fill: var(--accent);
+}
+
+.home-trace rect:hover {
+  fill: var(--accent-2);
+}
+
+/* The way into the network: a still drawing, and the button around it. */
+.home-brain-open {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  color: var(--text);
+  border-radius: var(--r-md);
+}
+
+.home-brain-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 8rem;
+  border-radius: var(--r-md);
+  background: var(--canvas);
+  border: 1px solid rgba(93, 210, 220, 0.14);
+}
+
+.home-brain-preview line {
+  stroke: rgba(93, 210, 220, 0.28);
+  stroke-width: 0.8;
+}
+
+.home-brain-preview circle {
+  fill: #39dceb;
+  opacity: 0.8;
+}
+
+.home-brain-open:hover .home-brain-preview {
+  border-color: rgba(57, 220, 235, 0.4);
+  box-shadow: var(--glow);
+}
+
+.home-brain-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-brain-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-md);
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.home-brain-hint {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+/* ---- Brain health --------------------------------------------------------
+ *
+ * Calm on purpose: the number in body ink, a thin neutral proportion under it,
+ * findings as rows with their state mark. A category with nothing in it keeps
+ * its row in the faint ink — done, not decorated. */
+
+.health-score {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  column-gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+
+.health-n {
+  font-size: var(--t-xl);
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.health-of {
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+.health-meter {
+  grid-column: 1 / -1;
+  display: block;
+  height: 3px;
+  margin-top: var(--s-2);
+  border-radius: var(--r-full);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.health-meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-3);
+}
+
+.health-empty {
+  color: var(--text-3);
+  font-size: var(--t-md);
+}
+
+.health-parts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.health-part {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: 6px var(--s-2);
+  border-radius: var(--r-md);
+  text-align: left;
+  font-size: var(--t-md);
+  color: var(--text);
+}
+
+.health-head .health-part {
+  grid-template-columns: auto minmax(0, 1fr) auto 3.2rem;
+}
+
+.health-part:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.health-part[aria-pressed='true'] {
+  background: var(--selected);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.health-part:disabled {
+  cursor: default;
+  color: var(--text-3);
+}
+
+.health-part-n {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.health-part[data-empty='true'] .health-part-n {
+  font-family: var(--font);
+  font-size: var(--t-xs);
+}
+
+.health-part-cost {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  text-align: right;
+}
+
+.dot-none {
+  background: var(--line-2);
+}
+
+.health-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-3);
+  margin: var(--s-2) 0 0;
+  padding: 0 var(--s-2);
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.health-link {
+  color: var(--text-2);
+  text-decoration: underline;
+  text-decoration-color: var(--line-2);
+  text-underline-offset: 3px;
+}
+
+.health-link:hover {
+  color: var(--text);
+}
+
+.health-link[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+/* In Tidy up: score and explanation on the left, the breakdown on the right. */
+.health-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-4);
+  margin: var(--s-3) 0 var(--s-4);
+  padding: var(--s-4);
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-lg);
+  box-shadow: var(--panel-shadow);
+}
+
+@media (min-width: 48rem) {
+  .health-head {
+    grid-template-columns: minmax(12rem, 1fr) minmax(0, 1.6fr);
+  }
+}
+
+.health-head .cap {
+  font-weight: inherit;
+}
+
+.health-how {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.health-how summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.health-how p {
+  margin: var(--s-2) 0 0;
+  line-height: 1.5;
+}
+
+.tidy-focus {
+  margin: 0 0 var(--s-2);
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+
+.tidy-findings {
+  scroll-margin-top: var(--s-4);
+}
+
+/* A phone scrolls one column: Continue keeps five of each list there, so the
+   health card is not pushed three screens down. The rest is a scroll away in
+   the tree and the search. */
+@media (max-width: 40rem) {
+  .home-notes > .home-note:nth-child(n + 6) {
+    display: none;
+  }
+}

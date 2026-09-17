@@ -52,7 +52,9 @@ import { FilesView } from './Files';
 import { Login } from './Login';
 import { Palette } from './Palette';
 import { Tree, displayPath, type Finding } from './Tree';
-import { OverviewView, SearchView, SharesView, TasksView, TidyView } from './Views';
+import { SearchView, SharesView, TasksView, TidyView } from './Views';
+import { HomeView } from './Home';
+import type { HealthKey } from './healthScore';
 import {
   invalidate,
   keys,
@@ -268,6 +270,8 @@ function Shell({
   const [taskIncludeDone, setTaskIncludeDone] = useState(false);
   const [taskBusy, setTaskBusy] = useState(false);
   const [topicsDone, setTopicsDone] = useState<number | null>(null);
+  /** The finding the tidy view opens narrowed to, when it was reached from the home view's health card. */
+  const [tidyFocus, setTidyFocus] = useState<HealthKey | 'stale' | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const [props, setProps] = useState<Array<{ key: string; count: number }>>([]);
   const [propValues, setPropValues] = useState<Array<{ value: string; count: number }>>([]);
@@ -1104,6 +1108,11 @@ function Shell({
     }
   };
 
+  // A focus handed over from the home view is used once, on arrival.
+  useEffect(() => {
+    if (view !== 'tidy') setTidyFocus(null);
+  }, [view]);
+
   const showView = async (next: View): Promise<void> => {
     if (pending.current !== null) await flush();
     if (next === 'overview') await refreshOverview();
@@ -1376,11 +1385,19 @@ function Shell({
               )}
 
               {view === 'overview' && overview !== null && (
-                <OverviewView
-                  data={overview}
+                <HomeView
+                  overview={overview}
+                  self={user.id}
+                  ownNotes={notes.filter((note) => note.owner === user.id).length}
+                  recents={recentRows}
+                  hidePrefixes={prefs.hidePrefixes}
                   onOpen={(owner, path) => void openNote(owner, path)}
-                  onFindings={() => void showView('tidy')}
                   onTasks={() => void showView('tasks')}
+                  onTidy={(focus) => {
+                    setTidyFocus(focus ?? null);
+                    void showView('tidy');
+                  }}
+                  onNetwork={() => void showView('brain')}
                 />
               )}
 
@@ -1420,6 +1437,10 @@ function Shell({
                   busy={bulkBusy}
                   tags={tags}
                   dirs={topLevelDirs(notes)}
+                  // Tags in use is read from the tag list, as the sidebar does; the
+                  // score does not depend on it, only the wording of an empty line.
+                  health={{ notes: notes.filter((note) => note.owner === user.id).length, tagsInUse: tags.length > 0 }}
+                  initialFocus={tidyFocus}
                   onToggle={(path) =>
                     setSelection((current) => {
                       const next = new Set(current);
