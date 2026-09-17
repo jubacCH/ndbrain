@@ -104,6 +104,36 @@ export interface ActivityRow {
   deleted: boolean;
 }
 
+/**
+ * One day of a vault's own activity, as counts — see `Queries.dailyActivity`.
+ *
+ * Counts of distinct notes, not of edit rows: twenty autosaves of one paragraph
+ * are one note edited, the same collapse `activity` applies.
+ */
+export interface ActivityDay {
+  /** Inclusive start of the day — the client's local midnight. */
+  start: number;
+  /** Exclusive end. */
+  end: number;
+  /** Notes created that day. */
+  created: number;
+  /** Notes changed that day that were not also created that day. */
+  edited: number;
+  deleted: number;
+  renamed: number;
+  /** Distinct notes with any change at all. */
+  touched: number;
+  /** Allowed agent reads, one per tool call — a search or a listing included. */
+  agentReads: number;
+  /** Allowed agent writes, one per tool call. */
+  agentWrites: number;
+}
+
+/** The MCP tools that only look — the same list `pulse` filters on. */
+const AGENT_READ_TOOLS = ['get_note', 'search_notes', 'list_notes', 'get_links', 'vault_map'] as const;
+/** The MCP tools that change a note. */
+const AGENT_WRITE_TOOLS = ['create_note', 'append_note', 'edit_note'] as const;
+
 /** One thing that happened in a vault: a change, or an agent reading. */
 export interface PulseEvent {
   at: number;
@@ -940,6 +970,98 @@ export class Queries {
       // once fired. An invariant the client has to reconstruct is a bug waiting.
       owner,
     }));
+  }
+
+  /**
+   * The caller's own activity, bucketed into days.
+   *
+   * `bounds` are the day boundaries, ascending: n + 1 timestamps make n days.
+   * The client computes them as its own local midnights, which is the only
+   * place that knows where a day begins — a fixed server-side offset would put
+   * an edit at 00:30 on the wrong day whenever daylight saving changes inside
+   * the window.
+   *
+   * Own vault only, on exactly the reasoning `pulse` gives: when somebody works
+   * and how much is information about that person, and a share is not consent
+   * to being watched. There is no owner parameter to get wrong.
+   *
+   * Agent writes are counted from the access log rather than from `edits`,
+   * because only the access log knows that a key made them. The same write is
+   * also in `edits` under the key's name, and therefore also in `edited`: the
+   * two numbers answer different questions — what changed, and who changed it.
+   */
+  dailyActivity(owner: string, bounds: readonly number[]): ActivityDay[] {
+    const days: ActivityDay[] = [];
+    for (let i = 0; i + 1 < bounds.length; i += 1) {
+      days.push({
+        start: bounds[i]!,
+        end: bounds[i + 1]!,
+        created: 0,
+        edited: 0,
+        deleted: 0,
+        renamed: 0,
+        touched: 0,
+        agentReads: 0,
+        agentWrites: 0,
+      });
+    }
+    if (days.length === 0) return days;
+
+    const values = days.map(() => '(?, ?, ?)').join(', ');
+    const buckets: SqlValue[] = days.flatMap((day, i) => [i, Math.trunc(day.start), Math.trunc(day.end)]);
+
+    // Distinct (day, note, action) first, so a run of autosaves is one row
+    // before anything is counted or compared.
+    const edits = this.#db.all(
+      `WITH b(i, lo, hi) AS (VALUES ${values}),
+            t AS (SELECT DISTINCT b.i AS i, e.path AS path, e.action AS action
+                    FROM b JOIN edits e ON e.owner = ? AND e.at >= b.lo AND e.at < b.hi)
+       SELECT i,
+              SUM(action = 'create') AS created,
+              SUM(action = 'update' AND NOT EXISTS (
+                    SELECT 1 FROM t c WHERE c.i = t.i AND c.path = t.path AND c.action = 'create'
+                  ))                  AS edited,
+              SUM(action = 'delete') AS deleted,
+              SUM(action = 'rename') AS renamed,
+              COUNT(DISTINCT path)   AS touched
+         FROM t
+        GROUP BY i`,
+      ...buckets,
+      owner,
+    );
+    for (const row of edits) {
+      const day = days[Number(row['i'])];
+      if (day === undefined) continue;
+      day.created = Number(row['created']);
+      day.edited = Number(row['edited']);
+      day.deleted = Number(row['deleted']);
+      day.renamed = Number(row['renamed']);
+      day.touched = Number(row['touched']);
+    }
+
+    const reads = AGENT_READ_TOOLS.map(() => '?').join(', ');
+    const writes = AGENT_WRITE_TOOLS.map(() => '?').join(', ');
+    const access = this.#db.all(
+      `WITH b(i, lo, hi) AS (VALUES ${values})
+       SELECT b.i AS i,
+              SUM(a.tool IN (${reads}))  AS reads,
+              SUM(a.tool IN (${writes})) AS writes
+         FROM b JOIN access_log a ON a.owner = ? AND a.at >= b.lo AND a.at < b.hi AND a.allowed = 1
+        GROUP BY b.i`,
+      // In the order the placeholders appear: the CTE, the select list, the join.
+      ...buckets,
+      ...AGENT_READ_TOOLS,
+      ...AGENT_WRITE_TOOLS,
+      owner,
+    );
+    for (const row of access) {
+      const day = days[Number(row['i'])];
+      if (day === undefined) continue;
+      day.agentReads = Number(row['reads'] ?? 0);
+      day.agentWrites = Number(row['writes'] ?? 0);
+    }
+
+    return days;
   }
 
   /**
