@@ -345,6 +345,10 @@ export const copy = {
     renameFolderLabel: (name: string) => `Rename ${name}`,
     deleteNote: (name: string) => `Delete “${name}” (Delete key)`,
     deleteNoteLabel: (name: string) => `Delete ${name}`,
+    shareNote: (name: string) => `Share “${name}”…`,
+    shareNoteLabel: (name: string) => `Share ${name}`,
+    spaceEmpty: 'Nothing in this space yet.',
+    newNoteIn: (space: string) => `New note in ${space}`,
   },
 
   context: {

@@ -1484,6 +1484,27 @@ tbody tr[data-selected='true']:hover td {
   color: var(--text-2);
 }
 
+/* A space: the icon is the difference from a person's vault, in the accent. */
+.vault-icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.vault-new {
+  margin-left: auto;
+}
+
+.vault-head:hover .vault-new {
+  opacity: 1;
+}
+
+/* Where there is no hover, the actions on a row have to be visible to exist. */
+@media (hover: none) {
+  .vault-new {
+    opacity: 1;
+  }
+}
+
 /*
  * A note shared read-only. The tint is deliberately faint: it marks a surface
  * that cannot be typed into, which is a state of the tool rather than a finding
