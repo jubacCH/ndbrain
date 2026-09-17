@@ -273,7 +273,7 @@ function Links({
   const id = useId();
   if (rows.length === 0) return null;
   const shown = all ? rows : rows.slice(0, FIRST_ROWS);
-  const whyKey = (row: Neighbour): string => `${title} ${row.key}`;
+  const whyKey = (row: Neighbour): string => `${title}\u0000${row.key}`;
 
   return (
     <div className="inspector-links">
