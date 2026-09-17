@@ -230,6 +230,18 @@ export interface NoteLifecycle {
   moved(owner: string, from: string, to: string): void;
   /** A note is gone. Its note shares are withdrawn, not reinterpreted. */
   removed(owner: string, notePath: string): void;
+  /**
+   * ndBrain replaced a note's file with new content (its saves write a new
+   * file and rename it into place). The note shares on it are bound to the new
+   * file, so the watcher does not take the save for a stranger's file.
+   */
+  rewritten(owner: string, notePath: string, file: string, hash: string): void;
+}
+
+/** What a note share was last confirmed against: the file, and its content. */
+export interface NoteBinding {
+  file: string | null;
+  hash: string | null;
 }
 
 export class ShareService {
@@ -485,6 +497,41 @@ export class ShareService {
     });
   }
 
+  /** The distinct bindings of the note shares on `notePath`; empty when there are none. */
+  noteBindings(owner: string, notePath: string): NoteBinding[] {
+    return this.#db
+      .all(
+        "SELECT DISTINCT bound_file, bound_hash FROM shares WHERE owner = ? AND kind = 'note' AND prefix = ?",
+        owner,
+        notePath,
+      )
+      .map((row) => ({
+        file: row['bound_file'] === null || row['bound_file'] === undefined ? null : String(row['bound_file']),
+        hash: row['bound_hash'] === null || row['bound_hash'] === undefined ? null : String(row['bound_hash']),
+      }));
+  }
+
+  /** Binds every note share on `notePath` to this file and content. */
+  bindNote(owner: string, notePath: string, file: string, hash: string): void {
+    this.#db.run(
+      "UPDATE shares SET bound_file = ?, bound_hash = ? WHERE owner = ? AND kind = 'note' AND prefix = ?",
+      file,
+      hash,
+      owner,
+      notePath,
+    );
+  }
+
+  /** Withdraws the note shares on `notePath` that were bound to `file`. */
+  dropNoteBoundTo(owner: string, notePath: string, file: string): void {
+    this.#db.run(
+      "DELETE FROM shares WHERE owner = ? AND kind = 'note' AND prefix = ? AND bound_file = ?",
+      owner,
+      notePath,
+      file,
+    );
+  }
+
   /** Withdraws every note share on `notePath`. */
   dropNote(owner: string, notePath: string): void {
     this.#db.run("DELETE FROM shares WHERE owner = ? AND kind = 'note' AND prefix = ?", owner, notePath);
@@ -545,6 +592,7 @@ export class ShareService {
       created: (owner, notePath) => this.dropNote(owner, notePath),
       moved: (owner, from, to) => this.moveNote(owner, from, to),
       removed: (owner, notePath) => this.dropNote(owner, notePath),
+      rewritten: (owner, notePath, file, hash) => this.bindNote(owner, notePath, file, hash),
     };
   }
 }

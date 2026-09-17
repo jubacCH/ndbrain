@@ -98,6 +98,7 @@ export function createWatcher(runtime: Runtime): VaultWatcher {
   return new VaultWatcher(runtime.config.dataDir, runtime.indexer, {
     reconcileIntervalMs: runtime.config.reconcileIntervalMs,
     onNoteRemoved: (owner, notePath) => runtime.app.noteVanished(owner, notePath),
+    onNoteChanged: (owner, notePath) => runtime.app.noteChanged(owner, notePath),
     afterSync: (owner) => runtime.app.dropDanglingShares(owner),
   });
 }

@@ -15,7 +15,7 @@ import { addTag, removeTag } from './markdown/edit.js';
 import { toggleTask as applyTaskToggle, type TaskExpectation } from './markdown/tasks.js';
 import { proposeFor, type TopicProposal } from './notes/topics.js';
 import { parseNote } from './markdown/parse.js';
-import type { Note, NoteService, PutOptions, PutResult } from './notes/service.js';
+import { contentHash, type Note, type NoteService, type PutOptions, type PutResult } from './notes/service.js';
 import type { Database } from './db/database.js';
 import type { VaultFile } from './vault/fs.js';
 import {
@@ -96,7 +96,13 @@ export class App {
       if (!(await this.notes.exists(owner, resolved.prefix))) {
         throw new NoteNotFoundError('note does not exist');
       }
-      return this.shares.grant(owner, { kind: 'note', path: resolved.prefix }, grantee, canWrite);
+      // Whatever the other shares on this path were bound to is confirmed
+      // first: a share given today must not make an older one's stale binding
+      // look current, nor be withdrawn for a replacement that came before it.
+      await this.#confirmNoteShares(owner, resolved.prefix);
+      const share = this.shares.grant(owner, { kind: 'note', path: resolved.prefix }, grantee, canWrite);
+      await this.#bindCurrent(owner, resolved.prefix);
+      return share;
     });
   }
 
@@ -113,17 +119,85 @@ export class App {
   }
 
   /**
-   * Withdraws note shares whose note is gone, for everything the watcher's
-   * events did not report.
+   * A note's file changed without going through ndBrain — the watcher saw a
+   * `change`. Whether it is the same note edited or a different file under the
+   * same name, only the file can say; see `#confirmNoteShares`.
+   */
+  async noteChanged(owner: string, notePath: string): Promise<void> {
+    if (this.shares.noteBindings(owner, notePath).length === 0) return;
+    await this.notes.withLock(owner, notePath, () => this.#confirmNoteShares(owner, notePath));
+  }
+
+  /**
+   * Withdraws note shares whose note is gone or was replaced, for everything
+   * the watcher's events did not report.
    *
-   * Each one is looked at under its note's lock, so a rename or a create in
-   * flight is seen either before or after, never half-done.
+   * Each one is looked at under its note's lock, so a rename, a create or a
+   * save in flight is seen either before or after, never half-done.
    */
   async dropDanglingShares(owner: string): Promise<void> {
     for (const notePath of this.shares.notePaths(owner)) {
-      await this.notes.withLock(owner, notePath, async () => {
-        if (!(await this.notes.exists(owner, notePath))) this.shares.dropNote(owner, notePath);
-      });
+      await this.notes.withLock(owner, notePath, () => this.#confirmNoteShares(owner, notePath));
+    }
+  }
+
+  /**
+   * Checks the note shares on one path against the file there now. Call it
+   * holding the note's lock.
+   *
+   * - No note: every share on it is withdrawn.
+   * - The file they were bound to: kept, and bound to its current content, so
+   *   an edit made in place (nano, VS Code, Obsidian) keeps the share.
+   * - Another file with the content they were bound to: kept and bound to the
+   *   new file. That is a restore or a copy onto another disk; the text the
+   *   grantee was given is the text that is there, so nothing new is revealed.
+   * - Another file with other content: withdrawn. From outside, a replaced
+   *   note and an editor that saves by writing a new file (vim's default
+   *   `backupcopy=auto`) look the same, and only one of them is safe to carry
+   *   a grant over to.
+   * - Never bound (granted before bindings existed): bound to what is there.
+   */
+  async #confirmNoteShares(owner: string, notePath: string): Promise<void> {
+    const bindings = this.shares.noteBindings(owner, notePath);
+    if (bindings.length === 0) return;
+
+    if (!(await this.notes.exists(owner, notePath))) {
+      this.shares.dropNote(owner, notePath);
+      return;
+    }
+    const current = await this.#currentFile(owner, notePath);
+    if (current === null) {
+      this.shares.dropNote(owner, notePath);
+      return;
+    }
+
+    let keep = false;
+    for (const binding of bindings) {
+      if (binding.file === null || binding.file === current.file || binding.hash === current.hash) {
+        keep = true;
+      } else {
+        this.shares.dropNoteBoundTo(owner, notePath, binding.file);
+      }
+    }
+    if (keep) this.shares.bindNote(owner, notePath, current.file, current.hash);
+  }
+
+  async #bindCurrent(owner: string, notePath: string): Promise<void> {
+    const current = await this.#currentFile(owner, notePath);
+    if (current !== null) this.shares.bindNote(owner, notePath, current.file, current.hash);
+  }
+
+  async #currentFile(owner: string, notePath: string): Promise<{ file: string; hash: string } | null> {
+    const file = await this.notes.vault.fileIdentity(owner, notePath);
+    if (file === null) return null;
+    try {
+      const content = await this.notes.vault.readNote(owner, notePath);
+      // Read twice around the content: a file swapped in between would bind
+      // this content to the wrong file.
+      if ((await this.notes.vault.fileIdentity(owner, notePath)) !== file) return null;
+      return { file, hash: contentHash(content) };
+    } catch {
+      return null;
     }
   }
 
@@ -351,6 +425,7 @@ export class App {
       if (isNotePath(canonical) && !existed) assertLinkableName(canonical);
       await this.notes.vault.writeFileBytes(owner, canonical, bytes);
       if (isNotePath(canonical) && !existed) this.shares.dropNote(owner, canonical);
+      if (isNotePath(canonical) && existed) await this.notes.rewritten(owner, canonical, bytes);
       return existed;
     };
     const replaced = isNotePath(canonical)
