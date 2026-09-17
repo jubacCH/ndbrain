@@ -26,25 +26,43 @@
 
 import { randomBytes } from 'node:crypto';
 
-import type { Database } from '../db/database.js';
+import type { Database, SqlValue } from '../db/database.js';
 import { NdbrainError, NoteNotFoundError } from '../errors.js';
-import { normalizeVaultPath } from '../vault/paths.js';
+import { isNotePath, normalizeVaultPath } from '../vault/paths.js';
+
+export type ShareKind = 'vault' | 'folder' | 'note';
 
 export interface Share {
   id: string;
   owner: string;
-  /** Path prefix, `''` for the whole vault. Always ends in `/` when non-empty. */
+  /** What the share covers: the whole vault, one folder, or exactly one note. */
+  kind: ShareKind;
+  /**
+   * The stored region. `''` for the vault, the folder with a trailing `/`, or
+   * the note's exact path. Read it through `inScope`, never by hand.
+   */
   prefix: string;
+  /** The same region as a person would name it: `''`, `Projekt`, `Projekt/Plan.md`. */
+  path: string;
   grantee: string;
   canWrite: boolean;
   createdAt: number;
 }
 
-/** One region of one vault a caller may read. */
-export interface Scope {
-  owner: string;
-  /** `''` means the whole vault. */
+/**
+ * The part of a scope that says which paths it covers.
+ *
+ * `exact` is what makes a note share a note share: the prefix is then a whole
+ * path that has to match in full, never the start of a longer one.
+ */
+export interface Region {
   prefix: string;
+  exact: boolean;
+}
+
+/** One region of one vault a caller may read. */
+export interface Scope extends Region {
+  owner: string;
   /** False for a region that may be read but not written. */
   canWrite: boolean;
 }
@@ -57,6 +75,13 @@ export interface Scope {
  * nothing.
  */
 export type View = Scope[];
+
+/** An owner whose notes a caller can see, with what the interface calls it. */
+export interface VisibleOwner {
+  id: string;
+  kind: 'person' | 'space';
+  displayName: string;
+}
 
 export class UnknownShareError extends NdbrainError {}
 export class InvalidShareError extends NdbrainError {}
@@ -76,20 +101,116 @@ export function normalizePrefix(prefix: string): string {
   return `${normalizeVaultPath(trimmed)}/`;
 }
 
-/** True if `notePath` lies inside `prefix`. */
-export function withinPrefix(prefix: string, notePath: string): boolean {
-  return prefix === '' || notePath.startsWith(prefix);
+/**
+ * True if `notePath` lies inside `region`. **The** scope rule.
+ *
+ * Every question of the form "is this path covered" is answered here or by
+ * `regionSql`, its SQL twin directly below — shares, the view in every query,
+ * the tree, agent keys and the list a rename reports. A note share ending up
+ * behind a `startsWith` somewhere else would hand out `Plan.md.bak` and
+ * `Plan.md/…` with it, which is exactly the class of leak the kind exists to
+ * rule out.
+ *
+ * An exact region with an empty prefix covers nothing. It cannot be granted,
+ * but if one ever arrived it must fail closed rather than read as the vault.
+ */
+export function inScope(region: Region, notePath: string): boolean {
+  if (region.exact) return region.prefix !== '' && notePath === region.prefix;
+  return region.prefix === '' || notePath.startsWith(region.prefix);
+}
+
+/**
+ * `inScope` as a SQL condition on `column`, or `null` when it covers every path.
+ *
+ * Kept beside `inScope` so the two cannot drift: the same three cases, in the
+ * same order. `substr` rather than `LIKE`, because `LIKE` folds ASCII case in
+ * SQLite and paths here are case-sensitive. An exact region compares with `=`,
+ * which is case-sensitive too.
+ */
+export function regionSql(column: string, region: Region): { sql: string | null; params: SqlValue[] } {
+  if (region.exact) return { sql: `${column} = ?`, params: [region.prefix] };
+  if (region.prefix === '') return { sql: null, params: [] };
+  return { sql: `substr(${column}, 1, ?) = ?`, params: [region.prefix.length, region.prefix] };
+}
+
+/** The region a share row covers. */
+export function regionOf(share: Pick<Share, 'kind' | 'prefix'>): Region {
+  return { prefix: share.prefix, exact: share.kind === 'note' };
+}
+
+function toKind(value: unknown, prefix: string): ShareKind {
+  if (value === 'note' || value === 'folder' || value === 'vault') return value;
+  return prefix === '' ? 'vault' : 'folder';
 }
 
 function toShare(row: Record<string, unknown>): Share {
+  const prefix = String(row['prefix']);
+  const kind = toKind(row['kind'], prefix);
   return {
     id: String(row['id']),
     owner: String(row['owner']),
-    prefix: String(row['prefix']),
+    kind,
+    prefix,
+    path: kind === 'folder' ? prefix.replace(/\/+$/, '') : prefix,
     grantee: String(row['grantee']),
     canWrite: Number(row['can_write']) === 1,
     createdAt: Number(row['created_at']),
   };
+}
+
+/**
+ * Turns what a client asked to share into the stored region.
+ *
+ * A bare string is the form every share was granted in before kinds existed,
+ * and it keeps meaning what it meant: empty is the vault, anything else a
+ * folder. A note has to be named as one, and has to look like one.
+ */
+export function shareTarget(target: string | { kind: ShareKind; path: string }): {
+  kind: ShareKind;
+  prefix: string;
+} {
+  if (typeof target === 'string') {
+    const prefix = normalizePrefix(target);
+    return { kind: prefix === '' ? 'vault' : 'folder', prefix };
+  }
+
+  switch (target.kind) {
+    case 'vault':
+      if (target.path.trim().replace(/^\/+|\/+$/g, '') !== '') {
+        throw new InvalidShareError('a vault share takes no path');
+      }
+      return { kind: 'vault', prefix: '' };
+    case 'folder': {
+      const prefix = normalizePrefix(target.path);
+      if (prefix === '') throw new InvalidShareError('name the folder to share');
+      return { kind: 'folder', prefix };
+    }
+    case 'note': {
+      const trimmed = target.path.trim();
+      if (trimmed === '') throw new InvalidShareError('name the note to share');
+      const prefix = normalizeVaultPath(trimmed);
+      if (!isNotePath(prefix)) throw new InvalidShareError('a note share names a note');
+      return { kind: 'note', prefix };
+    }
+    default:
+      throw new InvalidShareError('unknown share kind');
+  }
+}
+
+/**
+ * What the note write path tells the shares about, from inside its lock.
+ *
+ * Synchronous on purpose: these are single statements against the same
+ * database, and nothing may interleave between the file moving and the share
+ * moving with it.
+ */
+export interface NoteLifecycle {
+  /** A note came into being where none was. Nothing may be inherited. */
+  created(owner: string, notePath: string): void;
+  /** A note was renamed or moved. Its note shares go with it. */
+  moved(owner: string, from: string, to: string): void;
+  /** A note is gone. Its note shares are withdrawn, not reinterpreted. */
+  removed(owner: string, notePath: string): void;
 }
 
 export class ShareService {
@@ -105,19 +226,36 @@ export class ShareService {
    * Re-granting the same region to the same person changes the right instead of
    * adding a second row. Two rows for one grant would mean the resolver has to
    * decide which wins, and revoking one of them would look like it did nothing.
+   *
+   * `target` is either the legacy prefix string or `{ kind, path }`. Whether a
+   * note share names a note that exists is not decided here — that needs the
+   * vault and its lock, see `App.grantShare`.
    */
-  grant(owner: string, prefix: string, grantee: string, canWrite = false): Share {
+  grant(
+    owner: string,
+    target: string | { kind: ShareKind; path: string },
+    grantee: string,
+    canWrite = false,
+  ): Share {
     if (owner === grantee) {
       // Not an error worth tolerating quietly: it would create a row that can be
       // revoked, implying the owner could lose access to their own vault.
       throw new InvalidShareError('a vault cannot be shared with its own owner');
     }
 
-    const normalized = normalizePrefix(prefix);
+    // Only a person can be given a share. A space signs nobody in, so a share
+    // to one would be a row no request could ever use — and a space's own keys
+    // see its own vault only, never what is shared with it.
+    const recipient = this.#db.get('SELECT kind FROM users WHERE id = ?', grantee);
+    if (recipient !== undefined && String(recipient['kind']) !== 'person') {
+      throw new InvalidShareError('a share is granted to a person');
+    }
+
+    const { kind, prefix } = shareTarget(target);
     const existing = this.#db.get(
       'SELECT * FROM shares WHERE owner = ? AND prefix = ? AND grantee = ?',
       owner,
-      normalized,
+      prefix,
       grantee,
     );
 
@@ -132,10 +270,11 @@ export class ShareService {
 
     const id = `shr_${randomBytes(8).toString('hex')}`;
     this.#db.run(
-      'INSERT INTO shares (id, owner, prefix, grantee, can_write, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO shares (id, owner, kind, prefix, grantee, can_write, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
       id,
       owner,
-      normalized,
+      kind,
+      prefix,
       grantee,
       canWrite ? 1 : 0,
       Date.now(),
@@ -165,17 +304,30 @@ export class ShareService {
     this.#db.run('DELETE FROM shares WHERE id = ?', id);
   }
 
-  /** What this user has shared out. */
+  /** What this owner has shared out — for a space, its members. */
   byOwner(owner: string): Share[] {
     return this.#db
       .all('SELECT * FROM shares WHERE owner = ? ORDER BY grantee, prefix', owner)
       .map(toShare);
   }
 
-  /** What has been shared with this user. */
+  /**
+   * What has been shared with this user and is in force.
+   *
+   * The one place a disabled space drops out, so the list, the view and
+   * `check` cannot disagree about it: its members stop seeing it the moment it
+   * is switched off, and see it again, with the same grants, when it is back.
+   * A disabled *person* who shared something is left as it always was.
+   */
   toGrantee(grantee: string): Share[] {
     return this.#db
-      .all('SELECT * FROM shares WHERE grantee = ? ORDER BY owner, prefix', grantee)
+      .all(
+        `SELECT s.* FROM shares s JOIN users u ON u.id = s.owner
+          WHERE s.grantee = ?
+            AND NOT (u.kind = 'space' AND u.disabled_at IS NOT NULL)
+          ORDER BY s.owner, s.prefix`,
+        grantee,
+      )
       .map(toShare);
   }
 
@@ -188,13 +340,35 @@ export class ShareService {
    * withdrawing access ends it immediately.
    */
   view(caller: string): View {
-    const own: Scope = { owner: caller, prefix: '', canWrite: true };
+    const own: Scope = { owner: caller, prefix: '', exact: false, canWrite: true };
     const shared = this.toGrantee(caller).map((share) => ({
       owner: share.owner,
-      prefix: share.prefix,
+      ...regionOf(share),
       canWrite: share.canWrite,
     }));
     return [own, ...shared];
+  }
+
+  /**
+   * The owners behind a caller's view, own account first, with their kind and
+   * the name to show.
+   *
+   * Only owners the caller already holds a share from, so this names nobody
+   * the shares list does not already name.
+   */
+  visibleOwners(caller: string): VisibleOwner[] {
+    const ids = [caller, ...new Set(this.toGrantee(caller).map((share) => share.owner))];
+    const out: VisibleOwner[] = [];
+    for (const id of new Set(ids)) {
+      const row = this.#db.get('SELECT id, kind, display_name FROM users WHERE id = ?', id);
+      if (row === undefined) continue;
+      out.push({
+        id: String(row['id']),
+        kind: String(row['kind']) === 'space' ? 'space' : 'person',
+        displayName: String(row['display_name']),
+      });
+    }
+    return out;
   }
 
   /**
@@ -211,7 +385,7 @@ export class ShareService {
     const permitted = this.toGrantee(caller).some(
       (share) =>
         share.owner === owner &&
-        withinPrefix(share.prefix, path) &&
+        inScope(regionOf(share), path) &&
         (need === 'read' || share.canWrite),
     );
 
@@ -229,5 +403,104 @@ export class ShareService {
     } catch {
       return false;
     }
+  }
+
+  /* ---- following the notes ----------------------------------------------
+   *
+   * A folder share names a place; a note share names a note. The difference
+   * shows when a note moves: the place stays where it is, the note share has to
+   * go along — and when a note disappears, the share must not wait there for
+   * the next note that happens to get the same name.
+   */
+
+  /** The paths of every note share into `owner`'s vault. */
+  notePaths(owner: string): string[] {
+    return this.#db
+      .all("SELECT DISTINCT prefix FROM shares WHERE owner = ? AND kind = 'note' ORDER BY prefix", owner)
+      .map((row) => String(row['prefix']));
+  }
+
+  /**
+   * Moves note shares from `from` to `to`.
+   *
+   * Whatever pointed at `to` before is withdrawn first. The target was free, or
+   * the move would have been refused — so a share still naming it belongs to a
+   * note that is gone, and letting the moved note inherit it would give a
+   * stranger's grant to a note nobody shared with them.
+   */
+  moveNote(owner: string, from: string, to: string): void {
+    if (from === to) return;
+    this.#db.transaction(() => {
+      this.#db.run("DELETE FROM shares WHERE owner = ? AND kind = 'note' AND prefix = ?", owner, to);
+      this.#db.run(
+        "UPDATE shares SET prefix = ? WHERE owner = ? AND kind = 'note' AND prefix = ?",
+        to,
+        owner,
+        from,
+      );
+    });
+  }
+
+  /** Withdraws every note share on `notePath`. */
+  dropNote(owner: string, notePath: string): void {
+    this.#db.run("DELETE FROM shares WHERE owner = ? AND kind = 'note' AND prefix = ?", owner, notePath);
+  }
+
+  /**
+   * Moves folder shares at or below `from` to the same place below `to`.
+   *
+   * A grantee who already holds a share on the destination keeps that one and
+   * the moving one is withdrawn: two grants for one region cannot both stand
+   * (see `grant`), and the one that was given for that name is the one somebody
+   * decided on.
+   */
+  moveFolder(owner: string, from: string, to: string): void {
+    const source = normalizePrefix(from);
+    const target = normalizePrefix(to);
+    if (source === '' || target === '' || source === target) return;
+
+    this.#db.transaction(() => {
+      const moving = this.#db.all(
+        "SELECT id, prefix, grantee FROM shares WHERE owner = ? AND kind = 'folder' AND substr(prefix, 1, ?) = ?",
+        owner,
+        source.length,
+        source,
+      );
+      for (const row of moving) {
+        const next = `${target}${String(row['prefix']).slice(source.length)}`;
+        const taken = this.#db.get(
+          'SELECT id FROM shares WHERE owner = ? AND prefix = ? AND grantee = ?',
+          owner,
+          next,
+          String(row['grantee']),
+        );
+        if (taken !== undefined) {
+          this.#db.run('DELETE FROM shares WHERE id = ?', String(row['id']));
+        } else {
+          this.#db.run('UPDATE shares SET prefix = ? WHERE id = ?', next, String(row['id']));
+        }
+      }
+    });
+  }
+
+  /** Withdraws folder shares on `dir` and anything below it. */
+  dropFolder(owner: string, dir: string): void {
+    const prefix = normalizePrefix(dir);
+    if (prefix === '') return;
+    this.#db.run(
+      "DELETE FROM shares WHERE owner = ? AND kind = 'folder' AND substr(prefix, 1, ?) = ?",
+      owner,
+      prefix.length,
+      prefix,
+    );
+  }
+
+  /** The hooks the note write path calls from inside its lock. */
+  get lifecycle(): NoteLifecycle {
+    return {
+      created: (owner, notePath) => this.dropNote(owner, notePath),
+      moved: (owner, from, to) => this.moveNote(owner, from, to),
+      removed: (owner, notePath) => this.dropNote(owner, notePath),
+    };
   }
 }
