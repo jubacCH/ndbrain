@@ -40,12 +40,26 @@ export interface WatcherOptions {
   /** Called after each batch — used by tests and, later, by the live UI. */
   onBatch?: (changed: Map<string, Set<string>>) => void;
   onError?: (error: unknown) => void;
+  /**
+   * A note was deleted on disk, whether or not something has appeared under
+   * its name since. Called once per note per batch, before it is reindexed.
+   */
+  onNoteRemoved?: (owner: string, notePath: string) => void;
+  /** After a reconcile has synced one vault — for what the events missed. */
+  afterSync?: (owner: string) => Promise<void>;
 }
 
 interface PendingChange {
   owner: string;
   notePath: string;
   removed: boolean;
+  /**
+   * Whether the file was unlinked at any point in this batch. Sticky, unlike
+   * `removed`: a delete followed by an add of the same name inside one debounce
+   * window must still count as the note going, or the add would quietly hand
+   * the new file whatever was attached to the old one.
+   */
+  unlinked: boolean;
 }
 
 export class VaultWatcher {
@@ -54,6 +68,8 @@ export class VaultWatcher {
   readonly #debounceMs: number;
   readonly #onBatch: ((changed: Map<string, Set<string>>) => void) | undefined;
   readonly #onError: ((error: unknown) => void) | undefined;
+  readonly #onNoteRemoved: ((owner: string, notePath: string) => void) | undefined;
+  readonly #afterSync: ((owner: string) => Promise<void>) | undefined;
 
   readonly #reconcileIntervalMs: number;
 
@@ -70,6 +86,8 @@ export class VaultWatcher {
     this.#reconcileIntervalMs = options.reconcileIntervalMs ?? 5 * 60 * 1000;
     this.#onBatch = options.onBatch;
     this.#onError = options.onError;
+    this.#onNoteRemoved = options.onNoteRemoved;
+    this.#afterSync = options.afterSync;
   }
 
   async start(): Promise<void> {
@@ -145,6 +163,7 @@ export class VaultWatcher {
     for (const owner of await this.#owners()) {
       try {
         await this.#indexer.sync(owner);
+        await this.#afterSync?.(owner);
       } catch (error) {
         this.#onError?.(error);
       }
@@ -186,7 +205,8 @@ export class VaultWatcher {
     if (parsed === null) return;
 
     const key = `${parsed.owner}\u0000${parsed.notePath}`;
-    this.#pending.set(key, { ...parsed, removed });
+    const unlinked = removed || this.#pending.get(key)?.unlinked === true;
+    this.#pending.set(key, { ...parsed, removed, unlinked });
 
     if (this.#timer !== null) clearTimeout(this.#timer);
     this.#timer = setTimeout(() => {
@@ -225,6 +245,8 @@ export class VaultWatcher {
 
       for (const change of batch) {
         try {
+          if (change.unlinked) this.#onNoteRemoved?.(change.owner, change.notePath);
+
           if (change.removed) {
             this.#indexer.removeNote(change.owner, change.notePath);
           } else {

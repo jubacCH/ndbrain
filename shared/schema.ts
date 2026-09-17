@@ -114,6 +114,10 @@ export const ActivityRow = z.object({
 export const TreeResponse = z.object({
   notes: z.array(NoteRow),
   dirs: z.array(z.object({ owner: z.string(), path: z.string() })),
+  /** The owners of the roots above, with their kind and display name. */
+  owners: z.array(
+    z.object({ id: z.string(), kind: z.enum(['person', 'space']), displayName: z.string() }),
+  ),
 });
 
 export const OverviewResponse = z.object({
@@ -178,19 +182,37 @@ export const MeResponse = z.object({ user: User });
 
 export const TreeDirRow = z.object({ owner: z.string(), path: z.string() });
 
+export const ShareKind = z.enum(['vault', 'folder', 'note']);
+
 export const Share = z.object({
   id: z.string(),
   owner: z.string(),
-  /** Path prefix, `''` for the whole vault. Ends in `/` when it names a folder. */
+  /** The whole vault, one folder, or exactly one note. */
+  kind: ShareKind,
+  /**
+   * The stored region: `''` for the vault, the folder with a trailing `/`, or
+   * the note's exact path. A note share matches that path only, never a longer
+   * one that starts the same way.
+   */
   prefix: z.string(),
+  /** The region as a person names it: `''`, `Projekt`, `Projekt/Plan.md`. */
+  path: z.string(),
   grantee: z.string(),
   canWrite: z.boolean(),
   createdAt: Timestamp,
 });
 
+/** An owner whose notes the caller can see, own account first. */
+export const VisibleOwner = z.object({
+  id: z.string(),
+  kind: z.enum(['person', 'space']),
+  displayName: z.string(),
+});
+
 export const SharesResponse = z.object({
   granted: z.array(Share),
   received: z.array(Share),
+  owners: z.array(VisibleOwner),
 });
 
 export const GraphResponse = z.object({
@@ -502,8 +524,18 @@ export const BulkRequest = z
   })
   .strict();
 
+/**
+ * `{ grantee, kind, path, canWrite }`. `prefix` without `kind` is the form
+ * sent before kinds existed and still means a folder, or the vault when empty.
+ */
 export const GrantShareRequest = z
-  .object({ grantee: UserId, prefix: z.string(), canWrite: z.boolean() })
+  .object({
+    grantee: z.string().max(64),
+    kind: ShareKind.optional(),
+    path: z.string().max(1024).optional(),
+    prefix: z.string().max(1024).optional(),
+    canWrite: z.boolean().optional(),
+  })
   .strict();
 
 export const ToggleTaskRequest = z
@@ -535,6 +567,8 @@ export type Tidy = z.infer<typeof TidyResponse>;
 export type Tasks = z.infer<typeof TasksResponse>;
 export type User = z.infer<typeof User>;
 export type Share = z.infer<typeof Share>;
+export type ShareKind = z.infer<typeof ShareKind>;
+export type VisibleOwner = z.infer<typeof VisibleOwner>;
 export type GraphData = z.infer<typeof GraphResponse>;
 export type PulseEvent = z.infer<typeof PulseEvent>;
 export type ActivityDay = z.infer<typeof ActivityDay>;
