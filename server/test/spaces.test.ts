@@ -59,6 +59,21 @@ describe('a space cannot sign in', () => {
     expect(wrong.status).toBe(401);
   });
 
+  it('is refused even when its row carries a real password hash', async () => {
+    await createSpace();
+    // However that row came about — a restored backup, a hand edit — the kind
+    // decides, not whether the hash happens to verify.
+    const { hashPassword } = await import('../src/auth/password.js');
+    h.runtime.db.run(
+      "UPDATE users SET password_hash = ? WHERE id = 'familie'",
+      await hashPassword('ein echtes passwort'),
+    );
+    const asSpace = await h.login('familie', 'ein echtes passwort');
+    const wrong = await h.login('julian', 'falsches passwort');
+    expect({ status: asSpace.status, raw: asSpace.raw }).toEqual({ status: wrong.status, raw: wrong.raw });
+    expect(asSpace.raw).not.toContain('set-cookie');
+  });
+
   it('has no password that could be set', async () => {
     await createSpace();
     await expect(h.runtime.users.setPassword('familie', 'ein neues passwort')).rejects.toThrow();
