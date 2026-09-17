@@ -806,7 +806,7 @@ export const copy = {
     opened: 'Opened lately',
     edited: 'Edited lately',
     noOpened: 'Notes you open show up here.',
-    noEdited: 'Nothing edited yet.',
+    noEdited: (days: number) => `Nothing edited in the last ${days} days.`,
     /** The folder a note sits in, when it sits at the top of its vault. */
     topLevel: 'top level',
     editedAgo: (when: string) => `edited ${when}`,

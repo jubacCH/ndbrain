@@ -128,6 +128,27 @@ describe('continue', () => {
     const row = screen.getByRole('button', { name: /Geteilt, in/ });
     expect(within(row).getByText('ramona')).toBeInTheDocument();
   });
+
+  it('keeps an edited note exactly fourteen days old, but drops one a day older', () => {
+    const boundary = note('Grenze.md', 'Grenze', 'julian', NOW - 14 * 24 * HOUR);
+    const stale = note('Alt.md', 'Alt', 'julian', NOW - 15 * 24 * HOUR);
+    renderHome({ overview: overview({ recent: [boundary, stale] }) });
+    const section = screen.getByRole('region', { name: copy.home.continue });
+
+    expect(within(section).getByRole('button', { name: /Grenze, in/ })).toBeInTheDocument();
+    expect(within(section).queryByRole('button', { name: /Alt, in/ })).toBeNull();
+    // Untouched by the fortnight filter: "opened" is about visits, not edits.
+    expect(within(section).getByRole('button', { name: /Proxmox, in/ })).toBeInTheDocument();
+  });
+
+  it('says plainly that nothing was edited in the last 14 days, rather than showing months-old notes', () => {
+    const stale = note('Alt.md', 'Alt', 'julian', NOW - 15 * 24 * HOUR);
+    renderHome({ overview: overview({ recent: [stale] }) });
+    const section = screen.getByRole('region', { name: copy.home.continue });
+
+    expect(within(section).queryByRole('button', { name: /Alt, in/ })).toBeNull();
+    expect(within(section).getByText('Nothing edited in the last 14 days.')).toBeInTheDocument();
+  });
 });
 
 describe('your brain today', () => {
