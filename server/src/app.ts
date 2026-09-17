@@ -10,7 +10,7 @@
 
 import type { Indexer } from './index/indexer.js';
 import { Queries, toView, type NoteRow, type Viewable } from './index/queries.js';
-import { withinPrefix } from './auth/shares.js';
+import { inScope } from './auth/shares.js';
 import { addTag, removeTag } from './markdown/edit.js';
 import { toggleTask as applyTaskToggle, type TaskExpectation } from './markdown/tasks.js';
 import { proposeFor, type TopicProposal } from './notes/topics.js';
@@ -697,18 +697,35 @@ export class App {
    */
   async tree(viewable: Viewable): Promise<{ notes: NoteRow[]; dirs: DirRow[] }> {
     const view = toView(viewable);
+    const notes = this.queries.recentNotes(view, 100_000);
     const dirs: DirRow[] = [];
+    const seen = new Set<string>();
+    const add = (owner: string, dir: string): void => {
+      const key = `${owner}\u0000${dir}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      dirs.push({ owner, path: dir });
+    };
 
     for (const scope of view) {
+      if (scope.exact) {
+        // A shared note brings the folders on its own path and nothing else.
+        // They are read off the path of a note the caller can already see —
+        // never off the filesystem — so a sibling, an empty folder or a
+        // subfolder next to it changes nothing in this answer, and a share on
+        // a note that is gone brings no folders at all.
+        if (!notes.some((note) => note.owner === scope.owner && note.path === scope.prefix)) continue;
+        const segments = scope.prefix.split('/').slice(0, -1);
+        for (let i = 1; i <= segments.length; i += 1) add(scope.owner, segments.slice(0, i).join('/'));
+        continue;
+      }
       for (const dir of await this.notes.listDirs(scope.owner)) {
         // `${dir}/` so a shared `Homelab` does not also surface `Homelab2`.
-        if (scope.prefix === '' || `${dir}/`.startsWith(scope.prefix)) {
-          dirs.push({ owner: scope.owner, path: dir });
-        }
+        if (inScope(scope, `${dir}/`)) add(scope.owner, dir);
       }
     }
 
-    return { notes: this.queries.recentNotes(view, 100_000), dirs };
+    return { notes, dirs };
   }
 }
 
@@ -724,7 +741,7 @@ export class App {
 function visibleIn(viewable: Viewable, owner: string, paths: string[]): string[] {
   const view = toView(viewable);
   return paths.filter((notePath) =>
-    view.some((scope) => scope.owner === owner && withinPrefix(scope.prefix, notePath)),
+    view.some((scope) => scope.owner === owner && inScope(scope, notePath)),
   );
 }
 

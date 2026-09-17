@@ -16,6 +16,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Database } from '../db/database.js';
 import { NdbrainError } from '../errors.js';
 import { normalizeVaultPath } from '../vault/paths.js';
+import { inScope } from './shares.js';
 
 export interface ApiKey {
   id: string;
@@ -180,6 +181,7 @@ export class ApiKeyService {
  * a case-insensitive comparison here would widen the scope for no benefit.
  */
 export function withinScope(key: ApiKey, notePath: string): boolean {
-  if (key.scope === '') return true;
-  return notePath.startsWith(key.scope);
+  // A key's scope is always a folder or the whole vault; the rule itself is the
+  // one every share goes through, not a second copy of it.
+  return inScope({ prefix: key.scope, exact: false }, notePath);
 }
