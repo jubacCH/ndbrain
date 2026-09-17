@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { HEALTH_WEIGHTS, brainHealth } from '../src/health';
+import { HEALTH_WEIGHTS, brainHealth } from '../src/healthScore';
 
 const clean = { notes: 100, orphans: 0, broken: 0, untagged: 0, conflicts: 0 };
 
