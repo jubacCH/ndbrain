@@ -28,6 +28,15 @@ describe('focusCamera', () => {
     }
   });
 
+  it('leaves room right of the rightmost note for its name', () => {
+    const x = [500, 900];
+    const y = [500, 520];
+    const r = [6, 6];
+    const inset = { ...NONE, right: 380 };
+    const cam = focusCamera({ x, y, r, members: [0, 1], bounds, width: W, height: H, inset, labelRoom: 150 });
+    expect(toScreen(cam, 900, 520).x).toBeLessThanOrEqual(W - inset.right - 150);
+  });
+
   it('comes closer for a close neighbourhood, but no closer than the cap', () => {
     const home = fit(bounds, W, H, NONE);
     const cam = focusCamera({ x: [800, 810], y: [600, 605], r: [4, 4], members: [0, 1], bounds, width: W, height: H, inset: NONE });

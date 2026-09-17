@@ -121,6 +121,13 @@ export interface BrainProps {
 
 /** Space between a reserving element and the framed notes, in screen pixels. */
 const RESERVE_GAP = 16;
+/**
+ * Room for the names beside the rightmost focused notes, in screen pixels, at
+ * most this share of the canvas: a name is up to 26 characters, and on a phone
+ * a quarter of the width is all that can be spared for it.
+ */
+const LABEL_ROOM = 150;
+const LABEL_SHARE = 0.25;
 
 /**
  * Room the focused view keeps clear for elements over the canvas that reserve
@@ -129,9 +136,9 @@ const RESERVE_GAP = 16;
  * The inspector reserves room: a strip on the right in a wide view, a band
  * along the bottom in a narrow one. Which of the two is the stylesheet's
  * decision, so it is read off the element's box rather than passed in. An
- * element that starts in the right half reserves everything right of its left
- * edge; otherwise one that starts in the lower half reserves everything below
- * its top.
+ * element spanning most of the width is a band and reserves everything below
+ * its top; a narrower one that starts in the right half is a strip and
+ * reserves everything right of its left edge.
  */
 function reserved(canvas: HTMLElement, base: Inset): Inset {
   const host = canvas.parentElement;
@@ -144,8 +151,8 @@ function reserved(canvas: HTMLElement, base: Inset): Inset {
     if (!(r.width > 0) || !(r.height > 0)) continue;
     const x = r.left - frame.left;
     const y = r.top - frame.top;
-    if (x > frame.width / 2) right = Math.max(right, frame.width - x + RESERVE_GAP);
-    else if (y > frame.height / 2) bottom = Math.max(bottom, frame.height - y + RESERVE_GAP);
+    if (r.width >= frame.width * 0.6) bottom = Math.max(bottom, frame.height - y + RESERVE_GAP);
+    else if (x > frame.width / 2) right = Math.max(right, frame.width - x + RESERVE_GAP);
   }
   return { top: base.top, right, bottom, left: base.left };
 }
@@ -682,6 +689,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         width: e.width,
         height: e.height,
         inset: reserved(surface, margin.current),
+        labelRoom: Math.min(LABEL_ROOM, e.width * LABEL_SHARE),
       });
     }
 

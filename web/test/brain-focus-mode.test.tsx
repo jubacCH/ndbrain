@@ -76,6 +76,22 @@ function onScreen(spy: { mock: { calls: unknown[][] } }, key: string): { x: numb
   return toScreen(camera, layout.x[i]!, layout.y[i]!);
 }
 
+/** A point on the canvas with no note within 40 pixels in the last frame. */
+function darkPoint(spy: { mock: { calls: unknown[][] } }): { x: number; y: number } {
+  const { layout, camera } = lastFrame(spy);
+  for (let gy = 10; gy < H; gy += 30) {
+    for (let gx = 10; gx < W; gx += 30) {
+      let clear = true;
+      for (let i = 0; i < layout.x.length && clear; i += 1) {
+        const p = toScreen(camera, layout.x[i]!, layout.y[i]!);
+        if (Math.hypot(p.x - gx, p.y - gy) < 40) clear = false;
+      }
+      if (clear) return { x: gx, y: gy };
+    }
+  }
+  throw new Error('no dark point on the canvas');
+}
+
 /** Lays the brain out once and stores it, as a first visit does. */
 async function firstVisit(): Promise<void> {
   const view = render(<Brain data={data} events={[]} onOpen={vi.fn()} view="network" arrangement="brain" remember={remember} inset={INSET} />);
@@ -213,8 +229,7 @@ describe('focus mode', () => {
     click(canvas, onScreen(build, key));
     await run(600);
     const again = lastFrame(build).camera;
-    // A corner of the canvas, away from the focused notes.
-    click(canvas, { x: 2, y: 2 });
+    click(canvas, darkPoint(build));
     await run(600);
     expect(onPick).toHaveBeenLastCalledWith(null);
     expect(lastFrame(build).picked).toBe(-1);
