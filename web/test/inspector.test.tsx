@@ -150,6 +150,20 @@ describe('the inspector', () => {
     expect(screen.queryByRole('heading', { name: copy.inspector.activity })).toBeNull();
   });
 
+  it('shows markup written as entities as the characters it spells, never as an element', async () => {
+    vi.mocked(api.getNote).mockResolvedValue(
+      note('# Backup to Azure\n\nBefore &lt;img src=x onerror="window.__pwnedEntity=1"&gt; and &#60;script&#62;alert(1)&#60;/script&#62; after.'),
+    );
+    wrap(<Inspector index={index} picked={AZURE} onPick={vi.fn()} onOpen={vi.fn()} />);
+    await waitFor(() => expect(document.querySelector('.inspector-summary')).not.toBeNull());
+    const summary = document.querySelector('.inspector-summary')!;
+    expect(summary.children.length).toBe(0);
+    expect(summary.textContent).toContain('Before');
+    expect(summary.textContent).toContain('after.');
+    expect(document.querySelector('.inspector img, .inspector script')).toBeNull();
+    expect((window as { __pwnedEntity?: number }).__pwnedEntity).toBeUndefined();
+  });
+
   it('leaves the summary out when the note cannot be read, rather than guessing', async () => {
     vi.mocked(api.getNote).mockRejectedValue(new Error('forbidden'));
     wrap(<Inspector index={index} picked={AZURE} onPick={vi.fn()} onOpen={vi.fn()} />);

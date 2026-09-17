@@ -194,7 +194,13 @@ export function summarize(markdown: string, max = SUMMARY_MAX): string {
     if (end > 0) lines = lines.slice(end + 1);
   }
 
+  // A line or a paragraph is only ever read as far as the summary could reach.
+  // The markup rules in `plain` backtrack, and on a 40 KB line of `[` they
+  // took seconds on the main thread — a note may hold anything.
+  const reach = max * 2;
+  const clip = (text: string): string => (text.length > reach ? text.slice(0, reach) : text);
   const block: string[] = [];
+  let length = 0;
   let fence: string | null = null;
   let comment = false;
   let list = false;
@@ -233,13 +239,17 @@ export function summarize(markdown: string, max = SUMMARY_MAX): string {
       // A list after a paragraph is a new block; a paragraph after a list, too.
       if (block.length > 0 && !list) break;
       list = true;
-      const text = plain(item[1]!);
+      const text = plain(clip(item[1]!));
       if (text !== '') block.push(text);
+      length += text.length;
+      if (length > reach) break;
       continue;
     }
     if (list) break;
-    const text = plain(line);
+    const text = plain(clip(line));
     if (text !== '') block.push(text);
+    length += text.length;
+    if (length > reach) break;
   }
 
   const joined = block.join(list ? ' · ' : ' ');
