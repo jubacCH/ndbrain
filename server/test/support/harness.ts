@@ -49,9 +49,17 @@ function toReply(response: { statusCode: number; body: string }): Reply {
   return { status: response.statusCode, raw: response.body, body };
 }
 
-export async function startHarness(prefix: string): Promise<Harness> {
+export async function startHarness(prefix: string, overrides: Partial<Config> = {}): Promise<Harness> {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), `ndbrain-${prefix}-`));
-  const config: Config = { ...loadConfig(), dataDir, cookieSecure: false, logLevel: 'silent' };
+  const config: Config = {
+    ...loadConfig(),
+    dataDir,
+    cookieSecure: false,
+    logLevel: 'silent',
+    // Tests drive reconciliation themselves; a timer would make them flaky.
+    reconcileIntervalMs: 0,
+    ...overrides,
+  };
   const runtime = await createRuntime(config);
   const server = await buildServer({
     app: runtime.app,

@@ -98,6 +98,13 @@ export class VaultWatcher {
       // Do not follow symlinks: the vault layer refuses to read through them, so
       // watching them would produce events for notes that can never be indexed.
       followSymlinks: false,
+      // Report a delete as a delete even when a file of the same name appears
+      // right after it. chokidar's default folds an unlink and an add inside
+      // 100 ms into one `change`, and a change carries note shares over — so a
+      // note replaced by a different file would hand its grants to the stranger.
+      // ndBrain's own saves are unaffected: they rename a finished temporary
+      // file over the note, so the path is never missing.
+      atomic: false,
       ignored: (target: string) => {
         const relative = path.relative(this.#vaultsDir, target);
         if (relative.startsWith('..')) return true;
