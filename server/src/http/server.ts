@@ -477,7 +477,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (bounds === null) {
       return reply.code(400).send({
         code: 'bad_bounds',
-        message: `bounds must be 2 to ${MAX_DAY_BOUNDS} ascending timestamps, comma-separated`,
+        message: `bounds must be 2 to ${MAX_DAY_BOUNDS} ascending timestamps, comma-separated, each day at most ${MAX_DAY_HOURS} hours and all of them at most ${MAX_SPAN_DAYS} days`,
       });
     }
     return { days: app.queries.dailyActivity(owner, bounds) };
@@ -1246,12 +1246,21 @@ function clamp(value: number, min: number, max: number): number {
 
 /** A month and a day of boundaries: enough for any trace a view draws. */
 export const MAX_DAY_BOUNDS = 32;
+/** The longest a day can be: 24 hours, one more at a clock change, one of slack. */
+export const MAX_DAY_HOURS = 26;
+/** The longest window all the days together may cover. */
+export const MAX_SPAN_DAYS = 32;
+const HOUR_MS = 60 * 60 * 1000;
 
 /**
  * Reads `bounds` for the per-day activity: 2 to `MAX_DAY_BOUNDS` whole,
- * non-negative, strictly ascending timestamps. Anything else is `null` rather
- * than a guess — a silently repaired boundary would count a day's edits into
- * its neighbour.
+ * non-negative, strictly ascending timestamps, no day longer than
+ * `MAX_DAY_HOURS` and all of them within `MAX_SPAN_DAYS`. Anything else is
+ * `null` rather than a guess — a silently repaired boundary would count a day's
+ * edits into its neighbour.
+ *
+ * The count alone did not bound the work: `0,9000000000000000` is two bounds
+ * and one "day" holding every edit the vault ever had.
  */
 export function parseDayBounds(raw: unknown): number[] | null {
   if (typeof raw !== 'string' || raw === '') return null;
@@ -1264,8 +1273,10 @@ export function parseDayBounds(raw: unknown): number[] | null {
     const value = Number(part);
     const previous = bounds[bounds.length - 1];
     if (!Number.isSafeInteger(value) || (previous !== undefined && value <= previous)) return null;
+    if (previous !== undefined && value - previous > MAX_DAY_HOURS * HOUR_MS) return null;
     bounds.push(value);
   }
+  if (bounds[bounds.length - 1]! - bounds[0]! > MAX_SPAN_DAYS * 24 * HOUR_MS) return null;
   return bounds;
 }
 
