@@ -44,6 +44,7 @@ export function TidyView({
   selected,
   onToggle,
   onToggleAll,
+  onKeepSelected,
   onOpen,
   onBulk,
   busy,
@@ -56,6 +57,12 @@ export function TidyView({
   selected: Set<string>;
   onToggle: (path: string) => void;
   onToggleAll: (paths: string[]) => void;
+  /**
+   * Narrows the selection to these paths. Called when the view is narrowed to
+   * one finding: a row selected under "all" and then filtered out of sight
+   * must not be reached by the bulk action.
+   */
+  onKeepSelected?: (paths: string[]) => void;
   onOpen: (path: string) => void;
   onBulk: (action: 'move' | 'tag' | 'delete') => void;
   busy: boolean;
@@ -135,6 +142,16 @@ export function TidyView({
   const allPaths = [...new Set([...shownRows.map((r) => r.path), ...shownConflicts.map((c) => c.path)])];
   const allSelected = allPaths.length > 0 && selected.size === allPaths.length;
   const selectAll = (): void => onToggleAll(allPaths);
+
+  // The latest shown paths, read by the effect below, which runs on a change of
+  // focus only — not on every render, where it would fight a checkbox click.
+  const shownPaths = useRef(allPaths);
+  shownPaths.current = allPaths;
+  const keep = useRef(onKeepSelected);
+  keep.current = onKeepSelected;
+  useEffect(() => {
+    keep.current?.(shownPaths.current);
+  }, [focus]);
 
   return (
     <div className="pane padded">
