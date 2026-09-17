@@ -70,6 +70,8 @@ export class CachedLayer {
   #width = 0;
   #height = 0;
   #dpr = 1;
+  /** Scratch for softening the layer, made the first time a layer is softened. */
+  #soft: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
   /** True while the last paint is still good. Read by the tests and the idle check. */
   #fresh = false;
 
@@ -80,6 +82,10 @@ export class CachedLayer {
   /**
    * Brings the layer up to date and hands it back, or null where offscreen
    * canvases are not available and the caller has to paint directly.
+   *
+   * `soften`, in device pixels, blurs the painted layer itself slightly before
+   * its bloom is taken: a plane out of focus rather than one that is only
+   * darker. It is part of the paint, so it too happens once per stand.
    */
   sync(
     key: string,
@@ -89,6 +95,7 @@ export class CachedLayer {
     dpr: number,
     blur: number,
     paint: (ctx: CanvasRenderingContext2D) => void,
+    soften = 0,
   ): Painted | null {
     if (!(width > 0) || !(height > 0)) return null;
     const pixelW = Math.round(width * dpr);
@@ -100,6 +107,7 @@ export class CachedLayer {
       if (made === null) return null;
       this.#img = made;
       this.#bloom = surface(Math.max(1, Math.ceil(width / 2)), Math.max(1, Math.ceil(height / 2)));
+      this.#soft = null;
       this.#width = width;
       this.#height = height;
       this.#dpr = dpr;
@@ -123,6 +131,19 @@ export class CachedLayer {
       img.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       paint(img.ctx);
       img.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (soften > 0) {
+        this.#soft ??= surface(pixelW, pixelH);
+        const soft = this.#soft;
+        if (soft !== null) {
+          soft.ctx.setTransform(1, 0, 0, 1, 0, 0);
+          soft.ctx.clearRect(0, 0, pixelW, pixelH);
+          soft.ctx.drawImage(img.canvas, 0, 0);
+          img.ctx.clearRect(0, 0, pixelW, pixelH);
+          img.ctx.filter = `blur(${soften}px)`;
+          img.ctx.drawImage(soft.canvas, 0, 0);
+          img.ctx.filter = 'none';
+        }
+      }
       const bloom = this.#bloom;
       if (bloom !== null) {
         bloom.ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -145,6 +166,7 @@ export class CachedLayer {
   dispose(): void {
     this.#img = null;
     this.#bloom = null;
+    this.#soft = null;
     this.#key = '';
     this.#fresh = false;
   }
@@ -182,7 +204,7 @@ export class Sprites {
       grad.addColorStop(0.6, 'rgba(32,191,181,0.06)');
       grad.addColorStop(1, 'rgba(32,191,181,0)');
     } else if (kind === 'warm') {
-      grad.addColorStop(0, 'rgba(255,225,170,0.55)');
+      grad.addColorStop(0, 'rgba(255,208,135,0.55)');
       grad.addColorStop(0.25, 'rgba(234,184,93,0.22)');
       grad.addColorStop(0.6, 'rgba(234,150,80,0.05)');
       grad.addColorStop(1, 'rgba(234,150,80,0)');
