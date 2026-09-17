@@ -41,6 +41,10 @@ import {
 /** The views the sidebar navigates between. */
 export type NavView = 'overview' | 'journal' | 'brain' | 'tidy' | 'tasks' | 'search' | 'files';
 
+/**
+ * Files is not among them: attachments are looked after now and then, not
+ * reached for all day, so it sits in the account menu under Settings.
+ */
 const ENTRIES: Array<{ view: NavView; label: string; icon: ReactNode }> = [
   { view: 'overview', label: copy.nav.overview, icon: <HomeIcon /> },
   { view: 'journal', label: copy.nav.journal, icon: <CalendarIcon /> },
@@ -48,7 +52,6 @@ const ENTRIES: Array<{ view: NavView; label: string; icon: ReactNode }> = [
   { view: 'tidy', label: copy.nav.tidy, icon: <SparkleIcon /> },
   { view: 'tasks', label: copy.nav.tasks, icon: <TasksIcon /> },
   { view: 'search', label: copy.nav.search, icon: <SearchIcon /> },
-  { view: 'files', label: copy.nav.files, icon: <FileIcon /> },
 ];
 
 export interface Health {

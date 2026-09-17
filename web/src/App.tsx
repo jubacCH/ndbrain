@@ -40,7 +40,7 @@ import { copy } from './copy';
 import { discardLegacy, dropRecent, forgetAccount, loadRecents, pushRecent, type Recent } from './accountStorage';
 import { SESSION_SIGNAL_KEY, announceSessionChange, closeSession, openSession } from './session';
 import { applyPrefs, loadPrefs, savePrefs, type Prefs, type Theme } from './prefs';
-import { GearIcon, MoreIcon, ShareIcon, ShieldIcon, SignOutIcon, TrashIcon } from './icons';
+import { FileIcon, GearIcon, MoreIcon, ShareIcon, ShieldIcon, SignOutIcon, TrashIcon } from './icons';
 import { NetworkFrame, type FullscreenFrame } from './NetworkFrame';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
@@ -1504,6 +1504,7 @@ function Shell({
 
   const accountItems: MenuItem[] = [
     { key: 'settings', label: copy.nav.settings, icon: <GearIcon size={16} />, onSelect: () => void showView('settings') },
+    { key: 'files', label: copy.nav.files, icon: <FileIcon size={16} />, onSelect: () => void showView('files') },
     { key: 'shares', label: copy.nav.sharing, icon: <ShareIcon size={16} />, onSelect: () => void showView('shares') },
     // Hidden for everybody else, and refused by the server regardless: a menu
     // entry that is not rendered is not a permission.

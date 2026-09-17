@@ -247,7 +247,7 @@ describe('the sidebar', () => {
 
   it('folded, keeps every entry reachable by name and drops the tree', async () => {
     const { onShowView, onToggleCollapsed } = renderSidebar({ collapsed: true });
-    for (const label of [copy.nav.overview, copy.nav.network, copy.nav.tidy, copy.nav.tasks, copy.nav.search, copy.nav.files]) {
+    for (const label of [copy.nav.overview, copy.nav.network, copy.nav.tidy, copy.nav.tasks, copy.nav.search]) {
       const button = screen.getByRole('button', { name: label });
       expect(button).toHaveAttribute('title', label);
     }
@@ -513,6 +513,18 @@ describe('the shell, signed in', () => {
     await openFromPalette('Anna only');
     await waitFor(() => expect(recentTitles().join()).toMatch(/Anna only/));
     expect(recentTitles().join()).not.toMatch(/Julian only/);
+  });
+
+  it('keeps Files in the account menu, right under Settings, not among the views', async () => {
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await userEvent.click(await screen.findByRole('button', { name: copy.shell.account }));
+    const items = screen.getAllByRole('menuitem').map((item) => item.textContent);
+    expect(items.indexOf(copy.nav.files)).toBe(items.indexOf(copy.nav.settings) + 1);
+    const views = screen.getByRole('group', { name: copy.nav.view });
+    expect(within(views).queryByRole('button', { name: copy.nav.files })).toBeNull();
+
+    await userEvent.click(screen.getByRole('menuitem', { name: copy.nav.files }));
+    expect(await screen.findByRole('heading', { level: 1, name: copy.nav.files })).toBeInTheDocument();
   });
 
   it('offers no admin entry to an account that is not an administrator', async () => {
