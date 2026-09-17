@@ -23,6 +23,7 @@ import {
 import { Vault, type VaultEntry } from '../vault/fs.js';
 import { InvalidPathError } from '../errors.js';
 import { KeyedMutex } from './mutex.js';
+import type { NoteLifecycle } from '../auth/shares.js';
 
 export interface Note {
   path: string;
@@ -116,12 +117,45 @@ export function parseConflictPath(notePath: string): ConflictInfo | null {
   return { originalPath, at: at.getTime() };
 }
 
+/** For a service nobody listens to — the unit tests that build one bare. */
+const UNOBSERVED: NoteLifecycle = { created: () => {}, moved: () => {}, removed: () => {} };
+
 export class NoteService {
   readonly #vault: Vault;
   readonly #locks = new KeyedMutex();
+  readonly #lifecycle: NoteLifecycle;
 
-  constructor(vault: Vault) {
+  /**
+   * `lifecycle` hears about notes appearing, moving and disappearing, from
+   * inside the lock that makes the change. That is where note shares follow
+   * their note: anywhere later, and a request in between could find the file
+   * moved and the share not, or a new note already carrying an old grant.
+   */
+  constructor(vault: Vault, lifecycle: NoteLifecycle = UNOBSERVED) {
     this.#vault = vault;
+    this.#lifecycle = lifecycle;
+  }
+
+  /**
+   * Runs `fn` holding the write lock of one note.
+   *
+   * For decisions that have to see the note as the write path sees it — a
+   * note share may only be granted on a note that exists, and "exists" must not
+   * change between the look and the grant.
+   */
+  async withLock<T>(owner: string, notePath: string, fn: () => Promise<T>): Promise<T> {
+    return this.#locks.run(lockKey(owner, this.#assertNotePath(notePath)), fn);
+  }
+
+  /** Whether a note exists under exactly this spelling. Call it inside `withLock`. */
+  async exists(owner: string, notePath: string): Promise<boolean> {
+    const canonical = this.#assertNotePath(notePath);
+    try {
+      await this.#assertExactNoteExists(owner, canonical);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   get vault(): Vault {
@@ -161,6 +195,7 @@ export class NoteService {
     return this.#locks.run(lockKey(owner, canonical), async () => {
       await this.#assertTargetFree(owner, canonical);
       await this.#vault.writeNote(owner, canonical, content);
+      this.#lifecycle.created(owner, canonical);
       return this.getNote(owner, canonical);
     });
   }
@@ -201,6 +236,7 @@ export class NoteService {
 
       assertLinkableName(canonical);
       await this.#vault.writeNote(owner, canonical, content);
+      this.#lifecycle.created(owner, canonical);
       return { note: await this.getNote(owner, canonical), created: true };
     });
   }
@@ -275,6 +311,7 @@ export class NoteService {
         existing === undefined ? null : await this.#preserveDisplaced(owner, canonical, content, options);
 
       await this.#vault.writeNote(owner, canonical, content);
+      if (existing === undefined) this.#lifecycle.created(owner, canonical);
 
       const result: PutResult = {
         note: await this.getNote(owner, canonical),
@@ -317,6 +354,9 @@ export class NoteService {
 
     const copyPath = conflictPath(canonical, new Date());
     await this.#vault.writeNote(owner, copyPath, current.content);
+    // A new note like any other: whatever was once shared under that name is
+    // not this copy's to inherit.
+    this.#lifecycle.created(owner, copyPath);
     return copyPath;
   }
 
@@ -326,6 +366,7 @@ export class NoteService {
     await this.#locks.run(lockKey(owner, canonical), async () => {
       await this.#assertExactNoteExists(owner, canonical);
       await this.#vault.deleteNote(owner, canonical);
+      this.#lifecycle.removed(owner, canonical);
       await this.#vault.pruneEmptyDirs(owner, canonical);
     });
   }
@@ -357,6 +398,7 @@ export class NoteService {
       await this.#assertTargetFree(owner, target, source);
 
       await this.#vault.moveNote(owner, source, target);
+      this.#lifecycle.moved(owner, source, target);
       await this.#vault.pruneEmptyDirs(owner, source);
       return this.getNote(owner, target);
     };

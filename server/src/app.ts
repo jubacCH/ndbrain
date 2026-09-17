@@ -10,7 +10,7 @@
 
 import type { Indexer } from './index/indexer.js';
 import { Queries, toView, type NoteRow, type Viewable } from './index/queries.js';
-import { inScope } from './auth/shares.js';
+import { inScope, shareTarget, type Share, type ShareKind, type ShareService } from './auth/shares.js';
 import { addTag, removeTag } from './markdown/edit.js';
 import { toggleTask as applyTaskToggle, type TaskExpectation } from './markdown/tasks.js';
 import { proposeFor, type TopicProposal } from './notes/topics.js';
@@ -56,13 +56,75 @@ export class App {
   readonly notes: NoteService;
   readonly indexer: Indexer;
   readonly queries: Queries;
+  readonly shares: ShareService;
   readonly #db: Database;
 
-  constructor(db: Database, notes: NoteService, indexer: Indexer) {
+  constructor(db: Database, notes: NoteService, indexer: Indexer, shares: ShareService) {
     this.#db = db;
     this.notes = notes;
     this.indexer = indexer;
+    this.shares = shares;
     this.queries = new Queries(db);
+  }
+
+  /* ---- shares -----------------------------------------------------------
+   *
+   * Who may see what is decided in `ShareService`. What lives here is the part
+   * that needs the vault: a note share must name a note that is there, and
+   * must go when the note does.
+   */
+
+  /**
+   * Grants a share on `owner`'s vault — a person's own, or a space's.
+   *
+   * A note share is only granted on a note that exists under exactly that
+   * name, checked and granted under the note's own write lock. Checked outside
+   * it, a delete landing between the look and the insert would leave a share
+   * on a path with nothing behind it, waiting for the next note of that name.
+   * A missing note answers like every other missing note.
+   */
+  async grantShare(
+    owner: string,
+    grantee: string,
+    target: string | { kind: ShareKind; path: string },
+    canWrite: boolean,
+  ): Promise<Share> {
+    const resolved = shareTarget(target);
+    if (resolved.kind !== 'note') return this.shares.grant(owner, target, grantee, canWrite);
+
+    return this.notes.withLock(owner, resolved.prefix, async () => {
+      if (!(await this.notes.exists(owner, resolved.prefix))) {
+        throw new NoteNotFoundError('note does not exist');
+      }
+      return this.shares.grant(owner, { kind: 'note', path: resolved.prefix }, grantee, canWrite);
+    });
+  }
+
+  /**
+   * A note vanished without going through ndBrain — the watcher saw it go.
+   *
+   * Its note shares are withdrawn, not kept for whatever turns up under that
+   * name next: from outside, "deleted and recreated" and "replaced by some
+   * other file" look identical, and only one of them would be safe to carry a
+   * grant over to.
+   */
+  noteVanished(owner: string, notePath: string): void {
+    this.shares.dropNote(owner, notePath);
+  }
+
+  /**
+   * Withdraws note shares whose note is gone, for everything the watcher's
+   * events did not report.
+   *
+   * Each one is looked at under its note's lock, so a rename or a create in
+   * flight is seen either before or after, never half-done.
+   */
+  async dropDanglingShares(owner: string): Promise<void> {
+    for (const notePath of this.shares.notePaths(owner)) {
+      await this.notes.withLock(owner, notePath, async () => {
+        if (!(await this.notes.exists(owner, notePath))) this.shares.dropNote(owner, notePath);
+      });
+    }
   }
 
   /**
@@ -281,11 +343,19 @@ export class App {
     actor?: string,
   ): Promise<{ path: string; size: number; replaced: boolean }> {
     const canonical = normalizeVaultPath(filePath);
-    const replaced = await this.notes.vault.exists(owner, canonical);
 
-    if (isNotePath(canonical) && !replaced) assertLinkableName(canonical);
-
-    await this.notes.vault.writeFileBytes(owner, canonical, bytes);
+    // A note arriving as a file is still a note appearing: it takes the note's
+    // lock, and a new one inherits no share that once named its path.
+    const write = async (): Promise<boolean> => {
+      const existed = await this.notes.vault.exists(owner, canonical);
+      if (isNotePath(canonical) && !existed) assertLinkableName(canonical);
+      await this.notes.vault.writeFileBytes(owner, canonical, bytes);
+      if (isNotePath(canonical) && !existed) this.shares.dropNote(owner, canonical);
+      return existed;
+    };
+    const replaced = isNotePath(canonical)
+      ? await this.notes.withLock(owner, canonical, write)
+      : await write();
 
     if (isNotePath(canonical)) {
       await this.indexer.indexNote(owner, canonical);
@@ -655,6 +725,12 @@ export class App {
       for (const link of result.updatedLinks) updatedLinks.add(link);
     }
 
+    // Note shares went along one note at a time, inside each note's lock.
+    // Folder shares name the folder, so they follow once the folder has moved.
+    // Until this line a grantee of the old folder sees the moved notes vanish
+    // from it rather than appear somewhere they were not given.
+    this.shares.moveFolder(owner, source, target);
+
     // Whatever the note moves did not carry: the folder itself when it held no
     // notes, and any empty subfolder below it.
     for (const dir of subdirs) {
@@ -684,6 +760,7 @@ export class App {
     if (!(await this.notes.vault.removeDirIfEmpty(owner, canonical))) {
       throw new NotAFileError('the folder is not empty');
     }
+    this.shares.dropFolder(owner, canonical);
   }
 
   /**
@@ -701,7 +778,7 @@ export class App {
     const dirs: DirRow[] = [];
     const seen = new Set<string>();
     const add = (owner: string, dir: string): void => {
-      const key = `${owner}\u0000${dir}`;
+      const key = `${owner}:${dir}`;
       if (seen.has(key)) return;
       seen.add(key);
       dirs.push({ owner, path: dir });

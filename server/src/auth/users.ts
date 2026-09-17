@@ -17,10 +17,20 @@ import type { Vault } from '../vault/fs.js';
 
 export type Role = 'admin' | 'user';
 
+/**
+ * A person signs in; a space is a shared vault nobody signs in to.
+ *
+ * Both are rows in the same table because both own a vault, and one table is
+ * what gives them one namespace: the account id is the vault's directory name,
+ * so a space and a person of the same name would be the same folder.
+ */
+export type AccountKind = 'person' | 'space';
+
 export interface User {
   id: string;
   displayName: string;
   role: Role;
+  kind: AccountKind;
   createdAt: number;
   disabled: boolean;
 }
@@ -48,6 +58,9 @@ function toUser(row: Record<string, unknown>): User {
     id: String(row['id']),
     displayName: String(row['display_name']),
     role: String(row['role']) === 'admin' ? 'admin' : 'user',
+    // Anything but an explicit person is treated as a space: the kind that can
+    // do less is the safe reading of a value this build does not recognise.
+    kind: String(row['kind'] ?? 'person') === 'person' ? 'person' : 'space',
     createdAt: Number(row['created_at']),
     disabled: row['disabled_at'] !== null && row['disabled_at'] !== undefined,
   };
@@ -109,6 +122,37 @@ export class UserService {
   }
 
   /**
+   * Creates a space: an account with a vault and no way to sign in.
+   *
+   * The same name rules and the same namespace as a person, because the id is
+   * a vault directory either way. The stored password hash is not a hash at
+   * all, so no password can ever match it — and `authenticate` does not even
+   * try, see there.
+   */
+  async createSpace(id: string, displayName?: string): Promise<User> {
+    assertUserId(id);
+
+    if (this.get(id) !== undefined) {
+      throw new UserExistsError('a user with that name already exists');
+    }
+
+    const name = displayName === undefined ? id : checkedDisplayName(displayName);
+    this.#db.run(
+      `INSERT INTO users (id, display_name, password_hash, role, kind, created_at, disabled_at)
+       VALUES (?, ?, '!space', 'user', 'space', ?, NULL)`,
+      id,
+      name,
+      Date.now(),
+    );
+
+    await this.#vault.ensureVault(id);
+
+    const created = this.get(id);
+    if (created === undefined) throw new NdbrainError('space vanished immediately after creation');
+    return created;
+  }
+
+  /**
    * Changes the name the interface calls somebody.
    *
    * Only ever a label — the account id stays what it was. That separation is the
@@ -117,15 +161,7 @@ export class UserService {
    * "Julian" rather than "julian" is not.
    */
   setDisplayName(id: string, displayName: string): User {
-    const name = displayName.trim();
-    if (name === '' || name.length > 64) {
-      throw new InvalidUserError('a display name is between 1 and 64 characters');
-    }
-    // Control characters would let a name break the layout it appears in.
-    // eslint-disable-next-line no-control-regex
-    if (/[\u0000-\u001F\u007F]/.test(name)) {
-      throw new InvalidUserError('a display name may not contain control characters');
-    }
+    const name = checkedDisplayName(displayName);
 
     // Checked before the write rather than inferred from it: `run` reports
     // nothing about how many rows it touched, so an update against a missing id
@@ -140,7 +176,9 @@ export class UserService {
   }
 
   async setPassword(id: string, password: string): Promise<void> {
-    if (this.get(id) === undefined) throw new UnknownUserError('no such user');
+    // A space has no password to set; giving it one would not let anybody in,
+    // but it would make "spaces cannot sign in" depend on a check elsewhere.
+    if (this.get(id)?.kind !== 'person') throw new UnknownUserError('no such user');
     this.#db.run('UPDATE users SET password_hash = ? WHERE id = ?', await hashPassword(password), id);
     // Changing a password ends every session: that is the whole point of doing it
     // after a suspected compromise.
@@ -161,14 +199,31 @@ export class UserService {
    */
   async authenticate(id: string, password: string): Promise<User | null> {
     const row = this.#db.get('SELECT * FROM users WHERE id = ?', id);
-    const storedHash = row ? String(row['password_hash']) : DUMMY_HASH;
+    const user = row ? toUser(row) : undefined;
+    // A space is compared against the dummy hash, exactly like a name that does
+    // not exist, and refused whatever came back: same work, same answer, so
+    // the login form cannot be used to find out which names are spaces.
+    const storedHash = user?.kind === 'person' ? String(row?.['password_hash']) : DUMMY_HASH;
 
     const ok = await verifyPassword(password, storedHash);
-    if (!row || !ok) return null;
+    if (user === undefined || user.kind !== 'person' || !ok) return null;
 
-    const user = toUser(row);
     return user.disabled ? null : user;
   }
+}
+
+/** Trims and checks a display name; the one rule for people and spaces. */
+function checkedDisplayName(displayName: string): string {
+  const name = displayName.trim();
+  if (name === '' || name.length > 64) {
+    throw new InvalidUserError('a display name is between 1 and 64 characters');
+  }
+  // Control characters would let a name break the layout it appears in.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F]/.test(name)) {
+    throw new InvalidUserError('a display name may not contain control characters');
+  }
+  return name;
 }
 
 /**

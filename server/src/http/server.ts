@@ -24,7 +24,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 
 import type { App, BulkResult } from '../app.js';
 import type { ApiKeyService } from '../auth/keys.js';
-import { InvalidShareError, type Need, type ShareService } from '../auth/shares.js';
+import { InvalidShareError, type Need, type Share, type ShareService } from '../auth/shares.js';
 import type { SettingsService } from '../auth/settings.js';
 import type { History } from '../vault/history.js';
 import { SessionService, UserService, type User } from '../auth/users.js';
@@ -284,7 +284,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ---- notes --------------------------------------------------------------
   fastify.get('/api/v1/tree', async (request) => {
-    return app.tree(shares.view(requireUser(request).id));
+    const caller = requireUser(request).id;
+    return {
+      ...(await app.tree(shares.view(caller))),
+      // Who the roots belong to and what to call them: a space is a root of
+      // its own, not somebody's vault.
+      owners: shares.visibleOwners(caller),
+    };
   });
 
   fastify.get('/api/v1/notes/*', async (request) => {
@@ -1148,34 +1154,58 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // ---- shares -------------------------------------------------------------
   fastify.get('/api/v1/shares', async (request) => {
     const caller = requireUser(request).id;
-    return { granted: shares.byOwner(caller), received: shares.toGrantee(caller) };
+    return {
+      granted: shares.byOwner(caller),
+      received: shares.toGrantee(caller),
+      owners: shares.visibleOwners(caller),
+    };
   });
 
-  fastify.post('/api/v1/shares', async (request, reply) => {
-    const caller = requireUser(request).id;
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const grantee = typeof body['grantee'] === 'string' ? body['grantee'].trim() : '';
-    const prefix = typeof body['prefix'] === 'string' ? body['prefix'] : '';
+  /**
+   * Grants a share on `owner`'s vault from a request body.
+   *
+   * One implementation for a person sharing their own vault and an
+   * administrator adding a member to a space — the two differ in who may ask,
+   * never in what a grant is. Takes `{ grantee, kind, path, canWrite }`, or the
+   * `{ grantee, prefix, canWrite }` every client sent before kinds existed.
+   */
+  async function grantFromBody(
+    owner: string,
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<FastifyReply | { share: Share }> {
+    const input = body(request, S.GrantShareRequest);
+    const grantee = input.grantee.trim();
 
     if (grantee === '') {
       return reply.code(400).send({ code: 'no_grantee', message: 'name somebody to share with' });
     }
-    if (users.get(grantee) === undefined) {
-      // Named accounts only, and the caller already knows who they typed, so
-      // there is no oracle here to protect.
+    // A space is not somebody to share with, and it answers exactly like a
+    // name that does not exist: whether a space of that name exists is not the
+    // caller's to learn from this form.
+    const recipient = users.get(grantee);
+    if (recipient === undefined || recipient.kind !== 'person') {
       return reply.code(404).send({ code: 'no_such_user', message: 'no such account' });
     }
 
+    const target =
+      input.kind === undefined ? (input.prefix ?? input.path ?? '') : { kind: input.kind, path: input.path ?? input.prefix ?? '' };
+
     try {
-      // Only ever grants access to the caller's *own* vault: a share the caller
-      // holds is not theirs to pass on.
-      return { share: shares.grant(caller, prefix, grantee, body['canWrite'] === true) };
+      return { share: await app.grantShare(owner, grantee, target, input.canWrite === true) };
     } catch (error) {
       if (error instanceof InvalidShareError) {
         return reply.code(400).send({ code: 'invalid_share', message: error.message });
       }
       throw error;
     }
+  }
+
+  fastify.post('/api/v1/shares', async (request, reply) => {
+    // Only ever grants access to the caller's *own* vault: a share the caller
+    // holds is not theirs to pass on. A note share must name a note that is
+    // there, in that vault — a note of somebody else's answers as missing.
+    return grantFromBody(requireUser(request).id, request, reply);
   });
 
   fastify.delete('/api/v1/shares/:id', async (request, reply) => {
