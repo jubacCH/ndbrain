@@ -21,7 +21,7 @@ import { useMemo, useState } from 'react';
 import { ApiError, type AdminSpace, type AdminUser, type Share, type ShareKind } from './api';
 import { copy } from './copy';
 import { SpaceIcon } from './icons';
-import { useSpaceMembers } from './queries';
+import { useSpaceMembers, useSpaceTree } from './queries';
 import { ShareKindIcon } from './ShareDialog';
 
 /** The server's account-name rule (`USER_ID_RE`), stated once for the form. */
@@ -31,17 +31,33 @@ export interface AdminSpacesProps {
   spaces: AdminSpace[];
   /** Every account, for the name clash check and the member picker. */
   users: AdminUser[];
-  /**
-   * What this browser can see of each space: notes and folders from the tree.
-   * Complete only for a space the administrator is a member of.
-   */
-  paths: ReadonlyMap<string, { notes: string[]; folders: string[] }>;
   busy: boolean;
   onCreate: (id: string, displayName: string) => Promise<void>;
   onRename: (id: string, displayName: string) => Promise<void>;
   onSetDisabled: (id: string, disabled: boolean) => Promise<void>;
   onAddMember: (space: string, grantee: string, kind: ShareKind, path: string, canWrite: boolean) => Promise<void>;
   onRemoveMember: (space: string, share: Share) => Promise<void>;
+}
+
+/**
+ * What the member picker offers from a space's tree: every note, and every
+ * folder — the ones the tree lists, which include empty ones, and the ones on
+ * the way to a note, so a folder is offered even if a listing ever left it out.
+ */
+export function spaceChoices(tree: { dirs: string[]; notes: Array<{ path: string }> }): {
+  folders: string[];
+  notes: string[];
+} {
+  const folders = new Set(tree.dirs);
+  for (const note of tree.notes) {
+    const segments = note.path.split('/').slice(0, -1);
+    for (let i = 1; i <= segments.length; i += 1) folders.add(segments.slice(0, i).join('/'));
+  }
+  const byPath = (a: string, b: string): number => a.localeCompare(b);
+  return {
+    folders: [...folders].sort(byPath),
+    notes: tree.notes.map((note) => note.path).sort(byPath),
+  };
 }
 
 /** Why a proposed account name cannot be used, or null when it can. */
@@ -174,7 +190,6 @@ export function AdminSpaces(props: AdminSpacesProps): React.JSX.Element {
           key={managed.id}
           space={managed}
           users={users.filter((user) => !spaces.some((space) => space.id === user.id))}
-          paths={props.paths.get(managed.id) ?? { notes: [], folders: [] }}
           busy={busy}
           onAdd={(grantee, kind, path, canWrite) =>
             guard(
@@ -313,26 +328,28 @@ type Extent = ShareKind;
 function Members({
   space,
   users,
-  paths,
   busy,
   onAdd,
   onRemove,
 }: {
   space: AdminSpace;
   users: AdminUser[];
-  paths: { notes: string[]; folders: string[] };
   busy: boolean;
   onAdd: (grantee: string, kind: ShareKind, path: string, canWrite: boolean) => Promise<boolean>;
   onRemove: (share: Share) => void;
 }): React.JSX.Element {
   const members = useSpaceMembers(space.id);
+  // The space's own tree, from the admin-only route: the administrator picks a
+  // folder or a note without having to be a member of the space first.
+  const tree = useSpaceTree(space.id);
+  const paths = useMemo(() => (tree.data === undefined ? null : spaceChoices(tree.data)), [tree.data]);
   const people = users.filter((user) => !user.disabled);
   const [grantee, setGrantee] = useState('');
   const [extent, setExtent] = useState<Extent>('vault');
   const [path, setPath] = useState('');
   const [canWrite, setCanWrite] = useState(false);
 
-  const choices = extent === 'folder' ? paths.folders : extent === 'note' ? paths.notes : [];
+  const choices = paths === null ? [] : extent === 'folder' ? paths.folders : extent === 'note' ? paths.notes : [];
   const ready = grantee !== '' && (extent === 'vault' || path.trim() !== '');
 
   return (
@@ -434,16 +451,11 @@ function Members({
         {extent !== 'vault' && (
           <label>
             <span>{extent === 'folder' ? copy.spaces.pickFolder : copy.spaces.pickNote}</span>
-            {choices.length > 0 ? (
-              <select value={path} onChange={(event) => setPath(event.target.value)} required>
-                <option value="">{copy.spaces.choose}</option>
-                {choices.map((choice) => (
-                  <option key={choice} value={choice}>
-                    {choice}
-                  </option>
-                ))}
-              </select>
-            ) : (
+            {tree.isPending ? (
+              <span className="setnote">{copy.spaces.loadingTree}</span>
+            ) : paths === null ? (
+              // The tree could not be read: a typed path still works, and the
+              // server refuses one that does not name a folder or note of the space.
               <>
                 <input
                   value={path}
@@ -456,6 +468,17 @@ function Members({
                 />
                 <span className="setnote">{copy.spaces.notVisible}</span>
               </>
+            ) : choices.length === 0 ? (
+              <span className="setnote">{copy.spaces.nothingToPick[extent]}</span>
+            ) : (
+              <select value={path} onChange={(event) => setPath(event.target.value)} required>
+                <option value="">{copy.spaces.choose}</option>
+                {choices.map((choice) => (
+                  <option key={choice} value={choice}>
+                    {choice}
+                  </option>
+                ))}
+              </select>
             )}
           </label>
         )}

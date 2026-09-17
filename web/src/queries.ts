@@ -61,6 +61,7 @@ export const keys = {
   adminKeys: (owner: string) => ['admin', 'keys', owner] as const,
   adminSpaces: ['admin', 'spaces'] as const,
   spaceMembers: (space: string) => ['admin', 'spaces', space, 'members'] as const,
+  spaceTree: (space: string) => ['admin', 'spaces', space, 'tree'] as const,
   note: (owner: string, path: string) => ['note', owner, path] as const,
   tagRegistry: (owner: string) => ['tag-registry', owner] as const,
   links: (owner: string, path: string) => ['links', owner, path] as const,
@@ -286,6 +287,17 @@ export function useSpaceMembers(
   return useQuery({
     queryKey: keys.spaceMembers(space ?? ''),
     queryFn: () => api.spaceMembers(space!),
+    enabled: space !== null,
+    staleTime: 5_000,
+  });
+}
+
+export function useSpaceTree(
+  space: string | null,
+): UseQueryResult<Awaited<ReturnType<typeof api.spaceTree>>> {
+  return useQuery({
+    queryKey: keys.spaceTree(space ?? ''),
+    queryFn: () => api.spaceTree(space!),
     enabled: space !== null,
     staleTime: 5_000,
   });

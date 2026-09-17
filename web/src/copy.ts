@@ -734,8 +734,9 @@ export const copy = {
     choose: 'Choose…',
     folderExample: 'Folder/Subfolder',
     noteExample: 'Folder/Note.md',
-    notVisible:
-      'Only the notes of spaces you are a member of can be listed here. Type the path as it is in the space.',
+    notVisible: 'The space’s folders and notes could not be listed. Type the path as it is in the space.',
+    nothingToPick: { folder: 'This space has no folders yet.', note: 'This space has no notes yet.' } as const,
+    loadingTree: 'Reading the space…',
     add: 'Add member',
     memberAdded: (who: string, space: string) => `${who} added to ${space}.`,
     removeLabel: (who: string) => `Withdraw ${who}`,

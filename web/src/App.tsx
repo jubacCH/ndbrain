@@ -1039,41 +1039,6 @@ function Shell({
     [client, settle, write, user.id, setOpenRef],
   );
 
-  /**
-   * What this page can see of each space, for the member picker: its notes and
-   * every folder above them, and the empty folders the tree lists.
-   */
-  const spacePaths = useMemo(() => {
-    const out = new Map<string, { notes: string[]; folders: string[] }>();
-    const entry = (owner: string): { notes: string[]; folders: string[] } => {
-      let found = out.get(owner);
-      if (found === undefined) {
-        found = { notes: [], folders: [] };
-        out.set(owner, found);
-      }
-      return found;
-    };
-    const folders = new Map<string, Set<string>>();
-    const addFolder = (owner: string, path: string): void => {
-      const set = folders.get(owner) ?? new Set<string>();
-      set.add(path);
-      folders.set(owner, set);
-    };
-    for (const row of notes) {
-      if (ownerKind(owners, row.owner) !== 'space') continue;
-      entry(row.owner).notes.push(row.path);
-      const segments = row.path.split('/');
-      segments.pop();
-      for (let i = 1; i <= segments.length; i += 1) addFolder(row.owner, segments.slice(0, i).join('/'));
-    }
-    for (const dir of treeQuery.data?.dirs ?? []) {
-      if (ownerKind(owners, dir.owner) === 'space') addFolder(dir.owner, dir.path);
-    }
-    for (const [owner, set] of folders) entry(owner).folders = [...set].sort((a, b) => a.localeCompare(b));
-    for (const value of out.values()) value.notes.sort((a, b) => a.localeCompare(b));
-    return out;
-  }, [notes, owners, treeQuery.data]);
-
   /** Whether the caller may open the share dialog on notes of this vault. */
   const mayShareNote = useCallback(
     (owner: string): boolean => mayShare(user, owner, ownerKind(owners, owner)),
@@ -2072,7 +2037,6 @@ function Shell({
                   onRevokeKey={(id) => adminAct(() => api.revokeKey(id)).then(() => undefined)}
                   spaces={{
                     spaces: adminSpacesQuery.data ?? [],
-                    paths: spacePaths,
                     onCreate: (id, displayName) =>
                       adminAct(() => api.createSpace(id, displayName)).then(() => {
                         // The new space is a vault this page may be showing soon.

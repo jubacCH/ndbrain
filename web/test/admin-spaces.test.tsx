@@ -35,10 +35,18 @@ const MEMBERS: Share[] = [
   { id: 'm3', owner: 'familie', prefix: 'Ferien/Plan.md', grantee: 'julian', canWrite: false, createdAt: 0, kind: 'note' },
 ];
 
+/** The space's own tree, as the admin-only route answers it: paths and titles. */
+const TREE = {
+  dirs: ['Ferien', 'Rezepte'],
+  notes: [
+    { path: 'Ferien/Plan.md', title: 'Plan' },
+    { path: 'Rezepte/Zopf.md', title: 'Zopf' },
+  ],
+};
+
 function renderAdmin(overrides: Partial<AdminProps['spaces']> = {}, props: Partial<AdminProps> = {}) {
   const spaces = {
     spaces: SPACES,
-    paths: new Map([['familie', { notes: ['Ferien/Plan.md', 'Rezepte/Zopf.md'], folders: ['Ferien', 'Rezepte'] }]]),
     onCreate: vi.fn(async () => undefined),
     onRename: vi.fn(async () => undefined),
     onSetDisabled: vi.fn(async () => undefined),
@@ -73,6 +81,7 @@ function renderAdmin(overrides: Partial<AdminProps['spaces']> = {}, props: Parti
 beforeEach(() => {
   vi.spyOn(window, 'confirm').mockReturnValue(true);
   vi.spyOn(api, 'spaceMembers').mockResolvedValue(MEMBERS);
+  vi.spyOn(api, 'spaceTree').mockResolvedValue(TREE);
 });
 
 afterEach(() => {
@@ -200,7 +209,7 @@ describe('members of a space', () => {
     expect(within(form).queryByRole('option', { name: /Otto/ })).toBeNull();
     await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), 'anna');
     await userEvent.click(within(form).getByLabelText(copy.spaces.extent.note));
-    const picker = within(form).getByLabelText(copy.spaces.pickNote);
+    const picker = await within(form).findByLabelText(copy.spaces.pickNote);
     expect(within(picker).getAllByRole('option').map((o) => o.textContent)).toEqual([
       copy.spaces.choose,
       'Ferien/Plan.md',
@@ -219,7 +228,7 @@ describe('members of a space', () => {
 
     await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), 'anna');
     await userEvent.click(within(form).getByLabelText(copy.spaces.extent.folder));
-    await userEvent.selectOptions(within(form).getByLabelText(copy.spaces.pickFolder), 'Rezepte');
+    await userEvent.selectOptions(await within(form).findByLabelText(copy.spaces.pickFolder), 'Rezepte');
     await userEvent.click(within(form).getByRole('button', { name: copy.spaces.add }));
     expect(spaces.onAddMember).toHaveBeenLastCalledWith('familie', 'anna', 'folder', 'Rezepte', false);
 
@@ -230,18 +239,60 @@ describe('members of a space', () => {
     expect(spaces.onAddMember).toHaveBeenLastCalledWith('familie', 'julian', 'vault', '', false);
   });
 
-  it('takes a typed path where the space’s notes cannot be listed', async () => {
-    const rendered = renderAdmin({ paths: new Map() });
-    await userEvent.click(within(rendered.section).getByRole('button', { name: copy.spaces.manageLabel('Familie') }));
-    const panel = await screen.findByRole('region', { name: copy.spaces.membersOf('Familie') });
+  it('picks from the space’s own tree, which an administrator gets without being a member', async () => {
+    vi.mocked(api.spaceTree).mockResolvedValue({
+      // An empty folder the notes do not name, and a folder only a note's path names.
+      dirs: ['Leer'],
+      notes: [
+        { path: 'Rezepte/Brot/Zopf.md', title: 'Zopf' },
+        { path: 'Budget.md', title: 'Budget' },
+      ],
+    });
+    const { panel } = await manage();
+    expect(api.spaceTree).toHaveBeenCalledWith('familie');
+    const form = within(panel).getByRole('heading', { name: copy.spaces.addMember }).closest('form')!;
+
+    await userEvent.click(within(form).getByLabelText(copy.spaces.extent.folder));
+    const folders = await within(form).findByLabelText(copy.spaces.pickFolder);
+    expect(within(folders).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      copy.spaces.choose,
+      'Leer',
+      'Rezepte',
+      'Rezepte/Brot',
+    ]);
+
+    await userEvent.click(within(form).getByLabelText(copy.spaces.extent.note));
+    const notes = within(form).getByLabelText(copy.spaces.pickNote);
+    expect(within(notes).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      copy.spaces.choose,
+      'Budget.md',
+      'Rezepte/Brot/Zopf.md',
+    ]);
+    expect(within(form).queryByText(copy.spaces.notVisible)).toBeNull();
+  });
+
+  it('says there is nothing to pick in an empty space, and adds nothing', async () => {
+    vi.mocked(api.spaceTree).mockResolvedValue({ dirs: [], notes: [] });
+    const { panel } = await manage();
+    const form = within(panel).getByRole('heading', { name: copy.spaces.addMember }).closest('form')!;
+    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), 'anna');
+    await userEvent.click(within(form).getByLabelText(copy.spaces.extent.note));
+    expect(await within(form).findByText(copy.spaces.nothingToPick.note)).toBeInTheDocument();
+    expect(within(form).queryByRole('textbox')).toBeNull();
+    expect(within(form).getByRole('button', { name: copy.spaces.add })).toBeDisabled();
+  });
+
+  it('takes a typed path where the space’s tree cannot be read', async () => {
+    vi.mocked(api.spaceTree).mockRejectedValue(new Error('offline'));
+    const { panel, spaces } = await manage();
     const form = within(panel).getByRole('heading', { name: copy.spaces.addMember }).closest('form')!;
 
     await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), 'anna');
     await userEvent.click(within(form).getByLabelText(copy.spaces.extent.note));
-    expect(within(form).getByText(copy.spaces.notVisible)).toBeInTheDocument();
+    expect(await within(form).findByText(copy.spaces.notVisible)).toBeInTheDocument();
     await userEvent.type(within(form).getByPlaceholderText(copy.spaces.noteExample), 'Geheim/Liste.md');
     await userEvent.click(within(form).getByRole('button', { name: copy.spaces.add }));
-    expect(rendered.spaces.onAddMember).toHaveBeenCalledWith('familie', 'anna', 'note', 'Geheim/Liste.md', false);
+    expect(spaces.onAddMember).toHaveBeenCalledWith('familie', 'anna', 'note', 'Geheim/Liste.md', false);
   });
 
   it('withdraws a member after asking', async () => {
