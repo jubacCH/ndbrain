@@ -19,6 +19,7 @@ import {
   addDays,
   dailyNoteTemplate,
   dayHeading,
+  isDailyNote,
   isPendingDayLink,
   journalPath,
   parseIsoDate,
@@ -318,11 +319,35 @@ describe('findings around daily notes', () => {
     expect(c.deadLinks).toBe(2);
   });
 
+  it('never reports an old day as untouched, while an old ordinary note still is', async () => {
+    const lastSpring = { year: 2026, month: 3, day: 2 };
+    const dayPath = journalPath(lastSpring);
+    await ensure(julian, dayPath, dailyNoteTemplate(lastSpring));
+    await runtime.app.createNote('julian', 'Alt.md', '---\ntags: [x]\n---\nSiehe [[Hub]].\n');
+    // Both last touched half a year ago.
+    const old = new Date(2026, 2, 2, 20, 0);
+    for (const p of [dayPath, 'Alt.md']) {
+      await fs.utimes(path.join(dataDir, 'vaults', 'julian', p), old, old);
+      await runtime.indexer.indexNote('julian', p);
+    }
+
+    const tidy = (await server.inject({ url: '/api/v1/tidy', headers: { cookie: julian } })).json();
+    const stale = (tidy.stale as Array<{ path: string }>).map((n) => n.path);
+    expect(stale).toContain('Alt.md');
+    expect(stale).not.toContain(dayPath);
+    expect(tidy.totals.stale).toBe(stale.length);
+    expect((await counts()).attention).toBeGreaterThan(0);
+    const overview = (await server.inject({ url: '/api/v1/overview', headers: { cookie: julian } })).json();
+    expect(overview.counts.stale).toBe(stale.length);
+  });
+
   it('does not treat a mis-filed day as a daily note', async () => {
     const misfiled = '50_Journal/2026/10/2026-09-17.md';
     await runtime.app.createNote('julian', misfiled, dailyNoteTemplate(TODAY));
     const tidy = (await server.inject({ url: '/api/v1/tidy', headers: { cookie: julian } })).json();
     expect((tidy.deadLinks as Array<{ source: string }>).filter((l) => l.source === misfiled)).toHaveLength(2);
     expect((tidy.orphans as Array<{ path: string }>).map((n) => n.path)).toContain(misfiled);
+    expect(isDailyNote(misfiled)).toBe(false);
+    expect(isDailyNote(TODAY_PATH)).toBe(true);
   });
 });
