@@ -45,6 +45,8 @@ export interface Share {
   grantee: string;
   canWrite: boolean;
   createdAt: number;
+  /** For a note share, when it came to name `prefix` — see `Region.since`. */
+  boundAt: number | null;
 }
 
 /**
@@ -56,6 +58,12 @@ export interface Share {
 export interface Region {
   prefix: string;
   exact: boolean;
+  /**
+   * For an exact region: the moment it came to name this path. What a path's
+   * past holds from before then — history, edits — belongs to whatever had the
+   * name earlier. Ignored for anything but time-stamped rows.
+   */
+  since?: number;
 }
 
 /** One region of one vault a caller may read. */
@@ -125,15 +133,29 @@ export function inScope(region: Region, notePath: string): boolean {
  * SQLite and paths here are case-sensitive. An exact region compares with `=`,
  * which is case-sensitive too.
  */
-export function regionSql(column: string, region: Region): { sql: string | null; params: SqlValue[] } {
-  if (region.exact) return { sql: `${column} = ?`, params: [region.prefix] };
+export function regionSql(
+  column: string,
+  region: Region,
+  timeColumn?: string,
+): { sql: string | null; params: SqlValue[] } {
+  if (region.exact) {
+    // A time-stamped row (an edit) of this path counts only from the moment the
+    // region came to name it; see `Region.since`.
+    if (timeColumn !== undefined && region.since !== undefined) {
+      return { sql: `(${column} = ? AND ${timeColumn} >= ?)`, params: [region.prefix, region.since] };
+    }
+    return { sql: `${column} = ?`, params: [region.prefix] };
+  }
   if (region.prefix === '') return { sql: null, params: [] };
   return { sql: `substr(${column}, 1, ?) = ?`, params: [region.prefix.length, region.prefix] };
 }
 
 /** The region a share row covers. */
-export function regionOf(share: Pick<Share, 'kind' | 'prefix'>): Region {
-  return { prefix: share.prefix, exact: share.kind === 'note' };
+export function regionOf(share: Pick<Share, 'kind' | 'prefix' | 'boundAt'>): Region {
+  if (share.kind !== 'note') return { prefix: share.prefix, exact: false };
+  // A note share without a binding moment would reach its path's whole past;
+  // the creation time is the latest moment it can certainly claim.
+  return { prefix: share.prefix, exact: true, since: share.boundAt ?? Number.MAX_SAFE_INTEGER };
 }
 
 function toKind(value: unknown, prefix: string): ShareKind {
@@ -151,6 +173,7 @@ function toShare(row: Record<string, unknown>): Share {
     grantee: String(row['grantee']),
     canWrite: Number(row['can_write']) === 1,
     createdAt: Number(row['created_at']),
+    boundAt: row['bound_at'] === null || row['bound_at'] === undefined ? null : Number(row['bound_at']),
   };
 }
 
@@ -265,15 +288,17 @@ export class ShareService {
     }
 
     const id = `shr_${randomBytes(8).toString('hex')}`;
+    const now = Date.now();
     this.#db.run(
-      'INSERT INTO shares (id, owner, kind, prefix, grantee, can_write, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO shares (id, owner, kind, prefix, grantee, can_write, created_at, bound_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       id,
       owner,
       kind,
       prefix,
       grantee,
       canWrite ? 1 : 0,
-      Date.now(),
+      now,
+      kind === 'note' ? now : null,
     );
 
     const share = this.get(id);
@@ -391,6 +416,27 @@ export class ShareService {
     if (!permitted) throw new NoteNotFoundError('note does not exist');
   }
 
+  /**
+   * From when on `caller` may see the past of `notePath` — its history and its
+   * edits. Zero for the owner and for anybody a vault or folder share reaches
+   * the path through: those name places, and the place's past is theirs. For
+   * somebody who holds only a note share, the moment that share came to name
+   * the path. Call it after `check`; it grants nothing by itself.
+   */
+  pastVisibleFrom(caller: string, owner: string, notePath: string): number {
+    if (caller === owner) return 0;
+    const path = normalizeVaultPath(notePath);
+    let from = Number.MAX_SAFE_INTEGER;
+    for (const share of this.toGrantee(caller)) {
+      if (share.owner !== owner) continue;
+      const region = regionOf(share);
+      if (!inScope(region, path)) continue;
+      if (!region.exact) return 0;
+      from = Math.min(from, region.since ?? Number.MAX_SAFE_INTEGER);
+    }
+    return from;
+  }
+
   /** Non-throwing form, for filtering lists rather than gating one access. */
   allows(caller: string, owner: string, notePath: string, need: Need = 'read'): boolean {
     try {
@@ -428,9 +474,11 @@ export class ShareService {
     if (from === to) return;
     this.#db.transaction(() => {
       this.#db.run("DELETE FROM shares WHERE owner = ? AND kind = 'note' AND prefix = ?", owner, to);
+      // Bound anew: the path's past before this moment is another note's.
       this.#db.run(
-        "UPDATE shares SET prefix = ? WHERE owner = ? AND kind = 'note' AND prefix = ?",
+        "UPDATE shares SET prefix = ?, bound_at = ? WHERE owner = ? AND kind = 'note' AND prefix = ?",
         to,
+        Date.now(),
         owner,
         from,
       );

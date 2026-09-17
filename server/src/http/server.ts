@@ -26,7 +26,7 @@ import type { App, BulkResult } from '../app.js';
 import type { ApiKeyService } from '../auth/keys.js';
 import { InvalidShareError, type Need, type Share, type ShareService } from '../auth/shares.js';
 import type { SettingsService } from '../auth/settings.js';
-import type { History } from '../vault/history.js';
+import type { History, Version } from '../vault/history.js';
 import { SessionService, UnknownUserError, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
@@ -869,18 +869,40 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * a restore is therefore just another restore, and no history is ever rewritten.
    */
 
+  /**
+   * The versions of one note the caller may see.
+   *
+   * The history belongs to a path. For a caller holding only a note share it
+   * starts when that share came to name the path — before then, the versions
+   * under this name may be another note's, one deleted or renamed away, and a
+   * share on this note is not a key to that one. A version outside the window
+   * reads exactly like one that was never there.
+   */
+  async function visibleVersions(caller: string, owner: string, path: string): Promise<Version[]> {
+    const from = shares.pastVisibleFrom(caller, owner, path);
+    return (await history.versions(owner, path)).filter((version) => version.at >= from);
+  }
+
+  async function visibleContentAt(caller: string, owner: string, path: string, version: string): Promise<string> {
+    if (!(await visibleVersions(caller, owner, path)).some((known) => known.id === version)) {
+      throw new NoteNotFoundError('no such version of this note');
+    }
+    return history.contentAt(owner, path, version);
+  }
+
   fastify.get('/api/v1/history/*', async (request) => {
     const { owner, path } = target(request, 'read');
+    const caller = requireUser(request).id;
     const query = (request.query ?? {}) as { version?: unknown };
 
     // One route, two questions: the list, or one version's text.
     if (typeof query.version === 'string' && query.version !== '') {
-      return { content: await history.contentAt(owner, path, query.version) };
+      return { content: await visibleContentAt(caller, owner, path, query.version) };
     }
 
     return {
       available: await history.available(owner),
-      versions: await history.versions(owner, path),
+      versions: await visibleVersions(caller, owner, path),
     };
   });
 
@@ -892,7 +914,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // be rolled back by the person it was lent to.
     shares.check(caller, owner, path, 'write');
 
-    const content = await history.contentAt(owner, path, version);
+    const content = await visibleContentAt(caller, owner, path, version);
     const result = await app.putNote(owner, path, content, caller);
     return { note: result.note, created: result.created };
   });
