@@ -60,7 +60,7 @@ function noteShares(): Array<{ path: string; grantee: string }> {
   return h.runtime.shares
     .byOwner('julian')
     .filter((share) => share.kind === 'note')
-    .map((share) => ({ path: share.path, grantee: share.grantee }));
+    .map((share) => ({ path: share.prefix, grantee: share.grantee }));
 }
 
 /** A note share left behind by a note that disappeared while nobody was looking. */
@@ -127,14 +127,14 @@ describe('rename and move', () => {
 
     const all = h.runtime.shares
       .byOwner('julian')
-      .map((share) => ({ kind: share.kind, path: share.path, grantee: share.grantee }))
+      .map((share) => ({ kind: share.kind, path: share.prefix, grantee: share.grantee }))
       .sort((a, b) => `${a.grantee}${a.path}`.localeCompare(`${b.grantee}${b.path}`));
     expect(all).toEqual([
-      { kind: 'folder', path: 'Archiv/Projekt 2026', grantee: 'peter' },
+      { kind: 'folder', path: 'Archiv/Projekt 2026/', grantee: 'peter' },
       // A folder share on a folder merely starting with the same letters stays.
-      { kind: 'folder', path: 'Projektil.md', grantee: 'peter' },
+      { kind: 'folder', path: 'Projektil.md/', grantee: 'peter' },
       { kind: 'note', path: 'Archiv/Projekt 2026/Plan.md', grantee: 'ramona' },
-      { kind: 'folder', path: 'Archiv/Projekt 2026/Sub', grantee: 'ramona' },
+      { kind: 'folder', path: 'Archiv/Projekt 2026/Sub/', grantee: 'ramona' },
     ]);
     expect(await reads('ramona', 'Archiv/Projekt 2026/Plan.md')).toBe(200);
     expect(await reads('peter', 'Archiv/Projekt 2026/Alt.md')).toBe(200);
@@ -231,7 +231,7 @@ describe('delete', () => {
     h.runtime.shares.grant('julian', 'Leer/Innen', 'ramona', false);
     h.runtime.shares.grant('julian', 'Leer', 'peter', false);
     expect((await h.as('julian', { method: 'DELETE', url: '/api/v1/folders/Leer/Innen' })).status).toBe(204);
-    expect(h.runtime.shares.byOwner('julian').map((share) => share.path)).toEqual(['Leer']);
+    expect(h.runtime.shares.byOwner('julian').map((share) => share.prefix)).toEqual(['Leer/']);
   });
 });
 
