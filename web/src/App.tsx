@@ -765,6 +765,18 @@ function Shell({
         pending.current !== null && pending.current.owner === owner && pending.current.path === path;
       // Text waiting for a different note is written first, as on any switch.
       if (pending.current !== null && !typingHere()) await flush();
+      // Text waiting for this one is held while the question is open: a save
+      // firing during the link count below could land after the delete and
+      // bring the note back. Cancelling starts the wait again.
+      if (typingHere() && saveTimer.current !== null) {
+        window.clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      const resume = (): void => {
+        if (typingHere() && saveTimer.current === null) {
+          saveTimer.current = window.setTimeout(() => void flush(), prefsRef.current.saveDelayMs);
+        }
+      };
 
       let linking = 0;
       try {
@@ -780,22 +792,27 @@ function Shell({
       }
 
       const question = copy.ask.deleteNote(title) + (linking > 0 ? ` ${copy.ask.linksWillBreak(linking)}` : '');
-      if (!window.confirm(question)) return false;
-
-      // Unsaved text in the note being deleted is dropped, not written: a save
-      // landing after the delete would bring the note straight back.
-      if (typingHere()) {
-        pending.current = null;
-        window.__ndbrainPending = null;
-        if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
-        saveTimer.current = null;
+      if (!window.confirm(question)) {
+        resume();
+        return false;
       }
 
       try {
         await api.deleteNote(owner, path);
       } catch (caught) {
+        // Still there, so its unsaved text is still worth saving.
+        resume();
         setError(caught instanceof ApiError ? caught.message : copy.errors.deleteNoteFailed);
         return false;
+      }
+
+      // Unsaved text in the deleted note is dropped, not written: a save landing
+      // now would bring the note straight back.
+      if (typingHere()) {
+        pending.current = null;
+        window.__ndbrainPending = null;
+        if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+        saveTimer.current = null;
       }
 
       dropRecent(user.id, owner, path);
