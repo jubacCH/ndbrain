@@ -85,6 +85,18 @@ export function parseJournalPath(path: string): JournalDate | null {
 }
 
 /**
+ * Whether a note is a daily note — the one test every rule about them starts from.
+ *
+ * A daily note is reached by its date through the calendar, not by links, and
+ * it is finished when its day is over. So it is never "orphaned" and never
+ * "untouched", on the server's findings and in the panel beside the editor
+ * alike; both ask here rather than each keeping a copy of the pattern.
+ */
+export function isDailyNote(path: string): boolean {
+  return parseJournalPath(path) !== null;
+}
+
+/**
  * The day a wikilink target names, when it names one in the journal pattern.
  *
  * Accepts the path form the template writes (`50_Journal/2026/09/2026-09-16`,

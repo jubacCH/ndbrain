@@ -21,7 +21,7 @@ import type { View } from '../auth/shares.js';
 import { caseKey } from '../vault/paths.js';
 import { DEFAULT_SETTINGS } from '../auth/settings.js';
 import { parseConflictPath } from '../notes/service.js';
-import { isPendingDayLink, parseJournalPath } from '../../../shared/journal.js';
+import { isDailyNote, isPendingDayLink } from '../../../shared/journal.js';
 
 export interface SearchOptions {
   /** Only notes carrying this tag. */
@@ -628,7 +628,7 @@ export class Queries {
       // A daily note is reached by its date, through the journal calendar, and
       // today's is linked from nothing until tomorrow's is written. Neither
       // makes it lost, which is what "orphaned" is meant to say.
-      .filter((note) => parseJournalPath(note.path) === null);
+      .filter((note) => !isDailyNote(note.path));
   }
 
   /**
@@ -655,7 +655,12 @@ export class Queries {
       .map(toNoteRow);
   }
 
-  /** Notes untouched for longer than `days`. */
+  /**
+   * Notes untouched for longer than `days`.
+   *
+   * Not daily notes: a day's entry is finished when the day is, and last
+   * spring's journal is not neglected, it is last spring's journal.
+   */
   stale(view: Viewable, days = DEFAULT_SETTINGS.staleDays, now = Date.now()): NoteRow[] {
     const cutoff = now - days * 24 * 60 * 60 * 1000;
     const scope = scopeSql('n', 'path', view);
@@ -666,7 +671,8 @@ export class Queries {
         ...scope.params,
         Math.trunc(cutoff),
       )
-      .map(toNoteRow);
+      .map(toNoteRow)
+      .filter((note) => !isDailyNote(note.path));
   }
 
   /**
