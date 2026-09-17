@@ -166,6 +166,46 @@ export class NoteService {
   }
 
   /**
+   * Creates a note unless it already exists, and never writes over one.
+   *
+   * For writers that mean "make sure this note is there": the daily note that a
+   * button, a shortcut and a second tab may all ask for in the same second.
+   * `putNote` is wrong for that — the second request would overwrite whatever
+   * the first one's person had typed since, silently, because it carries no
+   * base version. `createNote` is right about the write but answers the second
+   * request with an error, which leaves the caller to guess whether the note it
+   * wanted is the one that is there.
+   *
+   * The existence check and the write sit inside the same lock, so of any number
+   * of concurrent calls exactly one writes and every other one reads back what
+   * that one wrote. A differently-cased sibling is still refused: opening it
+   * would hand back a note under a name the caller did not ask for.
+   */
+  async createNoteIfAbsent(owner: string, notePath: string, content: string): Promise<PutResult> {
+    const canonical = this.#assertNotePath(notePath);
+
+    return this.#locks.run(lockKey(owner, canonical), async () => {
+      const siblings = await this.#vault.siblingCaseKeys(owner, canonical);
+      const name = canonical.slice(canonical.lastIndexOf('/') + 1);
+      const existing = siblings.get(caseKey(name));
+
+      if (existing === name) {
+        return { note: await this.getNote(owner, canonical), created: false };
+      }
+      if (existing !== undefined) {
+        throw new CaseCollisionError(
+          `"${existing}" already exists and differs only in letter case; ` +
+            'that pair cannot survive on Windows or macOS',
+        );
+      }
+
+      assertLinkableName(canonical);
+      await this.#vault.writeNote(owner, canonical, content);
+      return { note: await this.getNote(owner, canonical), created: true };
+    });
+  }
+
+  /**
    * Overwrites an existing note.
    *
    * Takes the same `baseMtimeMs` as `putNote`, and for the same reason: an agent
