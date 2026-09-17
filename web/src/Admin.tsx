@@ -17,7 +17,8 @@
 
 import { useState } from 'react';
 
-import { ApiError, type AdminUser, type ApiKey } from './api';
+import { ApiError, type AdminSpace, type AdminUser, type ApiKey } from './api';
+import { AdminSpaces, type AdminSpacesProps } from './AdminSpaces';
 import { copy } from './copy';
 
 export interface AdminProps {
@@ -32,6 +33,8 @@ export interface AdminProps {
   onRevokeKey: (id: string) => Promise<void>;
   onPickOwner: (owner: string) => void;
   keyOwner: string;
+  /** Spaces, their members, and what it takes to change them. */
+  spaces: Omit<AdminSpacesProps, 'users' | 'busy'>;
 }
 
 function when(at: number): string {
@@ -40,6 +43,11 @@ function when(at: number): string {
 
 export function AdminView(props: AdminProps): React.JSX.Element {
   const { users, keys, self, busy, keyOwner } = props;
+  const spaces: AdminSpace[] = props.spaces.spaces;
+  const spaceIds = new Set(spaces.map((space) => space.id));
+  // A server that lists spaces among the accounts as well must not have them
+  // offered as people, with a password to reset.
+  const people = users.filter((user) => !spaceIds.has(user.id));
   const [note, setNote] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
 
   const guard = async (run: () => Promise<void>, ok: string): Promise<void> => {
@@ -76,7 +84,7 @@ export function AdminView(props: AdminProps): React.JSX.Element {
             </tr>
           </thead>
           <tbody>
-            {users.map((user) => (
+            {people.map((user) => (
               <tr key={user.id} data-disabled={user.disabled}>
                 <td>
                   <span className="adminname">{user.displayName}</span>
@@ -128,6 +136,8 @@ export function AdminView(props: AdminProps): React.JSX.Element {
         />
       </section>
 
+      <AdminSpaces {...props.spaces} users={users} busy={busy} />
+
       <section className="setgroup">
         <h3 className="cap">{copy.admin.agentKeys}</h3>
         <p className="setnote">{copy.admin.keysExplain}</p>
@@ -137,13 +147,25 @@ export function AdminView(props: AdminProps): React.JSX.Element {
             <span>{copy.admin.forAccount}</span>
           </div>
           <select value={keyOwner} aria-label={copy.admin.forAccount} onChange={(e) => props.onPickOwner(e.target.value)}>
-            {users.map((user) => (
-              <option key={user.id} value={user.id}>
-                {user.displayName} ({user.id})
-              </option>
-            ))}
+            <optgroup label={copy.admin.people}>
+              {people.map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.displayName} ({user.id})
+                </option>
+              ))}
+            </optgroup>
+            {spaces.length > 0 && (
+              <optgroup label={copy.admin.spacesGroup}>
+                {spaces.map((space) => (
+                  <option key={space.id} value={space.id}>
+                    {space.displayName} ({space.id})
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
+        {spaceIds.has(keyOwner) && <p className="setnote">{copy.admin.keysForSpace}</p>}
 
         {keys.length === 0 ? (
           <p className="empty">{copy.admin.noKeys}</p>
