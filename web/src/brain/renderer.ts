@@ -61,14 +61,20 @@ const PLANE_Z: readonly number[] = [-1, 0, 1];
 /** Blur radius of a plane's bloom, in half-resolution pixels. */
 const PLANE_BLUR = 11;
 const TISSUE_BLUR = 9;
-/** How strongly a bloom is added back over its own layer. */
-const BLOOM_STRENGTH = 0.32;
+/**
+ * How strongly a bloom is added back over its own layer, per plane, back first.
+ * The back plane glows more and is softened (`PLANE_SOFTEN`): out of focus, not
+ * merely darker. The front plane blooms least, so its cores stay crisp.
+ */
+const PLANE_BLOOM: readonly number[] = [0.42, 0.32, 0.26];
 const TISSUE_BLOOM = 0.4;
+/** A slight blur over each whole plane once it is painted, in device pixels. Only the back one. */
+const PLANE_SOFTEN: readonly number[] = [1.1, 0, 0];
 
 const rgba = (c: Rgb, a: number): string => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
 /** Where a tract cools to at its far end, and a selected one. The prototype's colours. */
-const TAIL: Rgb = [60, 200, 215];
+const TAIL: Rgb = [30, 150, 200];
 const FOCUS_TAIL: Rgb = [120, 230, 245];
 /** How far a hub's parallel fibres bow away from the ray, as a share of its length. */
 const FIBRE_BOW = 0.06;
@@ -76,6 +82,32 @@ const FIBRE_BOW = 0.06;
 const PLAQUE_PAD = 5;
 /** A note this much of a hub (see `SceneNode.hub`) gets the wide second halo. */
 const HUB_HALO = 0.25;
+/**
+ * A ray of the centre: its fibres, as bow, width share and opacity. Opacity is
+ * absolute here, times the ray's `radiant`, so a quiet spoke over the fissure
+ * still reads as a ray while its own tract stays as quiet as the plan says.
+ */
+const RAY_FIBRES: ReadonlyArray<readonly [number, number, number]> = [
+  [0.035, 0.5, 0.09],
+  [-0.05, 0.42, 0.08],
+  [0.09, 0.32, 0.055],
+  [-0.12, 0.28, 0.045],
+];
+/** How far the centre's corona reaches, in body radii, and how bright it is. */
+const CORONA = 7;
+const CORONA_ALPHA = 0.16;
+/** A body's pinpoint: the one nearly white part of it, as a share of its radius. */
+const PINPOINT = 0.24;
+
+/** A colour part way towards white. */
+const lighten = (c: Rgb, t: number): Rgb => [
+  Math.round(c[0] + (255 - c[0]) * t),
+  Math.round(c[1] + (255 - c[1]) * t),
+  Math.round(c[2] + (255 - c[2]) * t),
+];
+
+/** What a tract needs to be drawn: a link, or a branch off one. */
+type Tract = Pick<SceneEdge, 'pts' | 'n' | 'w0' | 'w1' | 'colour'>;
 
 export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
   const ctx = canvas.getContext('2d');
@@ -173,11 +205,12 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
    */
   const tract = (
     g: CanvasRenderingContext2D,
-    e: SceneEdge,
+    e: Tract,
     alpha: number,
     tail: number,
     bow = 0,
     thin = 1,
+    lead = 0,
   ): void => {
     const n = e.n;
     if (n < 2 || alpha < INVISIBLE) return;
@@ -217,7 +250,10 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     // fades against the near one, and cools as it goes — bright where the link
     // leaves the better-connected note, a deeper teal at the leaf, as in the
     // optics prototype.
-    grad.addColorStop(0, rgba(e.colour, 1));
+    // `lead` fades the first stretch in: a fibre then leaves from beside its
+    // ray instead of adding to the knot where every ray of a hub meets.
+    if (lead > 0) grad.addColorStop(0, rgba(e.colour, 0));
+    grad.addColorStop(lead, rgba(e.colour, 1));
     grad.addColorStop(1, rgba(e.colour === FOCUSED ? FOCUS_TAIL : TAIL, Math.min(1, tail / Math.max(1e-6, alpha))));
     g.fillStyle = grad;
     g.globalAlpha = Math.min(1, alpha);
@@ -230,9 +266,14 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
   };
 
   /**
-   * The glowing body of one note: a sprite halo, a coloured disc, a white core —
-   * and for a hub one more halo, wide and faint: a star that radiates, not a sun
-   * that drowns its region.
+   * The glowing body of one note: a sprite halo, a sphere of coloured light
+   * brightest in its middle, and a pinpoint — and for a hub one more halo, wide
+   * and faint: a star that radiates, not a sun that drowns its region.
+   *
+   * Coloured through to the middle since 2026-09-17. The body used to be a disc
+   * with a white core half its radius wide, over a white core sprite; drawn
+   * additively, a cluster of those summed to white. Now only the pinpoint is
+   * close to white, and it is small enough that neighbours do not merge.
    */
   const body = (g: CanvasRenderingContext2D, n: SceneNode): void => {
     // Resting values only. This is painted into a cached layer, and the cache
@@ -256,19 +297,42 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       g.globalAlpha = haloAlpha * 0.2;
       g.drawImage(sprite, n.x - wide, n.y - wide, wide * 2, wide * 2);
     }
+    if (sprite !== null && n.centre) {
+      // The centre's corona: a wide cyan glow the rays leave from.
+      const corona = n.r * CORONA;
+      const light = sprites.halo('cyan', corona);
+      g.globalAlpha = CORONA_ALPHA;
+      if (light !== null) g.drawImage(light, n.x - corona, n.y - corona, corona * 2, corona * 2);
+    }
 
+    // What lies under the sphere in this plane is taken out first: the tracts
+    // meeting in the middle of a hub summed to a white knot there. A ray now
+    // leaves from the rim, as in the target picture.
+    g.globalCompositeOperation = 'destination-out';
+    g.globalAlpha = 0.9;
+    g.fillStyle = '#000';
+    g.beginPath();
+    g.arc(n.x, n.y, n.r * 0.92, 0, Math.PI * 2);
+    g.fill();
+    g.globalCompositeOperation = 'lighter';
+
+    // The sphere: a light tint in the middle, the colour itself through the
+    // body, a brighter rim and a soft edge — a bead of light, not a flat disc.
+    const sphere = g.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r);
+    sphere.addColorStop(0, rgba(lighten(n.restColour, 0.3), 0.95));
+    sphere.addColorStop(0.45, rgba(n.restColour, 0.74));
+    sphere.addColorStop(0.8, rgba(lighten(n.restColour, 0.18), 0.92));
+    sphere.addColorStop(1, rgba(n.restColour, 0));
     g.globalAlpha = Math.min(1, n.restAlpha);
-    g.fillStyle = rgba(n.restColour, 0.85);
+    g.fillStyle = sphere;
     g.beginPath();
     g.arc(n.x, n.y, n.r, 0, Math.PI * 2);
     g.fill();
-    const core = sprites.halo('core', n.r * 1.3);
-    if (core !== null) g.drawImage(core, n.x - n.r * 1.3, n.y - n.r * 1.3, n.r * 2.6, n.r * 2.6);
-    // The white core: what makes a note the brightest thing in the picture.
-    g.globalAlpha = 1;
-    g.fillStyle = `rgba(255,255,255,${Math.min(1, 0.55 + 0.45 * n.restAlpha)})`;
+    // The pinpoint: nearly white, and only in the middle.
+    g.globalAlpha = Math.min(1, 0.4 + 0.6 * n.restAlpha);
+    g.fillStyle = rgba(lighten(n.restColour, 0.82), 0.9);
     g.beginPath();
-    g.arc(n.x, n.y, n.r * 0.5, 0, Math.PI * 2);
+    g.arc(n.x, n.y, n.r * PINPOINT, 0, Math.PI * 2);
     g.fill();
     g.globalAlpha = 1;
   };
@@ -284,9 +348,19 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       // hub's rays then read as bundles of fibres rather than single ribbons.
       // The prototype's values: 45 % and 35 % of the width, 35 % and 25 % of
       // the opacity, fading out entirely before the leaf.
+      if (e.radiant > 0) {
+        // A ray of the centre: a wider bundle of finer fibres, each fading out
+        // before the leaf, so the ray thins as it reaches into its region.
+        for (const [bow, thin, alpha] of RAY_FIBRES) tract(g, e, alpha * e.radiant, 0, bow, thin, 0.18);
+        continue;
+      }
       if (!e.strands) continue;
       tract(g, e, e.restAlpha * 0.35, 0, FIBRE_BOW, 0.45);
       tract(g, e, e.restAlpha * 0.25, 0, -FIBRE_BOW * 0.6, 0.35);
+    }
+    for (const f of scene.forks) {
+      if (f.depth !== plane) continue;
+      tract(g, f, f.alpha, 0);
     }
     g.globalAlpha = 1;
     for (const i of scene.order) {
@@ -418,10 +492,17 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     }
 
     for (let plane = 0; plane < 3; plane += 1) {
-      const layer = planes[plane]!.sync(`${stand}:${plane}`, scene.camera, w, h, dpr, PLANE_BLUR, (g) =>
-        paintPlane(g, scene, plane as Depth),
+      const layer = planes[plane]!.sync(
+        `${stand}:${plane}`,
+        scene.camera,
+        w,
+        h,
+        dpr,
+        PLANE_BLUR,
+        (g) => paintPlane(g, scene, plane as Depth),
+        PLANE_SOFTEN[plane]! * dpr,
       );
-      if (layer !== null) blit(ctx, layer, scene, PLANE_Z[plane]!, BLOOM_STRENGTH);
+      if (layer !== null) blit(ctx, layer, scene, PLANE_Z[plane]!, PLANE_BLOOM[plane]!);
       else paintPlane(ctx, scene, plane as Depth);
     }
 
