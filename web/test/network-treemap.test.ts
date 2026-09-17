@@ -21,6 +21,9 @@ import {
   type MapNode,
   type Rect,
 } from '../src/network/treemap';
+import { RECENT_DAYS as BRAIN_RECENT_DAYS } from '../src/brain/scene';
+import { copy } from '../src/copy';
+import { TRACE_DAYS } from '../src/Home';
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 8, 16);
@@ -277,6 +280,15 @@ describe('layoutFolder', () => {
 describe('warmth', () => {
   it('is fully warm the moment a note is written', () => {
     expect(noteWarmth(NOW, NOW)).toBe(1);
+  });
+
+  it('covers the same fortnight as the brain, its legend and the home trace', () => {
+    // Three constants, kept apart so the map stays free of the renderer and home
+    // free of both. A drift between them would have the map, the brain and
+    // home say different things about what "recent" is.
+    expect(RECENT_DAYS).toBe(BRAIN_RECENT_DAYS);
+    expect(TRACE_DAYS).toBe(BRAIN_RECENT_DAYS);
+    expect(copy.network.recent(BRAIN_RECENT_DAYS)).toContain('14 days');
   });
 
   it('fades to zero over RECENT_DAYS', () => {
