@@ -810,8 +810,8 @@ export const FORK_POINTS = 8;
 /** Where along a ray the three branches leave it, before their jitter. */
 const FORK_AT: readonly number[] = [0.3, 0.5, 0.7];
 /** A branch's length as a share of the ray's chord, at the ray's start; shorter further out. */
-const FORK_LENGTH = 0.13;
-const FORK_LENGTH_RANGE = 0.09;
+const FORK_LENGTH = 0.16;
+const FORK_LENGTH_RANGE = 0.1;
 /** Angle off the ray, radians: a branch leaves at 20 to 40 degrees and bends back towards it. */
 const FORK_ANGLE = 0.35;
 const FORK_ANGLE_RANGE = 0.35;

@@ -355,9 +355,11 @@ const HUB_FULL = 40;
  * ray's own resting opacity, with a floor so a quiet spoke still branches. A
  * twig off a branch is quieter again.
  */
-const FORK_SHARE = 0.55;
-const FORK_FLOOR = 0.07;
+const FORK_SHARE = 0.7;
+const FORK_FLOOR = 0.13;
 const TWIG_SHARE = 0.6;
+/** How much of its fibres a ray of the centre keeps once zoomed in past the tissue. */
+const RADIANT_NEAR = 0.35;
 /** A note worked on within this many days carries the warm accent. */
 export const RECENT_DAYS = 14;
 /**
@@ -890,7 +892,12 @@ export class SceneBuilder {
       out.strands = nodes[thick]!.degree >= 8 && resting > 0.1;
       // A ray of the centre, unless the overview holds it back. Quieter while
       // another note is selected, so the selection keeps the stage.
-      out.radiant = thick === this.#centre && resting >= VISIBLE ? (picked >= 0 && picked !== thick ? 0.5 : 1) : 0;
+      // Closer in, the rays open up anyway and their fibres would only add to
+      // the knot at the centre, so the fibres give way with the tissue.
+      out.radiant =
+        thick === this.#centre && resting >= VISIBLE
+          ? (picked >= 0 && picked !== thick ? 0.5 : 1) * (RADIANT_NEAR + (1 - RADIANT_NEAR) * fade)
+          : 0;
     }
 
     // The branches: as loud as their ray allows, and faded with the tissue,
