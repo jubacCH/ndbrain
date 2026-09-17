@@ -642,7 +642,7 @@ export const copy = {
     disable: 'Disable',
     enable: 'Enable',
     confirmDisable: (id: string) =>
-      `Disable ${id}? They are signed out everywhere and cannot sign in again until you enable them. Their notes stay where they are.`,
+      `Disable ${id}? They are signed out everywhere, their agent keys stop working, and they cannot sign in again until you enable them. Their notes stay where they are.`,
     disabledNow: (id: string) => `${id} is disabled.`,
     enabled: (id: string) => `${id} can sign in again.`,
     passwordReset: (id: string) => `Password changed. ${id} has been signed out everywhere.`,
