@@ -184,11 +184,11 @@ describe('administering spaces', () => {
 
     const members = await h.as('admin', { url: '/api/v1/admin/spaces/familie/members' });
     expect(
-      members.body.members.map((share: any) => ({ kind: share.kind, path: share.path, grantee: share.grantee, canWrite: share.canWrite })),
+      members.body.members.map((share: any) => ({ kind: share.kind, prefix: share.prefix, grantee: share.grantee, canWrite: share.canWrite })),
     ).toEqual([
-      { kind: 'vault', path: '', grantee: 'julian', canWrite: true },
-      { kind: 'folder', path: 'Ferien', grantee: 'ramona', canWrite: false },
-      { kind: 'note', path: 'Ferien/Packliste.md', grantee: 'ramona', canWrite: true },
+      { kind: 'vault', prefix: '', grantee: 'julian', canWrite: true },
+      { kind: 'folder', prefix: 'Ferien/', grantee: 'ramona', canWrite: false },
+      { kind: 'note', prefix: 'Ferien/Packliste.md', grantee: 'ramona', canWrite: true },
     ]);
 
     const list = await h.as('admin', { url: '/api/v1/admin/spaces' });

@@ -42,8 +42,6 @@ export interface Share {
    * the note's exact path. Read it through `inScope`, never by hand.
    */
   prefix: string;
-  /** The same region as a person would name it: `''`, `Projekt`, `Projekt/Plan.md`. */
-  path: string;
   grantee: string;
   canWrite: boolean;
   createdAt: number;
@@ -145,13 +143,11 @@ function toKind(value: unknown, prefix: string): ShareKind {
 
 function toShare(row: Record<string, unknown>): Share {
   const prefix = String(row['prefix']);
-  const kind = toKind(row['kind'], prefix);
   return {
     id: String(row['id']),
     owner: String(row['owner']),
-    kind,
+    kind: toKind(row['kind'], prefix),
     prefix,
-    path: kind === 'folder' ? prefix.replace(/\/+$/, '') : prefix,
     grantee: String(row['grantee']),
     canWrite: Number(row['can_write']) === 1,
     createdAt: Number(row['created_at']),

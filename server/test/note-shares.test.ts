@@ -252,7 +252,6 @@ describe('a share on one note', () => {
       owner: 'julian',
       grantee: 'ramona',
       kind: 'note',
-      path: 'Projekt/Plan.md',
       prefix: 'Projekt/Plan.md',
       canWrite: true,
     });
@@ -358,13 +357,13 @@ describe('a share on one note', () => {
       url: '/api/v1/shares',
       payload: { grantee: 'ramona', prefix: 'Projekt', canWrite: false },
     });
-    expect(folder.body.share).toMatchObject({ kind: 'folder', prefix: 'Projekt/', path: 'Projekt' });
+    expect(folder.body.share).toMatchObject({ kind: 'folder', prefix: 'Projekt/' });
     const vault = await h.as('julian', {
       method: 'POST',
       url: '/api/v1/shares',
       payload: { grantee: 'ramona', prefix: '', canWrite: false },
     });
-    expect(vault.body.share).toMatchObject({ kind: 'vault', prefix: '', path: '' });
+    expect(vault.body.share).toMatchObject({ kind: 'vault', prefix: '' });
   });
 
   it('writes the note it names and nothing else', async () => {
