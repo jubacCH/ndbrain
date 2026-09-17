@@ -42,7 +42,7 @@ import {
 import { BrainLayout } from '../src/brain/layout';
 import type { BrainGraph } from '../src/brain/model';
 import { buildGraph } from '../src/brain/model';
-import { SceneBuilder } from '../src/brain/scene';
+import { FOCUS_EDGE_DIM, SceneBuilder } from '../src/brain/scene';
 import { paraVault, shuffled } from './fixtures/para-vault';
 
 /** Large enough that the whole brain fits at the design scale: the overview is scale 1. */
@@ -359,10 +359,11 @@ describe('edge weighting', () => {
     // A link across the fissure, too: focus overrides the overview rule.
     const across = drawnPairs(plan).find((i) => plan.kind[i] === FISSURE)!;
     expect(scene(graph.edges[across]!.a).edges[across]!.alpha).toBe(FOCUS);
-    // Nothing else changes when a note is picked.
+    // Every other link steps back by the focus mode's share, and only by that
+    // (since 2026-09-17: the briefing asks for the rest to be strongly dimmed).
     const rest = scene();
     const untouched = drawnPairs(plan).find((i) => graph.edges[i]!.a !== hub && graph.edges[i]!.b !== hub)!;
-    expect(picked.edges[untouched]!.alpha).toBe(rest.edges[untouched]!.alpha);
+    expect(picked.edges[untouched]!.alpha).toBeCloseTo(rest.edges[untouched]!.alpha * FOCUS_EDGE_DIM, 12);
   });
 
   it('draws about nine in ten links as lines in the overview, and holds the rest back', () => {

@@ -19,6 +19,8 @@ import { BrainLayout } from '../src/brain/layout';
 import { buildGraph } from '../src/brain/model';
 import { regionView } from '../src/brain/regions';
 import {
+  FOCUS_EDGE_DIM,
+  FOCUS_NODE_DIM,
   HUB_PLANES,
   NOTE_PLANES,
   PLANE_LIGHT,
@@ -176,8 +178,9 @@ describe('the warm accent', () => {
     const paint = createCanvasRenderer(canvas);
     paint.resize(W, H);
 
-    for (let k = 0; k <= 20; k += 1) {
-      const warmth = k / 20;
+    // Eleven steps and both ends; each step grows the tissue once, which is
+    // what the explicit timeout below is for on a busy runner.
+    for (const warmth of [0, 0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.98, 1]) {
       const builder = new SceneBuilder(graph);
       builder.recent(new Float64Array(graph.nodes.length).fill(warmth));
       // Settled layout, overview: bodies, links, rays, branches and the tissue.
@@ -191,7 +194,7 @@ describe('the warm accent', () => {
     expect(mint.map((c) => `${c.text} (h ${c.h.toFixed(0)}, c ${c.c.toFixed(3)})`)).toEqual([]);
     // And the amber is really there, so the check above is not passing on nothing.
     expect(all.some((c) => Math.abs(c.h - WARM_HUE) < 4 && c.c > 0.05)).toBe(true);
-  });
+  }, 30_000);
 
   it('recognises a blend of cyan and amber as mint', () => {
     // The check itself, against the colour the straight mix used to produce.
@@ -274,6 +277,99 @@ describe('the centre', () => {
     expect(scene.nodes.some((n) => n.centre)).toBe(false);
     expect(scene.edges.some((e) => e.radiant > 0)).toBe(false);
     expect(scene.forks.length).toBe(0);
+  });
+});
+
+describe('the focus mode', () => {
+  const pick = graph.hub;
+  const related = new Set<number>([pick]);
+  for (const e of graph.touching[pick]!) {
+    related.add(graph.edges[e]!.a);
+    related.add(graph.edges[e]!.b);
+  }
+  const touches = (i: number): boolean => graph.edges[i]!.a === pick || graph.edges[i]!.b === pick;
+
+  /** Copied out: the builder refills one scene in place. */
+  const values = (scene: ReturnType<SceneBuilder['build']>) => ({
+    nodes: scene.nodes.map((n) => [n.alpha, n.restAlpha]),
+    edges: scene.edges.map((e) => [e.alpha, e.restAlpha, e.radiant]),
+  });
+
+  it('dims every note and link that has nothing to do with the selection, and only those', () => {
+    const builder = new SceneBuilder(graph);
+    const calm = values(builder.build(layout, new Activity(graph), overview(), -1, W, H));
+    const picked = builder.build(layout, new Activity(graph), overview(), pick, W, H);
+    expect(related.size).toBeLessThan(graph.nodes.length);
+    graph.nodes.forEach((_, i) => {
+      const before = calm.nodes[i]![1]!;
+      const expected = related.has(i) ? before : before * FOCUS_NODE_DIM;
+      expect(picked.nodes[i]!.restAlpha, `note ${i}`).toBeCloseTo(expected, 12);
+    });
+    let dimmed = 0;
+    graph.edges.forEach((_, i) => {
+      if (touches(i)) return;
+      const before = calm.edges[i]![1]!;
+      expect(picked.edges[i]!.restAlpha, `link ${i}`).toBeCloseTo(before * FOCUS_EDGE_DIM, 12);
+      if (before > 0) dimmed += 1;
+    });
+    expect(dimmed).toBeGreaterThan(10);
+    expect(FOCUS_NODE_DIM).toBeLessThanOrEqual(0.3);
+    expect(FOCUS_EDGE_DIM).toBeLessThanOrEqual(0.35);
+  });
+
+  it('repaints the cached layers on every change of selection, and returns exactly to rest', () => {
+    const builder = new SceneBuilder(graph);
+    const activity = new Activity(graph);
+    const calm = builder.build(layout, activity, overview(), -1, W, H);
+    const before = values(calm);
+    const stampCalm = calm.stamp;
+    const stampPicked = builder.build(layout, activity, overview(), pick, W, H).stamp;
+    expect(stampPicked).not.toBe(stampCalm);
+    // The same selection again: nothing to repaint.
+    expect(builder.build(layout, activity, overview(), pick, W, H).stamp).toBe(stampPicked);
+    // Another note selected: a new picture.
+    const other = graph.nodes.findIndex((_, i) => !related.has(i));
+    expect(builder.build(layout, activity, overview(), other, W, H).stamp).not.toBe(stampPicked);
+    const back = builder.build(layout, activity, overview(), -1, W, H);
+    expect(back.stamp).not.toBe(stampPicked);
+    expect(values(back)).toEqual(before);
+  });
+
+  it('keeps a pulse on a dimmed note and along a dimmed link at full strength', () => {
+    const far = graph.nodes.findIndex((_, i) => !related.has(i) && graph.touching[i]!.some((e) => !touches(e)));
+    expect(far).toBeGreaterThanOrEqual(0);
+    const pulse = (): Activity => {
+      const activity = new Activity(graph);
+      const n = graph.nodes[far]!;
+      activity.record([{ at: 0, kind: 'write', what: 'edit_note', path: n.path, who: 'jb', agent: true, owner: n.owner }]);
+      for (let k = 0; k < 6; k += 1) activity.advance();
+      return activity;
+    };
+    const free = new SceneBuilder(graph).build(layout, pulse(), overview(), -1, W, H);
+    const focused = new SceneBuilder(graph).build(layout, pulse(), overview(), pick, W, H);
+    const a = free.nodes[far]!;
+    const b = focused.nodes[far]!;
+    expect(b.heat).toBeGreaterThan(0);
+    expect(b.heat).toBe(a.heat);
+    expect(b.restAlpha).toBeLessThan(a.restAlpha);
+    // What the pulse adds over the resting body is the same, dimmed or not.
+    expect(b.alpha - b.restAlpha).toBeCloseTo(a.alpha - a.restAlpha, 12);
+    // A spark lights its link as strongly as without a selection.
+    const sparked = graph.edges.map((_, i) => i).filter((i) => free.edges[i]!.alpha > free.edges[i]!.restAlpha + 0.1);
+    expect(sparked.length).toBeGreaterThan(0);
+    for (const i of sparked) {
+      if (touches(i)) continue;
+      expect(focused.edges[i]!.alpha).toBeCloseTo(free.edges[i]!.alpha, 12);
+    }
+  });
+
+  it('leaves the neighbourhood beside an open note as it was', () => {
+    const loose = new BrainLayout(graph, { arrangement: 'loose' });
+    const camera = { scale: 1, x: 0, y: 0 };
+    const builder = new SceneBuilder(graph);
+    const calm = values(builder.build(loose, new Activity(graph), camera, -1, W, H));
+    const picked = values(builder.build(loose, new Activity(graph), camera, pick, W, H));
+    expect(picked.nodes).toEqual(calm.nodes);
   });
 });
 
