@@ -68,3 +68,11 @@ export class TaskChangedError extends NdbrainError {}
  * reachability, and the message has to say so or the refusal looks arbitrary.
  */
 export class UnlinkableNameError extends NdbrainError {}
+
+/**
+ * A deleted note the caller may bring back, with nothing to bring it back from:
+ * the host keeps no history, or no saved version holds the note. Only ever
+ * raised after the caller's right to restore there has been established — to
+ * anybody else the note does not exist.
+ */
+export class NothingToRestoreError extends NdbrainError {}
