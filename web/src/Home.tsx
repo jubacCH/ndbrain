@@ -88,7 +88,10 @@ export function HomeView(props: HomeProps): React.JSX.Element {
   return (
     <div className="pane padded home">
       <h2 className="h-big">{copy.overview.title}</h2>
-      <p className="h-sub">{copy.home.summary(counts.notes, counts.attention)}</p>
+      {/* No count line here. The header above already reads "N notes · N
+          folders · N need attention", on every screen width, and the health
+          card below names the same attention count with what it is made of.
+          A third copy of the numbers only pushed the cards down. */}
 
       {/* Two stacks on a wide screen, so a tall list on the left never leaves a
           hole under a short card on the right; one column on a phone, where
