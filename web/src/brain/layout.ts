@@ -307,15 +307,21 @@ const JOURNAL_SHARE = 0.18;
 const JOURNAL_SIDE: Side = -1;
 const JOURNAL_AT = { x: -0.6, y: 0.82 };
 /**
- * The widest step between two days on the journal's spiral, world units, and
- * how large a day's cell body may be against that step.
+ * The room a day gets on the journal's spiral, world units: at most a square of
+ * this side. A journal of a few weeks is a small coil in the middle of its lobe
+ * and grows outwards one day at a time; only once the coil fills the lobe does
+ * the room shrink. Below that, a new day changes the place of no other day.
  *
- * A journal of a few weeks is a small, tight coil in the middle of its lobe and
- * grows outwards one day at a time; only once the coil fills the lobe does the
- * step shrink. Below that, a new day changes the place of no other day.
+ * Laid out as a spiral whose turns are further apart than the days along it
+ * (`JOURNAL_ALONG` of the room along the trace, its inverse between turns), so
+ * the trace reads as a trace and not as an even mesh of dots. A day's cell
+ * body is at most `JOURNAL_BODY` of its step along the trace: small, because
+ * a year of days is three hundred bodies, and the lobe has to stay quiet beside
+ * the regions that carry the thinking.
  */
-const JOURNAL_STEP = 15;
-const JOURNAL_BODY = 0.4;
+const JOURNAL_STEP = 12;
+const JOURNAL_ALONG = 0.65;
+const JOURNAL_BODY = 0.35;
 
 /** The most a note may move in one step, in world units. */
 const MAX_SPEED = 30;
@@ -432,6 +438,8 @@ export class BrainLayout {
   readonly #daily: Uint8Array;
   /** The journal's region index, or -1 when the vault has no daily notes. */
   #journal = -1;
+  /** Links per note, those from days not counted (brain only; see the constructor). */
+  readonly #degree: Float64Array;
   /**
    * The note the brain is organised around, or -1: the best-connected note,
    * links from days not counted, when it is a map (`MAP_DEGREE`). The layout
@@ -498,29 +506,31 @@ export class BrainLayout {
     this.#daily = new Uint8Array(n);
     if (brain) for (let i = 0; i < n; i += 1) this.#daily[i] = isDailyNote(graph.nodes[i]!.path) ? 1 : 0;
     const days = this.#daily.reduce((sum, d) => sum + d, 0);
-    // The note with the most links that do not come from a day, when that is
-    // a map. Links from days are left out for the reason they are left out of
-    // the clusters: a project mentioned on a hundred days would otherwise take
-    // the middle of the brain from the map it was placed round, and every region
-    // would be dealt again. Ties go to the first key, never to the server's order.
-    let centre = -1;
-    let best = -1;
-    if (brain) {
-      for (const i of this.#seq) {
-        if (this.#daily[i] === 1) continue;
-        let fromDays = 0;
+    // Links that do not come from a day, per note. Everything the layout ranks
+    // notes by goes by this — which note is a region's hub, which are its cores,
+    // which is the centre — for the reason days are left out of the clusters: a
+    // project mentioned on a hundred days would otherwise become the hub of its
+    // region, and each day written could rearrange that region round it.
+    this.#degree = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) {
+      let fromDays = 0;
+      if (brain && this.#daily[i] !== 1) {
         for (const e of graph.touching[i]!) {
           const edge = graph.edges[e]!;
           if (this.#daily[edge.a === i ? edge.b : edge.a] === 1) fromDays += 1;
         }
-        const links = graph.nodes[i]!.degree - fromDays;
-        if (links > best) {
-          best = links;
-          centre = i;
-        }
+      }
+      this.#degree[i] = graph.nodes[i]!.degree - fromDays;
+    }
+    // The centre: the note with the most such links, when that is a map. Ties go
+    // to the first key, never to the server's order.
+    let centre = -1;
+    if (brain) {
+      for (const i of this.#seq) {
+        if (this.#daily[i] !== 1 && (centre === -1 || this.#degree[i]! > this.#degree[centre]!)) centre = i;
       }
     }
-    this.centre = best >= MAP_DEGREE ? centre : -1;
+    this.centre = centre !== -1 && this.#degree[centre]! >= MAP_DEGREE ? centre : -1;
 
     // Regions only where there are hemispheres to divide: the neighbourhood is
     // six notes round one, and a cell of the silhouette means nothing to it.
@@ -704,7 +714,7 @@ export class BrainLayout {
    * notes reach the outline — not because a force pushes them there.
    */
   #buildCells(groups: readonly RegionGroup[], remembered: Uint8Array): Region[] {
-    const { nodes, edges, touching } = this.graph;
+    const { edges, touching } = this.graph;
     const u = this.unitLength;
     const k = groups.length;
     if (k === 0) return [];
@@ -715,7 +725,7 @@ export class BrainLayout {
     const journal = this.#journal;
     groups.forEach((group, r) => {
       let hub = group.members[0]!;
-      for (const i of group.members) if (nodes[i]!.degree > nodes[hub]!.degree) hub = i;
+      for (const i of group.members) if (this.#degree[i]! > this.#degree[hub]!) hub = i;
       // The centre is its region's hub even where another note ties with it.
       if (this.centre !== -1 && this.regionOf[this.centre] === r) hub = this.centre;
       hubs.push(hub);
@@ -1095,7 +1105,7 @@ export class BrainLayout {
         .filter((i) => i !== hub && inDegree.get(i)! >= CORE_MIN_LINKS)
         .sort(
           (a, b) =>
-            inDegree.get(b)! - inDegree.get(a)! || nodes[b]!.degree - nodes[a]!.degree || place.get(a)! - place.get(b)!,
+            inDegree.get(b)! - inDegree.get(a)! || this.#degree[b]! - this.#degree[a]! || place.get(a)! - place.get(b)!,
         )
         .slice(0, coreCount - 1);
       const isCore = new Set([hub, ...cores]);
@@ -1135,7 +1145,7 @@ export class BrainLayout {
       const down = new Set(order);
       let rest = members
         .filter((i) => !down.has(i))
-        .sort((a, b) => nodes[b]!.degree - nodes[a]!.degree || place.get(a)! - place.get(b)!);
+        .sort((a, b) => this.#degree[b]! - this.#degree[a]! || place.get(a)! - place.get(b)!);
       while (rest.length > 0) {
         const ready = rest.filter((i) => down.has(parent.get(i)!));
         if (ready.length === 0) {
@@ -1284,32 +1294,34 @@ export class BrainLayout {
     let lobeSamples = 0;
     for (let p = 0; p < sx.length; p += 1) lobeSamples += lobe[p]!;
     const area = lobeSamples * SAMPLE_STEP * SAMPLE_STEP * u * u;
-    let step = Math.min(JOURNAL_STEP, Math.sqrt(area / count) * 0.9);
+    let room = Math.min(JOURNAL_STEP, Math.sqrt(area / count) * 0.9);
 
     const places: Point[] = [];
     const limit = lobeRadius * u * 2.5;
+    let along = room * JOURNAL_ALONG;
     for (;;) {
       places.length = 0;
-      // Turns `step` apart: r = step · θ / 2π, and each place `step` further
-      // along the curve than the one before.
-      // Starts one step out, and turns by the angle whose chord is a step, so
-      // the first days in the middle do not sit on top of each other.
+      along = room * JOURNAL_ALONG;
+      const turn = room / JOURNAL_ALONG;
+      // Turns `turn` apart: r = turn · θ / 2π. Starts a turn out, and moves on
+      // by the angle whose chord is one step along, so the first days in the
+      // middle do not sit on top of each other.
       let theta = Math.PI * 2;
       for (let guard = 0; places.length < count && guard < count * 40; guard += 1) {
-        const radius = (step * theta) / (Math.PI * 2);
+        const radius = (turn * theta) / (Math.PI * 2);
         if (radius > limit) break;
         const x = region.cx + Math.cos(theta) * radius;
         const y = region.cy + Math.sin(theta) * radius;
         if (inLobe(x / u, y / u) && withinOutline(x / u, y / u, WALL)) places.push({ x, y });
-        theta += 2 * Math.asin(Math.min(1, step / (2 * radius)));
+        theta += 2 * Math.asin(Math.min(1, along / (2 * radius)));
       }
-      if (places.length === count || step < 1) break;
-      step *= 0.92;
+      if (places.length === count || room < 1) break;
+      room *= 0.92;
     }
 
     // A day's cell body fits its step, so a dense year does not merge into a
     // band. Set from the step alone, so it is the same however the day arrived.
-    for (const { i } of dated) this.r[i] = Math.min(this.r[i]!, step * JOURNAL_BODY);
+    for (const { i } of dated) this.r[i] = Math.min(this.r[i]!, along * JOURNAL_BODY);
     dated.forEach(({ i }, k) => {
       if (remembered !== null && remembered[i] === 1) return;
       const at = places[Math.min(k, places.length - 1)] ?? { x: region.cx, y: region.cy };

@@ -200,6 +200,25 @@ describe('the journal', () => {
     }
   });
 
+  it('leaves every note that is not a day exactly where it was, from a month of days to three years', () => {
+    // Stronger than the anchors: the days link to a project seventy times and
+    // more, and that project must not become the hub its region is arranged
+    // round. From no journal to the first one the brain grows once for the lobe
+    // and the cells stop reaching into it, so that step is measured by the
+    // anchors above; from then on nothing but days may change.
+    const month = layouts.get(30)!;
+    for (const count of [365, 800]) {
+      const layout = layouts.get(count)!;
+      for (let j = 0; j < month.x.length; j += 1) {
+        if (isDay(month, j)) continue;
+        const key = month.graph.nodes[j]!.key;
+        const i = layout.graph.index.get(key)!;
+        expect(layout.x[i], `${key} with ${count} days`).toBe(month.x[j]);
+        expect(layout.y[i], `${key} with ${count} days`).toBe(month.y[j]);
+      }
+    }
+  });
+
   it('keeps every link a day carries, to other days and to notes elsewhere', () => {
     const layout = layouts.get(365)!;
     const { graph } = layout;

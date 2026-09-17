@@ -1118,7 +1118,10 @@ export class SceneBuilder {
       });
     };
 
-    add(this.#graph.hub, 1, true);
+    // The centre carries the one always-on label where there is one: a note
+    // mentioned on a hundred days may have more links, but it is not what the
+    // picture is organised around.
+    add(this.#centre >= 0 ? this.#centre : this.#graph.hub, 1, true);
     for (let i = 0; i < nodes.length; i += 1) if (activity.fire[i]! > LABEL_FIRE) add(i, 1, true);
     add(picked, 1, true);
     if (picked >= 0) {
