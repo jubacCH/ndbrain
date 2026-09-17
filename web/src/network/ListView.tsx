@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { GraphData } from '../api';
 import { copy } from '../copy';
+import { ownerLabel, useOwners } from '../owners';
 import { displayName } from '../Tree';
 import { absoluteTime, relativeTime } from './relativeTime';
 import './network.css';
@@ -30,6 +31,8 @@ type Node = GraphData['nodes'][number];
 interface Row {
   key: string;
   owner: string;
+  /** What the owner is called on screen: a space's display name, a person's account. */
+  ownerLabel: string;
   path: string;
   title: string;
   folder: string;
@@ -75,7 +78,7 @@ function compare(a: Row, b: Row, key: SortKey): number {
     case 'title':
       return a.title.localeCompare(b.title);
     case 'owner':
-      return a.owner.localeCompare(b.owner);
+      return a.ownerLabel.localeCompare(b.ownerLabel);
     case 'folder':
       return a.folderLabel.localeCompare(b.folderLabel);
     case 'links':
@@ -96,6 +99,7 @@ export function ListView(props: {
   hidePrefixes?: boolean;
 }): React.JSX.Element {
   const { graph, onOpen, hidePrefixes = true } = props;
+  const owners = useOwners();
 
   const rows = useMemo<Row[]>(
     () =>
@@ -106,6 +110,7 @@ export function ListView(props: {
         // theory, appear in either string.
         key: JSON.stringify([n.owner, n.path]),
         owner: n.owner,
+        ownerLabel: ownerLabel(owners, n.owner),
         path: n.path,
         title: n.title,
         folder: n.folder,
@@ -114,7 +119,7 @@ export function ListView(props: {
         tags: n.tags,
         updatedAt: n.updatedAt,
       })),
-    [graph.nodes, hidePrefixes],
+    [graph.nodes, hidePrefixes, owners],
   );
 
   // Whose note a row is only needs saying once there is more than one answer.
@@ -266,7 +271,7 @@ export function ListView(props: {
                     onClick={() => openRow(row)}
                   >
                     <td className="nv-title">{row.title}</td>
-                    {columns.some((c) => c.key === 'owner') && <td className="nv-owner">{row.owner}</td>}
+                    {columns.some((c) => c.key === 'owner') && <td className="nv-owner">{row.ownerLabel}</td>}
                     <td className="nv-folder">{row.folderLabel}</td>
                     <td className="nv-num">{row.links}</td>
                     <td>

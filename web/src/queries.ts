@@ -36,7 +36,7 @@ import {
   type UseQueryResult,
 } from '@tanstack/react-query';
 
-import { api, type FileRow, type GraphData, type NoteRow, type OpenNote } from './api';
+import { api, type FileRow, type GraphData, type OpenNote, type TreeData } from './api';
 import { parseTagRegistry, REGISTRY_PATH } from './editor/tagRegistry';
 
 /**
@@ -59,6 +59,8 @@ export const keys = {
   topics: ['topics'] as const,
   adminUsers: ['admin', 'users'] as const,
   adminKeys: (owner: string) => ['admin', 'keys', owner] as const,
+  adminSpaces: ['admin', 'spaces'] as const,
+  spaceMembers: (space: string) => ['admin', 'spaces', space, 'members'] as const,
   note: (owner: string, path: string) => ['note', owner, path] as const,
   tagRegistry: (owner: string) => ['tag-registry', owner] as const,
   links: (owner: string, path: string) => ['links', owner, path] as const,
@@ -76,7 +78,7 @@ export const keys = {
  */
 const FRESH_MS = 30_000;
 
-export function useTree(): UseQueryResult<{ notes: NoteRow[] }> {
+export function useTree(): UseQueryResult<TreeData> {
   return useQuery({ queryKey: keys.tree, queryFn: () => api.tree(), staleTime: FRESH_MS });
 }
 
@@ -272,6 +274,21 @@ export function useTopics(enabled: boolean): UseQueryResult<Awaited<ReturnType<t
 
 export function useAdminUsers(enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.adminUsers>>> {
   return useQuery({ queryKey: keys.adminUsers, queryFn: () => api.adminUsers(), enabled, staleTime: 5_000 });
+}
+
+export function useAdminSpaces(enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.adminSpaces>>> {
+  return useQuery({ queryKey: keys.adminSpaces, queryFn: () => api.adminSpaces(), enabled, staleTime: 5_000 });
+}
+
+export function useSpaceMembers(
+  space: string | null,
+): UseQueryResult<Awaited<ReturnType<typeof api.spaceMembers>>> {
+  return useQuery({
+    queryKey: keys.spaceMembers(space ?? ''),
+    queryFn: () => api.spaceMembers(space!),
+    enabled: space !== null,
+    staleTime: 5_000,
+  });
 }
 
 export function useAdminKeys(owner: string, enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.adminKeys>>> {
