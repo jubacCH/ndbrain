@@ -582,6 +582,13 @@ export const api = {
   spaceMembers: (id: string) =>
     request(`/api/v1/admin/spaces/${encodeURIComponent(id)}/members`, memberRows(id)),
 
+  /**
+   * The folders and notes of a space, by path and title only, so the member
+   * picker can offer them to an administrator who is not a member.
+   */
+  spaceTree: (id: string) =>
+    request(`/api/v1/admin/spaces/${encodeURIComponent(id)}/tree`, S.AdminSpaceTreeResponse),
+
   addSpaceMember: (id: string, grantee: string, kind: ShareKind, path: string, canWrite: boolean) =>
     request(`/api/v1/admin/spaces/${encodeURIComponent(id)}/members`, Ignored, {
       method: 'POST',
