@@ -1,5 +1,6 @@
 /**
- * A small pop-up menu behind a button: the account menu in the header.
+ * A small pop-up menu behind a button: the account menu in the header, and the
+ * actions on an open note beside its save state.
  *
  * Built to the ARIA menu-button pattern, because that is what a keyboard user
  * already knows from every desktop application: the button says it has a menu
@@ -14,6 +15,8 @@ export interface MenuItem {
   key: string;
   label: string;
   icon?: ReactNode;
+  /** A destructive entry, drawn in the warning colour. */
+  danger?: boolean;
   onSelect: () => void;
 }
 
@@ -130,7 +133,7 @@ export function MenuButton({
               type="button"
               role="menuitem"
               tabIndex={-1}
-              className="menu-item"
+              className={item.danger === true ? 'menu-item menu-item-danger' : 'menu-item'}
               onClick={() => {
                 close(false);
                 item.onSelect();

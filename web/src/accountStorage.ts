@@ -82,6 +82,17 @@ export function pushRecent(account: string, owner: string, path: string): void {
   }
 }
 
+/** Takes a deleted note out of the list, so it is not offered again. */
+export function dropRecent(account: string, owner: string, path: string): void {
+  if (!mayWrite(account)) return;
+  try {
+    const kept = loadRecents(account).filter((r) => !(r.owner === owner && r.path === path));
+    window.localStorage.setItem(recentsKey(account), JSON.stringify(kept));
+  } catch {
+    // As above: a list that cannot be rewritten still resolves against the tree.
+  }
+}
+
 export function loadOpenFolders(account: string): Set<string> {
   try {
     const raw = window.localStorage.getItem(openFoldersKey(account));

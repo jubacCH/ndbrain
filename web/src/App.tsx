@@ -37,14 +37,15 @@ import { Brain } from './Brain';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { copy } from './copy';
-import { discardLegacy, forgetAccount, loadRecents, pushRecent, type Recent } from './accountStorage';
+import { discardLegacy, dropRecent, forgetAccount, loadRecents, pushRecent, type Recent } from './accountStorage';
 import { SESSION_SIGNAL_KEY, announceSessionChange, closeSession, openSession } from './session';
 import { applyPrefs, loadPrefs, savePrefs, type Prefs, type Theme } from './prefs';
-import { GearIcon, ShareIcon, ShieldIcon, SignOutIcon } from './icons';
+import { GearIcon, MoreIcon, ShareIcon, ShieldIcon, SignOutIcon, TrashIcon } from './icons';
 import { NetworkFrame, type FullscreenFrame } from './NetworkFrame';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
-import type { MenuItem } from './Menu';
+import { MenuButton, type MenuItem } from './Menu';
+import { mayChange } from './rights';
 import { SettingsView } from './Settings';
 import { AdminView } from './Admin';
 import { TopicsPanel } from './Topics';
@@ -282,6 +283,13 @@ function Shell({
   /** On a narrow screen the tree overlays the page rather than keeping a column. */
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [treeFilter, setTreeFilter] = useState('');
+  /**
+   * The note the tree is asked to show without opening it — the inspector's
+   * "Show in tree". Counted, so asking twice for the same note scrolls to it
+   * again; cleared when a note is opened, since the tree then shows that one.
+   */
+  const [revealed, setRevealed] = useState<{ owner: string; path: string; seq: number } | null>(null);
+  const revealSeq = useRef(0);
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
   const narrow = useMedia(DRAWER_QUERY);
   const systemDark = useMedia('(prefers-color-scheme: dark)');
@@ -510,6 +518,7 @@ function Shell({
         setView('note');
         setSaveState('saved');
         setDrawerOpen(false);
+        setRevealed(null);
         setError(null);
         pushRecent(user.id, owner, path);
         setRecents(loadRecents(user.id));
@@ -737,6 +746,101 @@ function Shell({
     const folder = open.note.path.split('/').slice(0, -1).join('/');
     await createNoteAt(open.owner, folder === '' ? target : `${folder}/${target}`);
   };
+
+  /**
+   * Deletes one note, after saying what that breaks.
+   *
+   * The same path for all three places that offer it — the note's header, the
+   * tree and the inspector — so the question, the permission and the clean-up
+   * cannot drift apart between them.
+   *
+   * The count of notes that link here is read fresh from the backlinks
+   * endpoint, which answers within the caller's own view: a note in a part of
+   * somebody's vault the caller cannot see is not counted, and not revealed by
+   * the number either. Answers whether the note was deleted.
+   */
+  const deleteNote = useCallback(
+    async (owner: string, path: string, title: string): Promise<boolean> => {
+      const typingHere = (): boolean =>
+        pending.current !== null && pending.current.owner === owner && pending.current.path === path;
+      // Text waiting for a different note is written first, as on any switch.
+      if (pending.current !== null && !typingHere()) await flush();
+
+      let linking = 0;
+      try {
+        const { backlinks } = await client.fetchQuery({
+          queryKey: keys.links(owner, path),
+          queryFn: () => api.links(owner, path),
+          staleTime: 0,
+        });
+        linking = new Set(backlinks.filter((row) => row.source !== path).map((row) => row.source)).size;
+      } catch {
+        // Unknown is not zero, but the question still names the note, and the
+        // server has the final word on whether it exists at all.
+      }
+
+      const question = copy.ask.deleteNote(title) + (linking > 0 ? ` ${copy.ask.linksWillBreak(linking)}` : '');
+      if (!window.confirm(question)) return false;
+
+      // Unsaved text in the note being deleted is dropped, not written: a save
+      // landing after the delete would bring the note straight back.
+      if (typingHere()) {
+        pending.current = null;
+        window.__ndbrainPending = null;
+        if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+
+      try {
+        await api.deleteNote(owner, path);
+      } catch (caught) {
+        setError(caught instanceof ApiError ? caught.message : copy.errors.deleteNoteFailed);
+        return false;
+      }
+
+      dropRecent(user.id, owner, path);
+      setRecents(loadRecents(user.id));
+      // Off the screen before its cache entry goes: an editor still mounted on
+      // a removed entry would fetch it again, and get a 404 for its trouble.
+      flushSync(() => {
+        setRevealed((current) => (current?.owner === owner && current.path === path ? null : current));
+        if (openRef?.owner === owner && openRef.path === path) {
+          setOpenRef(null);
+          setSaveState('saved');
+          if (view === 'note') setView('overview');
+        }
+      });
+      invalidate.afterDelete(client, owner, path);
+      setError(null);
+      return true;
+    },
+    [client, flush, openRef, user.id, view],
+  );
+
+  /** Whether a note may be deleted from a place that holds only its path. */
+  const mayDelete = useCallback(
+    (owner: string, path: string): boolean => mayChange(user.id, received, owner, path),
+    [user.id, received],
+  );
+
+  /**
+   * Shows a note in the tree without opening it.
+   *
+   * The tree has to be on screen for that: full screen is left, a filter that
+   * would hide the folders is cleared, a folded sidebar unfolds, and on a
+   * phone the drawer slides out over the network.
+   */
+  const revealNote = useCallback(
+    (owner: string, path: string): void => {
+      fullscreenRef.current?.leave();
+      setTreeFilter('');
+      revealSeq.current += 1;
+      setRevealed({ owner, path, seq: revealSeq.current });
+      if (narrow) setDrawerOpen(true);
+      else setPrefs((current) => (current.sidebarCollapsed ? { ...current, sidebarCollapsed: false } : current));
+    },
+    [narrow],
+  );
 
   const runSearch = useCallback(
     async (value: string, active: Filters): Promise<void> => {
@@ -1290,6 +1394,8 @@ function Shell({
               setDrawerOpen(false);
             }}
             onRenameFolder={(path) => void renameFolder(path)}
+            onDeleteNote={(owner, path, title) => void deleteNote(owner, path, title)}
+            revealed={revealed}
             onCreateFirst={() => void createNote()}
           />
         }
@@ -1330,6 +1436,23 @@ function Shell({
                   </span>
                 )}
                 <SaveIndicator state={saveState} />
+                {/* Only where the server said this note may be written: a note
+                    read through a read-only share has nothing to offer here. */}
+                {open !== null && open.canWrite && (
+                  <MenuButton
+                    label={copy.note.actions}
+                    icon={<MoreIcon />}
+                    items={[
+                      {
+                        key: 'delete',
+                        label: copy.note.delete,
+                        icon: <TrashIcon size={16} />,
+                        danger: true,
+                        onSelect: () => void deleteNote(open.owner, open.note.path, open.note.title),
+                      },
+                    ]}
+                  />
+                )}
               </>
             ) : undefined
           }
@@ -1414,6 +1537,9 @@ function Shell({
                     onView={(networkView) => setPrefs((current) => ({ ...current, networkView }))}
                     onOpen={(owner, path) => void openNote(owner, path)}
                     onFullscreen={setFullscreen}
+                    onReveal={revealNote}
+                    onDelete={deleteNote}
+                    mayDelete={mayDelete}
                   />
                 ))}
 

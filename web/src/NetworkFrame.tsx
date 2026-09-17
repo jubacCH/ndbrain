@@ -54,6 +54,8 @@ export function NetworkFrame({
   onOpen,
   onFullscreen,
   onReveal,
+  onDelete,
+  mayDelete,
   hidePrefixes = true,
 }: {
   graph: GraphData;
@@ -77,6 +79,13 @@ export function NetworkFrame({
    * offers "Show in tree" only when the shell passes this.
    */
   onReveal?: (owner: string, path: string) => void;
+  /**
+   * Deletes a note after asking, and answers whether it did. The inspector
+   * offers it only where `mayDelete` is given and allows it, and ends the
+   * focus afterwards.
+   */
+  onDelete?: (owner: string, path: string, title: string) => Promise<boolean>;
+  mayDelete?: (owner: string, path: string) => boolean;
   /** Show folder names without their sort prefixes, as the tree does. */
   hidePrefixes?: boolean;
 }): React.JSX.Element {
@@ -91,6 +100,7 @@ export function NetworkFrame({
    */
   const [picked, setPicked] = useState<string | null>(null);
   const index = useMemo(() => indexGraph(graph), [graph]);
+  const pickedNode = picked === null ? undefined : index.nodes.get(picked);
 
   // Another view has no canvas to hold the focus; coming back starts without one.
   useEffect(() => {
@@ -222,6 +232,18 @@ export function NetworkFrame({
               onPick={pick}
               onOpen={onOpen}
               onReveal={onReveal}
+              onDelete={
+                onDelete !== undefined &&
+                pickedNode !== undefined &&
+                mayDelete !== undefined &&
+                mayDelete(pickedNode.owner, pickedNode.path)
+                  ? (owner, path, title) =>
+                      void onDelete(owner, path, title).then((done) => {
+                        // The note is gone; so is anything to focus on.
+                        if (done) pick(null);
+                      })
+                  : undefined
+              }
             />
           )}
           {controls}

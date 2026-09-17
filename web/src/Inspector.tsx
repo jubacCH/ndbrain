@@ -28,7 +28,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { noteKind } from './brain/kind';
 import { copy } from './copy';
-import { CloseIcon, FileIcon } from './icons';
+import { CloseIcon, FileIcon, TrashIcon } from './icons';
 import type { GraphIndex, Neighbour } from './inspect';
 import { neighbourhood, summarize, whyConnected } from './inspect';
 import { absoluteTime, relativeTime } from './network/relativeTime';
@@ -49,9 +49,14 @@ export interface InspectorProps {
   onOpen: (owner: string, path: string) => void;
   /** Reveals the note in the sidebar's tree; the action is offered only when given. */
   onReveal?: ((owner: string, path: string) => void) | undefined;
+  /**
+   * Deletes the note, after the shell has asked. Given only for a note the
+   * caller may change, so a note read through a read-only share offers none.
+   */
+  onDelete?: ((owner: string, path: string, title: string) => void) | undefined;
 }
 
-export function Inspector({ index, picked, onPick, onOpen, onReveal }: InspectorProps): React.JSX.Element | null {
+export function Inspector({ index, picked, onPick, onOpen, onReveal, onDelete }: InspectorProps): React.JSX.Element | null {
   const node = index.nodes.get(picked);
   const links = useMemo(() => neighbourhood(index, picked), [index, picked]);
   // Per note: a reason opened for one note says nothing about the next.
@@ -226,6 +231,18 @@ export function Inspector({ index, picked, onPick, onOpen, onReveal }: Inspector
         {onReveal !== undefined && (
           <button type="button" className="inspector-reveal" onClick={() => onReveal(node.owner, node.path)}>
             {copy.inspector.reveal}
+          </button>
+        )}
+        {onDelete !== undefined && (
+          <button
+            type="button"
+            className="inspector-delete"
+            aria-label={copy.tree.deleteNoteLabel(node.title)}
+            title={copy.tree.deleteNoteLabel(node.title)}
+            onClick={() => onDelete(node.owner, node.path, node.title)}
+          >
+            <TrashIcon size={15} />
+            <span>{copy.inspector.delete}</span>
           </button>
         )}
       </footer>

@@ -269,3 +269,21 @@ export function MenuIcon(props: IconProps): React.JSX.Element {
     </Svg>
   );
 }
+
+/** A bin: deleting a note. */
+export function TrashIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 5.5h13M8 5.5V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M5.2 5.5l.7 10.1a1.5 1.5 0 0 0 1.5 1.4h5.2a1.5 1.5 0 0 0 1.5-1.4l.7-10.1M8.5 9v4.5M11.5 9v4.5" />
+    </Svg>
+  );
+}
+
+/** Three points in a row: a menu of actions on one thing. */
+export function MoreIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M5 10h.01M10 10h.01M15 10h.01" strokeWidth="2.4" />
+    </Svg>
+  );
+}

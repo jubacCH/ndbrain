@@ -1621,8 +1621,11 @@ tbody tr[data-selected='true']:hover td {
 }
 
 /*
- * Focusable so that the keyboard can reach the view at all — `0` and Escape
- * return it to the overview. The ring only ever appears for a keyboard focus,
+ * Focusable so that the keyboard can reach the view at all. `0` returns it to
+ * the overview. Escape does so only in the neighbourhood beside a note; in the
+ * whole network it ends the focus and nothing else — the inspector closes, the
+ * camera stays on what was being looked at. The ring only ever appears for a
+ * keyboard focus,
  * so a pointer user sees the canvas exactly as before.
  */
 .brain:focus-visible {
@@ -3885,6 +3888,45 @@ kbd,
   padding-right: var(--s-3);
 }
 
+.nav .node-del:hover {
+  color: var(--crit);
+}
+
+/* Without a pointer that hovers there is no way to find a control that only
+   appears on hover. On a phone the bin shows on the open note's row only —
+   one on every row would be a column of bins. */
+@media (hover: none) {
+  .nav .node-row:has(.node[aria-current='true']) .node-del {
+    opacity: 1;
+  }
+}
+
+/* A note shown from the network ("Show in tree"): marked, not selected — it is
+   not open, so it does not take the selected row's fill. The ring stays until
+   something is opened; the pulse says where to look once. */
+.nav .node[data-revealed='true'] {
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+  color: var(--text);
+  animation: node-revealed 1.4s ease-out 1;
+}
+
+@keyframes node-revealed {
+  0%,
+  30% {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav .node[data-revealed='true'] {
+    animation: none;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+}
+
 .nav .vault-head {
   padding: 0 var(--s-3);
 }
@@ -4201,6 +4243,17 @@ kbd,
 
 .menu-item:focus-visible {
   box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.menu-item-danger,
+.menu-item-danger svg {
+  color: var(--crit);
+}
+
+.menu-item-danger:hover,
+.menu-item-danger:focus-visible {
+  color: var(--crit);
+  background: color-mix(in srgb, var(--crit) 12%, transparent);
 }
 
 /* ---- Stage ---- */
@@ -5174,6 +5227,30 @@ th.pick input,
 
 .inspector-reveal:hover {
   background: rgba(93, 210, 220, 0.09);
+}
+
+/* At the far end, apart from the two that lead somewhere, and quiet until it is
+   pointed at: deleting is the one action here that cannot be taken back from
+   this screen. The inspector is dark in both themes, hence fixed colours. */
+.inspector-delete {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px var(--s-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  font: inherit;
+  font-size: var(--t-sm);
+  color: rgba(200, 232, 240, 0.62);
+  cursor: pointer;
+}
+
+.inspector-delete:hover {
+  border-color: rgba(239, 98, 98, 0.4);
+  background: rgba(239, 98, 98, 0.12);
+  color: #ffb4b4;
 }
 
 .inspector button:focus-visible {
