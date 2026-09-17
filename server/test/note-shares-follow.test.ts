@@ -9,6 +9,7 @@
  * ever holds a share that has come to point at a different note.
  */
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -344,6 +345,96 @@ describe('changes made around ndBrain', () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     await watcher?.flushNow();
     expect(noteShares()).toEqual([{ path: 'Projekt/Plan 2.md', grantee: 'ramona' }]);
+  });
+
+  // The events alone cannot tell a replaced file from an edited one: a file
+  // renamed over the note never leaves the path missing, and a delete followed
+  // at once by a new file reaches chokidar as one `change` on every platform.
+  // What does tell them apart is the file itself.
+  it.each([
+    [
+      'a file renamed over it',
+      async () => {
+        await fs.writeFile(onDisk('Fremd.md'), '# fremd\n', 'utf8');
+        await fs.rename(onDisk('Fremd.md'), onDisk('Projekt/Plan.md'));
+      },
+    ],
+    [
+      'a delete and a new file in one shell command',
+      async () => {
+        const file = onDisk('Projekt/Plan.md');
+        execFileSync('sh', ['-c', 'rm "$1" && printf "# fremd\\n" > "$1"', 'sh', file]);
+      },
+    ],
+  ])('withdraws the share when the note is replaced by %s', async (_name, replace) => {
+    await shareNote('ramona', 'Projekt/Plan.md');
+    await startWatching();
+
+    await replace();
+    await waitForWatcher('the replacement indexed', () =>
+      h.runtime.app.queries.search('julian', 'fremd').length === 1,
+    );
+    expect(noteShares()).toEqual([]);
+    expect(await reads('ramona', 'Projekt/Plan.md')).toBe(404);
+  });
+
+  it('keeps the share through an edit made in place by another program', async () => {
+    await shareNote('ramona', 'Projekt/Plan.md');
+    await startWatching();
+
+    // Written into the same file, as nano, VS Code or Obsidian save.
+    await fs.writeFile(onDisk('Projekt/Plan.md'), '# Plan\n\nvon draussen bearbeitet\n', 'utf8');
+    await waitForWatcher('the edit indexed', () =>
+      h.runtime.app.queries.search('julian', 'draussen').length === 1,
+    );
+    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: 'ramona' }]);
+    expect(await reads('ramona', 'Projekt/Plan.md')).toBe(200);
+  });
+
+  it('keeps the share when an upload through the file route replaces the note', async () => {
+    await shareNote('ramona', 'Projekt/Plan.md');
+    await startWatching();
+
+    const reply = await h.as('julian', {
+      method: 'POST',
+      url: '/api/v1/files/Projekt/Plan.md',
+      payload: Buffer.from('# Plan\n\nhochgeladen\n'),
+    });
+    expect(reply.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await watcher?.flushNow();
+    await createWatcher(h.runtime).reconcile();
+    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: 'ramona' }]);
+  });
+
+  it('lets reconciliation withdraw a share whose note was replaced without any event', async () => {
+    await shareNote('ramona', 'Projekt/Plan.md');
+    await shareNote('peter', 'Projekt/Alt.md');
+    await fs.writeFile(onDisk('Fremd.md'), '# fremd\n', 'utf8');
+    await fs.rename(onDisk('Fremd.md'), onDisk('Projekt/Plan.md'));
+
+    await createWatcher(h.runtime).reconcile();
+    expect(noteShares()).toEqual([{ path: 'Projekt/Alt.md', grantee: 'peter' }]);
+  });
+
+  it('keeps a share whose note came back as a new file with the same text, as after a restore', async () => {
+    await shareNote('ramona', 'Projekt/Plan.md');
+    await startWatching();
+    // Edited in place first, so the text it comes back with is not the text
+    // it had when it was shared.
+    await fs.writeFile(onDisk('Projekt/Plan.md'), '# Plan\n\nzweite Fassung\n', 'utf8');
+    await waitForWatcher('the edit indexed', () =>
+      h.runtime.app.queries.search('julian', 'Fassung').length === 1,
+    );
+    await watcher?.stop();
+    watcher = null;
+
+    // Copied out and back, as a restore onto another disk does: new file, same text.
+    await fs.copyFile(onDisk('Projekt/Plan.md'), onDisk('Kopie.tmp'));
+    await fs.rename(onDisk('Kopie.tmp'), onDisk('Projekt/Plan.md'));
+
+    await syncAllVaults(h.runtime);
+    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: 'ramona' }]);
   });
 
   it('lets reconciliation withdraw a share whose file vanished without any event', async () => {

@@ -22,6 +22,8 @@ import {
 } from '../vault/paths.js';
 import { Vault, type VaultEntry } from '../vault/fs.js';
 import { InvalidPathError } from '../errors.js';
+import { createHash } from 'node:crypto';
+
 import { KeyedMutex } from './mutex.js';
 import type { NoteLifecycle } from '../auth/shares.js';
 
@@ -117,8 +119,18 @@ export function parseConflictPath(notePath: string): ConflictInfo | null {
   return { originalPath, at: at.getTime() };
 }
 
+/** The content hash a note share is confirmed against. */
+export function contentHash(content: string): string {
+  return createHash('sha1').update(content, 'utf8').digest('hex');
+}
+
 /** For a service nobody listens to — the unit tests that build one bare. */
-const UNOBSERVED: NoteLifecycle = { created: () => {}, moved: () => {}, removed: () => {} };
+const UNOBSERVED: NoteLifecycle = {
+  created: () => {},
+  moved: () => {},
+  removed: () => {},
+  rewritten: () => {},
+};
 
 export class NoteService {
   readonly #vault: Vault;
@@ -262,6 +274,7 @@ export class NoteService {
       await this.#assertExactNoteExists(owner, canonical);
       const conflictCopy = await this.#preserveDisplaced(owner, canonical, content, options);
       await this.#vault.writeNote(owner, canonical, content);
+      await this.#rewritten(owner, canonical, content);
 
       const result: PutResult = { note: await this.getNote(owner, canonical), created: false };
       if (conflictCopy !== null) result.conflictCopy = conflictCopy;
@@ -312,6 +325,7 @@ export class NoteService {
 
       await this.#vault.writeNote(owner, canonical, content);
       if (existing === undefined) this.#lifecycle.created(owner, canonical);
+      else await this.#rewritten(owner, canonical, content);
 
       const result: PutResult = {
         note: await this.getNote(owner, canonical),
@@ -412,6 +426,21 @@ export class NoteService {
       return this.#locks.run(keys[0]!, move);
     }
     return this.#locks.run(keys[0]!, async () => this.#locks.run(keys[1]!, move));
+  }
+
+  /**
+   * Tells the lifecycle which file a note is now, after a save put a new one in
+   * place. Also for writers outside this class that hold the note's lock.
+   */
+  async rewritten(owner: string, notePath: string, content: string | Buffer): Promise<void> {
+    await this.#rewritten(owner, this.#assertNotePath(notePath), content);
+  }
+
+  async #rewritten(owner: string, canonical: string, content: string | Buffer): Promise<void> {
+    const file = await this.#vault.fileIdentity(owner, canonical);
+    if (file === null) return;
+    const text = typeof content === 'string' ? content : content.toString('utf8');
+    this.#lifecycle.rewritten(owner, canonical, file, contentHash(text));
   }
 
   #assertNotePath(notePath: string): string {

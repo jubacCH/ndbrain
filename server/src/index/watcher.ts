@@ -45,6 +45,13 @@ export interface WatcherOptions {
    * its name since. Called once per note per batch, before it is reindexed.
    */
   onNoteRemoved?: (owner: string, notePath: string) => void;
+  /**
+   * A note's file was reported changed and not deleted in this batch. The
+   * event cannot say whether it is the same file: a file renamed over the note,
+   * or a delete followed at once by a new file, arrive as a `change` too.
+   * Called before the note is reindexed.
+   */
+  onNoteChanged?: (owner: string, notePath: string) => Promise<void>;
   /** After a reconcile has synced one vault — for what the events missed. */
   afterSync?: (owner: string) => Promise<void>;
 }
@@ -69,6 +76,7 @@ export class VaultWatcher {
   readonly #onBatch: ((changed: Map<string, Set<string>>) => void) | undefined;
   readonly #onError: ((error: unknown) => void) | undefined;
   readonly #onNoteRemoved: ((owner: string, notePath: string) => void) | undefined;
+  readonly #onNoteChanged: ((owner: string, notePath: string) => Promise<void>) | undefined;
   readonly #afterSync: ((owner: string) => Promise<void>) | undefined;
 
   readonly #reconcileIntervalMs: number;
@@ -87,6 +95,7 @@ export class VaultWatcher {
     this.#onBatch = options.onBatch;
     this.#onError = options.onError;
     this.#onNoteRemoved = options.onNoteRemoved;
+    this.#onNoteChanged = options.onNoteChanged;
     this.#afterSync = options.afterSync;
   }
 
@@ -104,6 +113,12 @@ export class VaultWatcher {
       // note replaced by a different file would hand its grants to the stranger.
       // ndBrain's own saves are unaffected: they rename a finished temporary
       // file over the note, so the path is never missing.
+      //
+      // This only helps when the new file is slow to arrive. A delete followed
+      // at once by a new file still reaches us as one `change` on Linux and
+      // macOS alike, and a file renamed over the note never leaves the path
+      // missing at all — which is why a `change` asks `onNoteChanged` whether
+      // it is still the same file.
       atomic: false,
       ignored: (target: string) => {
         const relative = path.relative(this.#vaultsDir, target);
@@ -253,6 +268,7 @@ export class VaultWatcher {
       for (const change of batch) {
         try {
           if (change.unlinked) this.#onNoteRemoved?.(change.owner, change.notePath);
+          else if (!change.removed) await this.#onNoteChanged?.(change.owner, change.notePath);
 
           if (change.removed) {
             this.#indexer.removeNote(change.owner, change.notePath);

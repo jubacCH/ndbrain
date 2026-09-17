@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -343,6 +343,21 @@ const MIGRATIONS: Array<(db: Database) => void> = [
       UPDATE shares SET kind = CASE WHEN prefix = '' THEN 'vault' ELSE 'folder' END;
 
       CREATE INDEX shares_owner_kind ON shares (owner, kind, prefix);
+    `);
+  },
+
+  // v9 -> v10: which file a note share names.
+  //
+  // A path says where a note is, not which note it is. A file renamed over
+  // the note, or a delete followed at once by a new file, reaches the watcher
+  // as one `change` — the path was never seen missing. `bound_file` is the
+  // identity of the file the share was given for (device, inode, birth time)
+  // and `bound_hash` its content when last confirmed, so a different file
+  // under the same name is recognised as one. Empty until first confirmed.
+  (db) => {
+    db.exec(`
+      ALTER TABLE shares ADD COLUMN bound_file TEXT;
+      ALTER TABLE shares ADD COLUMN bound_hash TEXT;
     `);
   },
 ];

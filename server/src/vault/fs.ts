@@ -97,6 +97,28 @@ export class Vault {
     }
   }
 
+  /**
+   * Which file sits at a path: device, inode and birth time, or null when
+   * nothing does.
+   *
+   * The inode alone is not enough — a filesystem hands a freed inode number to
+   * the next file created, which is exactly the file that replaces a deleted
+   * note. The birth time tells those two apart. A filesystem without birth
+   * times reports zero there, which leaves the inode to decide on its own, or
+   * the change time, which moves with every write — the identity then changes
+   * more often than the file does, never less.
+   */
+  async fileIdentity(owner: string, vaultPath: string): Promise<string | null> {
+    const absolute = await this.resolve(owner, vaultPath);
+    try {
+      const stat = await fs.stat(absolute, { bigint: true });
+      if (!stat.isFile()) return null;
+      return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
+    } catch {
+      return null;
+    }
+  }
+
   async readNote(owner: string, vaultPath: string): Promise<string> {
     const absolute = await this.resolve(owner, vaultPath);
     try {
