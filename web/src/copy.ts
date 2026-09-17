@@ -156,6 +156,8 @@ export const copy = {
       `Delete ${count} notes? Earlier versions stay in the history.`,
     deleteFile: (name: string) => `Delete “${name}”? This cannot be undone.`,
     deleteNote: (name: string) => `Delete “${name}”? Earlier versions stay in the history.`,
+    /** Appended to `deleteNote` when the note has text that has not been saved yet. */
+    unsavedDropped: 'Changes not saved yet are discarded.',
     /** Appended to `deleteNote` when other notes the caller can see link to it. */
     linksWillBreak: (count: number) =>
       `${count} ${count === 1 ? 'note links' : 'notes link'} here — ${count === 1 ? 'that link' : 'those links'} will break.`,

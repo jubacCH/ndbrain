@@ -19,7 +19,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { bracketMatching, indentOnInput } from '@codemirror/language';
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import { drawSelection, EditorView, highlightActiveLine, keymap } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
 import { GFM } from '@lezer/markdown';
@@ -52,6 +52,13 @@ export interface EditorProps {
    * exactly one copy.
    */
   readOnly?: boolean;
+  /**
+   * Refuses input for a moment without rebuilding the editor — while the note
+   * is being deleted. `readOnly` cannot do this: changing it rebuilds from
+   * `initialContent` and would throw away text that has not been saved yet,
+   * which matters exactly when the delete is cancelled.
+   */
+  locked?: boolean;
   /**
    * The tags the vault allows, for `/tag`.
    *
@@ -165,6 +172,7 @@ export function Editor({
   path,
   initialContent,
   readOnly = false,
+  locked = false,
   tags = null,
   line,
   onChange,
@@ -172,6 +180,9 @@ export function Editor({
 }: EditorProps): React.JSX.Element {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
+  const lock = useRef(new Compartment());
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
 
   // Kept in a ref so that changing the callback does not rebuild the editor and
   // throw away the cursor position mid-sentence.
@@ -190,14 +201,19 @@ export function Editor({
 
     const state = EditorState.create({
       doc: initialContent,
-      extensions: noteExtensions({
-        owner,
-        path,
-        readOnly,
-        attach: () => onAttachRef.current,
-        tags: () => tagsRef.current,
-        onChange: (content) => onChangeRef.current(content),
-      }),
+      // The lock goes first: `readOnly` and `editable` take the first value
+      // given, and `noteExtensions` gives one of its own.
+      extensions: [
+        lock.current.of(lockExtension(lockedRef.current)),
+        ...noteExtensions({
+          owner,
+          path,
+          readOnly,
+          attach: () => onAttachRef.current,
+          tags: () => tagsRef.current,
+          onChange: (content) => onChangeRef.current(content),
+        }),
+      ],
     });
 
     const instance = new EditorView({ state, parent: host.current });
@@ -212,6 +228,11 @@ export function Editor({
     // which would fight the person typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner, path, readOnly]);
+
+  // Reconfigured in place, so the document and the cursor stay as they are.
+  useEffect(() => {
+    view.current?.dispatch({ effects: lock.current.reconfigure(lockExtension(locked)) });
+  }, [locked]);
 
   // Placing the cursor is a second effect rather than part of the document's
   // initial selection above: that effect only runs when the note switches, so
@@ -230,7 +251,11 @@ export function Editor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner, path, line]);
 
-  return <div className="pane" data-readonly={readOnly} ref={host} />;
+  return <div className="pane" data-readonly={readOnly} data-locked={locked} ref={host} />;
+}
+
+function lockExtension(locked: boolean): Extension {
+  return locked ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [];
 }
 
 /**
