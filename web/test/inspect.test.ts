@@ -92,6 +92,21 @@ describe('whyConnected', () => {
 });
 
 describe('summarize', () => {
+  it('reads a pathological line only as far as the summary reaches', () => {
+    for (const body of ['['.repeat(40_000), '[['.repeat(20_000), `**${'_'.repeat(40_000)}`, `${'word '.repeat(8_000)}`]) {
+      const started = performance.now();
+      const summary = summarize(`# Title\n\n${body}`);
+      const took = performance.now() - started;
+      expect(took).toBeLessThan(50);
+      expect(summary.length).toBeLessThanOrEqual(241);
+    }
+    // And many short lines in one paragraph stop early too.
+    const many = Array.from({ length: 20_000 }, () => '[x').join('\n');
+    const started = performance.now();
+    summarize(many);
+    expect(performance.now() - started).toBeLessThan(50);
+  });
+
   it('skips frontmatter, headings and the blockquote header, and returns the first paragraph', () => {
     const text = [
       '---',
