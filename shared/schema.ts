@@ -476,6 +476,11 @@ export const PutNoteRequest = z
     owner: UserId.optional(),
     /** The version the editor started from; drives conflict detection. */
     baseMtimeMs: z.number().optional(),
+    /**
+     * Create the note only if it is not there. An existing note is returned
+     * untouched with `created: false`: no write, no conflict copy.
+     */
+    ifAbsent: z.boolean().optional(),
   })
   .strict();
 

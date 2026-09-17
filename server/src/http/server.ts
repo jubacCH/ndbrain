@@ -303,7 +303,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   fastify.put('/api/v1/notes/*', async (request, reply) => {
     const { owner, path } = target(request, 'write');
     const caller = requireUser(request).id;
-    const { content, baseMtimeMs } = body(request, S.PutNoteRequest);
+    const { content, baseMtimeMs, ifAbsent } = body(request, S.PutNoteRequest);
+
+    // "Make sure it exists": the one form of this request that may never write
+    // over anything, so it does not take a base version and cannot make a copy.
+    if (ifAbsent === true) {
+      const result = await app.createNoteIfAbsent(owner, path, content, caller);
+      return reply.code(result.created ? 201 : 200).send(result);
+    }
 
     // Optional and only meaningful for a shared note: see App.putNote.
     const options = baseMtimeMs !== undefined && baseMtimeMs > 0 ? { baseMtimeMs } : {};

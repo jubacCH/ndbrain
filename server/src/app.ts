@@ -121,6 +121,22 @@ export class App {
     this.#recordEdit(owner, result.conflictCopy, 'create', actor);
   }
 
+  /**
+   * Creates a note only if nothing is there yet; see `NoteService.createNoteIfAbsent`.
+   *
+   * Indexed and logged only when it wrote. A call that found the note is a read,
+   * and recording it as a create would put a second "new note" into today's
+   * counts for every extra click on the button.
+   */
+  async createNoteIfAbsent(owner: string, notePath: string, content: string, actor?: string): Promise<PutResult> {
+    const result = await this.notes.createNoteIfAbsent(owner, notePath, content);
+    if (result.created) {
+      await this.indexer.indexNote(owner, result.note.path);
+      this.#recordEdit(owner, result.note.path, 'create', actor);
+    }
+    return result;
+  }
+
   /** Create-or-update in one call; see `NoteService.putNote` for why it is one call. */
   async putNote(
     owner: string,
