@@ -111,9 +111,21 @@ export const ActivityRow = z.object({
 
 /* ---- responses ----------------------------------------------------------- */
 
+/**
+ * An owner in the caller's view, own account first: only owners the caller
+ * holds at least one scope in, spaces without notes included.
+ */
+export const VisibleOwner = z.object({
+  id: z.string(),
+  kind: z.enum(['person', 'space']),
+  displayName: z.string(),
+});
+
 export const TreeResponse = z.object({
   notes: z.array(NoteRow),
   dirs: z.array(z.object({ owner: z.string(), path: z.string() })),
+  /** The owners of the roots above, with their kind and display name. */
+  owners: z.array(VisibleOwner),
 });
 
 export const OverviewResponse = z.object({
@@ -178,10 +190,18 @@ export const MeResponse = z.object({ user: User });
 
 export const TreeDirRow = z.object({ owner: z.string(), path: z.string() });
 
+export const ShareKind = z.enum(['vault', 'folder', 'note']);
+
 export const Share = z.object({
   id: z.string(),
   owner: z.string(),
-  /** Path prefix, `''` for the whole vault. Ends in `/` when it names a folder. */
+  /** The whole vault, one folder, or exactly one note. */
+  kind: ShareKind,
+  /**
+   * The stored region: `''` for the vault, the folder with a trailing `/`, or
+   * the note's exact path. A note share matches that path only, never a longer
+   * one that starts the same way.
+   */
   prefix: z.string(),
   grantee: z.string(),
   canWrite: z.boolean(),
@@ -396,6 +416,37 @@ export const AdminUser = z.object({
 
 export const AdminUsersResponse = z.object({ users: z.array(AdminUser) });
 
+/**
+ * A shared vault nobody signs in to. `members` counts its shares; the shares
+ * themselves come from `/admin/spaces/:id/members`.
+ */
+export const AdminSpace = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  disabled: z.boolean(),
+  noteCount: z.number(),
+  members: z.number(),
+});
+
+export const AdminSpacesResponse = z.object({ spaces: z.array(AdminSpace) });
+
+export const CreateSpaceRequest = z
+  .object({ id: UserId, displayName: z.string().min(1).max(64).optional() })
+  .strict();
+
+export const UpdateSpaceRequest = z
+  .object({ displayName: z.string().min(1).max(64).optional(), disabled: z.boolean().optional() })
+  .strict();
+
+/** The members of a space: shares whose owner is the space. */
+export const SpaceMembersResponse = z.object({ members: z.array(Share) });
+
+/** A space's folders and notes as paths and titles, for choosing what to grant. */
+export const AdminSpaceTreeResponse = z.object({
+  dirs: z.array(z.string()),
+  notes: z.array(z.object({ path: z.string(), title: z.string() })),
+});
+
 export const CreateUserRequest = z
   .object({
     id: UserId,
@@ -488,9 +539,12 @@ export const RenameNoteRequest = z
   .object({ owner: UserId.optional(), from: VaultPath, to: VaultPath })
   .strict();
 
-export const CreateFolderRequest = z.object({ path: VaultPath }).strict();
+/** `owner` names another vault — a space — under a share with write access. */
+export const CreateFolderRequest = z.object({ path: VaultPath, owner: UserId.optional() }).strict();
 
-export const RenameFolderRequest = z.object({ from: VaultPath, to: VaultPath }).strict();
+export const RenameFolderRequest = z
+  .object({ from: VaultPath, to: VaultPath, owner: UserId.optional() })
+  .strict();
 
 export const BulkRequest = z
   .object({
@@ -502,8 +556,18 @@ export const BulkRequest = z
   })
   .strict();
 
+/**
+ * `{ grantee, kind, path, canWrite }`. `prefix` without `kind` is the form
+ * sent before kinds existed and still means a folder, or the vault when empty.
+ */
 export const GrantShareRequest = z
-  .object({ grantee: UserId, prefix: z.string(), canWrite: z.boolean() })
+  .object({
+    grantee: z.string().max(64),
+    kind: ShareKind.optional(),
+    path: z.string().max(1024).optional(),
+    prefix: z.string().max(1024).optional(),
+    canWrite: z.boolean().optional(),
+  })
   .strict();
 
 export const ToggleTaskRequest = z
@@ -535,12 +599,15 @@ export type Tidy = z.infer<typeof TidyResponse>;
 export type Tasks = z.infer<typeof TasksResponse>;
 export type User = z.infer<typeof User>;
 export type Share = z.infer<typeof Share>;
+export type ShareKind = z.infer<typeof ShareKind>;
+export type VisibleOwner = z.infer<typeof VisibleOwner>;
 export type GraphData = z.infer<typeof GraphResponse>;
 export type PulseEvent = z.infer<typeof PulseEvent>;
 export type ActivityDay = z.infer<typeof ActivityDay>;
 export type FileRow = z.infer<typeof FileRow>;
 export type UserSettings = z.infer<typeof UserSettings>;
 export type AdminUser = z.infer<typeof AdminUser>;
+export type AdminSpace = z.infer<typeof AdminSpace>;
 export type ApiKey = z.infer<typeof ApiKey>;
 export type Version = z.infer<typeof Version>;
 export type TopicProposal = z.infer<typeof TopicProposal>;

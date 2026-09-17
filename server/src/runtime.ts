@@ -47,13 +47,15 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   migrate(db);
 
   const vault = new Vault(config.dataDir);
-  const notes = new NoteService(vault);
+  // Shares first: the note write path tells them, from inside its lock, when a
+  // note moves or goes, so a note share follows its note and never outlives it.
+  const shares = new ShareService(db);
+  const notes = new NoteService(vault, shares.lifecycle);
   const indexer = new Indexer(db, notes);
-  const app = new App(db, notes, indexer);
+  const app = new App(db, notes, indexer, shares);
   const users = new UserService(db, vault);
   const sessions = new SessionService(db);
   const keys = new ApiKeyService(db);
-  const shares = new ShareService(db);
   const settings = new SettingsService(db);
   const history = new History(config.dataDir);
 
@@ -86,11 +88,16 @@ export async function createRuntime(config: Config): Promise<Runtime> {
 export async function syncAllVaults(runtime: Runtime): Promise<void> {
   for (const user of runtime.users.list()) {
     await runtime.indexer.sync(user.id);
+    // Whatever disappeared while the process was down took its note shares
+    // with it; nothing that is created later may find them waiting.
+    await runtime.app.dropDanglingShares(user.id);
   }
 }
 
 export function createWatcher(runtime: Runtime): VaultWatcher {
   return new VaultWatcher(runtime.config.dataDir, runtime.indexer, {
     reconcileIntervalMs: runtime.config.reconcileIntervalMs,
+    onNoteRemoved: (owner, notePath) => runtime.app.noteVanished(owner, notePath),
+    afterSync: (owner) => runtime.app.dropDanglingShares(owner),
   });
 }

@@ -17,7 +17,7 @@
  */
 
 import type { Database, SqlValue } from '../db/database.js';
-import type { View } from '../auth/shares.js';
+import { regionSql, type View } from '../auth/shares.js';
 import { caseKey } from '../vault/paths.js';
 import { DEFAULT_SETTINGS } from '../auth/settings.js';
 import { parseConflictPath } from '../notes/service.js';
@@ -189,7 +189,7 @@ export type Viewable = string | View;
 /** Widens the shorthand. Own vault is always writable by its owner. */
 export function toView(viewable: Viewable): View {
   return typeof viewable === 'string'
-    ? [{ owner: viewable, prefix: '', canWrite: true }]
+    ? [{ owner: viewable, prefix: '', exact: false, canWrite: true }]
     : viewable;
 }
 
@@ -198,25 +198,31 @@ export function toView(viewable: Viewable): View {
  *
  * A whole-vault scope compares only the owner, so the ordinary single-user case
  * produces exactly the `owner = ?` this file used before sharing — same plan,
- * same indexes. A prefix scope adds a `substr` comparison rather than `LIKE`,
- * because `LIKE` folds ASCII case in SQLite and paths here are case-sensitive.
+ * same indexes. Every other scope adds the path condition `regionSql` writes,
+ * the SQL twin of `inScope`: a prefix for a folder, equality for a note.
  */
 function scopeSql(
   alias: string,
   pathColumn: string,
   viewable: Viewable,
+  timeColumn?: string,
 ): { sql: string; params: SqlValue[] } {
   const view = toView(viewable);
   const parts: string[] = [];
   const params: SqlValue[] = [];
 
   for (const scope of view) {
-    if (scope.prefix === '') {
+    const region = regionSql(
+      `${alias}.${pathColumn}`,
+      scope,
+      timeColumn === undefined ? undefined : `${alias}.${timeColumn}`,
+    );
+    if (region.sql === null) {
       parts.push(`${alias}.owner = ?`);
       params.push(scope.owner);
     } else {
-      parts.push(`(${alias}.owner = ? AND substr(${alias}.${pathColumn}, 1, ?) = ?)`);
-      params.push(scope.owner, scope.prefix.length, scope.prefix);
+      parts.push(`(${alias}.owner = ? AND ${region.sql})`);
+      params.push(scope.owner, ...region.params);
     }
   }
 
@@ -1230,7 +1236,9 @@ export class Queries {
    * somebody needs.
    */
   activity(view: Viewable, sinceMs: number, limit = 50): ActivityRow[] {
-    const scope = scopeSql('e', 'path', view);
+    // With the edit time: a note share reaches its path's edits only from when
+    // it came to name that path, never those of an earlier note of that name.
+    const scope = scopeSql('e', 'path', view, 'at');
     return this.#db
       .all(
         `SELECT e.owner,

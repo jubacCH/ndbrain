@@ -24,10 +24,10 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 
 import type { App, BulkResult } from '../app.js';
 import type { ApiKeyService } from '../auth/keys.js';
-import { InvalidShareError, type Need, type ShareService } from '../auth/shares.js';
+import { InvalidShareError, type Need, type Share, type ShareService } from '../auth/shares.js';
 import type { SettingsService } from '../auth/settings.js';
-import type { History } from '../vault/history.js';
-import { SessionService, UserService, type User } from '../auth/users.js';
+import type { History, Version } from '../vault/history.js';
+import { SessionService, UnknownUserError, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
 import { toProblem } from './errors.js';
@@ -174,7 +174,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     }
 
     const user = users.get(session.userId);
-    if (user === undefined || user.disabled) {
+    // A space never signs in, so a session naming one cannot be real. Refused
+    // here as well as at login: `/auth/me` and every route after it must never
+    // run as a space, however such a row came to exist.
+    if (user === undefined || user.disabled || user.kind !== 'person') {
       sessions.destroy(token ?? '');
       await reply.code(401).send({ code: 'unauthenticated', message: 'sign in first' });
       return reply;
@@ -284,7 +287,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ---- notes --------------------------------------------------------------
   fastify.get('/api/v1/tree', async (request) => {
-    return app.tree(shares.view(requireUser(request).id));
+    const caller = requireUser(request).id;
+    return {
+      ...(await app.tree(shares.view(caller))),
+      // Who the roots belong to and what to call them: a space is a root of
+      // its own, not somebody's vault.
+      owners: shares.visibleOwners(caller),
+    };
   });
 
   fastify.get('/api/v1/notes/*', async (request) => {
@@ -346,31 +355,50 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ---- folders ------------------------------------------------------------
   //
-  // Own vault only, and deliberately so. A folder operation moves everything
-  // under it, and the write-shared region a guest holds is a *part* of a vault:
-  // renaming a folder that straddles its edge would either move notes the guest
-  // may not touch or silently move only half of them. Neither is a good answer,
-  // so the question is not asked.
+  // In the caller's own vault, or in another one — a space, typically — under
+  // a share that gives write access to the folder's path. The check is the one
+  // notes go through, on the folder path itself: a write share on `Projekt/`
+  // covers `Projekt/Neu` and `Projekt/A` → `Projekt/B`, and nothing beside it.
+  // A folder operation moves everything below the folder, and everything below
+  // a path inside a folder share is inside that share, so a grantee can never
+  // move notes she was not given. A note share never covers a folder path.
+  //
+  // The folder shared itself is not renamed or removed by its grantee: its
+  // path is not *inside* the share, and letting it be would move the share's
+  // own root out from under the owner.
   fastify.post('/api/v1/folders', async (request, reply) => {
-    const owner = requireUser(request).id;
-    const { path: dir } = body(request, S.CreateFolderRequest);
+    const caller = requireUser(request).id;
+    const { path: dir, owner: named } = body(request, S.CreateFolderRequest);
+    const owner = named ?? caller;
 
     if (dir.trim() === '') {
       return reply.code(400).send({ code: 'no_path', message: 'name the folder' });
     }
+    shares.check(caller, owner, dir, 'write');
     return reply.code(201).send({ folder: await app.createFolder(owner, dir) });
   });
 
   fastify.post('/api/v1/folders/rename', async (request) => {
-    const owner = requireUser(request).id;
-    const { from, to } = body(request, S.RenameFolderRequest);
+    const caller = requireUser(request).id;
+    const { from, to, owner: named } = body(request, S.RenameFolderRequest);
+    const owner = named ?? caller;
 
-    return app.renameFolder(owner, from, to, owner);
+    // Both ends, as for a note: a folder may not be carried out of the region.
+    shares.check(caller, owner, from, 'write');
+    shares.check(caller, owner, to, 'write');
+
+    // The caller's view bounds what is reported about links, exactly as a
+    // note rename does.
+    return app.renameFolder(owner, from, to, { view: shares.view(caller), actor: caller });
   });
 
   fastify.delete('/api/v1/folders/*', async (request, reply) => {
-    const owner = requireUser(request).id;
-    await app.deleteFolder(owner, notePathOf(request));
+    const caller = requireUser(request).id;
+    const dir = notePathOf(request);
+    const owner = ownerOf(request, caller);
+
+    shares.check(caller, owner, dir, 'write');
+    await app.deleteFolder(owner, dir);
     return reply.code(204).send();
   });
 
@@ -841,18 +869,40 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * a restore is therefore just another restore, and no history is ever rewritten.
    */
 
+  /**
+   * The versions of one note the caller may see.
+   *
+   * The history belongs to a path. For a caller holding only a note share it
+   * starts when that share came to name the path — before then, the versions
+   * under this name may be another note's, one deleted or renamed away, and a
+   * share on this note is not a key to that one. A version outside the window
+   * reads exactly like one that was never there.
+   */
+  async function visibleVersions(caller: string, owner: string, path: string): Promise<Version[]> {
+    const from = shares.pastVisibleFrom(caller, owner, path);
+    return (await history.versions(owner, path)).filter((version) => version.at >= from);
+  }
+
+  async function visibleContentAt(caller: string, owner: string, path: string, version: string): Promise<string> {
+    if (!(await visibleVersions(caller, owner, path)).some((known) => known.id === version)) {
+      throw new NoteNotFoundError('no such version of this note');
+    }
+    return history.contentAt(owner, path, version);
+  }
+
   fastify.get('/api/v1/history/*', async (request) => {
     const { owner, path } = target(request, 'read');
+    const caller = requireUser(request).id;
     const query = (request.query ?? {}) as { version?: unknown };
 
     // One route, two questions: the list, or one version's text.
     if (typeof query.version === 'string' && query.version !== '') {
-      return { content: await history.contentAt(owner, path, query.version) };
+      return { content: await visibleContentAt(caller, owner, path, query.version) };
     }
 
     return {
       available: await history.available(owner),
-      versions: await history.versions(owner, path),
+      versions: await visibleVersions(caller, owner, path),
     };
   });
 
@@ -864,7 +914,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // be rolled back by the person it was lent to.
     shares.check(caller, owner, path, 'write');
 
-    const content = await history.contentAt(owner, path, version);
+    const content = await visibleContentAt(caller, owner, path, version);
     const result = await app.putNote(owner, path, content, caller);
     return { note: result.note, created: result.created };
   });
@@ -913,7 +963,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   fastify.get('/api/v1/admin/users', async (request) => {
     requireAdmin(request);
     return {
-      users: users.list().map((user) => ({
+      // People only. Spaces have their own list; shown here they would offer a
+      // password reset for an account that has no password.
+      users: users.list().filter((user) => user.kind === 'person').map((user) => ({
         id: user.id,
         displayName: user.displayName,
         role: user.role,
@@ -1012,6 +1064,106 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     requireAdmin(request);
     const { id } = request.params as { id: string };
     keys.revoke(id);
+    return reply.code(204).send();
+  });
+
+  /* ---- spaces --------------------------------------------------------------
+   *
+   * A space is a vault several people share, owned by nobody who signs in. It
+   * is an account row of kind `space` with a vault like any other, and its
+   * members are ordinary shares with the space as owner — so reading and
+   * writing in it go through exactly the checks every other share does. What
+   * is special is only who hands out those shares: an administrator, here.
+   *
+   * Every route answers a non-administrator like an unknown route, and a name
+   * that is not a space — a person included — like a space that does not
+   * exist.
+   */
+
+  /** The space named in the route, or a 404 that says nothing about the name. */
+  function requireSpace(request: FastifyRequest): User {
+    const { id } = request.params as { id: string };
+    const space = users.get(id);
+    if (space === undefined || space.kind !== 'space') throw new UnknownUserError('no such space');
+    return space;
+  }
+
+  function spaceRow(space: User): S.AdminSpace {
+    return {
+      id: space.id,
+      displayName: space.displayName,
+      disabled: space.disabled,
+      noteCount: app.queries.countNotes(space.id),
+      members: shares.byOwner(space.id).length,
+    };
+  }
+
+  fastify.get('/api/v1/admin/spaces', async (request) => {
+    requireAdmin(request);
+    return { spaces: users.list().filter((user) => user.kind === 'space').map(spaceRow) };
+  });
+
+  fastify.post('/api/v1/admin/spaces', async (request, reply) => {
+    requireAdmin(request);
+    const { id, displayName } = body(request, S.CreateSpaceRequest);
+    const space = await users.createSpace(id, displayName);
+    return reply.code(201).send(spaceRow(space));
+  });
+
+  fastify.patch('/api/v1/admin/spaces/:id', async (request) => {
+    requireAdmin(request);
+    const space = requireSpace(request);
+    const { displayName, disabled } = body(request, S.UpdateSpaceRequest);
+
+    if (displayName !== undefined) users.setDisplayName(space.id, displayName);
+    if (disabled !== undefined) users.setDisabled(space.id, disabled);
+
+    return spaceRow(requireSpace(request));
+  });
+
+  fastify.get('/api/v1/admin/spaces/:id/members', async (request) => {
+    requireAdmin(request);
+    return { members: shares.byOwner(requireSpace(request).id) };
+  });
+
+  fastify.post('/api/v1/admin/spaces/:id/members', async (request, reply) => {
+    requireAdmin(request);
+    const space = requireSpace(request);
+    const granted = await grantFromBody(space.id, request, reply);
+    if ('share' in granted) return reply.code(201).send(granted.share);
+    return granted;
+  });
+
+  /**
+   * What is in a space, as paths and titles — so an administrator can grant a
+   * folder or a note without being a member.
+   *
+   * No note text, no sizes, no dates: choosing what to share needs the shape
+   * of the space, and reading it is what membership is for.
+   */
+  fastify.get('/api/v1/admin/spaces/:id/tree', async (request) => {
+    requireAdmin(request);
+    const space = requireSpace(request);
+    const tree = await app.tree(space.id);
+    return {
+      dirs: tree.dirs.map((dir) => dir.path),
+      notes: tree.notes
+        .map((note) => ({ path: note.path, title: note.title }))
+        .sort((a, b) => a.path.localeCompare(b.path)),
+    };
+  });
+
+  fastify.delete('/api/v1/admin/spaces/:id/members/:shareId', async (request, reply) => {
+    requireAdmin(request);
+    const space = requireSpace(request);
+    const { shareId } = request.params as { shareId: string };
+    const share = shares.get(shareId);
+
+    // A share of some other vault is not this space's member, whoever asks.
+    if (share === undefined || share.owner !== space.id) {
+      return reply.code(404).send({ code: 'not_found', message: 'no such share' });
+    }
+    shares.revoke(shareId);
     return reply.code(204).send();
   });
 
@@ -1151,31 +1303,51 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return { granted: shares.byOwner(caller), received: shares.toGrantee(caller) };
   });
 
-  fastify.post('/api/v1/shares', async (request, reply) => {
-    const caller = requireUser(request).id;
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const grantee = typeof body['grantee'] === 'string' ? body['grantee'].trim() : '';
-    const prefix = typeof body['prefix'] === 'string' ? body['prefix'] : '';
+  /**
+   * Grants a share on `owner`'s vault from a request body.
+   *
+   * One implementation for a person sharing their own vault and an
+   * administrator adding a member to a space — the two differ in who may ask,
+   * never in what a grant is. Takes `{ grantee, kind, path, canWrite }`, or the
+   * `{ grantee, prefix, canWrite }` every client sent before kinds existed.
+   */
+  async function grantFromBody(
+    owner: string,
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<FastifyReply | { share: Share }> {
+    const input = body(request, S.GrantShareRequest);
+    const grantee = input.grantee.trim();
 
     if (grantee === '') {
       return reply.code(400).send({ code: 'no_grantee', message: 'name somebody to share with' });
     }
-    if (users.get(grantee) === undefined) {
-      // Named accounts only, and the caller already knows who they typed, so
-      // there is no oracle here to protect.
+    // A space is not somebody to share with, and it answers exactly like a
+    // name that does not exist: whether a space of that name exists is not the
+    // caller's to learn from this form.
+    const recipient = users.get(grantee);
+    if (recipient === undefined || recipient.kind !== 'person') {
       return reply.code(404).send({ code: 'no_such_user', message: 'no such account' });
     }
 
+    const target =
+      input.kind === undefined ? (input.prefix ?? input.path ?? '') : { kind: input.kind, path: input.path ?? input.prefix ?? '' };
+
     try {
-      // Only ever grants access to the caller's *own* vault: a share the caller
-      // holds is not theirs to pass on.
-      return { share: shares.grant(caller, prefix, grantee, body['canWrite'] === true) };
+      return { share: await app.grantShare(owner, grantee, target, input.canWrite === true) };
     } catch (error) {
       if (error instanceof InvalidShareError) {
         return reply.code(400).send({ code: 'invalid_share', message: error.message });
       }
       throw error;
     }
+  }
+
+  fastify.post('/api/v1/shares', async (request, reply) => {
+    // Only ever grants access to the caller's *own* vault: a share the caller
+    // holds is not theirs to pass on. A note share must name a note that is
+    // there, in that vault — a note of somebody else's answers as missing.
+    return grantFromBody(requireUser(request).id, request, reply);
   });
 
   fastify.delete('/api/v1/shares/:id', async (request, reply) => {
