@@ -315,6 +315,22 @@ export const invalidate = {
     void client.invalidateQueries({ queryKey: keys.tags });
     void client.invalidateQueries({ queryKey: keys.topics });
   },
+
+  /**
+   * A note went away. Everything that lists notes, as for any structural
+   * change, and more besides: its open tasks leave the task list, every link
+   * that pointed at it is now dead (the neighbours' link lists say so), and
+   * what was cached about the note itself is dropped rather than marked stale —
+   * nothing should render it again, and a stale entry is exactly what would.
+   */
+  afterDelete: (client: QueryClient, owner: string, path: string): void => {
+    invalidate.afterStructure(client);
+    void client.invalidateQueries({ queryKey: ['tasks'] });
+    void client.invalidateQueries({ queryKey: ['links'] });
+    client.removeQueries({ queryKey: keys.note(owner, path), exact: true });
+    client.removeQueries({ queryKey: keys.history(owner, path), exact: true });
+    client.removeQueries({ queryKey: ['inspector-note', owner, path], exact: true });
+  },
 };
 
 /** Saves a note, then marks exactly what that could have changed. */

@@ -35,7 +35,8 @@ import { copy } from './copy';
 
 import { refKey, type NoteRow, type Share } from './api';
 import { loadOpenFolders, saveOpenFolders } from './accountStorage';
-import { ChevronIcon, FileIcon, FolderIcon } from './icons';
+import { ChevronIcon, FileIcon, FolderIcon, TrashIcon } from './icons';
+import { mayChange } from './rights';
 
 export type Finding = 'crit' | 'warn';
 
@@ -84,6 +85,18 @@ export interface TreeProps {
    * straddles its edge has no good answer, so it is not offered.
    */
   onRenameFolder: (path: string) => void;
+  /**
+   * Deletes a note, after the shell has asked. Offered on every note the caller
+   * may change (`rights.ts`) — as a button at the end of the row, and as the
+   * Delete key on a focused row — and on no other.
+   */
+  onDeleteNote?: (owner: string, path: string, title: string) => void;
+  /**
+   * A note to show without opening it: the folders above it open, the row is
+   * marked and scrolled into view. `seq` makes a second request for the same
+   * note scroll again, after the tree has been scrolled away from it.
+   */
+  revealed?: { owner: string; path: string; seq: number } | null;
   /** Offered on the first-run empty state only. */
   onCreateFirst?: () => void;
 }
@@ -171,7 +184,10 @@ function ancestors(owner: string, path: string): string[] {
  * manager: up and down move, right opens a folder or steps into it, left closes
  * it or steps out to the parent, Home and End jump to the ends.
  */
-function useTreeKeys(container: React.RefObject<HTMLDivElement | null>) {
+function useTreeKeys(
+  container: React.RefObject<HTMLDivElement | null>,
+  onDelete: ((row: HTMLElement) => void) | undefined,
+) {
   const rows = (): HTMLButtonElement[] =>
     [...(container.current?.querySelectorAll<HTMLButtonElement>('button.node') ?? [])];
 
@@ -238,6 +254,16 @@ function useTreeKeys(container: React.RefObject<HTMLDivElement | null>) {
         all[all.length - 1]?.focus();
         break;
       }
+      // Delete, or ⌘⌫ as in the Finder. Only on a note row the caller may
+      // change: that row carries the attribute, a folder or a read-only note
+      // does not, and the key does nothing there.
+      case 'Delete':
+      case 'Backspace':
+        if (event.key === 'Backspace' && !event.metaKey) break;
+        if (onDelete === undefined || !target.hasAttribute('data-deletable')) break;
+        event.preventDefault();
+        onDelete(target);
+        break;
       default:
     }
   };
@@ -253,10 +279,22 @@ export function Tree({
   hidePrefixes,
   onSelect,
   onRenameFolder,
+  onDeleteNote,
+  revealed = null,
   onCreateFirst,
 }: TreeProps): React.JSX.Element {
   const box = useRef<HTMLDivElement>(null);
-  const onKeyDown = useTreeKeys(box);
+  const onKeyDown = useTreeKeys(
+    box,
+    onDeleteNote === undefined
+      ? undefined
+      : (row) => {
+          const owner = row.getAttribute('data-owner');
+          const path = row.getAttribute('data-path');
+          const note = notes.find((n) => n.owner === owner && n.path === path);
+          if (note !== undefined) onDeleteNote(note.owner, note.path, note.title);
+        },
+  );
 
   const vaults = useMemo(() => {
     const byOwner = new Map<string, NoteRow[]>();
@@ -303,6 +341,31 @@ export function Tree({
     });
   }, [selected]);
 
+  // Showing a note from elsewhere — the inspector's "Show in tree" — opens the
+  // same way, without touching the selection: nothing is opened.
+  useEffect(() => {
+    if (revealed === null) return;
+    const needed = ancestors(revealed.owner, revealed.path);
+    setOpen((previous) => {
+      if (needed.every((key) => previous.has(key))) return previous;
+      const next = new Set(previous);
+      for (const key of needed) next.add(key);
+      return next;
+    });
+  }, [revealed]);
+
+  // Scrolled to once the row exists, which is after the folders above it have
+  // rendered open — hence keyed on `open` as well, and once per request.
+  const scrolled = useRef<number | null>(null);
+  useEffect(() => {
+    if (revealed === null || scrolled.current === revealed.seq) return;
+    const row = box.current?.querySelector<HTMLElement>('[data-revealed="true"]');
+    if (row === null || row === undefined) return;
+    scrolled.current = revealed.seq;
+    // Absent in some test environments; a tree that cannot scroll still opens.
+    if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [revealed, open]);
+
   const toggle = (key: string): void => {
     setOpen((previous) => {
       const next = new Set(previous);
@@ -316,21 +379,44 @@ export function Tree({
     const key = refKey(note.owner, note.path);
     const finding = findings.get(key);
     const where = displayPath(note.path, hidePrefixes);
+    const deletable = onDeleteNote !== undefined && mayChange(self, received, note.owner, note.path);
+    const isRevealed = revealed !== null && revealed.owner === note.owner && revealed.path === note.path;
     return (
       <li key={`f:${key}`}>
-        <button
-          type="button"
-          className={showPath ? 'node node-hit' : 'node'}
-          tabIndex={seatOf()}
-          aria-current={selected !== null && selected.owner === note.owner && selected.path === note.path}
-          onClick={() => onSelect(note.owner, note.path)}
-        >
-          {finding !== undefined && <span className={`st st-${finding}`} />}
-          {!showPath && <span className="tw" />}
-          {!showPath && <FileIcon size={15} className="node-icon" />}
-          <span className="nm">{note.title}</span>
-          {showPath && where !== '' && <span className="where">{where}</span>}
-        </button>
+        <div className="node-row">
+          <button
+            type="button"
+            className={showPath ? 'node node-hit' : 'node'}
+            tabIndex={seatOf()}
+            aria-current={selected !== null && selected.owner === note.owner && selected.path === note.path}
+            data-owner={note.owner}
+            data-path={note.path}
+            data-deletable={deletable ? '' : undefined}
+            data-revealed={isRevealed ? 'true' : undefined}
+            aria-keyshortcuts={deletable ? 'Delete Meta+Backspace' : undefined}
+            onClick={() => onSelect(note.owner, note.path)}
+          >
+            {finding !== undefined && <span className={`st st-${finding}`} />}
+            {!showPath && <span className="tw" />}
+            {!showPath && <FileIcon size={15} className="node-icon" />}
+            <span className="nm">{note.title}</span>
+            {showPath && where !== '' && <span className="where">{where}</span>}
+          </button>
+          {/* Out of the tab order, like every row but one: the keyboard reaches
+              it as the Delete key on the row, which the title names. */}
+          {deletable && (
+            <button
+              type="button"
+              className="node-act node-del"
+              tabIndex={-1}
+              title={copy.tree.deleteNote(note.title)}
+              aria-label={copy.tree.deleteNoteLabel(note.title)}
+              onClick={() => onDeleteNote?.(note.owner, note.path, note.title)}
+            >
+              <TrashIcon size={14} />
+            </button>
+          )}
+        </div>
       </li>
     );
   };

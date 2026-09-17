@@ -128,6 +128,9 @@ export const copy = {
     neighbourhood: 'Neighbourhood',
     wholeNetwork: 'whole network',
     showWholeNetwork: 'Show the whole network',
+    /** The menu beside the save state in the header of an open note. */
+    actions: 'Note actions',
+    delete: 'Delete…',
     /** Around the link syntax, which is shown as code. */
     noLinksYet: { before: 'No links yet. Type ', after: ' in the text to connect this note.' },
     linkSyntax: '[[',
@@ -153,6 +156,9 @@ export const copy = {
       `Delete ${count} notes? Earlier versions stay in the history.`,
     deleteFile: (name: string) => `Delete “${name}”? This cannot be undone.`,
     deleteNote: (name: string) => `Delete “${name}”? Earlier versions stay in the history.`,
+    /** Appended to `deleteNote` when other notes the caller can see link to it. */
+    linksWillBreak: (count: number) =>
+      `${count} ${count === 1 ? 'note links' : 'notes link'} here — ${count === 1 ? 'that link' : 'those links'} will break.`,
     revokeShare: (what: string) => `Stop sharing ${what}?`,
   },
 
@@ -169,6 +175,7 @@ export const copy = {
     revokeFailed: 'Could not withdraw that.',
     replaceFailed: 'Could not replace that file.',
     deleteFileFailed: 'Could not delete that file.',
+    deleteNoteFailed: 'Could not delete that note.',
     importFailed: (count: number, first: string) => `Could not import ${count}: ${first}`,
     /**
      * The one that was half-translated. Whole here, so it cannot happen again.
@@ -329,6 +336,8 @@ export const copy = {
     noMatch: 'No match.',
     renameFolder: (name: string) => `Rename or move “${name}”`,
     renameFolderLabel: (name: string) => `Rename ${name}`,
+    deleteNote: (name: string) => `Delete “${name}” (Delete key)`,
+    deleteNoteLabel: (name: string) => `Delete ${name}`,
   },
 
   context: {
@@ -659,13 +668,10 @@ export const copy = {
     changed: 'Changed',
     open: 'Open',
     reveal: 'Show in tree',
+    delete: 'Delete…',
   },
   /** The start page: where to pick up, what happened today, how the vault is doing. */
   home: {
-    summary: (notes: number, attention: number) =>
-      `${notes} ${notes === 1 ? 'note' : 'notes'} · ` +
-      (attention === 0 ? 'nothing needs attention' : `${attention} need attention`),
-
     continue: 'Continue',
     opened: 'Opened lately',
     edited: 'Edited lately',
