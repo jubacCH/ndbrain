@@ -13,10 +13,12 @@
  * region names clear of them, so the switcher never ends up printed over a name.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { GraphData, PulseEvent } from './api';
 import { Brain } from './Brain';
+import { Inspector } from './Inspector';
+import { indexGraph } from './inspect';
 import { RECENT_DAYS } from './brain/scene';
 import { copy } from './copy';
 import { BrainIcon, ExpandIcon, ListIcon, MapIcon, NetworkIcon, ShrinkIcon } from './icons';
@@ -51,6 +53,7 @@ export function NetworkFrame({
   onView,
   onOpen,
   onFullscreen,
+  onReveal,
   hidePrefixes = true,
 }: {
   graph: GraphData;
@@ -69,11 +72,36 @@ export function NetworkFrame({
    * to step out before opening something that lives outside.
    */
   onFullscreen?: (frame: FullscreenFrame | null) => void;
+  /**
+   * Shows a note in the sidebar's tree without opening it. The inspector
+   * offers "Show in tree" only when the shell passes this.
+   */
+  onReveal?: (owner: string, path: string) => void;
   /** Show folder names without their sort prefixes, as the tree does. */
   hidePrefixes?: boolean;
 }): React.JSX.Element {
   const frame = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(false);
+  /**
+   * The focused note in the brain, by key, or null.
+   *
+   * Held here rather than in the canvas because two things show it: the brain,
+   * which frames it, and the inspector, which describes it and can move the
+   * focus on to a neighbour.
+   */
+  const [picked, setPicked] = useState<string | null>(null);
+  const index = useMemo(() => indexGraph(graph), [graph]);
+
+  // Another view has no canvas to hold the focus; coming back starts without one.
+  useEffect(() => {
+    if (view !== 'graph') setPicked(null);
+  }, [view]);
+
+  /** Ends the focus from the inspector, and hands the keyboard back to the canvas. */
+  const pick = useCallback((key: string | null): void => {
+    setPicked(key);
+    if (key === null) frame.current?.querySelector<HTMLCanvasElement>('canvas.brain')?.focus();
+  }, []);
 
   // Full screen can end without this button — Escape, the browser's own
   // control — so the state follows the document rather than the click.
@@ -182,7 +210,20 @@ export function NetworkFrame({
             view="network"
             arrangement="brain"
             inset={NETWORK_INSET}
+            focus={{ picked, onPick: setPicked }}
           />
+          {/* Right after the canvas, so Tab from a focused note reaches the
+              inspector before the controls. A sibling of the canvas, so the
+              region names keep clear of it (`brain/blocked.ts`). */}
+          {picked !== null && index.nodes.has(picked) && (
+            <Inspector
+              index={index}
+              picked={picked}
+              onPick={pick}
+              onOpen={onOpen}
+              onReveal={onReveal}
+            />
+          )}
           {controls}
           {/* The legend, where the reference has its motto: along the bottom,
               one line. Colours from the renderer's palette, which is not a

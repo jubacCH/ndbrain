@@ -623,6 +623,43 @@ export const copy = {
     reload: 'Reload',
     whatWentWrong: 'What went wrong',
   },
+
+  /* The card beside a focused note in the brain — see `web/src/Inspector.tsx`.
+     Everything it says is read off the vault's structure and the note's own
+     text; nothing here is generated. */
+  inspector: {
+    label: (title: string) => `About ${title}`,
+    close: 'Close',
+    type: 'Type',
+    edited: 'Last edited',
+    tags: 'Tags',
+    noTags: 'none',
+    summary: 'Summary',
+    summaryLoading: 'Reading the note…',
+    summaryEmpty: 'No text beyond headings and links yet.',
+    connected: 'Connected',
+    linksTo: 'Links to',
+    linkedFrom: 'Linked from',
+    noLinks: 'Not linked to any note yet.',
+    showAll: (count: number) => `Show all ${count}`,
+    showFewer: 'Show fewer',
+    focus: (title: string) => `Focus ${title}`,
+    why: 'Why?',
+    whyLabel: (title: string) => `Why is ${title} connected?`,
+    reason: {
+      outgoing: 'direct link',
+      incoming: 'direct link back',
+      both: 'linked both ways',
+      sameFolder: 'same folder',
+      underFolder: 'both in',
+      tags: (count: number) => `${count} shared ${count === 1 ? 'tag' : 'tags'}`,
+      neighbours: (count: number) => `${count} shared ${count === 1 ? 'neighbour' : 'neighbours'}`,
+    },
+    activity: 'Activity',
+    changed: 'Changed',
+    open: 'Open',
+    reveal: 'Show in tree',
+  },
 } as const;
 
 /**
