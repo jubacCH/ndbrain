@@ -10,6 +10,7 @@
 
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { copy } from './copy';
+import { ownerLabel, useOwners } from './owners';
 import { HealthHeader, healthLabel } from './Health';
 import type { HealthKey } from './healthScore';
 
@@ -557,6 +558,7 @@ export function SearchView({
   /** The field belongs to this view, since the header no longer carries one. */
   onQuery: (value: string) => void;
 }): React.JSX.Element {
+  const owners = useOwners();
   const active =
     filters.tag !== undefined ||
     filters.dir !== undefined ||
@@ -682,7 +684,7 @@ export function SearchView({
           <span className="path">
             {/* Search spans the shares, so a result can come from a vault that is
                 not yours. Without the label, the path alone reads as your own. */}
-            {hit.owner !== self && <span className="pill p-info">{hit.owner}</span>}
+            {hit.owner !== self && <span className="pill p-info">{ownerLabel(owners, hit.owner)}</span>}
             {hit.path}
           </span>
           {hit.snippet !== '' && <span className="snip">{hit.snippet}</span>}
@@ -720,6 +722,7 @@ export function SharesView({
   onGrant: (grantee: string, prefix: string, canWrite: boolean) => void;
   onRevoke: (share: Share) => void;
 }): React.JSX.Element {
+  const owners = useOwners();
   const [grantee, setGrantee] = useState('');
   const [prefix, setPrefix] = useState('');
   const [canWrite, setCanWrite] = useState(false);
@@ -809,7 +812,14 @@ export function SharesView({
         ) : (
           // The grantee may end it too. A share you cannot get out of is a folder
           // somebody else can put things in your view forever.
-          <ShareTable shares={received} column="Vault von" nameOf={(share) => share.owner} busy={busy} onRevoke={onRevoke} verb="Ablehnen" />
+          <ShareTable
+            shares={received}
+            column={copy.shares.vaultOf}
+            nameOf={(share) => ownerLabel(owners, share.owner)}
+            busy={busy}
+            onRevoke={onRevoke}
+            verb={copy.shares.decline}
+          />
         )}
       </section>
     </div>
