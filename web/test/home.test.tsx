@@ -256,7 +256,7 @@ function tidy(): Tidy {
   };
 }
 
-function renderTidy(props: Partial<Parameters<typeof TidyView>[0]> = {}) {
+function renderTidy(props: Partial<Parameters<typeof TidyView>[0]> = {}, withHealth = true) {
   const handlers = { onToggle: vi.fn(), onToggleAll: vi.fn(), onOpen: vi.fn(), onBulk: vi.fn() };
   render(
     <TidyView
@@ -265,7 +265,7 @@ function renderTidy(props: Partial<Parameters<typeof TidyView>[0]> = {}) {
       busy={false}
       tags={[]}
       dirs={[]}
-      health={{ notes: 10, tagsInUse: true }}
+      {...(withHealth ? { health: { notes: 10, tagsInUse: true } } : {})}
       {...handlers}
       {...props}
     />,
@@ -306,7 +306,7 @@ describe('the health head of Tidy up', () => {
   });
 
   it('shows no head without the note count, as before', () => {
-    renderTidy({ health: undefined });
+    renderTidy({}, false);
     expect(screen.queryByText(copy.health.title)).toBeNull();
   });
 });
