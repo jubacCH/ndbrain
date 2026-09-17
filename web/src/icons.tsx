@@ -310,6 +310,29 @@ export function TrashIcon(props: IconProps): React.JSX.Element {
   );
 }
 
+/** Two people under one roof: a space, a vault several people keep together. */
+export function SpaceIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M2.8 8.6 10 3.2l7.2 5.4" />
+      <circle cx="7.3" cy="10.4" r="1.7" />
+      <circle cx="12.7" cy="10.4" r="1.7" />
+      <path d="M4.3 16.6a3 3 0 0 1 6 0M9.7 16.6a3 3 0 0 1 6 0" />
+    </Svg>
+  );
+}
+
+/** A strongbox: a whole vault, everything in it. */
+export function VaultIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="3.5" width="14" height="12.5" rx="1.5" />
+      <circle cx="10" cy="9.75" r="2.6" />
+      <path d="M10 7.15v1.1M5.5 16v1.2M14.5 16v1.2" />
+    </Svg>
+  );
+}
+
 /** Three points in a row: a menu of actions on one thing. */
 export function MoreIcon(props: IconProps): React.JSX.Element {
   return (
