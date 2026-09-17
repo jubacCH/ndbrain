@@ -1240,6 +1240,12 @@ function Shell({
     if (next === 'files') await refreshFiles();
     if (next === 'tidy') await refreshTree();
     if (next === 'shares') await refreshShares();
+    // The graph is fetched only while a view draws it, so arriving from home
+    // (or anywhere else) used to show a frame of "loading" between the page
+    // that was there and the brain. Waiting for it here keeps the old page on
+    // screen until the brain can take its place; a fresh answer in the cache
+    // costs nothing.
+    if (next === 'brain') await client.prefetchQuery({ queryKey: keys.graph, queryFn: () => api.graph(), staleTime: 30_000 });
     setView(next);
   };
 
