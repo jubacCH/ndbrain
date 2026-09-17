@@ -62,7 +62,7 @@ describe('renaming a folder', () => {
   });
 
   it('carries the notes and rewrites the links that pointed into it', async () => {
-    const result = await runtime.app.renameFolder('julian', 'Homelab', 'Infrastruktur', 'julian');
+    const result = await runtime.app.renameFolder('julian', 'Homelab', 'Infrastruktur', { view: 'julian', actor: 'julian' });
 
     expect(result.movedNotes).toContain('Infrastruktur/Proxmox.md');
     expect(result.movedNotes).toContain('Infrastruktur/Netz/VLANs.md');
@@ -78,7 +78,7 @@ describe('renaming a folder', () => {
   });
 
   it('takes empty subfolders with it instead of flattening the structure', async () => {
-    await runtime.app.renameFolder('julian', 'Homelab', 'Infrastruktur', 'julian');
+    await runtime.app.renameFolder('julian', 'Homelab', 'Infrastruktur', { view: 'julian', actor: 'julian' });
     const dirs = await runtime.app.notes.listDirs('julian');
 
     expect(dirs).toContain('Infrastruktur/Leer');
@@ -86,7 +86,7 @@ describe('renaming a folder', () => {
   });
 
   it('handles a pure change of letter case', async () => {
-    await runtime.app.renameFolder('julian', 'Homelab', 'homelab', 'julian');
+    await runtime.app.renameFolder('julian', 'Homelab', 'homelab', { view: 'julian', actor: 'julian' });
 
     const paths = (await runtime.app.notes.listNotes('julian')).map((n) => n.path).sort();
     expect(paths).toContain('homelab/Proxmox.md');
@@ -97,19 +97,19 @@ describe('renaming a folder', () => {
 
   it('refuses to move a folder inside itself', async () => {
     await expect(
-      runtime.app.renameFolder('julian', 'Homelab', 'Homelab/Unterordner', 'julian'),
+      runtime.app.renameFolder('julian', 'Homelab', 'Homelab/Unterordner', { view: 'julian', actor: 'julian' }),
     ).rejects.toThrow(InvalidPathError);
   });
 
   it('refuses a folder that is not there', async () => {
-    await expect(runtime.app.renameFolder('julian', 'GibtEsNicht', 'Neu', 'julian')).rejects.toThrow(
+    await expect(runtime.app.renameFolder('julian', 'GibtEsNicht', 'Neu', { view: 'julian', actor: 'julian' })).rejects.toThrow(
       NoteNotFoundError,
     );
   });
 
   it('moves a folder into another folder', async () => {
     await runtime.app.createFolder('julian', 'Archiv');
-    await runtime.app.renameFolder('julian', 'Homelab', 'Archiv/Homelab', 'julian');
+    await runtime.app.renameFolder('julian', 'Homelab', 'Archiv/Homelab', { view: 'julian', actor: 'julian' });
 
     const paths = (await runtime.app.notes.listNotes('julian')).map((n) => n.path);
     expect(paths).toContain('Archiv/Homelab/Proxmox.md');
@@ -147,7 +147,7 @@ describe('the tenant boundary still holds', () => {
       InvalidPathError,
     );
     await expect(
-      runtime.app.renameFolder('julian', '../ramona/Privat', 'Geklaut', 'julian'),
+      runtime.app.renameFolder('julian', '../ramona/Privat', 'Geklaut', { view: 'julian', actor: 'julian' }),
     ).rejects.toThrow(InvalidPathError);
 
     expect((await runtime.app.notes.listNotes('ramona')).map((n) => n.path)).toEqual([

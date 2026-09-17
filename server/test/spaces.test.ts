@@ -117,7 +117,9 @@ describe('administering spaces', () => {
     await fs.access(path.join(h.dataDir, 'vaults', 'familie'));
 
     const list = await h.as('admin', { url: '/api/v1/admin/spaces' });
-    expect(list.body).toEqual([{ id: 'familie', displayName: 'Familie', disabled: false, noteCount: 0, members: 0 }]);
+    expect(list.body).toEqual({
+      spaces: [{ id: 'familie', displayName: 'Familie', disabled: false, noteCount: 0, members: 0 }],
+    });
 
     const users = await h.as('admin', { url: '/api/v1/admin/users' });
     expect(users.body.users.map((user: { id: string }) => user.id)).toEqual(['admin', 'julian', 'ramona']);
@@ -182,7 +184,7 @@ describe('administering spaces', () => {
 
     const members = await h.as('admin', { url: '/api/v1/admin/spaces/familie/members' });
     expect(
-      members.body.map((share: any) => ({ kind: share.kind, path: share.path, grantee: share.grantee, canWrite: share.canWrite })),
+      members.body.members.map((share: any) => ({ kind: share.kind, path: share.path, grantee: share.grantee, canWrite: share.canWrite })),
     ).toEqual([
       { kind: 'vault', path: '', grantee: 'julian', canWrite: true },
       { kind: 'folder', path: 'Ferien', grantee: 'ramona', canWrite: false },
@@ -190,11 +192,13 @@ describe('administering spaces', () => {
     ]);
 
     const list = await h.as('admin', { url: '/api/v1/admin/spaces' });
-    expect(list.body[0]).toMatchObject({ noteCount: 1, members: 3 });
+    expect(list.body.spaces[0]).toMatchObject({ noteCount: 1, members: 3 });
+    expect(note.body).toMatchObject({ kind: 'note', prefix: 'Ferien/Packliste.md', grantee: 'ramona', canWrite: true });
+    expect(members.body.members[0]).toEqual(vault.body);
 
     const removed = await h.as('admin', {
       method: 'DELETE',
-      url: `/api/v1/admin/spaces/familie/members/${folder.body.share.id}`,
+      url: `/api/v1/admin/spaces/familie/members/${folder.body.id}`,
     });
     expect(removed.status).toBe(204);
     expect(h.runtime.shares.byOwner('familie')).toHaveLength(2);
@@ -253,7 +257,9 @@ describe('members', () => {
     ]);
 
     const shares = await h.as('ramona', { url: '/api/v1/shares' });
-    expect(shares.body.owners).toContainEqual({ id: 'familie', kind: 'space', displayName: 'Familie' });
+    expect(shares.body.received.map((share: any) => ({ owner: share.owner, kind: share.kind, prefix: share.prefix }))).toEqual([
+      { owner: 'familie', kind: 'folder', prefix: 'Ferien/' },
+    ]);
     const search = await h.as('ramona', { url: '/api/v1/search?q=Sonnencreme' });
     expect(search.body.hits.map((hit: any) => hit.path)).toEqual(['Ferien/Packliste.md']);
   });

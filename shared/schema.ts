@@ -111,13 +111,21 @@ export const ActivityRow = z.object({
 
 /* ---- responses ----------------------------------------------------------- */
 
+/**
+ * An owner in the caller's view, own account first: only owners the caller
+ * holds at least one scope in, spaces without notes included.
+ */
+export const VisibleOwner = z.object({
+  id: z.string(),
+  kind: z.enum(['person', 'space']),
+  displayName: z.string(),
+});
+
 export const TreeResponse = z.object({
   notes: z.array(NoteRow),
   dirs: z.array(z.object({ owner: z.string(), path: z.string() })),
   /** The owners of the roots above, with their kind and display name. */
-  owners: z.array(
-    z.object({ id: z.string(), kind: z.enum(['person', 'space']), displayName: z.string() }),
-  ),
+  owners: z.array(VisibleOwner),
 });
 
 export const OverviewResponse = z.object({
@@ -202,17 +210,9 @@ export const Share = z.object({
   createdAt: Timestamp,
 });
 
-/** An owner whose notes the caller can see, own account first. */
-export const VisibleOwner = z.object({
-  id: z.string(),
-  kind: z.enum(['person', 'space']),
-  displayName: z.string(),
-});
-
 export const SharesResponse = z.object({
   granted: z.array(Share),
   received: z.array(Share),
-  owners: z.array(VisibleOwner),
 });
 
 export const GraphResponse = z.object({
@@ -430,8 +430,7 @@ export const AdminSpace = z.object({
   members: z.number(),
 });
 
-/** A bare list, as the contract names it. */
-export const AdminSpacesResponse = z.array(AdminSpace);
+export const AdminSpacesResponse = z.object({ spaces: z.array(AdminSpace) });
 
 export const CreateSpaceRequest = z
   .object({ id: UserId, displayName: z.string().min(1).max(64).optional() })
@@ -442,7 +441,13 @@ export const UpdateSpaceRequest = z
   .strict();
 
 /** The members of a space: shares whose owner is the space. */
-export const SpaceMembersResponse = z.array(Share);
+export const SpaceMembersResponse = z.object({ members: z.array(Share) });
+
+/** A space's folders and notes as paths and titles, for choosing what to grant. */
+export const AdminSpaceTreeResponse = z.object({
+  dirs: z.array(z.string()),
+  notes: z.array(z.object({ path: z.string(), title: z.string() })),
+});
 
 export const CreateUserRequest = z
   .object({
@@ -536,9 +541,12 @@ export const RenameNoteRequest = z
   .object({ owner: UserId.optional(), from: VaultPath, to: VaultPath })
   .strict();
 
-export const CreateFolderRequest = z.object({ path: VaultPath }).strict();
+/** `owner` names another vault — a space — under a share with write access. */
+export const CreateFolderRequest = z.object({ path: VaultPath, owner: UserId.optional() }).strict();
 
-export const RenameFolderRequest = z.object({ from: VaultPath, to: VaultPath }).strict();
+export const RenameFolderRequest = z
+  .object({ from: VaultPath, to: VaultPath, owner: UserId.optional() })
+  .strict();
 
 export const BulkRequest = z
   .object({

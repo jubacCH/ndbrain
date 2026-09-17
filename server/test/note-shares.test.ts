@@ -212,6 +212,21 @@ async function surface(): Promise<Record<string, { status: number; raw: string }
     dir: 'Projekt',
   });
   await send('folder of the owner', 'POST', '/api/v1/folders/rename', { from: 'Projekt', to: 'Anders' });
+  await send('folder create beside', 'POST', '/api/v1/folders', { owner: 'julian', path: 'Projekt/Neu' });
+  await send('folder create under', 'POST', '/api/v1/folders', { owner: 'julian', path: 'Projekt/Plan.md/Neu' });
+  await send('folder rename beside', 'POST', '/api/v1/folders/rename', {
+    owner: 'julian',
+    from: 'Projekt/Leer',
+    to: 'Projekt/Voll',
+  });
+  await send('folder rename parent', 'POST', '/api/v1/folders/rename', {
+    owner: 'julian',
+    from: 'Projekt',
+    to: 'Projekt2',
+  });
+  await send('folder delete beside', 'DELETE', '/api/v1/folders/Projekt/Leer?owner=julian');
+  await send('folder delete parent', 'DELETE', '/api/v1/folders/Projekt?owner=julian');
+  await get('admin tree', '/api/v1/admin/spaces/julian/tree');
 
   await tool('vault_map', {});
   await tool('search_notes', { query: 'Qdevice' });
@@ -244,7 +259,8 @@ describe('a share on one note', () => {
 
     const listed = await h.as('ramona', { url: '/api/v1/shares' });
     expect(listed.body.received).toEqual([granted.body.share]);
-    expect(listed.body.owners).toEqual([
+    const tree = await h.as('ramona', { url: '/api/v1/tree' });
+    expect(tree.body.owners).toEqual([
       { id: 'ramona', kind: 'person', displayName: 'ramona' },
       { id: 'julian', kind: 'person', displayName: 'julian' },
     ]);
