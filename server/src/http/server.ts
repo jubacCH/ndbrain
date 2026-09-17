@@ -461,6 +461,28 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     };
   });
 
+  /**
+   * The caller's own activity per day, for the home view's "today" and its
+   * two-week trace.
+   *
+   * `bounds` is a comma-separated list of ascending timestamps — the client's
+   * local midnights; n + 1 of them make n days. Own vault only, like the pulse:
+   * an `owner` in the query is not read at all, so asking about somebody else
+   * answers exactly what asking about nobody does.
+   */
+  fastify.get('/api/v1/activity/days', async (request, reply) => {
+    const owner = requireUser(request).id;
+    const query = (request.query ?? {}) as { bounds?: unknown };
+    const bounds = parseDayBounds(query.bounds);
+    if (bounds === null) {
+      return reply.code(400).send({
+        code: 'bad_bounds',
+        message: `bounds must be 2 to ${MAX_DAY_BOUNDS} ascending timestamps, comma-separated`,
+      });
+    }
+    return { days: app.queries.dailyActivity(owner, bounds) };
+  });
+
   fastify.get('/api/v1/tags', async (request) => {
     return { tags: app.queries.tagCounts(shares.view(requireUser(request).id)) };
   });
@@ -1220,6 +1242,31 @@ function decodeOnce(value: string): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+/** A month and a day of boundaries: enough for any trace a view draws. */
+export const MAX_DAY_BOUNDS = 32;
+
+/**
+ * Reads `bounds` for the per-day activity: 2 to `MAX_DAY_BOUNDS` whole,
+ * non-negative, strictly ascending timestamps. Anything else is `null` rather
+ * than a guess — a silently repaired boundary would count a day's edits into
+ * its neighbour.
+ */
+export function parseDayBounds(raw: unknown): number[] | null {
+  if (typeof raw !== 'string' || raw === '') return null;
+  const parts = raw.split(',');
+  if (parts.length < 2 || parts.length > MAX_DAY_BOUNDS) return null;
+
+  const bounds: number[] = [];
+  for (const part of parts) {
+    if (!/^\d{1,16}$/.test(part)) return null;
+    const value = Number(part);
+    const previous = bounds[bounds.length - 1];
+    if (!Number.isSafeInteger(value) || (previous !== undefined && value <= previous)) return null;
+    bounds.push(value);
+  }
+  return bounds;
 }
 
 export function replyProblem(reply: FastifyReply, error: unknown): FastifyReply {
