@@ -134,6 +134,38 @@ const AGENT_READ_TOOLS = ['get_note', 'search_notes', 'list_notes', 'get_links',
 /** The MCP tools that change a note. */
 const AGENT_WRITE_TOOLS = ['create_note', 'append_note', 'edit_note'] as const;
 
+/**
+ * The per-day edit counts, for `days` buckets; parameters are the buckets as
+ * `(i, lo, hi)` triples, then the owner.
+ *
+ * One row per (day, note) first, carrying which actions that note saw that
+ * day, so a run of autosaves is one row before anything is counted, and "edited
+ * but not new" is a column of the same row rather than a lookup. The first
+ * version asked that with a correlated `NOT EXISTS` over the materialised
+ * rows, which SQLite runs as a scan per row: quadratic in a day's edits, and
+ * `node:sqlite` holds the event loop for every user while it runs. Exported
+ * so a test can read the plan.
+ */
+export function dailyEditsSql(days: number): string {
+  const values = Array.from({ length: days }, () => '(?, ?, ?)').join(', ');
+  return `WITH b(i, lo, hi) AS (VALUES ${values}),
+            p AS (SELECT b.i AS i,
+                         MAX(e.action = 'create') AS c,
+                         MAX(e.action = 'update') AS u,
+                         MAX(e.action = 'delete') AS d,
+                         MAX(e.action = 'rename') AS r
+                    FROM b JOIN edits e ON e.owner = ? AND e.at >= b.lo AND e.at < b.hi
+                   GROUP BY b.i, e.path)
+       SELECT i,
+              SUM(c)           AS created,
+              SUM(u AND NOT c) AS edited,
+              SUM(d)           AS deleted,
+              SUM(r)           AS renamed,
+              COUNT(*)         AS touched
+         FROM p
+        GROUP BY i`;
+}
+
 /** One thing that happened in a vault: a change, or an agent reading. */
 export interface PulseEvent {
   at: number;
@@ -1010,25 +1042,7 @@ export class Queries {
     const values = days.map(() => '(?, ?, ?)').join(', ');
     const buckets: SqlValue[] = days.flatMap((day, i) => [i, Math.trunc(day.start), Math.trunc(day.end)]);
 
-    // Distinct (day, note, action) first, so a run of autosaves is one row
-    // before anything is counted or compared.
-    const edits = this.#db.all(
-      `WITH b(i, lo, hi) AS (VALUES ${values}),
-            t AS (SELECT DISTINCT b.i AS i, e.path AS path, e.action AS action
-                    FROM b JOIN edits e ON e.owner = ? AND e.at >= b.lo AND e.at < b.hi)
-       SELECT i,
-              SUM(action = 'create') AS created,
-              SUM(action = 'update' AND NOT EXISTS (
-                    SELECT 1 FROM t c WHERE c.i = t.i AND c.path = t.path AND c.action = 'create'
-                  ))                  AS edited,
-              SUM(action = 'delete') AS deleted,
-              SUM(action = 'rename') AS renamed,
-              COUNT(DISTINCT path)   AS touched
-         FROM t
-        GROUP BY i`,
-      ...buckets,
-      owner,
-    );
+    const edits = this.#db.all(dailyEditsSql(days.length), ...buckets, owner);
     for (const row of edits) {
       const day = days[Number(row['i'])];
       if (day === undefined) continue;
