@@ -6000,3 +6000,14 @@ th.pick input,
     display: none;
   }
 }
+
+/* A daily note's yesterday or tomorrow that is not written yet: a way to go,
+   not a finding, so it is muted rather than red. */
+.ctx .ref-pending {
+  color: var(--text-2);
+  border-style: dashed;
+}
+
+.ctx .ref-pending small {
+  color: var(--text-3);
+}

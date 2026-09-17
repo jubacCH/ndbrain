@@ -348,6 +348,10 @@ export const copy = {
   context: {
     linksHere: 'Links here',
     orphanedNote: 'Nobody — this note is orphaned.',
+    /** A daily note nothing links to: reached by its date, so not orphaned. */
+    noLinksToDay: 'No note links to this day yet.',
+    /** Beside yesterday or tomorrow in a daily note, before that day is written. */
+    notWrittenYet: 'not written yet — open to start it',
     linksOut: 'Links out',
     noLinks: { before: 'No links yet. Type ', after: ' in the editor.' },
     pointsNowhere: 'Points nowhere',
