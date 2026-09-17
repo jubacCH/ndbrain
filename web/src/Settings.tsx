@@ -49,6 +49,7 @@ const MEASURES: Array<{ value: Measure; label: string; hint: string }> = [
 
 const START_VIEWS: Array<{ value: StartView; label: string }> = [
   { value: 'overview', label: 'Overview' },
+  { value: 'journal', label: 'Journal' },
   { value: 'note', label: 'The last note you had open' },
   { value: 'search', label: 'Search' },
   { value: 'files', label: 'Files' },

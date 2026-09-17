@@ -41,7 +41,7 @@ import { copy } from './copy';
 import { discardLegacy, dropRecent, forgetAccount, loadRecents, pushRecent, type Recent } from './accountStorage';
 import { SESSION_SIGNAL_KEY, announceSessionChange, closeSession, openSession } from './session';
 import { applyPrefs, loadPrefs, savePrefs, type Prefs, type Theme } from './prefs';
-import { GearIcon, MoreIcon, ShareIcon, ShieldIcon, SignOutIcon, TrashIcon } from './icons';
+import { FileIcon, GearIcon, MoreIcon, ShareIcon, ShieldIcon, SignOutIcon, TrashIcon } from './icons';
 import { NetworkFrame, type FullscreenFrame } from './NetworkFrame';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
@@ -68,6 +68,7 @@ import {
   type JournalDate,
 } from './daily';
 import { Tree, displayPath, type Finding } from './Tree';
+import { lineOfHit } from './snippet';
 import { SearchView, SharesView, TasksView, TidyView } from './Views';
 import { HomeView } from './Home';
 import type { HealthKey } from './healthScore';
@@ -107,7 +108,6 @@ type View =
   | 'journal'
   | 'brain'
   | 'tidy'
-  | 'tasks'
   | 'search'
   | 'shares'
   | 'files'
@@ -433,7 +433,8 @@ function Shell({
     () => (taskDir === undefined ? { includeDone: taskIncludeDone } : { dir: taskDir, includeDone: taskIncludeDone }),
     [taskDir, taskIncludeDone],
   );
-  const tasksQuery = useTasks(taskFilter, view === 'tasks');
+  // Tasks sit beside the calendar, so they are wanted exactly while the journal is.
+  const tasksQuery = useTasks(taskFilter, view === 'journal');
   const toggleTaskMutation = useToggleTask();
 
   const notes = treeQuery.data?.notes ?? [];
@@ -610,12 +611,17 @@ function Shell({
   }, [flush]);
 
   const openNote = useCallback(
-    async (owner: string, path: string, line?: number): Promise<void> => {
+    /**
+     * `line` is where to put the cursor: a number when the caller knows it,
+     * or a function of the note's text when it can only be found in there —
+     * the palette knows the words it matched, not the line they are on.
+     */
+    async (owner: string, path: string, line?: number | ((content: string) => number | undefined)): Promise<void> => {
       // Never switch away from unsaved text without writing it first — and
       // never read a note while a write is still on its way: the read would
       // show the text from before it.
       await settle();
-      setJumpLine(line ?? null);
+      setJumpLine(typeof line === 'number' ? line : null);
 
       try {
         // Fetched through the cache under this note's own key rather than into
@@ -637,6 +643,7 @@ function Shell({
           queryFn: () => api.getNote(owner, path),
           staleTime: 0,
         });
+        if (typeof line === 'function') setJumpLine(line(opened.note.content) ?? null);
         setOpenRef({ owner, path });
         versions.current.set(refKey(owner, path), opened.note.mtimeMs);
         setView('note');
@@ -1595,6 +1602,7 @@ function Shell({
 
   const accountItems: MenuItem[] = [
     { key: 'settings', label: copy.nav.settings, icon: <GearIcon size={16} />, onSelect: () => void showView('settings') },
+    { key: 'files', label: copy.nav.files, icon: <FileIcon size={16} />, onSelect: () => void showView('files') },
     { key: 'shares', label: copy.nav.sharing, icon: <ShareIcon size={16} />, onSelect: () => void showView('shares') },
     // Hidden for everybody else, and refused by the server regardless: a menu
     // entry that is not rendered is not a permission.
@@ -1662,8 +1670,6 @@ function Shell({
           subtitle:
             tidy === null ? sub.loading : sub.tidy(tidy.totals.orphans, tidy.totals.deadLinks, tidy.totals.stale),
         };
-      case 'tasks':
-        return { title: copy.nav.tasks, subtitle: tasks === null ? sub.loading : sub.tasks(tasks.total) };
       case 'search':
         return {
           title: copy.nav.search,
@@ -1677,7 +1683,10 @@ function Shell({
       case 'journal': {
         const today = localDate(new Date());
         const inMonth = [...journalDays].filter((day) => day.startsWith(isoDate(today).slice(0, 8))).length;
-        return { title: copy.journal.title, subtitle: sub.journal(journalDays.size, inMonth) };
+        return {
+          title: copy.journal.title,
+          subtitle: sub.journal(journalDays.size, inMonth) + (tasks === null ? '' : ` · ${sub.tasks(tasks.total)}`),
+        };
       }
       case 'settings':
         return { title: copy.nav.settings, subtitle: sub.settings };
@@ -1891,7 +1900,7 @@ function Shell({
                   recents={recentRows}
                   hidePrefixes={prefs.hidePrefixes}
                   onOpen={(owner, path) => void openNote(owner, path)}
-                  onTasks={() => void showView('tasks')}
+                  onTasks={() => void showView('journal')}
                   onTidy={(focus) => {
                     setTidyFocus(focus ?? null);
                     void showView('tidy');
@@ -1902,7 +1911,34 @@ function Shell({
                 />
               )}
 
-              {view === 'journal' && <JournalView days={journalDays} onOpenDay={(date) => void openDay(date)} />}
+              {view === 'journal' && (
+                <JournalView
+                  days={journalDays}
+                  onOpenDay={(date) => void openDay(date)}
+                  aside={
+                    tasks === null ? (
+                      <section className="journal-tasks" aria-busy="true" aria-label={copy.tasks.title}>
+                        <h2 className="h-big">{copy.tasks.title}</h2>
+                        <p className="h-sub">{copy.shell.sub.loading}</p>
+                      </section>
+                    ) : (
+                      <TasksView
+                        embedded
+                        data={tasks}
+                        dirs={topLevelDirs(notes)}
+                        dir={taskDir}
+                        includeDone={taskIncludeDone}
+                        self={user.id}
+                        busy={taskBusy}
+                        onDir={setTaskDir}
+                        onIncludeDone={setTaskIncludeDone}
+                        onToggle={(task) => void toggleTask(task)}
+                        onOpen={(owner, path, line) => void openNote(owner, path, line)}
+                      />
+                    )
+                  }
+                />
+              )}
 
               {view === 'brain' &&
                 (graph === null ? (
@@ -1969,21 +2005,6 @@ function Shell({
                   }
                   onOpen={(path) => void openNote(user.id, path)}
                   onBulk={(action) => void runBulk(action)}
-                />
-              )}
-
-              {view === 'tasks' && tasks !== null && (
-                <TasksView
-                  data={tasks}
-                  dirs={topLevelDirs(notes)}
-                  dir={taskDir}
-                  includeDone={taskIncludeDone}
-                  self={user.id}
-                  busy={taskBusy}
-                  onDir={setTaskDir}
-                  onIncludeDone={setTaskIncludeDone}
-                  onToggle={(task) => void toggleTask(task)}
-                  onOpen={(owner, path, line) => void openNote(owner, path, line)}
                 />
               )}
 
@@ -2163,7 +2184,13 @@ function Shell({
         self={user.id}
         commands={paletteCommands}
         onClose={() => setPaletteOpen(false)}
-        onOpenNote={(owner, path) => void openNote(owner, path)}
+        onOpenNote={(owner, path, find) =>
+          void openNote(owner, path, find === undefined ? undefined : (content) => lineOfHit(content, find.snippet, find.query))
+        }
+        onSearchAll={(words) => {
+          setQuery(words);
+          void showView('search').then(() => runSearch(words, filters)).catch(() => setError(copy.errors.searchFailed));
+        }}
       />
 
       {shareTarget !== null && mayShareNote(shareTarget.owner) && (

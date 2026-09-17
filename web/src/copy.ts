@@ -407,8 +407,15 @@ export const copy = {
     /** Extra words a command is also found by. */
     openTodayKeywords: 'today daily journal heute',
     label: 'Find a note',
-    placeholder: 'Open a note…',
-    titleLabel: 'Note title',
+    placeholder: 'Open a note or search inside notes…',
+    titleLabel: 'Note title or words in a note',
+    /** Heading over the notes found by title and path. */
+    notes: 'Notes',
+    /** Heading over the full-text hits. */
+    inNotes: 'In notes',
+    searchAll: (q: string) => `Search all notes for “${q}”`,
+    /** Beside the last row, where a note row names its folder. */
+    searchView: 'search',
     recentAppearHere: 'Recently edited notes appear here.',
     nothingFound: 'Nothing found.',
     choose: 'choose',
