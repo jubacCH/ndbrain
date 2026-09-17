@@ -30,7 +30,7 @@ import {
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph } from '../src/brain/model';
 import { regionView } from '../src/brain/regions';
-import { ACCENT, SceneBuilder, planeOf } from '../src/brain/scene';
+import { RAY, SceneBuilder, amber, planeOf } from '../src/brain/scene';
 import { paraVault } from './fixtures/para-vault';
 
 const ROOM = 4000;
@@ -323,14 +323,21 @@ describe('the warm accent', () => {
     const hot = scene.nodes[0]!;
     const half = scene.nodes[1]!;
     const cold = scene.nodes[2]!;
+    // Since 2026-09-17 the warmth is not mixed into the body's colour — a mix
+    // of cyan and amber is mint — but carried beside it, and drawn as an amber
+    // core whose area is the warmth. What this guards is unchanged: the warmth
+    // follows the age, all of it today and none a fortnight later, and the
+    // accent grows with it without a step.
     expect(hot.warm).toBe(1);
-    expect(hot.colour).toEqual(ACCENT);
+    expect(half.warm).toBe(0.5);
     expect(cold.warm).toBe(0);
-    // Red up, blue down, monotonically with the age — no step anywhere.
-    expect(half.colour[0]).toBeGreaterThan(cold.colour[0]!);
-    expect(half.colour[0]).toBeLessThan(hot.colour[0]!);
-    expect(half.colour[2]).toBeLessThan(cold.colour[2]!);
-    expect(half.colour[2]).toBeGreaterThan(hot.colour[2]!);
+    expect(hot.warmColour).toEqual(amber(1));
+    expect(half.warmColour).toEqual(amber(0.5));
+    // The body's own colour is the same cool colour at any warmth.
+    expect(hot.restColour).toEqual(scene.nodes[0]!.restColour);
+    const light = (c: readonly number[]): number => c[0]! + c[1]! + c[2]!;
+    expect(light(half.warmColour)).toBeGreaterThan(light(amber(0.01)));
+    expect(light(half.warmColour)).toBeLessThan(light(hot.warmColour));
   });
 
   it('carries the same warmth into the links a note grows and the branches around it', () => {
@@ -340,7 +347,11 @@ describe('the warm accent', () => {
     builder.recent(heat);
     const warm = builder.build(layout, new Activity(graph), IDENTITY, -1, ROOM, ROOM);
     const drawn = warm.edges.find((e) => e.alpha > 0.05)!;
-    expect(drawn.colour).toEqual(ACCENT);
+    // The link keeps its cyan and carries the warmth of the note it grows out
+    // of, which the renderer draws as amber reaching along it.
+    expect(drawn.colour).toEqual(RAY);
+    expect(drawn.warm).toBe(1);
+    expect(drawn.warmColour).toEqual(amber(1));
 
     const branches = buildDecoration({ view, x: layout.x, y: layout.y, warm: heat });
     let hottest = 0;
@@ -355,7 +366,7 @@ describe('the warm accent', () => {
     builder.recent(new Float64Array(graph.nodes.length));
     const scene = builder.build(layout, new Activity(graph), IDENTITY, -1, ROOM, ROOM);
     for (const node of scene.nodes) expect(node.warm).toBe(0);
-    for (const edge of scene.edges) expect(edge.colour).not.toEqual(ACCENT);
+    for (const edge of scene.edges) expect(edge.warm).toBe(0);
   });
 });
 

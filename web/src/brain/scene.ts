@@ -37,8 +37,14 @@ import { fit } from './camera';
 import type { EdgeGeometry, EdgePlan, RoutePlan } from './edges';
 import {
   CURVE_STEPS,
+  FORK_POINTS,
+  MAP_DEGREE,
+  RAY_FORKS,
   TWIN,
+  VISIBLE,
   alongCurve,
+  branchRay,
+  LIT,
   edgeAlpha,
   glow,
   growth,
@@ -57,6 +63,7 @@ import { NO_DECORATION, buildDecoration } from './deco';
 import type { Rect } from './labels';
 import type { RegionAnchor, RegionView } from './regions';
 import { regionAnchors, regionView } from './regions';
+import type { RayFork } from './edges';
 import { unit } from './seed';
 
 export type Rgb = readonly [number, number, number];
@@ -67,20 +74,37 @@ export const PULSE_COLOUR: Record<PulseKind, Rgb> = {
   write: [255, 184, 107],
 };
 
-/** The tissue's cyan, and the warm accent for a note worked on recently. */
+/** The tissue's cyan. */
 export const TISSUE: Rgb = [140, 240, 250];
-export const ACCENT: Rgb = [240, 205, 140];
 /** A link of the selected note. */
 export const FOCUSED: Rgb = [230, 255, 255];
 /**
- * Cell bodies: a hub, an ordinary note, a note nothing links to.
+ * Cell bodies: a hub, an ordinary note, a note nothing links to, as drawn in the
+ * front plane.
  *
- * Brighter since 2026-09-16, towards the prototype's near-white cores; the note
- * with no links stays the dim one, because that is what it says.
+ * Since 2026-09-17 a body is coloured light, not white. The near-white cores of
+ * the day before summed, in every dense cluster, into white patches with no
+ * colour left in them; in the target picture only a pinpoint in the middle of a
+ * core is close to white and everything around it is cyan. The note with no
+ * links stays the dim one, because that is what it says.
  */
-export const HUB_BODY: Rgb = [150, 240, 250];
-export const NOTE_BODY: Rgb = [110, 220, 235];
+export const HUB_BODY: Rgb = [80, 230, 246];
+export const NOTE_BODY: Rgb = [46, 214, 236];
 export const LONELY_BODY: Rgb = [58, 96, 110];
+
+/**
+ * The same bodies further back: smaller, fainter and bluer, the way distance
+ * reads in the target picture. Back plane first, front last, which is
+ * `HUB_BODY` and `NOTE_BODY` again.
+ */
+export const HUB_PLANES: readonly [Rgb, Rgb, Rgb] = [[52, 136, 206], [52, 192, 230], HUB_BODY];
+export const NOTE_PLANES: readonly [Rgb, Rgb, Rgb] = [[40, 118, 196], [34, 172, 216], NOTE_BODY];
+/** A link at rest: a saturated cyan, where the tissue's own cyan is paler. */
+export const RAY: Rgb = [70, 214, 236];
+/** How large a body is drawn in each plane, as a share of `bodyRadius`. Never above 1: see `bodyRadius`. */
+export const PLANE_SIZE: readonly [number, number, number] = [0.6, 0.8, 1];
+/** How opaque a body is in each plane, as a share of the front plane's. */
+export const PLANE_LIGHT: readonly [number, number, number] = [0.46, 0.74, 1];
 
 /** Three depth planes: back, middle, front. */
 export type Depth = 0 | 1 | 2;
@@ -100,12 +124,16 @@ export interface SceneNode {
   depth: Depth;
   /** How much of a hub this note is, 0 to 1: its degree against a large map's. */
   hub: number;
+  /** The one hub the whole picture is organised around (see `SceneEdge.radiant`). */
+  centre: boolean;
   /**
-   * How warm this note is drawn, 0 to 1: 1 the day it was written, 0 a
-   * fortnight later. Already folded into `colour`; the renderer reads it to
-   * pick the halo sprite.
+   * How warm this note is, 0 to 1: 1 the day it was written, 0 a fortnight
+   * later. Not folded into `colour`: the renderer draws it as an amber core of
+   * this share of the radius, in `warmColour`.
    */
   warm: number;
+  /** The accent at this warmth (`amber`). */
+  warmColour: Rgb;
   /**
    * The same note with no pulse on it: what the cached depth layers paint.
    *
@@ -139,8 +167,19 @@ export interface SceneEdge {
   colour: Rgb;
   /** Which plane it is painted into: its thick end's. */
   depth: Depth;
+  /** The warmth of its thick end, 0 to 1, and the accent for it. Amber reaches along the link by this share. */
+  warm: number;
+  warmColour: Rgb;
   /** Twice more, fainter and wider apart: a hub's link reads as a bundle of fibres. */
   strands: boolean;
+  /**
+   * 0 to 1: how strongly this link is drawn as a ray of the centre — more
+   * fibres, and fine branches (`Scene.forks`). Zero for every link that does
+   * not leave the centre, and for one of its links held back to a ghost: a ray
+   * must not bring back a link the overview hides. Resting value only; it is
+   * part of the cached picture.
+   */
+  radiant: number;
   /**
    * The same link with no spark on it: what the cached depth layers paint.
    * `alpha` above includes a passing spark; the difference is drawn live.
@@ -157,6 +196,23 @@ export interface SceneSpark {
   alpha: number;
   /** A ring runs outward from a note with no tracts; otherwise a dot travels one. */
   ring: boolean;
+}
+
+/**
+ * A fine branch off one of the centre's rays. Decoration, like the tissue: it
+ * is never hit tested, fades out with the tissue as the camera comes closer, and
+ * is thinner and fainter than the ray it grows from.
+ */
+export interface SceneFork {
+  /** x,y pairs in world units, valid up to `n` points. */
+  pts: Float64Array;
+  n: number;
+  /** Half-width at the ray and at the tip, world units. */
+  w0: number;
+  w1: number;
+  alpha: number;
+  colour: Rgb;
+  depth: Depth;
 }
 
 export interface SceneLabel {
@@ -177,6 +233,8 @@ export interface Scene {
   /** Node indices, furthest back first. Drawing order, not iteration order. */
   order: number[];
   edges: SceneEdge[];
+  /** The branches of the centre's rays, resting values only. Empty without a centre. */
+  forks: SceneFork[];
   sparks: SceneSpark[];
   /** Note titles, most connected first. The renderer measures and drops collisions. */
   labels: SceneLabel[];
@@ -293,20 +351,78 @@ const TISSUE_FROM = 1.3;
 const TISSUE_TO = 2.4;
 /** A note with this many links is drawn as fully a hub: the widest halo. */
 const HUB_FULL = 40;
+/**
+ * How loud the branches of the centre's rays are at the ray, as a share of the
+ * ray's own resting opacity, with a floor so a quiet spoke still branches. A
+ * twig off a branch is quieter again.
+ */
+const FORK_SHARE = 0.7;
+const FORK_FLOOR = 0.13;
+const TWIG_SHARE = 0.6;
+/**
+ * The focus mode: with a note selected, everything that is not about it steps
+ * back. A note that is neither the selected one nor linked to it keeps this
+ * share of its resting opacity, and a link that does not touch the selected
+ * note this share of its own. Tuned in the browser on 2026-09-17 against the
+ * briefing's "strongly dimmed": the selection and its neighbourhood carry the
+ * picture, the rest is still there to keep the place. Only in the brain
+ * arrangement; the neighbourhood beside an open note is all neighbourhood.
+ */
+export const FOCUS_NODE_DIM = 0.25;
+export const FOCUS_EDGE_DIM = 0.3;
+/** How much of its fibres a ray of the centre keeps once zoomed in past the tissue. */
+const RADIANT_NEAR = 0.35;
 /** A note worked on within this many days carries the warm accent. */
 export const RECENT_DAYS = 14;
+/**
+ * The warm accent: one amber hue, the map's (`network.css`, OKLCH hue 76).
+ *
+ * Only lightness and chroma rise with the warmth; the hue never moves. And the
+ * accent is never mixed into the cyan. A straight mix of the two passes through
+ * a pale mint, which is neither colour and read as white once the bloom added
+ * to it — on 2026-09-17 nearly every note was somewhere in that mint, because
+ * the vault had just been migrated and 117 of 118 notes were within six days.
+ * That part is true and stays: the window is Julian's fortnight, as in the map
+ * and the legend. What changed is how warmth is drawn: as *area* of amber, not
+ * as a share of a blend (see `renderer.ts`): a pixel is cyan or amber, never
+ * both.
+ */
+export const WARM_HUE = 76;
+/** Lightness and chroma of the accent at the faintest warmth and at the full one. */
+const WARM_L0 = 0.56;
+const WARM_L1 = 0.82;
+const WARM_C0 = 0.075;
+const WARM_C1 = 0.135;
+
+/** OKLCH to 8-bit sRGB, clamped. */
+export function oklch(l: number, c: number, hue: number): Rgb {
+  const h = (hue * Math.PI) / 180;
+  const a = c * Math.cos(h);
+  const b = c * Math.sin(h);
+  const l_ = (l + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m_ = (l - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s_ = (l - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const linear = [
+    4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
+    -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
+    -0.0041960863 * l_ - 0.7034186147 * m_ + 1.707614701 * s_,
+  ];
+  const [r, g, bl] = linear.map((v) => {
+    const x = Math.min(1, Math.max(0, v));
+    const srgb = x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055;
+    return Math.round(srgb * 255);
+  }) as [number, number, number];
+  return [r, g, bl];
+}
+
+/** The accent for a warmth of 0 to 1: always hue `WARM_HUE`, brighter and purer as it rises. */
+export function amber(warmth: number): Rgb {
+  const t = warmth < 0 ? 0 : warmth > 1 ? 1 : warmth;
+  return oklch(WARM_L0 + (WARM_L1 - WARM_L0) * t, WARM_C0 + (WARM_C1 - WARM_C0) * t, WARM_HUE);
+}
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-/** A colour part way between two, for the warm accent fading with a note's age. */
-function mix(from: Rgb, to: Rgb, t: number): Rgb {
-  const k = clamp01(t);
-  return [
-    Math.round(from[0] + (to[0] - from[0]) * k),
-    Math.round(from[1] + (to[1] - from[1]) * k),
-    Math.round(from[2] + (to[2] - from[2]) * k),
-  ];
-}
 
 /**
  * Which plane a note sits in.
@@ -406,6 +522,16 @@ export class SceneBuilder {
   #anchorsStale = true;
   /** Which plane each note is in. Fixed per graph. */
   #plane: Uint8Array;
+  /** The note the picture is organised around, or -1 (see `#centreOf`). */
+  #centre = -1;
+  /**
+   * The branches of each of the centre's rays, grown with the curves: world
+   * geometry, so they change when the notes move and not per frame. Empty for
+   * every other link.
+   */
+  #forks: SceneFork[][];
+  /** How far along its ray each fork leaves, and whether it is a twig off another fork. */
+  #forkAt: RayFork[][];
   /** How warm each note is drawn, 0 to 1. Set by the caller from the data. */
   #recent: Float64Array;
   #deco: Decoration = NO_DECORATION;
@@ -422,6 +548,11 @@ export class SceneBuilder {
   /** What the last frame's cached layers were built from, to notice a change. */
   #lastPicked = -1;
   #lastZoom = -1;
+  /** The selected note and its direct neighbours, for the focus mode; rebuilt when the selection changes. */
+  #related: Uint8Array;
+  #relatedTo = -1;
+  /** Whether the planned layout is the brain arrangement, where the focus mode applies. */
+  #brain = false;
 
   constructor(graph: BrainGraph) {
     this.#graph = graph;
@@ -432,6 +563,8 @@ export class SceneBuilder {
     this.#recent = new Float64Array(graph.nodes.length);
     this.#curves = graph.edges.map(() => new Float64Array((CURVE_STEPS + 1) * 2));
     this.#curveLength = new Int32Array(graph.edges.length);
+    this.#forks = graph.edges.map(() => []);
+    this.#forkAt = graph.edges.map(() => []);
     this.#scene = {
       nodes: graph.nodes.map((_, i) => ({
         x: 0,
@@ -443,7 +576,9 @@ export class SceneBuilder {
         glow: 0,
         depth: this.#plane[i] as Depth,
         hub: 0,
+        centre: false,
         warm: 0,
+        warmColour: amber(0),
         restColour: TISSUE,
         restAlpha: 0,
         restGlow: 0,
@@ -462,10 +597,14 @@ export class SceneBuilder {
         tail: 0,
         colour: TISSUE,
         depth: 1,
+        warm: 0,
+        warmColour: amber(0),
         strands: false,
+        radiant: 0,
         restAlpha: 0,
         restTail: 0,
       })),
+      forks: [],
       sparks: [],
       labels: [],
       regions: [],
@@ -486,6 +625,7 @@ export class SceneBuilder {
       stamp: 0,
     };
     this.#lit = new Float64Array(graph.edges.length);
+    this.#related = new Uint8Array(graph.nodes.length);
   }
 
   /**
@@ -557,13 +697,20 @@ export class SceneBuilder {
       clusterOf: regions ? clusters.of : null,
       nodeSide: regions ? layout.nodeSide : null,
     });
+    // The centre only exists where there is a brain to organise, and only for a
+    // map: a vault whose best-connected note has a handful of links has no
+    // centre, and pretending otherwise would crown an arbitrary note.
+    const hub = this.#graph.hub;
+    this.#centre = regions && view.shaped && hub >= 0 && nodes[hub]!.degree >= MAP_DEGREE ? hub : -1;
     this.#routes = planRoutes({
       edges,
       keys,
       degree: nodes.map((n) => n.degree),
       geometry: this.#geometry,
+      centre: this.#centre,
     });
     this.#planned = layout;
+    this.#brain = regions;
     this.#shape = null;
     this.#anchors = null;
     this.#anchorsGrown = null;
@@ -654,6 +801,17 @@ export class SceneBuilder {
     scene.blocked = blocked;
 
     const { plan, routes, view } = this.#planFor(layout);
+    const focus = this.#brain && picked >= 0 && picked < nodes.length;
+    if (focus && this.#relatedTo !== picked) {
+      this.#related.fill(0);
+      this.#related[picked] = 1;
+      for (const e of this.#graph.touching[picked]!) {
+        const edge = edges[e]!;
+        this.#related[edge.a] = 1;
+        this.#related[edge.b] = 1;
+      }
+      this.#relatedTo = picked;
+    }
     this.#tissue(layout, view);
     scene.deco = this.#deco;
 
@@ -670,14 +828,25 @@ export class SceneBuilder {
       const depth = node.depth;
       const heat = Math.max(activity.fire[i]!, activity.warm[i]! * 0.42);
       const warm = this.#recent[i]!;
-      const cool: Rgb = node.degree === 0 ? LONELY_BODY : node.degree >= 8 ? HUB_BODY : NOTE_BODY;
-      const base = warm > 0 ? mix(cool, ACCENT, warm) : cool;
+      // The plane decides size, opacity and hue together: a note further back is
+      // smaller, fainter and bluer at once, which is what reads as depth. Before
+      // 2026-09-17 size and opacity followed the model's own depth draw, which
+      // is unrelated to the plane a note is painted into — the three planes
+      // then moved apart under the pointer but looked alike.
+      const plane = this.#plane[i] as Depth;
+      const cool: Rgb = node.degree === 0 ? LONELY_BODY : node.degree >= 8 ? HUB_PLANES[plane] : NOTE_PLANES[plane];
+      const base = cool;
 
       const out = scene.nodes[i]!;
       out.x = layout.x[i]!;
       out.y = layout.y[i]!;
-      out.r = bodyRadius(layout.r[i]!, depth) * shrink;
-      const restAlpha = (node.degree === 0 ? 0.24 : 0.72) * (0.55 + depth * 0.45);
+      // Never larger than `bodyRadius`, which the hit test uses: a note may be
+      // easier to hit than it looks, never harder.
+      out.r = bodyRadius(layout.r[i]!, depth) * shrink * PLANE_SIZE[plane];
+      // Dimmed in the focus mode when it has nothing to do with the selection.
+      // A pulse on it still adds its full share on top, live.
+      const restAlpha =
+        (node.degree === 0 ? 0.3 : 0.84) * PLANE_LIGHT[plane] * (focus && this.#related[i] === 0 ? FOCUS_NODE_DIM : 1);
       out.colour = heat > 0 ? PULSE_COLOUR[activity.kind[i]!] : base;
       out.alpha = restAlpha + heat * 0.5;
       out.heat = heat;
@@ -687,7 +856,9 @@ export class SceneBuilder {
       out.restGlow = glow(0);
       out.depth = this.#plane[i] as Depth;
       out.hub = Math.min(1, node.degree / HUB_FULL);
+      out.centre = i === this.#centre;
       out.warm = warm;
+      out.warmColour = amber(warm);
     }
 
     scene.zoom = zoom;
@@ -725,6 +896,7 @@ export class SceneBuilder {
     if (this.#curvesStale) {
       for (let i = 0; i < edges.length; i += 1) {
         this.#curveLength[i] = traceEdge(this.#curves[i]!, routes, i, layout.x, layout.y, this.#geometry);
+        this.#growForks(i, routes.hubEnd[i] === this.#centre ? routes.leafEnd[i]! : -1);
       }
       this.#curvesStale = false;
       this.#anchorsStale = true;
@@ -751,8 +923,11 @@ export class SceneBuilder {
       const seen =
         (ax >= left && ax <= right && ay >= top && ay <= bottom) ||
         (bx >= left && bx <= right && by >= top && by <= bottom);
-      const alpha = edgeAlpha(plan, i, seen ? open : 0, focused, lit[i]!);
-      const resting = edgeAlpha(plan, i, seen ? open : 0, focused, 0);
+      // A link that does not touch the selection steps back with the notes; a
+      // spark along it is drawn at full strength all the same.
+      const aside = focus && !focused ? FOCUS_EDGE_DIM : 1;
+      const resting = edgeAlpha(plan, i, seen ? open : 0, focused, 0) * aside;
+      const alpha = Math.max(resting, lit[i]! * LIT);
       out.alpha = alpha;
       // A link's resting opacity is part of the cached picture. It changes with
       // the selection and the zoom, which bump the stamp themselves — and with
@@ -764,10 +939,47 @@ export class SceneBuilder {
       // The far end of a tract fades out: that is what makes a link grow out of
       // a note rather than lie between two of them.
       out.tail = alpha * 0.32;
-      const heat = this.#recent[thick]!;
-      out.colour = focused ? FOCUSED : heat > 0 ? mix(TISSUE, ACCENT, heat) : TISSUE;
+      out.colour = focused ? FOCUSED : RAY;
+      // The warmth of the note a link grows out of, drawn as how far amber
+      // reaches along it — not as a tint of the whole link. A selected link
+      // stays in the selection's colour.
+      out.warm = focused ? 0 : this.#recent[thick]!;
+      out.warmColour = amber(out.warm);
       out.depth = this.#plane[thick] as Depth;
       out.strands = nodes[thick]!.degree >= 8 && resting > 0.1;
+      // A ray of the centre, unless the overview holds it back. Quieter while
+      // another note is selected, so the selection keeps the stage.
+      // Closer in, the rays open up anyway and their fibres would only add to
+      // the knot at the centre, so the fibres give way with the tissue.
+      out.radiant =
+        thick === this.#centre && resting >= VISIBLE
+          ? aside * (RADIANT_NEAR + (1 - RADIANT_NEAR) * fade)
+          : 0;
+    }
+
+    // The branches: as loud as their ray allows, and faded with the tissue,
+    // since they are decoration of the same kind.
+    scene.forks = [];
+    if (this.#centre >= 0 && scene.decoAlpha > 0.01) {
+      for (let i = 0; i < edges.length; i += 1) {
+        const e = scene.edges[i]!;
+        if (e.radiant <= 0) continue;
+        const forks = this.#forks[i]!;
+        const at = this.#forkAt[i]!;
+        const loud = Math.max(FORK_FLOOR, e.restAlpha * FORK_SHARE) * e.radiant * scene.decoAlpha;
+        for (let k = 0; k < forks.length; k += 1) {
+          const fork = forks[k]!;
+          const where = at[k]!;
+          if (fork.n < 2) continue;
+          const width = e.w0 + (e.w1 - e.w0) * where.at;
+          fork.w0 = Math.max(e.w1, width * (where.twig ? 0.4 : 0.6));
+          fork.w1 = e.w1 * 0.5;
+          fork.alpha = loud * (where.twig ? TWIG_SHARE : 1);
+          fork.colour = e.colour;
+          fork.depth = e.depth;
+          scene.forks.push(fork);
+        }
+      }
     }
 
     scene.sparks = [];
@@ -841,6 +1053,32 @@ export class SceneBuilder {
     scene.stamp = this.#stamp;
 
     return scene;
+  }
+
+  /**
+   * Grows the branches of one ray, or clears them when the link is not a ray of
+   * the centre (`leaf` -1). Seeded by the pair of keys, so a ray branches the
+   * same way on every visit.
+   */
+  #growForks(edge: number, leaf: number): void {
+    const forks = this.#forks[edge]!;
+    const at = this.#forkAt[edge]!;
+    if (leaf < 0) {
+      forks.length = 0;
+      at.length = 0;
+      return;
+    }
+    if (at.length === 0) {
+      for (let k = 0; k < RAY_FORKS; k += 1) {
+        const pts = new Float64Array(FORK_POINTS * 2);
+        at.push({ pts, n: 0, at: 0, twig: false });
+        forks.push({ pts, n: 0, w0: 0, w1: 0, alpha: 0, colour: TISSUE, depth: 1 });
+      }
+    }
+    const seed = `${this.#graph.nodes[this.#centre]!.key}|${this.#graph.nodes[leaf]!.key}`;
+    const inside = this.#geometry?.inside ?? null;
+    const count = branchRay(this.#curves[edge]!, this.#curveLength[edge]!, seed, inside, at);
+    for (let k = 0; k < RAY_FORKS; k += 1) forks[k]!.n = k < count ? at[k]!.n : 0;
   }
 
   /**
