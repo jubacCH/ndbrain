@@ -27,6 +27,7 @@ export type PutResult = z.infer<typeof S.PutNoteResponse>;
 export type BulkResult = z.infer<typeof S.BulkResponse>;
 
 export type {
+  ActivityDay,
   ActivityRow,
   ConflictRow,
   FileRow,
@@ -327,6 +328,13 @@ export const api = {
    */
   pulse: (since?: number) =>
     request(`/api/v1/pulse${since === undefined ? '' : `?since=${since}`}`, S.PulseResponse),
+
+  /**
+   * The caller's own activity per day. `bounds` are local midnights, ascending:
+   * n + 1 of them make n days. Never another vault, shared or not.
+   */
+  activityDays: (bounds: number[]) =>
+    request(`/api/v1/activity/days?bounds=${bounds.map((b) => Math.trunc(b)).join(',')}`, S.ActivityDaysResponse),
 
   tidy: () => request('/api/v1/tidy', S.TidyResponse),
 

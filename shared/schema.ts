@@ -238,6 +238,25 @@ export const PulseResponse = z.object({
   now: Timestamp,
 });
 
+/** One day of the caller's own activity, as counts of distinct notes and agent calls. */
+export const ActivityDay = z.object({
+  start: Timestamp,
+  end: Timestamp,
+  created: z.number(),
+  /** Changed that day, and not also created that day. */
+  edited: z.number(),
+  deleted: z.number(),
+  renamed: z.number(),
+  touched: z.number(),
+  agentReads: z.number(),
+  agentWrites: z.number(),
+});
+
+/** Always the caller's own vault, like the pulse. Oldest day first. */
+export const ActivityDaysResponse = z.object({
+  days: z.array(ActivityDay),
+});
+
 export const PutNoteResponse = z.object({
   note: Note,
   created: z.boolean(),
@@ -513,6 +532,7 @@ export type User = z.infer<typeof User>;
 export type Share = z.infer<typeof Share>;
 export type GraphData = z.infer<typeof GraphResponse>;
 export type PulseEvent = z.infer<typeof PulseEvent>;
+export type ActivityDay = z.infer<typeof ActivityDay>;
 export type FileRow = z.infer<typeof FileRow>;
 export type UserSettings = z.infer<typeof UserSettings>;
 export type AdminUser = z.infer<typeof AdminUser>;

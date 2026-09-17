@@ -1,15 +1,19 @@
 /**
- * The librarian surfaces: overview, tidy-up and search results.
+ * The librarian surfaces: tidy-up, tasks, search results and sharing.
+ *
+ * The start page lives in `Home.tsx`.
  *
  * Denser than the writing surface and monospaced wherever data appears — paths,
  * counts, tags. Two registers in one application, told apart by typography
  * rather than by colour.
  */
 
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { copy } from './copy';
+import { HealthHeader, healthLabel } from './Health';
+import type { HealthKey } from './healthScore';
 
-import { refKey, type ConflictRow, type LinkRow, type NoteRow, type Overview, type SearchHit, type Share, type TaskRow, type Tasks, type Tidy } from './api';
+import { refKey, type ConflictRow, type LinkRow, type NoteRow, type SearchHit, type Share, type TaskRow, type Tasks, type Tidy } from './api';
 
 const RELATIVE = new Intl.RelativeTimeFormat(copy.locale, { numeric: 'auto' });
 
@@ -19,208 +23,6 @@ export function ago(mtimeMs: number, now = Date.now()): string {
   const hours = Math.round(minutes / 60);
   if (Math.abs(hours) < 24) return RELATIVE.format(hours, 'hour');
   return RELATIVE.format(Math.round(hours / 24), 'day');
-}
-
-/**
- * The overview, as a bento grid.
- *
- * The unequal tile sizes are the point and also the justification: findings are
- * what this product is for, so that tile is the largest; tags are a lookup aid,
- * so theirs is the smallest. A bento whose tiles are all the same importance is
- * just a grid with extra steps.
- *
- * It stops here. The editor needs a continuous column, the tree is a hierarchy,
- * and the tidy table lives on aligned columns — tiling those would trade the
- * tool for a shop window.
- */
-export function OverviewView({
-  data,
-  onOpen,
-  onFindings,
-  onTasks,
-}: {
-  data: Overview;
-  onOpen: (owner: string, path: string) => void;
-  /** Opens the tidy view — the place every finding count leads to. */
-  onFindings: () => void;
-  /** Opens the full task list — this tile only ever shows eight. */
-  onTasks: () => void;
-}): React.JSX.Element {
-  const { counts } = data;
-  // Counted by the server as distinct notes. Adding the four findings together
-  // here was the bug: they overlap, and the total ran past the number of notes.
-  const attention = counts.attention;
-
-  /**
-   * Only the findings that found something.
-   *
-   * A zero rendered at the same size as a forty is worse than no tile at all:
-   * the eye reads size as importance before it reads the digit, so two large
-   * noughts beside one large forty say "three things to look at". The zeros are
-   * still reported — as a single quiet line — because "nothing broken" is
-   * genuinely worth knowing, just not worth a third of the tile.
-   */
-  const findings = [
-    { label: copy.overview.orphaned, kind: 'crit' as const, count: counts.orphans },
-    { label: copy.overview.brokenLinks, kind: 'crit' as const, count: counts.deadLinks },
-    // Withheld where no note is tagged: see Queries.tagsInUse.
-    ...(counts.tagsInUse
-      ? [{ label: copy.overview.untagged, kind: 'warn' as const, count: counts.untagged }]
-      : []),
-    { label: copy.overview.untouched, kind: 'warn' as const, count: counts.stale },
-    { label: copy.overview.conflictCopies, kind: 'warn' as const, count: counts.conflicts },
-  ];
-  const active = findings.filter((f) => f.count > 0);
-  const clear = findings.filter((f) => f.count === 0);
-
-  return (
-    <div className="pane padded">
-      <h2 className="h-big">{copy.overview.title}</h2>
-      <p className="h-sub">
-        {copy.overview.notes(counts.notes)} ·{' '}
-        {attention === 0 ? copy.overview.nothingToDo : copy.overview.needAttention(attention)}
-      </p>
-
-      <div className="bento">
-        <section className="tile tile-wide">
-          <p className="cap">{copy.overview.needsAttention}</p>
-          {attention === 0 ? (
-            /* Not an apology for having nothing to show. A vault with no
-               findings is the goal state, so it reads as one. */
-            <p className="allclear">{copy.overview.clean}</p>
-          ) : (
-            <>
-              <div className="findings">
-                {active.map((f) => (
-                  <Finding key={f.label} onOpen={onFindings} label={f.label} kind={f.kind} count={f.count} />
-                ))}
-              </div>
-              {clear.length > 0 && (
-                <p className="clearline">{copy.overview.noneOf(clear.map((f) => f.label))}</p>
-              )}
-            </>
-          )}
-        </section>
-
-        {data.activity.length > 0 && (
-        <section className="tile">
-          <p className="cap">{copy.overview.sinceYesterday}</p>
-          <div className="list">
-            {data.activity.slice(0, 8).map((row) => (
-              <button
-                type="button"
-                className="item"
-                key={refKey(row.owner, row.path)}
-                disabled={row.deleted}
-                onClick={() => !row.deleted && onOpen(row.owner, row.path)}
-              >
-                {/* The actor only earns a badge when it is not you — otherwise
-                    every row would carry the same label and say nothing. */}
-                {row.actor !== '' && row.action === 'delete' && <span className="pill p-crit">{copy.overview.deleted}</span>}
-                <span className="t" style={row.deleted ? { textDecoration: 'line-through' } : undefined}>
-                  {row.title}
-                </span>
-                <span className="r">
-                  {row.edits > 1 && `${row.edits}× · `}
-                  {ago(row.at)}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-        )}
-
-        {data.tasks.length > 0 && (
-        <section className="tile">
-          <p className="cap">{copy.overview.openTasks}</p>
-          <div className="list">
-            {data.tasks.slice(0, 8).map((task: TaskRow) => (
-              <button
-                type="button"
-                className="item"
-                key={`${refKey(task.owner, task.path)}:${task.line}`}
-                onClick={() => onOpen(task.owner, task.path)}
-              >
-                <span className="t">{task.text}</span>
-                <span className="r">{task.path.split('/').slice(0, -1).join('/') || '—'}</span>
-              </button>
-            ))}
-          </div>
-          {/* Never the whole truth — the overview caps at eight and the server
-              at fifty. The full, filterable list lives one click away. */}
-          <button type="button" className="tile-more" onClick={onTasks}>
-            {copy.overview.seeAllTasks}
-          </button>
-        </section>
-        )}
-
-        <section className="tile">
-          <p className="cap">{copy.overview.recentlyEdited}</p>
-          <div className="list">
-            {data.recent.length === 0 && <p className="empty">{copy.overview.nothingYet}</p>}
-            {data.recent.slice(0, 8).map((note) => (
-              <button
-                type="button"
-                className="item"
-                key={refKey(note.owner, note.path)}
-                onClick={() => onOpen(note.owner, note.path)}
-              >
-                <span className="t">{note.title}</span>
-                <span className="r">{ago(note.mtimeMs)}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        {data.tags.length > 0 && (
-        <section className="tile tile-short">
-          <p className="cap">{copy.overview.tags}</p>
-          <div className="tagcloud">
-            {data.tags.slice(0, 14).map((tag) => (
-              <span className="pill p-tag" key={tag.tag}>
-                #{tag.tag} <span style={{ opacity: 0.6 }}>{tag.count}</span>
-              </span>
-            ))}
-          </div>
-        </section>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * One finding count.
- *
- * A button rather than a div: a number on a dashboard that cannot be clicked is
- * a dead end — you are told forty notes need attention and then left to find
- * them yourself. Zero is the exception; there is nothing behind it to open.
- */
-function Finding({
-  label,
-  kind,
-  count,
-  onOpen,
-}: {
-  label: string;
-  kind: 'crit' | 'warn';
-  count: number;
-  onOpen?: () => void;
-}): React.JSX.Element {
-  const empty = count === 0;
-  return (
-    <button
-      type="button"
-      className="finding"
-      data-empty={empty}
-      disabled={empty}
-      aria-label={empty ? undefined : `${count} ${label} — open in the tidy view`}
-      onClick={() => !empty && onOpen?.()}
-    >
-      <span className="finding-n">{count}</span>
-      <span className={`pill p-${kind}`}>{label}</span>
-    </button>
-  );
 }
 
 /**
@@ -247,6 +49,8 @@ export function TidyView({
   busy,
   tags,
   dirs,
+  health,
+  initialFocus = null,
 }: {
   data: Tidy;
   selected: Set<string>;
@@ -257,8 +61,30 @@ export function TidyView({
   busy: boolean;
   tags: Array<{ tag: string; count: number }>;
   dirs: string[];
+  /**
+   * What the health head needs beyond the findings: the own-vault note count,
+   * and whether tagging is a convention here. Without it there is no head.
+   */
+  health?: { notes: number; tagsInUse: boolean };
+  /** A finding to narrow the list to on arrival — a click on the home view's card. */
+  initialFocus?: HealthKey | 'stale' | null;
 }): React.JSX.Element {
-  type Row = { path: string; title: string; finding: string; kind: 'crit' | 'warn'; when: string };
+  type Row = { path: string; title: string; finding: string; kind: 'crit' | 'warn'; when: string; key: HealthKey | 'stale' };
+
+  /**
+   * One finding at a time, or all of them.
+   *
+   * Narrowing rather than scrolling to a section: the findings share one table,
+   * sorted by kind, and "the 29 broken links" is easier to work through as a
+   * table of 29 than as rows somewhere in a table of 60. Select-all follows what
+   * is shown, so a bulk action never reaches a row that is out of sight.
+   */
+  const [focus, setFocus] = useState<HealthKey | 'stale' | null>(initialFocus);
+  const findingsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focus === null) return;
+    findingsRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  }, [focus]);
 
   void tags;
   void dirs;
@@ -268,6 +94,7 @@ export function TidyView({
       path: n.path,
       title: n.title,
       finding: copy.tidy.findingOrphaned,
+      key: 'orphans' as const,
       kind: 'crit' as const,
       when: ago(n.mtimeMs),
     })),
@@ -275,6 +102,7 @@ export function TidyView({
       path: l.source,
       title: l.targetRaw,
       finding: copy.tidy.findingBroken,
+      key: 'broken' as const,
       kind: 'crit' as const,
       when: '—',
     })),
@@ -282,6 +110,7 @@ export function TidyView({
       path: n.path,
       title: n.title,
       finding: copy.tidy.findingUntagged,
+      key: 'untagged' as const,
       kind: 'warn' as const,
       when: ago(n.mtimeMs),
     })),
@@ -289,6 +118,7 @@ export function TidyView({
       path: n.path,
       title: n.title,
       finding: copy.tidy.findingUntouched,
+      key: 'stale' as const,
       kind: 'warn' as const,
       when: ago(n.mtimeMs),
     })),
@@ -300,7 +130,9 @@ export function TidyView({
   // bar, so every one of those stays honest about them rather than only about
   // the four findings that happen to fit the shared row shape.
   const total = rows.length + data.conflicts.length;
-  const allPaths = [...new Set([...rows.map((r) => r.path), ...data.conflicts.map((c) => c.path)])];
+  const shownRows = focus === null ? rows : rows.filter((r) => r.key === focus);
+  const shownConflicts = focus === null || focus === 'conflicts' ? data.conflicts : [];
+  const allPaths = [...new Set([...shownRows.map((r) => r.path), ...shownConflicts.map((c) => c.path)])];
   const allSelected = allPaths.length > 0 && selected.size === allPaths.length;
   const selectAll = (): void => onToggleAll(allPaths);
 
@@ -320,6 +152,22 @@ export function TidyView({
           ? copy.tidy.clean
           : copy.tidy.found(total)}
       </p>
+
+      {health !== undefined && (
+        <HealthHeader
+          input={{
+            notes: health.notes,
+            orphans: data.totals.orphans,
+            broken: data.totals.deadLinks,
+            untagged: health.tagsInUse ? data.totals.untagged : null,
+            conflicts: data.totals.conflicts,
+          }}
+          stale={data.totals.stale}
+          active={focus}
+          onPick={(key) => setFocus((current) => (current === key ? null : key))}
+          onClear={() => setFocus(null)}
+        />
+      )}
 
       {/*
         The action bar sits above both tables and stays visible whenever there
@@ -350,7 +198,14 @@ export function TidyView({
         </div>
       )}
 
-      {rows.length > 0 && (
+      <div ref={findingsRef} className="tidy-findings">
+      {focus !== null && (
+        <p className="tidy-focus" role="status">
+          {copy.health.showing(focus === 'stale' ? copy.tidy.findingUntouched : healthLabel(focus, 2))}
+        </p>
+      )}
+
+      {shownRows.length > 0 && (
         <div className="tablewrap">
           <div className="tablescroll">
             <table>
@@ -371,7 +226,7 @@ export function TidyView({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, index) => (
+                {shownRows.map((row, index) => (
                   <tr
                     key={`${row.finding}:${row.path}:${index}`}
                     data-selected={selected.has(row.path)}
@@ -399,9 +254,9 @@ export function TidyView({
         </div>
       )}
 
-      {data.conflicts.length > 0 && (
+      {shownConflicts.length > 0 && (
         <ConflictSection
-          conflicts={data.conflicts}
+          conflicts={shownConflicts}
           selected={selected}
           allSelected={allSelected}
           onToggle={onToggle}
@@ -409,6 +264,7 @@ export function TidyView({
           onOpen={onOpen}
         />
       )}
+      </div>
     </div>
   );
 }
