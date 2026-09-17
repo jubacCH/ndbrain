@@ -7,6 +7,7 @@
  * it has no findings at all just because the shared `rows` table is empty.
  */
 
+import { useState } from 'react';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -63,17 +64,60 @@ function renderTidy(props: Partial<Parameters<typeof TidyView>[0]> = {}) {
   return handlers;
 }
 
+describe('narrowing to one finding', () => {
+  function Harness({ onBulk }: { onBulk: (paths: string[]) => void }): React.JSX.Element {
+    // The shell's own selection rules, as App.tsx has them.
+    const [selected, setSelected] = useState<Set<string>>(new Set());
+    const note = (path: string) => ({ owner: 'julian', path, title: path.replace(/\.md$/, ''), size: 1, mtimeMs: 1_700_000_000_000 });
+    return (
+      <TidyView
+        data={tidy({
+          orphans: [note('Allein.md'), note('Einsam.md')],
+          deadLinks: [{ owner: 'julian', source: 'Kaputt.md', targetRaw: 'Nirgends', targetPath: null, heading: null, alias: null, offset: 0 }],
+          totals: { orphans: 2, untagged: 0, deadLinks: 1, stale: 0, conflicts: 0 },
+        })}
+        selected={selected}
+        busy={false}
+        tags={[]}
+        dirs={[]}
+        health={{ notes: 10, tagsInUse: false }}
+        onToggle={(path) => setSelected((c) => { const n = new Set(c); if (n.has(path)) n.delete(path); else n.add(path); return n; })}
+        onToggleAll={(paths) => setSelected((c) => (c.size === paths.length ? new Set() : new Set(paths)))}
+        onKeepSelected={(paths) => setSelected((c) => new Set([...c].filter((p) => paths.includes(p))))}
+        onOpen={vi.fn()}
+        onBulk={() => onBulk([...selected])}
+      />
+    );
+  }
+
+  it('drops selected rows that are no longer shown, so the bulk action cannot reach them', async () => {
+    const onBulk = vi.fn();
+    render(<Harness onBulk={onBulk} />);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select all' }));
+    expect(screen.getByText('3 selected')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^Show the 1 broken/ }));
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete…' }));
+    expect(onBulk).toHaveBeenCalledWith(['Kaputt.md']);
+
+    // Widening again does not bring the dropped rows back.
+    await userEvent.click(screen.getByRole('button', { name: /^Show the 1 broken/ }));
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+  });
+});
+
 describe('a vault with only conflict copies', () => {
   it('still shows the delete bar, not just checkboxes with nothing to act on', () => {
     renderTidy({ data: tidy({ conflicts: [conflict()] }) });
 
     // The bar the other findings share — same delete button, no second one.
-    expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete…' })).toBeInTheDocument();
   });
 
   it('draws delete as the destructive button, not the accent', () => {
     renderTidy({ data: tidy({ conflicts: [conflict()] }) });
-    const button = screen.getByRole('button', { name: /delete/i });
+    const button = screen.getByRole('button', { name: 'Delete…' });
     expect(button).toHaveClass('btn-danger');
     expect(button).not.toHaveClass('btn-solid');
   });
@@ -129,7 +173,7 @@ describe('copy and original, side by side', () => {
 
     // One delete button for the whole view — not a second one scoped to this
     // section — and it is enabled once the copy alone is selected.
-    const deleteButton = screen.getByRole('button', { name: /delete/i });
+    const deleteButton = screen.getByRole('button', { name: 'Delete…' });
     expect(deleteButton).toBeEnabled();
     await user.click(deleteButton);
     expect(onBulk).toHaveBeenCalledWith('delete');
