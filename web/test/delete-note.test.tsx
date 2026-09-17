@@ -40,8 +40,8 @@ vi.mock('../src/Brain', () => ({
   ),
 }));
 vi.mock('../src/Editor', () => ({
-  Editor: (props: { path: string; onChange: (content: string) => void }) => (
-    <div data-testid="editor">
+  Editor: (props: { path: string; locked?: boolean; onChange: (content: string) => void }) => (
+    <div data-testid="editor" data-locked={props.locked === true}>
       {props.path}
       <button type="button" onClick={() => props.onChange('typed, not yet saved')}>
         type
@@ -62,6 +62,9 @@ const server = vi.hoisted(() => ({
   calls: { tree: 0, graph: 0, links: 0 },
   /** How long the backlinks endpoint takes to answer. */
   linksDelayMs: 0,
+  /** How long the delete takes to answer, and whether it fails. */
+  deleteDelayMs: 0,
+  deleteFails: false,
 }));
 
 vi.mock('../src/api', async (original) => {
@@ -129,6 +132,8 @@ vi.mock('../src/api', async (original) => {
       return { note: { path, title: '', content: '', size: 0, mtimeMs: 1 }, created: false };
     },
     deleteNote: async (owner: string, path: string) => {
+      if (server.deleteDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, server.deleteDelayMs));
+      if (server.deleteFails) throw new real.ApiError(500, 'internal', 'disk full');
       server.deleted.push([owner, path]);
       server.notes = server.notes.filter((n) => !(n.owner === owner && n.path === path));
       return {};
@@ -180,6 +185,8 @@ beforeEach(() => {
   server.written = [];
   server.calls = { tree: 0, graph: 0, links: 0 };
   server.linksDelayMs = 0;
+  server.deleteDelayMs = 0;
+  server.deleteFails = false;
 });
 
 afterEach(() => {
@@ -268,6 +275,108 @@ describe("deleting from the note's header", () => {
     await waitFor(() => expect(server.deleted).toEqual([['julian', PLAN]]), { timeout: 2000 });
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(server.written).toEqual([]);
+  });
+
+  describe('nothing written while the delete is under way', () => {
+    const typeInEditor = (): Promise<void> =>
+      userEvent.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
+    const askToDelete = async (): Promise<void> => {
+      await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
+      await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+    };
+    const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it('typing while the links are counted', async () => {
+      server.linksDelayMs = 200;
+      server.deleteDelayMs = 900;
+      mount();
+      await openFromPalette('Plan');
+      await askToDelete();
+      await typeInEditor();
+      await waitFor(() => expect(server.deleted).toEqual([['julian', PLAN]]), { timeout: 3000 });
+      await settle(700);
+      expect(server.written).toEqual([]);
+    });
+
+    it('typing after the question was answered, while the delete runs', async () => {
+      server.deleteDelayMs = 900;
+      mount();
+      await openFromPalette('Plan');
+      await askToDelete();
+      await waitFor(() => expect(confirm).toHaveBeenCalled());
+      await typeInEditor();
+      await settle(650);
+      expect(server.written).toEqual([]);
+      await waitFor(() => expect(server.deleted).toEqual([['julian', PLAN]]), { timeout: 3000 });
+      await settle(700);
+      expect(server.written).toEqual([]);
+    });
+
+    it('the tab being hidden while the delete runs', async () => {
+      server.deleteDelayMs = 900;
+      mount();
+      await openFromPalette('Plan');
+      await typeInEditor();
+      await askToDelete();
+      await waitFor(() => expect(confirm).toHaveBeenCalled());
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('pagehide'));
+      await settle(100);
+      expect(server.written).toEqual([]);
+      await waitFor(() => expect(server.deleted).toEqual([['julian', PLAN]]), { timeout: 3000 });
+      await settle(700);
+      expect(server.written).toEqual([]);
+    });
+
+    it('locks the editor for the time of the delete', async () => {
+      server.deleteDelayMs = 600;
+      confirm.mockReturnValue(false);
+      mount();
+      await openFromPalette('Plan');
+      expect(screen.getByTestId('editor')).toHaveAttribute('data-locked', 'false');
+
+      // Cancelled: locked while asking, free again afterwards.
+      server.linksDelayMs = 300;
+      await askToDelete();
+      await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-locked', 'true'));
+      await waitFor(() => expect(confirm).toHaveBeenCalled());
+      await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-locked', 'false'));
+
+      // Accepted: locked until the delete has answered.
+      server.linksDelayMs = 0;
+      confirm.mockReturnValue(true);
+      await askToDelete();
+      await waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+      expect(screen.getByTestId('editor')).toHaveAttribute('data-locked', 'true');
+      await waitFor(() => expect(screen.queryByTestId('editor')).toBeNull(), { timeout: 3000 });
+    });
+
+    it('writes the held text after a failed delete', async () => {
+      server.deleteFails = true;
+      // Longer than the save delay: a debounce that ran anyway would have
+      // fired, been refused, and left nothing to write once the delete failed.
+      server.deleteDelayMs = 900;
+      mount();
+      await openFromPalette('Plan');
+      await askToDelete();
+      await waitFor(() => expect(confirm).toHaveBeenCalled());
+      await typeInEditor();
+      await waitFor(() => expect(screen.getByText('disk full')).toBeInTheDocument(), { timeout: 3000 });
+      await waitFor(() => expect(server.written).toEqual([['julian', PLAN]]), { timeout: 2000 });
+      expect(screen.getByTestId('editor')).toHaveAttribute('data-locked', 'false');
+    });
+
+    it('says in the question that unsaved text goes, only when there is some', async () => {
+      confirm.mockReturnValue(false);
+      mount();
+      await openFromPalette('Plan');
+      await askToDelete();
+      await waitFor(() => expect(confirm).toHaveBeenCalledWith(QUESTION_PLAN));
+
+      await typeInEditor();
+      await askToDelete();
+      await waitFor(() => expect(confirm).toHaveBeenLastCalledWith(`${QUESTION_PLAN} ${copy.ask.unsavedDropped}`));
+    });
   });
 
   it('keeps unsaved text when the question is cancelled', async () => {

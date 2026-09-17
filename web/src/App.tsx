@@ -324,6 +324,18 @@ function Shell({
    * make every later save look like a conflict.
    */
   const baseMtime = useRef<number | null>(null);
+  /**
+   * Notes being deleted right now, by `refKey`.
+   *
+   * From the moment the question is about to be asked until the delete has
+   * answered, nothing writes to them: not the debounce, not a switch, not a tab
+   * being hidden. Any of those used to be able to send a PUT that landed after
+   * the DELETE and brought the note straight back. Their unsaved text stays in
+   * `pending` meanwhile — it is written after a cancel or a failed delete, and
+   * dropped after a successful one. Mirrored in state so the editor can lock.
+   */
+  const deleting = useRef(new Set<string>());
+  const [deletingKeys, setDeletingKeys] = useState<ReadonlySet<string>>(() => new Set());
 
   const client = useQueryClient();
 
@@ -425,6 +437,8 @@ function Shell({
   const flush = useCallback(async (): Promise<void> => {
     const outstanding = pending.current;
     if (outstanding === null) return;
+    // Held, not written: see `deleting`.
+    if (deleting.current.has(refKey(outstanding.owner, outstanding.path))) return;
     pending.current = null;
     setSaveState('saving');
 
@@ -477,6 +491,10 @@ function Shell({
       window.__ndbrainPending = { path, content };
       setSaveState('dirty');
       if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      // Kept, but not timed, while the note is being deleted; `deleteNote`
+      // starts the wait again if the note survives.
+      if (deleting.current.has(refKey(owner, path))) return;
       saveTimer.current = window.setTimeout(() => void flush(), prefsRef.current.saveDelayMs);
     },
     [flush],
@@ -761,18 +779,22 @@ function Shell({
    */
   const deleteNote = useCallback(
     async (owner: string, path: string, title: string): Promise<boolean> => {
+      const key = refKey(owner, path);
       const typingHere = (): boolean =>
         pending.current !== null && pending.current.owner === owner && pending.current.path === path;
       // Text waiting for a different note is written first, as on any switch.
       if (pending.current !== null && !typingHere()) await flush();
-      // Text waiting for this one is held while the question is open: a save
-      // firing during the link count below could land after the delete and
-      // bring the note back. Cancelling starts the wait again.
-      if (typingHere() && saveTimer.current !== null) {
+      // From here until the delete answers, nothing is written to this note.
+      deleting.current.add(key);
+      setDeletingKeys(new Set(deleting.current));
+      if (saveTimer.current !== null && typingHere()) {
         window.clearTimeout(saveTimer.current);
         saveTimer.current = null;
       }
-      const resume = (): void => {
+      /** The note stays: release it, and let its unsaved text be written. */
+      const release = (): void => {
+        deleting.current.delete(key);
+        setDeletingKeys(new Set(deleting.current));
         if (typingHere() && saveTimer.current === null) {
           saveTimer.current = window.setTimeout(() => void flush(), prefsRef.current.saveDelayMs);
         }
@@ -791,9 +813,12 @@ function Shell({
         // server has the final word on whether it exists at all.
       }
 
-      const question = copy.ask.deleteNote(title) + (linking > 0 ? ` ${copy.ask.linksWillBreak(linking)}` : '');
+      const question =
+        copy.ask.deleteNote(title) +
+        (linking > 0 ? ` ${copy.ask.linksWillBreak(linking)}` : '') +
+        (typingHere() ? ` ${copy.ask.unsavedDropped}` : '');
       if (!window.confirm(question)) {
-        resume();
+        release();
         return false;
       }
 
@@ -801,7 +826,7 @@ function Shell({
         await api.deleteNote(owner, path);
       } catch (caught) {
         // Still there, so its unsaved text is still worth saving.
-        resume();
+        release();
         setError(caught instanceof ApiError ? caught.message : copy.errors.deleteNoteFailed);
         return false;
       }
@@ -811,9 +836,13 @@ function Shell({
       if (typingHere()) {
         pending.current = null;
         window.__ndbrainPending = null;
-        if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+      }
+      if (saveTimer.current !== null && pending.current === null) {
+        window.clearTimeout(saveTimer.current);
         saveTimer.current = null;
       }
+      deleting.current.delete(key);
+      setDeletingKeys(new Set(deleting.current));
 
       dropRecent(user.id, owner, path);
       setRecents(loadRecents(user.id));
@@ -1508,6 +1537,9 @@ function Shell({
                     path={open.note.path}
                     initialContent={open.note.content}
                     readOnly={!open.canWrite}
+                    // Locked, not rebuilt, while its delete is in flight: typing
+                    // then would be text with nowhere to go.
+                    locked={deletingKeys.has(refKey(open.owner, open.note.path))}
                     tags={registryQuery.data ?? null}
                     line={jumpLine ?? undefined}
                     onChange={(content) => scheduleSave(open.owner, open.note.path, content)}
