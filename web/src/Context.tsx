@@ -10,6 +10,7 @@
  */
 
 
+import { isDailyNote, isPendingDayLink } from '../../shared/journal';
 import type { Ref } from './api';
 import { copy } from './copy';
 import { useHistory, useLinks } from './queries';
@@ -52,8 +53,15 @@ export function ContextPanel({
   const backlinks = linksQuery.data?.backlinks ?? [];
   const outgoing = linksQuery.data?.outgoing ?? [];
 
-  const dead = outgoing.filter((link) => link.targetPath === null);
+  // A daily note's link to a day not written yet is not a broken link — the
+  // same rule, from the same function, as the server's findings. It is listed
+  // with the links out, quietly, and following it starts that day.
+  const pending = outgoing.filter(
+    (link) => link.targetPath === null && notePath !== null && isPendingDayLink(notePath, link.targetRaw),
+  );
+  const dead = outgoing.filter((link) => link.targetPath === null && !pending.includes(link));
   const live = outgoing.filter((link) => link.targetPath !== null);
+  const daily = notePath !== null && isDailyNote(notePath);
 
   if (notePath === null) return <></>;
 
@@ -64,7 +72,7 @@ export function ContextPanel({
               <h4>{copy.context.linksHere} · {backlinks.length}</h4>
               {backlinks.length === 0 && (
                 <p className="empty" style={{ padding: '.2rem 0' }}>
-                  {copy.context.orphanedNote}
+                  {daily ? copy.context.noLinksToDay : copy.context.orphanedNote}
                 </p>
               )}
               {backlinks.map((link) => (
@@ -81,8 +89,8 @@ export function ContextPanel({
             </section>
 
             <section>
-              <h4>{copy.context.linksOut} · {live.length}</h4>
-              {live.length === 0 && (
+              <h4>{copy.context.linksOut} · {live.length + pending.length}</h4>
+              {live.length + pending.length === 0 && (
                 <p className="empty" style={{ padding: '.2rem 0' }}>
                   {copy.context.noLinks.before}
                   <code>{copy.note.linkSyntax}</code>
@@ -98,6 +106,19 @@ export function ContextPanel({
                 >
                   {titleOf(link.targetPath ?? '')}
                   {link.heading !== null && <small>↳ {link.heading}</small>}
+                </button>
+              ))}
+              {pending.map((link) => (
+                <button
+                  type="button"
+                  className="ref ref-pending"
+                  key={`pending:${link.targetRaw}:${link.offset}`}
+                  // Days are started only in your own journal; see `openDay`.
+                  disabled={!canCreate || owner !== self}
+                  onClick={() => onCreate(link.targetRaw)}
+                >
+                  {link.alias ?? titleOf(link.targetRaw)}
+                  <small>{copy.context.notWrittenYet}</small>
                 </button>
               ))}
             </section>

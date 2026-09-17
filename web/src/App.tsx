@@ -821,8 +821,10 @@ function Shell({
     // the template and in the journal — not an empty note named after the link
     // beside this one. Only in your own journal; see `openDay`.
     const day = parseJournalLinkTarget(target);
-    if (day !== null && open.owner === user.id && parseJournalPath(open.note.path) !== null) {
-      await openDay(day);
+    if (day !== null && parseJournalPath(open.note.path) !== null) {
+      // Somebody else's day is theirs to start; a plain note named after the
+      // link would only land nested inside their journal.
+      if (open.owner === user.id) await openDay(day);
       return;
     }
     const folder = open.note.path.split('/').slice(0, -1).join('/');
