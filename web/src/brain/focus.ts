@@ -42,10 +42,17 @@ export interface FocusInput {
   height: number;
   /** Room to keep clear: the caller's controls plus anything that reserves space. */
   inset: Inset;
+  /**
+   * Screen pixels kept free right of the rightmost note, for its name: titles
+   * are written beside a cell body, and a frame that fits only the bodies cuts
+   * the names on that side off at the edge or under the inspector.
+   */
+  labelRoom?: number;
 }
 
 export function focusCamera(input: FocusInput): Camera {
   const { x, y, r, members, bounds, width, height, inset } = input;
+  const labels = Math.max(0, input.labelRoom ?? 0);
   const home = fit(bounds, width, height, inset);
   if (members.length === 0) return home;
 
@@ -79,7 +86,7 @@ export function focusCamera(input: FocusInput): Camera {
 
   const w = maxX - minX;
   const h = maxY - minY;
-  const roomW = Math.max(1, width - inset.left - inset.right);
+  const roomW = Math.max(1, width - inset.left - inset.right - labels);
   const roomH = Math.max(1, height - inset.top - inset.bottom);
   // `fit` stops at one world unit per pixel, which is right for a resting view
   // and too timid for a focus; the scale is chosen here and the offset follows.
