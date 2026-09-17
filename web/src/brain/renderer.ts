@@ -93,6 +93,11 @@ const RAY_FIBRES: ReadonlyArray<readonly [number, number, number]> = [
   [0.09, 0.32, 0.055],
   [-0.12, 0.28, 0.045],
 ];
+/**
+ * The share of a centre's ray that fades in from the body: forty rays meeting
+ * at full strength in one point are a white star, whatever colour each is.
+ */
+const RAY_LEAD = 0.05;
 /** How far the centre's corona reaches, in body radii, and how bright it is. */
 const CORONA = 7;
 const CORONA_ALPHA = 0.16;
@@ -343,7 +348,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     g.globalCompositeOperation = 'lighter';
     for (const e of scene.edges) {
       if (e.depth !== plane) continue;
-      tract(g, e, e.restAlpha, e.restTail);
+      tract(g, e, e.restAlpha, e.restTail, 0, 1, e.radiant > 0 ? RAY_LEAD : 0);
       // The same link twice more, fainter, narrower and bent either side: a
       // hub's rays then read as bundles of fibres rather than single ribbons.
       // The prototype's values: 45 % and 35 % of the width, 35 % and 25 % of
