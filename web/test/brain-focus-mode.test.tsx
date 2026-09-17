@@ -103,10 +103,12 @@ async function firstVisit(): Promise<void> {
 async function mountFocused(): Promise<{
   canvas: HTMLCanvasElement;
   onPick: ReturnType<typeof vi.fn>;
+  onOpen: ReturnType<typeof vi.fn>;
   setPicked: (key: string | null) => void;
   unmount: () => void;
 }> {
   const onPick = vi.fn();
+  const onOpen = vi.fn();
   const handle: { set: (key: string | null) => void } = { set: () => {} };
   function Focused(): React.JSX.Element {
     const [picked, setPicked] = useState<string | null>(null);
@@ -115,7 +117,7 @@ async function mountFocused(): Promise<{
       <Brain
         data={data}
         events={[]}
-        onOpen={vi.fn()}
+        onOpen={onOpen}
         view="network"
         arrangement="brain"
         remember={remember}
@@ -135,6 +137,7 @@ async function mountFocused(): Promise<{
   return {
     canvas: view.container.querySelector('canvas')!,
     onPick,
+    onOpen,
     setPicked: (key) => act(() => handle.set(key)),
     unmount: view.unmount,
   };
@@ -208,6 +211,25 @@ describe('focus mode', () => {
       expect(after.get(key)!.x, key).toBe(was.x);
       expect(after.get(key)!.y, key).toBe(was.y);
     }
+  });
+
+  it('opens the note on a double click, although the first click has set the camera moving', async () => {
+    await firstVisit();
+    const build = vi.spyOn(SceneBuilder.prototype, 'build');
+    const { canvas, onOpen, unmount } = await mountFocused();
+    const key = targets[3]!;
+    const node = graph.nodes[graph.index.get(key)!]!;
+    // Where the note was when the double click began. By the second press the
+    // glide is well under way and the note is no longer under the pointer.
+    const p = onScreen(build, key);
+    click(canvas, p);
+    await run(150);
+    expect(Math.hypot(onScreen(build, key).x - p.x, onScreen(build, key).y - p.y)).toBeGreaterThan(8);
+    click(canvas, p);
+    await run(16);
+    fireEvent.doubleClick(canvas, { clientX: p.x, clientY: p.y });
+    expect(onOpen).toHaveBeenCalledWith(node.owner, node.path);
+    unmount();
   });
 
   it('is ended by Escape and by a click on the dark, and the camera stays where it was', async () => {

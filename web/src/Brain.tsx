@@ -178,6 +178,9 @@ const SAVE_MS = 5000;
  */
 const DRAG_SLOP = 4;
 
+/** How long after a click a second press still belongs to it, as a double click. */
+const DOUBLE_MS = 500;
+
 /** Breathing room around the fitted world when the caller asks for none. */
 const EDGE: Inset = { top: 12, right: 12, bottom: 12, left: 12 };
 
@@ -655,10 +658,28 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     }
     ask();
 
+    /**
+     * The note the last click landed on, and where and when.
+     *
+     * A click in focus mode sets the camera moving, so by the second press of
+     * a double click the note is no longer under the pointer. A press close to
+     * the last click, soon after it, means the same note — which is what
+     * somebody double-clicking a point meant.
+     */
+    let lastClick: { node: number; x: number; y: number; at: number } | null = null;
+
     /** The node under a screen point, or -1. */
     const locate = (event: { clientX: number; clientY: number }): number => {
       const e = engine.current;
       if (e === null) return -1;
+      if (
+        lastClick !== null &&
+        lastClick.node < e.graph.nodes.length &&
+        performance.now() - lastClick.at <= DOUBLE_MS &&
+        Math.hypot(event.clientX - lastClick.x, event.clientY - lastClick.y) <= DRAG_SLOP * 2
+      ) {
+        return lastClick.node;
+      }
       const rect = canvas.getBoundingClientRect();
       const at = toWorld(e.camera, event.clientX - rect.left, event.clientY - rect.top);
       return e.hits.at(at.x, at.y, e.camera.scale);
@@ -870,7 +891,12 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       }
       // A press on a note that never became a drag is a click: it focuses the
       // note. A drag keeps the selection its press made, and the camera.
-      if (e.press !== null && e.drag < 0) select(e.press.node);
+      if (e.press !== null && e.drag < 0) {
+        select(e.press.node);
+        lastClick = { node: e.press.node, x: e.press.x, y: e.press.y, at: performance.now() };
+      } else {
+        lastClick = null;
+      }
       if (e.press !== null) report(e);
       if (e.drag >= 0) {
         e.layout.release();
