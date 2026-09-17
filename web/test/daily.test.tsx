@@ -280,6 +280,22 @@ describe('opening today from the shell', () => {
     expect(editor.textContent).toBe('Schon angefangen.\n');
   });
 
+  it('reopens a day with what is on disk now, not what it said when first opened', async () => {
+    at('2026-09-17T10:00:00Z');
+    await renderApp();
+
+    await userEvent.click(todayButton());
+    expect((await screen.findByTestId('editor')).textContent).toContain('## Notizen');
+
+    // Written since — in this tab before leaving, or by anybody else.
+    server.contents.set('julian 50_Journal/2026/09/2026-09-17.md', 'Seither geschrieben.\n');
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.overview }));
+    await waitFor(() => expect(screen.queryByTestId('editor')).toBeNull());
+    await userEvent.click(todayButton());
+
+    await waitFor(() => expect(screen.getByTestId('editor').textContent).toBe('Seither geschrieben.\n'));
+  });
+
   it('answers the shortcut with either modifier', async () => {
     at('2026-09-17T10:00:00Z');
     await renderApp();
