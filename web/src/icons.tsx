@@ -91,6 +91,37 @@ export function TasksIcon(props: IconProps): React.JSX.Element {
   );
 }
 
+/** A calendar page: the journal. */
+export function CalendarIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="3.2" y="4.2" width="13.6" height="12.6" rx="2.2" />
+      <path d="M3.2 8.2h13.6M7 2.8v2.8M13 2.8v2.8" />
+      <path d="M6.8 11.2h.01M10 11.2h.01M13.2 11.2h.01M6.8 14h.01M10 14h.01" />
+    </Svg>
+  );
+}
+
+/** A calendar page with one day ringed: today's note. */
+export function TodayIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="3.2" y="4.2" width="13.6" height="12.6" rx="2.2" />
+      <path d="M3.2 8.2h13.6M7 2.8v2.8M13 2.8v2.8" />
+      <circle cx="10" cy="12.5" r="2" />
+    </Svg>
+  );
+}
+
+/** A single chevron pointing left; the right-hand one is `ChevronIcon`. */
+export function ChevronLeftIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="m12.5 5-5 5 5 5" />
+    </Svg>
+  );
+}
+
 export function SearchIcon(props: IconProps): React.JSX.Element {
   return (
     <Svg {...props}>
