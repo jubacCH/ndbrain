@@ -656,20 +656,20 @@ export class App {
    * have taken them, and losing them would quietly flatten a structure somebody
    * built on purpose.
    *
-   * **Own vault only, and it takes no view for that reason.** `movedNotes` and
-   * `updatedLinks` are both lists of paths, so a caller acting for somebody else
-   * would leak the same way `renameNote` did — but filtering the report would be
-   * the smaller half of the problem here. A folder may straddle the edge of a
-   * share, and this moves everything under it: the damage would be notes written
-   * outside the grantee's region, not merely named. The route therefore takes
-   * the owner from the session and never from the request, and this stays a
-   * whole-vault operation. Anything else needs the boundary decided first.
+   * **Whose view, and why it is required.** `movedNotes` and `updatedLinks`
+   * are both lists of paths, so a caller acting in somebody else's vault — a
+   * member renaming a folder in a space — would leak the way `renameNote` once
+   * did. Both are therefore reported through the caller's view. The larger
+   * danger, a folder straddling the edge of a share so that the move writes
+   * notes outside the grantee's region, is ruled out before this runs: the
+   * route requires write access to the folder's own path at both ends, and
+   * everything below a path inside a folder share is inside that share.
    */
   async renameFolder(
     owner: string,
     from: string,
     to: string,
-    actor?: string,
+    options: { view: Viewable; actor?: string },
   ): Promise<{ folder: string; movedNotes: string[]; updatedLinks: string[] }> {
     const source = normalizeVaultPath(from);
     const target = normalizeVaultPath(to);
@@ -694,8 +694,8 @@ export class App {
     // neither turns it into two moves that are safe everywhere.
     if (caseKey(source) === caseKey(target)) {
       const temporary = `${source}.${Date.now().toString(36)}.tmp`;
-      const first = await this.renameFolder(owner, source, temporary, actor);
-      const second = await this.renameFolder(owner, temporary, target, actor);
+      const first = await this.renameFolder(owner, source, temporary, options);
+      const second = await this.renameFolder(owner, temporary, target, options);
       return {
         folder: target,
         movedNotes: second.movedNotes,
@@ -714,13 +714,7 @@ export class App {
     const updatedLinks = new Set<string>();
 
     for (const notePath of notes) {
-      const result = await this.renameNote(owner, notePath, rebase(notePath), {
-        // `owner` as the view, spelled out: this operation is the owner's own
-        // vault by construction (see the docstring), so the whole vault is what
-        // may be reported. Nothing here is allowed to inherit that silently.
-        view: owner,
-        ...(actor === undefined ? {} : { actor }),
-      });
+      const result = await this.renameNote(owner, notePath, rebase(notePath), options);
       movedNotes.push(result.note.path);
       for (const link of result.updatedLinks) updatedLinks.add(link);
     }
@@ -741,7 +735,11 @@ export class App {
       await this.notes.vault.removeDirIfEmpty(owner, dir);
     }
 
-    return { folder: target, movedNotes, updatedLinks: [...updatedLinks] };
+    return {
+      folder: target,
+      movedNotes: visibleIn(options.view, owner, movedNotes),
+      updatedLinks: [...updatedLinks],
+    };
   }
 
   /**

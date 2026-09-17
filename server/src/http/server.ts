@@ -355,31 +355,50 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // ---- folders ------------------------------------------------------------
   //
-  // Own vault only, and deliberately so. A folder operation moves everything
-  // under it, and the write-shared region a guest holds is a *part* of a vault:
-  // renaming a folder that straddles its edge would either move notes the guest
-  // may not touch or silently move only half of them. Neither is a good answer,
-  // so the question is not asked.
+  // In the caller's own vault, or in another one — a space, typically — under
+  // a share that gives write access to the folder's path. The check is the one
+  // notes go through, on the folder path itself: a write share on `Projekt/`
+  // covers `Projekt/Neu` and `Projekt/A` → `Projekt/B`, and nothing beside it.
+  // A folder operation moves everything below the folder, and everything below
+  // a path inside a folder share is inside that share, so a grantee can never
+  // move notes she was not given. A note share never covers a folder path.
+  //
+  // The folder shared itself is not renamed or removed by its grantee: its
+  // path is not *inside* the share, and letting it be would move the share's
+  // own root out from under the owner.
   fastify.post('/api/v1/folders', async (request, reply) => {
-    const owner = requireUser(request).id;
-    const { path: dir } = body(request, S.CreateFolderRequest);
+    const caller = requireUser(request).id;
+    const { path: dir, owner: named } = body(request, S.CreateFolderRequest);
+    const owner = named ?? caller;
 
     if (dir.trim() === '') {
       return reply.code(400).send({ code: 'no_path', message: 'name the folder' });
     }
+    shares.check(caller, owner, dir, 'write');
     return reply.code(201).send({ folder: await app.createFolder(owner, dir) });
   });
 
   fastify.post('/api/v1/folders/rename', async (request) => {
-    const owner = requireUser(request).id;
-    const { from, to } = body(request, S.RenameFolderRequest);
+    const caller = requireUser(request).id;
+    const { from, to, owner: named } = body(request, S.RenameFolderRequest);
+    const owner = named ?? caller;
 
-    return app.renameFolder(owner, from, to, owner);
+    // Both ends, as for a note: a folder may not be carried out of the region.
+    shares.check(caller, owner, from, 'write');
+    shares.check(caller, owner, to, 'write');
+
+    // The caller's view bounds what is reported about links, exactly as a
+    // note rename does.
+    return app.renameFolder(owner, from, to, { view: shares.view(caller), actor: caller });
   });
 
   fastify.delete('/api/v1/folders/*', async (request, reply) => {
-    const owner = requireUser(request).id;
-    await app.deleteFolder(owner, notePathOf(request));
+    const caller = requireUser(request).id;
+    const dir = notePathOf(request);
+    const owner = ownerOf(request, caller);
+
+    shares.check(caller, owner, dir, 'write');
+    await app.deleteFolder(owner, dir);
     return reply.code(204).send();
   });
 
@@ -1059,10 +1078,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   fastify.get('/api/v1/admin/spaces', async (request) => {
     requireAdmin(request);
-    return users
-      .list()
-      .filter((user) => user.kind === 'space')
-      .map(spaceRow);
+    return { spaces: users.list().filter((user) => user.kind === 'space').map(spaceRow) };
   });
 
   fastify.post('/api/v1/admin/spaces', async (request, reply) => {
@@ -1085,15 +1101,34 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   fastify.get('/api/v1/admin/spaces/:id/members', async (request) => {
     requireAdmin(request);
-    return shares.byOwner(requireSpace(request).id);
+    return { members: shares.byOwner(requireSpace(request).id) };
   });
 
   fastify.post('/api/v1/admin/spaces/:id/members', async (request, reply) => {
     requireAdmin(request);
     const space = requireSpace(request);
     const granted = await grantFromBody(space.id, request, reply);
-    if ('share' in granted) return reply.code(201).send(granted);
+    if ('share' in granted) return reply.code(201).send(granted.share);
     return granted;
+  });
+
+  /**
+   * What is in a space, as paths and titles — so an administrator can grant a
+   * folder or a note without being a member.
+   *
+   * No note text, no sizes, no dates: choosing what to share needs the shape
+   * of the space, and reading it is what membership is for.
+   */
+  fastify.get('/api/v1/admin/spaces/:id/tree', async (request) => {
+    requireAdmin(request);
+    const space = requireSpace(request);
+    const tree = await app.tree(space.id);
+    return {
+      dirs: tree.dirs.map((dir) => dir.path),
+      notes: tree.notes
+        .map((note) => ({ path: note.path, title: note.title }))
+        .sort((a, b) => a.path.localeCompare(b.path)),
+    };
   });
 
   fastify.delete('/api/v1/admin/spaces/:id/members/:shareId', async (request, reply) => {
@@ -1243,11 +1278,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // ---- shares -------------------------------------------------------------
   fastify.get('/api/v1/shares', async (request) => {
     const caller = requireUser(request).id;
-    return {
-      granted: shares.byOwner(caller),
-      received: shares.toGrantee(caller),
-      owners: shares.visibleOwners(caller),
-    };
+    return { granted: shares.byOwner(caller), received: shares.toGrantee(caller) };
   });
 
   /**
