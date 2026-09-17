@@ -21,6 +21,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
 import { NoteNotFoundError } from '../errors.js';
@@ -37,6 +38,9 @@ export interface Version {
   /** Bytes at this version, so the UI can show "grew by 400 bytes". */
   size: number;
 }
+
+/** What the host keeps for a vault; see `History.state`. */
+export type HistoryState = 'none' | 'empty' | 'ready';
 
 /** Big enough to matter, small enough that a note edited all day stays readable. */
 const MAX_VERSIONS = 50;
@@ -89,6 +93,79 @@ export class History {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * What the sidecar holds for this vault, told apart the way a deleted note's
+   * restore needs it: no repository of its own, a repository without a single
+   * commit yet, or one with history.
+   *
+   * `available` answers yes for a vault that merely sits somewhere inside a
+   * repository. That is harmless for listing a note's versions, which would
+   * come back empty, but a promise that a deleted note can be brought back has
+   * to rest on the vault's own repository, so its top level must be the vault.
+   */
+  async state(owner: string): Promise<HistoryState> {
+    const root = this.#root(owner);
+    try {
+      const { stdout } = await run('git', ['rev-parse', '--show-toplevel'], { cwd: root, timeout: TIMEOUT_MS });
+      if ((await realpath(stdout.trim())) !== (await realpath(root))) return 'none';
+    } catch {
+      return 'none';
+    }
+    try {
+      await run('git', ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { cwd: root, timeout: TIMEOUT_MS });
+      return 'ready';
+    } catch {
+      return 'empty';
+    }
+  }
+
+  /**
+   * The newest recorded version of `notePath` taken no later than `before` and
+   * no earlier than `from` in which the note actually exists — its last saved
+   * state before it was deleted. Null when there is none.
+   *
+   * A commit that touched the path may be the one that recorded its deletion,
+   * so each candidate is asked whether the file is there at all.
+   */
+  async lastVersionBefore(owner: string, notePath: string, before: number, from = 0): Promise<Version | null> {
+    const path = normalizeVaultPath(notePath);
+    for (const version of await this.versions(owner, path)) {
+      if (version.at > before || version.at < from) continue;
+      try {
+        await run('git', ['cat-file', '-e', `${version.id}:${path}`], { cwd: this.#root(owner), timeout: TIMEOUT_MS });
+        return version;
+      } catch {
+        // Absent at this commit; an older one may still hold it.
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Which of `paths` the latest commit holds. One tree listing for any number of
+   * notes, so a bulk delete can say how many of them could be brought back.
+   */
+  async recorded(owner: string, paths: string[]): Promise<Set<string>> {
+    const out = new Set<string>();
+    if (paths.length === 0) return out;
+    let stdout: string;
+    try {
+      const result = await run('git', ['ls-tree', '-r', '-z', '--name-only', 'HEAD'], {
+        cwd: this.#root(owner),
+        timeout: TIMEOUT_MS,
+        maxBuffer: 32 * 1024 * 1024,
+      });
+      stdout = result.stdout;
+    } catch {
+      return out;
+    }
+    const wanted = new Set(paths.map((notePath) => normalizeVaultPath(notePath)));
+    for (const name of stdout.split(NUL)) {
+      if (wanted.has(name)) out.add(name);
+    }
+    return out;
   }
 
   /** Every recorded version of one note, newest first. */
