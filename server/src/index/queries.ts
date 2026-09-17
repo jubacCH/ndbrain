@@ -21,6 +21,7 @@ import type { View } from '../auth/shares.js';
 import { caseKey } from '../vault/paths.js';
 import { DEFAULT_SETTINGS } from '../auth/settings.js';
 import { parseConflictPath } from '../notes/service.js';
+import { isDailyNote, isPendingDayLink } from '../../../shared/journal.js';
 
 export interface SearchOptions {
   /** Only notes carrying this tag. */
@@ -600,7 +601,16 @@ export class Queries {
       .map(toLinkRow);
   }
 
-  /** Links whose target does not exist — a finding, not an error. */
+  /**
+   * Links whose target does not exist — a finding, not an error.
+   *
+   * Except a daily note's link to a day nobody has written yet. The template
+   * links yesterday and tomorrow before either exists, and the link fills in by
+   * itself the day that note is written; counting it would make every daily
+   * note lower the health score for doing exactly what it is meant to. The rule
+   * is `isPendingDayLink` in `shared/journal.ts`, applied here so the tidy list,
+   * the overview count, the attention total and the tree markers all get it.
+   */
   deadLinks(view: Viewable): LinkRow[] {
     const scope = scopeSql('l', 'source', view);
     return this.#db
@@ -611,7 +621,8 @@ export class Queries {
           ORDER BY l.source, l.offset`,
         ...scope.params,
       )
-      .map(toLinkRow);
+      .map(toLinkRow)
+      .filter((link) => !isPendingDayLink(link.source, link.targetRaw));
   }
 
   /**
@@ -645,7 +656,11 @@ export class Queries {
         ...scope.params,
         ...linkScope.params,
       )
-      .map(toNoteRow);
+      .map(toNoteRow)
+      // A daily note is reached by its date, through the journal calendar, and
+      // today's is linked from nothing until tomorrow's is written. Neither
+      // makes it lost, which is what "orphaned" is meant to say.
+      .filter((note) => !isDailyNote(note.path));
   }
 
   /**
@@ -672,7 +687,12 @@ export class Queries {
       .map(toNoteRow);
   }
 
-  /** Notes untouched for longer than `days`. */
+  /**
+   * Notes untouched for longer than `days`.
+   *
+   * Not daily notes: a day's entry is finished when the day is, and last
+   * spring's journal is not neglected, it is last spring's journal.
+   */
   stale(view: Viewable, days = DEFAULT_SETTINGS.staleDays, now = Date.now()): NoteRow[] {
     const cutoff = now - days * 24 * 60 * 60 * 1000;
     const scope = scopeSql('n', 'path', view);
@@ -683,7 +703,8 @@ export class Queries {
         ...scope.params,
         Math.trunc(cutoff),
       )
-      .map(toNoteRow);
+      .map(toNoteRow)
+      .filter((note) => !isDailyNote(note.path));
   }
 
   /**
