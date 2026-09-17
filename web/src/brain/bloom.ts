@@ -31,6 +31,7 @@
  */
 
 import type { Camera } from './camera';
+import { WARM_HUE, oklch } from './scene';
 
 /** How far a pan may drift from the cached stand before the layer is repainted. */
 const PAN_TOLERANCE = 0.34;
@@ -204,10 +205,13 @@ export class Sprites {
       grad.addColorStop(0.6, 'rgba(32,191,181,0.06)');
       grad.addColorStop(1, 'rgba(32,191,181,0)');
     } else if (kind === 'warm') {
-      grad.addColorStop(0, 'rgba(255,208,135,0.55)');
-      grad.addColorStop(0.25, 'rgba(234,184,93,0.22)');
-      grad.addColorStop(0.6, 'rgba(234,150,80,0.05)');
-      grad.addColorStop(1, 'rgba(234,150,80,0)');
+      // The accent's one hue (see `WARM_HUE`), brighter towards the middle.
+      const [r0, g0, b0] = oklch(0.88, 0.1, WARM_HUE);
+      const [r1, g1, b1] = oklch(0.74, 0.13, WARM_HUE);
+      grad.addColorStop(0, `rgba(${r0},${g0},${b0},0.55)`);
+      grad.addColorStop(0.25, `rgba(${r1},${g1},${b1},0.22)`);
+      grad.addColorStop(0.6, `rgba(${r1},${g1},${b1},0.05)`);
+      grad.addColorStop(1, `rgba(${r1},${g1},${b1},0)`);
     } else {
       grad.addColorStop(0, 'rgba(255,255,255,0.9)');
       grad.addColorStop(0.4, 'rgba(180,245,255,0.35)');
