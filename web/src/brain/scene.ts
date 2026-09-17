@@ -44,6 +44,7 @@ import {
   VISIBLE,
   alongCurve,
   branchRay,
+  LIT,
   edgeAlpha,
   glow,
   growth,
@@ -358,6 +359,17 @@ const HUB_FULL = 40;
 const FORK_SHARE = 0.7;
 const FORK_FLOOR = 0.13;
 const TWIG_SHARE = 0.6;
+/**
+ * The focus mode: with a note selected, everything that is not about it steps
+ * back. A note that is neither the selected one nor linked to it keeps this
+ * share of its resting opacity, and a link that does not touch the selected
+ * note this share of its own. Tuned in the browser on 2026-09-17 against the
+ * briefing's "strongly dimmed": the selection and its neighbourhood carry the
+ * picture, the rest is still there to keep the place. Only in the brain
+ * arrangement; the neighbourhood beside an open note is all neighbourhood.
+ */
+export const FOCUS_NODE_DIM = 0.25;
+export const FOCUS_EDGE_DIM = 0.3;
 /** How much of its fibres a ray of the centre keeps once zoomed in past the tissue. */
 const RADIANT_NEAR = 0.35;
 /** A note worked on within this many days carries the warm accent. */
@@ -536,6 +548,11 @@ export class SceneBuilder {
   /** What the last frame's cached layers were built from, to notice a change. */
   #lastPicked = -1;
   #lastZoom = -1;
+  /** The selected note and its direct neighbours, for the focus mode; rebuilt when the selection changes. */
+  #related: Uint8Array;
+  #relatedTo = -1;
+  /** Whether the planned layout is the brain arrangement, where the focus mode applies. */
+  #brain = false;
 
   constructor(graph: BrainGraph) {
     this.#graph = graph;
@@ -608,6 +625,7 @@ export class SceneBuilder {
       stamp: 0,
     };
     this.#lit = new Float64Array(graph.edges.length);
+    this.#related = new Uint8Array(graph.nodes.length);
   }
 
   /**
@@ -692,6 +710,7 @@ export class SceneBuilder {
       centre: this.#centre,
     });
     this.#planned = layout;
+    this.#brain = regions;
     this.#shape = null;
     this.#anchors = null;
     this.#anchorsGrown = null;
@@ -782,6 +801,17 @@ export class SceneBuilder {
     scene.blocked = blocked;
 
     const { plan, routes, view } = this.#planFor(layout);
+    const focus = this.#brain && picked >= 0 && picked < nodes.length;
+    if (focus && this.#relatedTo !== picked) {
+      this.#related.fill(0);
+      this.#related[picked] = 1;
+      for (const e of this.#graph.touching[picked]!) {
+        const edge = edges[e]!;
+        this.#related[edge.a] = 1;
+        this.#related[edge.b] = 1;
+      }
+      this.#relatedTo = picked;
+    }
     this.#tissue(layout, view);
     scene.deco = this.#deco;
 
@@ -813,7 +843,10 @@ export class SceneBuilder {
       // Never larger than `bodyRadius`, which the hit test uses: a note may be
       // easier to hit than it looks, never harder.
       out.r = bodyRadius(layout.r[i]!, depth) * shrink * PLANE_SIZE[plane];
-      const restAlpha = (node.degree === 0 ? 0.3 : 0.84) * PLANE_LIGHT[plane];
+      // Dimmed in the focus mode when it has nothing to do with the selection.
+      // A pulse on it still adds its full share on top, live.
+      const restAlpha =
+        (node.degree === 0 ? 0.3 : 0.84) * PLANE_LIGHT[plane] * (focus && this.#related[i] === 0 ? FOCUS_NODE_DIM : 1);
       out.colour = heat > 0 ? PULSE_COLOUR[activity.kind[i]!] : base;
       out.alpha = restAlpha + heat * 0.5;
       out.heat = heat;
@@ -890,8 +923,11 @@ export class SceneBuilder {
       const seen =
         (ax >= left && ax <= right && ay >= top && ay <= bottom) ||
         (bx >= left && bx <= right && by >= top && by <= bottom);
-      const alpha = edgeAlpha(plan, i, seen ? open : 0, focused, lit[i]!);
-      const resting = edgeAlpha(plan, i, seen ? open : 0, focused, 0);
+      // A link that does not touch the selection steps back with the notes; a
+      // spark along it is drawn at full strength all the same.
+      const aside = focus && !focused ? FOCUS_EDGE_DIM : 1;
+      const resting = edgeAlpha(plan, i, seen ? open : 0, focused, 0) * aside;
+      const alpha = Math.max(resting, lit[i]! * LIT);
       out.alpha = alpha;
       // A link's resting opacity is part of the cached picture. It changes with
       // the selection and the zoom, which bump the stamp themselves — and with
@@ -917,7 +953,7 @@ export class SceneBuilder {
       // the knot at the centre, so the fibres give way with the tissue.
       out.radiant =
         thick === this.#centre && resting >= VISIBLE
-          ? (picked >= 0 && picked !== thick ? 0.5 : 1) * (RADIANT_NEAR + (1 - RADIANT_NEAR) * fade)
+          ? aside * (RADIANT_NEAR + (1 - RADIANT_NEAR) * fade)
           : 0;
     }
 
