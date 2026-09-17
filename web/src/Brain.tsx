@@ -43,6 +43,7 @@ import { Activity } from './brain/activity';
 import type { Camera, Inset } from './brain/camera';
 import { between, ease, fit, limitsFor, panBy, toWorld, zoomAt } from './brain/camera';
 import { blockedAround } from './brain/blocked';
+import { focusCamera } from './brain/focus';
 import { HitIndex } from './brain/hit';
 import { noteKind } from './brain/kind';
 import type { Arrangement } from './brain/layout';
@@ -97,6 +98,63 @@ export interface BrainProps {
    * cannot quietly inherit the wrong answer.
    */
   view: string;
+  /**
+   * Focus mode: the caller follows the selection and may set it.
+   *
+   * With it, a click on a note selects it *and* glides the camera so that the
+   * note and its direct neighbours are in view, clear of whatever the caller
+   * has laid over the canvas to reserve room (`data-brain-reserve`, see
+   * `reserved`). Escape or a click on the dark ends the focus and leaves the
+   * camera where it is: jumping back would take away the place somebody was
+   * just looking at. The reset control still goes home.
+   *
+   * Without it the selection is the canvas's own business and the camera never
+   * moves by itself — the neighbourhood panel beside an open note, which is too
+   * small for a camera flight to help anybody.
+   */
+  focus?: {
+    /** The selected note's key (`nodeKey`), or null. */
+    picked: string | null;
+    onPick: (key: string | null) => void;
+  };
+}
+
+/** Space between a reserving element and the framed notes, in screen pixels. */
+const RESERVE_GAP = 16;
+/**
+ * Room for the names beside the rightmost focused notes, in screen pixels, at
+ * most this share of the canvas: a name is up to 26 characters, and on a phone
+ * a quarter of the width is all that can be spared for it.
+ */
+const LABEL_ROOM = 150;
+const LABEL_SHARE = 0.25;
+
+/**
+ * Room the focused view keeps clear for elements over the canvas that reserve
+ * it, added to the caller's inset.
+ *
+ * The inspector reserves room: a strip on the right in a wide view, a band
+ * along the bottom in a narrow one. Which of the two is the stylesheet's
+ * decision, so it is read off the element's box rather than passed in. An
+ * element spanning most of the width is a band and reserves everything below
+ * its top; a narrower one that starts in the right half is a strip and
+ * reserves everything right of its left edge.
+ */
+function reserved(canvas: HTMLElement, base: Inset): Inset {
+  const host = canvas.parentElement;
+  if (host === null) return base;
+  const frame = canvas.getBoundingClientRect();
+  let { right, bottom } = base;
+  for (const el of Array.from(host.children)) {
+    if (el === canvas || !(el instanceof HTMLElement) || !el.hasAttribute('data-brain-reserve')) continue;
+    const r = el.getBoundingClientRect();
+    if (!(r.width > 0) || !(r.height > 0)) continue;
+    const x = r.left - frame.left;
+    const y = r.top - frame.top;
+    if (r.width >= frame.width * 0.6) bottom = Math.max(bottom, frame.height - y + RESERVE_GAP);
+    else if (x > frame.width / 2) right = Math.max(right, frame.width - x + RESERVE_GAP);
+  }
+  return { top: base.top, right, bottom, left: base.left };
 }
 
 /** A camera move takes this long. Long enough to follow, short enough not to wait. */
@@ -119,6 +177,9 @@ const SAVE_MS = 5000;
  * and a click that nudged the layout would, over a day of clicking, move it.
  */
 const DRAG_SLOP = 4;
+
+/** How long after a click a second press still belongs to it, as a double click. */
+const DOUBLE_MS = 500;
 
 /** Breathing room around the fitted world when the caller asks for none. */
 const EDGE: Inset = { top: 12, right: 12, bottom: 12, left: 12 };
@@ -222,8 +283,12 @@ interface Engine {
    * clears it; arriving back home sets it again.
    */
   homed: boolean;
-  /** An animated camera move in progress, or null. */
-  glide: { from: Camera; at: number } | null;
+  /**
+   * An animated camera move in progress, or null: home, or onto the picked
+   * note and its neighbours. The target is worked out again every frame, so a
+   * panel appearing or the window changing mid-move is followed.
+   */
+  glide: { from: Camera; at: number; to: 'home' | 'focus' } | null;
   /** The node whose name is shown because it was clicked, or -1. */
   picked: number;
   /** The node being dragged, or -1. */
@@ -259,11 +324,21 @@ interface Engine {
   view: string;
 }
 
-export function Brain({ data, events, onOpen, remember, view, arrangement, inset }: BrainProps): React.JSX.Element {
+export function Brain({ data, events, onOpen, remember, view, arrangement, inset, focus }: BrainProps): React.JSX.Element {
   const host = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
   /** Set by the frame effect, called by the reset control. */
   const home = useRef<() => void>(() => {});
+  /** Set by the frame effect: selects a node and, in focus mode, glides to it. */
+  const focusOn = useRef<(node: number) => void>(() => {});
+  /**
+   * The focus-mode props, in a ref for the same reason as `onOpen`: the frame
+   * effect runs once, and the caller's `onPick` is an inline function.
+   */
+  const follow = useRef(focus);
+  useEffect(() => {
+    follow.current = focus;
+  });
   /**
    * Held in a ref rather than a dependency.
    *
@@ -311,6 +386,25 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     margin.current = inset ?? EDGE;
   });
 
+  /**
+   * The caller changed the selection: a neighbour picked in the inspector, or
+   * the inspector closed. A selection made on the canvas comes back through
+   * here too, and is then already what the engine holds.
+   */
+  const wantedKey = focus?.picked ?? null;
+  useEffect(() => {
+    const e = engine.current;
+    if (e === null || follow.current === undefined) return;
+    const node = wantedKey === null ? -1 : (e.graph.index.get(wantedKey) ?? -1);
+    if (node === e.picked) return;
+    if (node < 0) {
+      e.picked = -1;
+      wake.current();
+      return;
+    }
+    focusOn.current(node);
+  }, [wantedKey]);
+
   // Rebuilt only when the graph really changes — not on every pulse.
   useEffect(() => {
     const canvas = host.current;
@@ -346,10 +440,18 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     // The camera and the selection survive a refetch of the same view. Yanking
     // the view back to the overview mid-read would punish the user for somebody
     // else's edit. Another view starts at home.
+    // In focus mode the caller holds the selection, so that is what survives;
+    // a note that has gone from the graph ends the focus.
+    const wanted = follow.current?.picked ?? null;
     const picked =
-      same === null || same.picked < 0
-        ? -1
-        : (graph.index.get(same.graph.nodes[same.picked]!.key) ?? -1);
+      follow.current !== undefined
+        ? wanted === null
+          ? -1
+          : (graph.index.get(wanted) ?? -1)
+        : same === null || same.picked < 0
+          ? -1
+          : (graph.index.get(same.graph.nodes[same.picked]!.key) ?? -1);
+    if (wanted !== null && picked < 0) follow.current?.onPick(null);
 
     const builder = new SceneBuilder(graph);
     builder.recent(warmth(data));
@@ -489,13 +591,16 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       const home = fit(e.layout.bounds, e.width, e.height, margin.current);
       if (e.glide !== null) {
         const t = reduce ? 1 : (now - e.glide.at) / GLIDE_MS;
+        // Towards where the target is now, not where it was when the glide
+        // began: the panel may be changing width at the same moment, and the
+        // inspector appears a frame after the click that asked for it.
+        const target = e.glide.to === 'home' ? home : focusTarget(e);
         if (t >= 1) {
+          if (e.glide.to === 'home') e.homed = true;
+          else e.camera = target;
           e.glide = null;
-          e.homed = true;
         } else {
-          // Towards where home is now, not where it was when the glide began:
-          // the panel may be changing width at the same moment.
-          e.camera = between(e.glide.from, home, ease(t));
+          e.camera = between(e.glide.from, target, ease(t));
         }
       }
       if (e.homed) e.camera = home;
@@ -553,10 +658,28 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     }
     ask();
 
+    /**
+     * The note the last click landed on, and where and when.
+     *
+     * A click in focus mode sets the camera moving, so by the second press of
+     * a double click the note is no longer under the pointer. A press close to
+     * the last click, soon after it, means the same note — which is what
+     * somebody double-clicking a point meant.
+     */
+    let lastClick: { node: number; x: number; y: number; at: number } | null = null;
+
     /** The node under a screen point, or -1. */
     const locate = (event: { clientX: number; clientY: number }): number => {
       const e = engine.current;
       if (e === null) return -1;
+      if (
+        lastClick !== null &&
+        lastClick.node < e.graph.nodes.length &&
+        performance.now() - lastClick.at <= DOUBLE_MS &&
+        Math.hypot(event.clientX - lastClick.x, event.clientY - lastClick.y) <= DRAG_SLOP * 2
+      ) {
+        return lastClick.node;
+      }
       const rect = canvas.getBoundingClientRect();
       const at = toWorld(e.camera, event.clientX - rect.left, event.clientY - rect.top);
       return e.hits.at(at.x, at.y, e.camera.scale);
@@ -564,11 +687,56 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
 
     const goHome = (): void => {
       const e = engine.current;
-      if (e === null || e.homed || e.glide !== null) return;
-      e.glide = { from: e.camera, at: performance.now() };
+      if (e === null || (e.homed && e.glide === null) || e.glide?.to === 'home') return;
+      e.glide = { from: e.camera, at: performance.now(), to: 'home' };
       ask();
     };
     home.current = goHome;
+
+    /** The picked node and its direct neighbours, framed clear of the reserved room. */
+    function focusTarget(e: Engine): Camera {
+      if (e.picked < 0) return e.camera;
+      const members = [e.picked];
+      for (const edge of e.graph.touching[e.picked]!) {
+        const link = e.graph.edges[edge]!;
+        members.push(link.a === e.picked ? link.b : link.a);
+      }
+      return focusCamera({
+        x: e.layout.x,
+        y: e.layout.y,
+        r: e.layout.r,
+        members,
+        bounds: e.layout.bounds,
+        width: e.width,
+        height: e.height,
+        inset: reserved(surface, margin.current),
+        labelRoom: Math.min(LABEL_ROOM, e.width * LABEL_SHARE),
+      });
+    }
+
+    /**
+     * Selects a node and, in focus mode, glides to it. Only the camera moves:
+     * the layout is not touched, so a focus can never shift a note.
+     */
+    const select = (node: number): void => {
+      const e = engine.current;
+      if (e === null || node < 0 || node >= e.graph.nodes.length) return;
+      e.picked = node;
+      if (follow.current !== undefined) {
+        e.homed = false;
+        e.glide = { from: e.camera, at: performance.now(), to: 'focus' };
+      }
+      ask();
+    };
+    focusOn.current = select;
+
+    /** Tells a caller in focus mode what is selected now, if that changed. */
+    const report = (e: Engine): void => {
+      const f = follow.current;
+      if (f === undefined) return;
+      const key = e.picked < 0 ? null : e.graph.nodes[e.picked]!.key;
+      if (key !== f.picked) f.onPick(key);
+    };
 
     /**
      * The card under the pointer.
@@ -719,7 +887,17 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       // that happens to start and end on the dark keeps it.
       if (e.pan !== null && Math.hypot(event.clientX - e.pan.fromX, event.clientY - e.pan.fromY) <= DRAG_SLOP) {
         e.picked = -1;
+        report(e);
       }
+      // A press on a note that never became a drag is a click: it focuses the
+      // note. A drag keeps the selection its press made, and the camera.
+      if (e.press !== null && e.drag < 0) {
+        select(e.press.node);
+        lastClick = { node: e.press.node, x: e.press.x, y: e.press.y, at: performance.now() };
+      } else {
+        lastClick = null;
+      }
+      if (e.press !== null) report(e);
       if (e.drag >= 0) {
         e.layout.release();
         // The frame loop does not step under reduced motion: the neighbours
@@ -756,9 +934,13 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       if (event.key === 'Escape' && engine.current !== null) {
         engine.current.picked = -1;
         setCard(null);
+        report(engine.current);
+        // In focus mode Escape ends the focus and nothing else: the camera
+        // stays on what was being looked at. Without it, Escape also goes home.
+        if (follow.current === undefined) goHome();
       }
       ask();
-      if (event.key === '0' || event.key === 'Escape') goHome();
+      if (event.key === '0') goHome();
     };
 
     const onLeaving = (): void => {
@@ -799,6 +981,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       canvas.removeEventListener('keydown', onKey);
       canvas.removeEventListener('pointerleave', onLeave);
       home.current = () => {};
+      focusOn.current = () => {};
       paint.dispose();
     };
   }, []);
