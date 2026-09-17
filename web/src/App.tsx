@@ -554,10 +554,10 @@ function Shell({
             // The note is no longer at this path: renamed, moved or deleted
             // while this text was being typed. The server does not bring it
             // back into being at the old name (a save names its version), so
-            // this text has nowhere to go — said plainly, kept in the editor
-            // and in the crash box's slot, and the tree refreshed so the new
-            // name is there to paste it into.
-            window.__ndbrainPending = { path: outstanding.path, content: outstanding.content };
+            // this text has nowhere to go — said plainly, and the tree
+            // refreshed so the new name is there to paste it into. The text
+            // stays in the editor, and in the crash box's slot: only a save
+            // that succeeded ever clears that.
             setError(copy.errors.noteMovedWhileSaving);
             invalidate.afterStructure(client);
             return;
