@@ -115,7 +115,14 @@ export class ApiKeyService {
   resolve(secret: string, now = Date.now()): ApiKey | null {
     if (typeof secret !== 'string' || !secret.startsWith(KEY_PREFIX)) return null;
 
-    const row = this.#db.get('SELECT * FROM api_keys WHERE key_hash = ?', hashKey(secret));
+    // A key of a disabled space answers like an unknown key: switching a space
+    // off has to stop its agents too, not only its members. Keys of a disabled
+    // person are left as they were.
+    const row = this.#db.get(
+      `SELECT k.* FROM api_keys k JOIN users u ON u.id = k.owner
+        WHERE k.key_hash = ? AND NOT (u.kind = 'space' AND u.disabled_at IS NOT NULL)`,
+      hashKey(secret),
+    );
     if (!row) return null;
 
     const key = toKey(row);

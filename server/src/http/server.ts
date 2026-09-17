@@ -27,7 +27,7 @@ import type { ApiKeyService } from '../auth/keys.js';
 import { InvalidShareError, type Need, type Share, type ShareService } from '../auth/shares.js';
 import type { SettingsService } from '../auth/settings.js';
 import type { History } from '../vault/history.js';
-import { SessionService, UserService, type User } from '../auth/users.js';
+import { SessionService, UnknownUserError, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
 import { toProblem } from './errors.js';
@@ -174,7 +174,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     }
 
     const user = users.get(session.userId);
-    if (user === undefined || user.disabled) {
+    // A space never signs in, so a session naming one cannot be real. Refused
+    // here as well as at login: `/auth/me` and every route after it must never
+    // run as a space, however such a row came to exist.
+    if (user === undefined || user.disabled || user.kind !== 'person') {
       sessions.destroy(token ?? '');
       await reply.code(401).send({ code: 'unauthenticated', message: 'sign in first' });
       return reply;
@@ -919,7 +922,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   fastify.get('/api/v1/admin/users', async (request) => {
     requireAdmin(request);
     return {
-      users: users.list().map((user) => ({
+      // People only. Spaces have their own list; shown here they would offer a
+      // password reset for an account that has no password.
+      users: users.list().filter((user) => user.kind === 'person').map((user) => ({
         id: user.id,
         displayName: user.displayName,
         role: user.role,
@@ -1018,6 +1023,90 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     requireAdmin(request);
     const { id } = request.params as { id: string };
     keys.revoke(id);
+    return reply.code(204).send();
+  });
+
+  /* ---- spaces --------------------------------------------------------------
+   *
+   * A space is a vault several people share, owned by nobody who signs in. It
+   * is an account row of kind `space` with a vault like any other, and its
+   * members are ordinary shares with the space as owner — so reading and
+   * writing in it go through exactly the checks every other share does. What
+   * is special is only who hands out those shares: an administrator, here.
+   *
+   * Every route answers a non-administrator like an unknown route, and a name
+   * that is not a space — a person included — like a space that does not
+   * exist.
+   */
+
+  /** The space named in the route, or a 404 that says nothing about the name. */
+  function requireSpace(request: FastifyRequest): User {
+    const { id } = request.params as { id: string };
+    const space = users.get(id);
+    if (space === undefined || space.kind !== 'space') throw new UnknownUserError('no such space');
+    return space;
+  }
+
+  function spaceRow(space: User): S.AdminSpace {
+    return {
+      id: space.id,
+      displayName: space.displayName,
+      disabled: space.disabled,
+      noteCount: app.queries.countNotes(space.id),
+      members: shares.byOwner(space.id).length,
+    };
+  }
+
+  fastify.get('/api/v1/admin/spaces', async (request) => {
+    requireAdmin(request);
+    return users
+      .list()
+      .filter((user) => user.kind === 'space')
+      .map(spaceRow);
+  });
+
+  fastify.post('/api/v1/admin/spaces', async (request, reply) => {
+    requireAdmin(request);
+    const { id, displayName } = body(request, S.CreateSpaceRequest);
+    const space = await users.createSpace(id, displayName);
+    return reply.code(201).send(spaceRow(space));
+  });
+
+  fastify.patch('/api/v1/admin/spaces/:id', async (request) => {
+    requireAdmin(request);
+    const space = requireSpace(request);
+    const { displayName, disabled } = body(request, S.UpdateSpaceRequest);
+
+    if (displayName !== undefined) users.setDisplayName(space.id, displayName);
+    if (disabled !== undefined) users.setDisabled(space.id, disabled);
+
+    return spaceRow(requireSpace(request));
+  });
+
+  fastify.get('/api/v1/admin/spaces/:id/members', async (request) => {
+    requireAdmin(request);
+    return shares.byOwner(requireSpace(request).id);
+  });
+
+  fastify.post('/api/v1/admin/spaces/:id/members', async (request, reply) => {
+    requireAdmin(request);
+    const space = requireSpace(request);
+    const granted = await grantFromBody(space.id, request, reply);
+    if ('share' in granted) return reply.code(201).send(granted);
+    return granted;
+  });
+
+  fastify.delete('/api/v1/admin/spaces/:id/members/:shareId', async (request, reply) => {
+    requireAdmin(request);
+    const space = requireSpace(request);
+    const { shareId } = request.params as { shareId: string };
+    const share = shares.get(shareId);
+
+    // A share of some other vault is not this space's member, whoever asks.
+    if (share === undefined || share.owner !== space.id) {
+      return reply.code(404).send({ code: 'not_found', message: 'no such share' });
+    }
+    shares.revoke(shareId);
     return reply.code(204).send();
   });
 
