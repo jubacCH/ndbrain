@@ -65,6 +65,14 @@ const server = vi.hoisted(() => ({
   /** How long the delete takes to answer, and whether it fails. */
   deleteDelayMs: 0,
   deleteFails: false,
+  /** How long a save takes to answer. */
+  putDelayMs: 0,
+  /** Every note's version on the server, by path; a save moves it on. */
+  versions: new Map<string, number>(),
+  /** Each write with the version it said it started from. */
+  writes: [] as Array<{ path: string; base: number | undefined }>,
+  /** The order requests started and ended in. */
+  log: [] as string[],
 }));
 
 vi.mock('../src/api', async (original) => {
@@ -111,7 +119,12 @@ vi.mock('../src/api', async (original) => {
     getNote: async (owner: string, path: string) => {
       const row = server.notes.find((n) => n.owner === owner && n.path === path);
       if (row === undefined) throw new real.ApiError(404, 'not_found', 'gone');
-      return { owner, canWrite: writable(owner, path), note: { path, title: row.title, content: '', size: 0, mtimeMs: 0 } };
+      server.log.push(`get ${path}`);
+      return {
+        owner,
+        canWrite: writable(owner, path),
+        note: { path, title: row.title, content: '', size: 0, mtimeMs: server.versions.get(path) ?? 0 },
+      };
     },
     links: async (owner: string, path: string) => {
       server.calls.links += 1;
@@ -127,12 +140,20 @@ vi.mock('../src/api', async (original) => {
       }));
       return { backlinks: rows, outgoing: [] };
     },
-    putNote: async (owner: string, path: string) => {
+    putNote: async (owner: string, path: string, _content: string, base?: number) => {
+      server.log.push(`put-start ${path}`);
       server.written.push([owner, path]);
-      return { note: { path, title: '', content: '', size: 0, mtimeMs: 1 }, created: false };
+      server.writes.push({ path, base });
+      if (server.putDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, server.putDelayMs));
+      const version = (server.versions.get(path) ?? 0) + 1000;
+      server.versions.set(path, version);
+      server.log.push(`put-end ${path}`);
+      return { note: { path, title: '', content: '', size: 0, mtimeMs: version }, created: false };
     },
     deleteNote: async (owner: string, path: string) => {
+      server.log.push(`delete-start ${path}`);
       if (server.deleteDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, server.deleteDelayMs));
+      server.log.push(`delete-end ${path}`);
       if (server.deleteFails) throw new real.ApiError(500, 'internal', 'disk full');
       server.deleted.push([owner, path]);
       server.notes = server.notes.filter((n) => !(n.owner === owner && n.path === path));
@@ -187,6 +208,10 @@ beforeEach(() => {
   server.linksDelayMs = 0;
   server.deleteDelayMs = 0;
   server.deleteFails = false;
+  server.putDelayMs = 0;
+  server.versions = new Map([[PLAN, 111], ['Loose.md', 222]]);
+  server.writes = [];
+  server.log = [];
 });
 
 afterEach(() => {
@@ -209,6 +234,14 @@ async function openFromPalette(title: string): Promise<void> {
   const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
   await userEvent.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
   await screen.findByTestId('editor');
+}
+
+/** Opens a note by title and waits until the editor shows that one. */
+async function switchTo(title: string, path: string): Promise<void> {
+  await userEvent.keyboard('{Control>}k{/Control}');
+  const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
+  await userEvent.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
+  await waitFor(() => expect(screen.getByTestId('editor')).toHaveTextContent(path), { timeout: 3000 });
 }
 
 async function toNetwork(): Promise<void> {
@@ -582,5 +615,164 @@ describe('show in tree', () => {
     await userEvent.click(within(tree).getByText('Loose'));
     await screen.findByTestId('editor');
     expect(tree.querySelector('[data-revealed]')).toBeNull();
+  });
+});
+
+describe('races around saving and deleting', () => {
+  const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+  const typeInEditor = (): Promise<void> =>
+    userEvent.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
+  const askToDelete = async (): Promise<void> => {
+    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
+    await userEvent.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+  };
+  /** The log, for a failure message that shows the order things happened in. */
+  const order = (): string => server.log.join(' → ');
+
+  it.each([
+    ['the first answered OK, the second cancelled', [true, false]],
+    ['the first cancelled, the second answered OK', [false, true]],
+  ])('asked twice for the same note, %s: one question, and no save afterwards', async (_name, answers) => {
+    const replies = [...answers];
+    confirm.mockImplementation(() => replies.shift() ?? false);
+    server.linksDelayMs = 300;
+    server.deleteDelayMs = 900;
+    mount();
+    await openFromPalette('Plan');
+    await typeInEditor();
+
+    await askToDelete();
+    await askToDelete();
+    await waitFor(() => expect(confirm).toHaveBeenCalled(), { timeout: 2000 });
+    await settle(1800);
+
+    // The second request returned at once, without a question of its own.
+    expect(confirm, order()).toHaveBeenCalledTimes(1);
+    const deleted = answers[0] === true;
+    if (deleted) {
+      expect(server.log.filter((line) => line.startsWith('put-start')), order()).toEqual([]);
+      expect(server.deleted).toEqual([['julian', PLAN]]);
+    } else {
+      // Cancelled first: the note stays, and its text is saved once.
+      expect(server.deleted).toEqual([]);
+      expect(server.written, order()).toEqual([['julian', PLAN]]);
+    }
+  });
+
+  it('a switch while the links are counted, then a cancel: both notes keep their text, each against its own version', async () => {
+    confirm.mockReturnValue(false);
+    server.linksDelayMs = 1500;
+    mount();
+    await openFromPalette('Plan');
+    await typeInEditor();
+    await askToDelete();
+
+    await switchTo('Loose', 'Loose.md');
+    await typeInEditor();
+    await waitFor(() => expect(confirm).toHaveBeenCalled(), { timeout: 3000 });
+    await waitFor(() => expect(server.writes).toHaveLength(2), { timeout: 3000 });
+
+    expect([...server.writes].sort((a, b) => a.path.localeCompare(b.path)), order()).toEqual([
+      { path: 'Loose.md', base: 222 },
+      { path: PLAN, base: 111 },
+    ]);
+
+    // The held write answered while Loose was open; Loose goes on from its own version.
+    await typeInEditor();
+    await waitFor(() => expect(server.writes).toHaveLength(3), { timeout: 2000 });
+    expect(server.writes[2], order()).toEqual({ path: 'Loose.md', base: 1222 });
+  });
+
+  it('a second save of the same note waits for the first, and starts from the version it produced', async () => {
+    server.putDelayMs = 900;
+    mount();
+    await openFromPalette('Plan');
+    await typeInEditor();
+    await waitFor(() => expect(server.log).toContain(`put-start ${PLAN}`), { timeout: 2000 });
+    await typeInEditor();
+    await waitFor(() => expect(server.writes).toHaveLength(2), { timeout: 4000 });
+    await waitFor(() => expect(server.log.filter((l) => l === `put-end ${PLAN}`)).toHaveLength(2), { timeout: 4000 });
+    expect(server.log, order()).toEqual([
+      `get ${PLAN}`,
+      `put-start ${PLAN}`,
+      `put-end ${PLAN}`,
+      `put-start ${PLAN}`,
+      `put-end ${PLAN}`,
+    ]);
+    expect(server.writes[1]).toEqual({ path: PLAN, base: 1111 });
+  });
+
+  it('a switch while the links are counted, then a cancel, no typing: the held text is saved against its own version', async () => {
+    confirm.mockReturnValue(false);
+    server.linksDelayMs = 1200;
+    mount();
+    await openFromPalette('Plan');
+    await typeInEditor();
+    await askToDelete();
+    await switchTo('Loose', 'Loose.md');
+    await waitFor(() => expect(confirm).toHaveBeenCalled(), { timeout: 3000 });
+    await waitFor(() => expect(server.writes).toHaveLength(1), { timeout: 2000 });
+    expect(server.writes, order()).toEqual([{ path: PLAN, base: 111 }]);
+  });
+
+  it('a slow delete does not close the note opened meanwhile', async () => {
+    server.deleteDelayMs = 900;
+    mount();
+    await openFromPalette('Plan');
+    await askToDelete();
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    await switchTo('Loose', 'Loose.md');
+    await waitFor(() => expect(server.deleted).toEqual([['julian', PLAN]]), { timeout: 3000 });
+    await settle(100);
+    expect(screen.queryByTestId('editor'), order()).not.toBeNull();
+    expect(screen.getByTestId('editor')).toHaveTextContent('Loose.md');
+  });
+
+  it('reopening a note whose save is still running reads it after the save, and saves on from that version', async () => {
+    server.putDelayMs = 600;
+    mount();
+    await openFromPalette('Plan');
+    await typeInEditor();
+    // The debounce fires and the save starts.
+    await waitFor(() => expect(server.log).toContain(`put-start ${PLAN}`), { timeout: 2000 });
+
+    await switchTo('Loose', 'Loose.md');
+    await switchTo('Plan', PLAN);
+    await waitFor(() => expect(server.log).toContain(`put-end ${PLAN}`), { timeout: 2000 });
+
+    const lastGet = server.log.lastIndexOf(`get ${PLAN}`);
+    expect(server.log.indexOf(`put-end ${PLAN}`), order()).toBeLessThan(lastGet);
+
+    // The next save starts from the version the reopened editor was read at.
+    server.putDelayMs = 0;
+    await typeInEditor();
+    await waitFor(() => expect(server.writes).toHaveLength(2), { timeout: 2000 });
+    expect(server.writes[1], order()).toEqual({ path: PLAN, base: 1111 });
+  });
+
+  it('a save that answers after the switch does not become the version of the note now open', async () => {
+    server.putDelayMs = 1500;
+    mount();
+    await openFromPalette('Plan');
+    await typeInEditor();
+    await waitFor(() => expect(server.log).toContain(`put-start ${PLAN}`), { timeout: 2000 });
+    await switchTo('Loose', 'Loose.md');
+    server.putDelayMs = 0;
+    await waitFor(() => expect(server.log).toContain(`put-end ${PLAN}`), { timeout: 3000 });
+    await typeInEditor();
+    await waitFor(() => expect(server.writes).toHaveLength(2), { timeout: 3000 });
+    expect(server.writes[1], order()).toEqual({ path: 'Loose.md', base: 222 });
+  });
+
+  it('a delete asked during a running save starts only after the save has answered', async () => {
+    server.putDelayMs = 1500;
+    mount();
+    await openFromPalette('Plan');
+    await typeInEditor();
+    await waitFor(() => expect(server.log).toContain(`put-start ${PLAN}`), { timeout: 2000 });
+    await askToDelete();
+    await waitFor(() => expect(server.log).toContain(`delete-start ${PLAN}`), { timeout: 4000 });
+    await waitFor(() => expect(server.log).toContain(`put-end ${PLAN}`), { timeout: 4000 });
+    expect(server.log.indexOf(`put-end ${PLAN}`), order()).toBeLessThan(server.log.indexOf(`delete-start ${PLAN}`));
   });
 });
