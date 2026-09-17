@@ -16,6 +16,13 @@
  * places, and merging them would make "delete this folder" ambiguous at exactly
  * the wrong moment. Each vault is its own labelled section, your own first.
  *
+ * Spaces come next, each its own root under its display name and the space
+ * icon, and only then other people's vaults. A space is not somebody who shared
+ * a folder with you; it is a place you are a member of, and mixing it into the
+ * list of people would make "Familie" look like a person called Familie. A space
+ * you belong to is shown even while it is empty, so there is somewhere to start
+ * its first note.
+ *
  * Three habits keep it legible as a vault grows, none of which touch the files:
  *
  * - It starts closed. Measured on a real vault, 72% of notes hung under a single
@@ -35,7 +42,8 @@ import { copy } from './copy';
 
 import { refKey, type NoteRow, type Share } from './api';
 import { loadOpenFolders, saveOpenFolders } from './accountStorage';
-import { ChevronIcon, FileIcon, FolderIcon, TrashIcon } from './icons';
+import { ChevronIcon, FileIcon, FolderIcon, NewNoteIcon, ShareIcon, SpaceIcon, TrashIcon } from './icons';
+import { ownerKind, ownerLabel, useOwners } from './owners';
 import { mayChange } from './rights';
 
 export type Finding = 'crit' | 'warn';
@@ -99,6 +107,17 @@ export interface TreeProps {
   revealed?: { owner: string; path: string; seq: number } | null;
   /** Offered on the first-run empty state only. */
   onCreateFirst?: () => void;
+  /**
+   * Opens the share dialog for a note. Offered on exactly the notes
+   * `mayShareNote` allows: your own, or, for an administrator, a space's.
+   */
+  onShareNote?: (owner: string, path: string, title: string) => void;
+  mayShareNote?: (owner: string) => boolean;
+  /**
+   * Starts a note in a space. Offered on a space's header only where some share
+   * on it carries write access; the path typed is checked again before sending.
+   */
+  onCreateIn?: (owner: string) => void;
 }
 
 interface Folder {
@@ -282,8 +301,12 @@ export function Tree({
   onDeleteNote,
   revealed = null,
   onCreateFirst,
+  onShareNote,
+  mayShareNote,
+  onCreateIn,
 }: TreeProps): React.JSX.Element {
   const box = useRef<HTMLDivElement>(null);
+  const owners = useOwners();
   const onKeyDown = useTreeKeys(
     box,
     onDeleteNote === undefined
@@ -310,12 +333,24 @@ export function Tree({
     const own = byOwner.get(self) ?? [];
     byOwner.delete(self);
 
-    const foreign = [...byOwner.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([owner, rows]) => ({ owner, rows }));
+    // A space you are a member of is there before its first note is.
+    for (const share of received) {
+      if (share.owner !== self && ownerKind(owners, share.owner) === 'space' && !byOwner.has(share.owner)) {
+        byOwner.set(share.owner, []);
+      }
+    }
 
-    return [{ owner: self, rows: own }, ...foreign];
-  }, [notes, self]);
+    const foreign = [...byOwner.entries()].map(([owner, rows]) => ({
+      owner,
+      rows,
+      space: ownerKind(owners, owner) === 'space',
+      label: ownerLabel(owners, owner),
+    }));
+    const spaces = foreign.filter((v) => v.space).sort((a, b) => a.label.localeCompare(b.label));
+    const people = foreign.filter((v) => !v.space).sort((a, b) => a.owner.localeCompare(b.owner));
+
+    return [{ owner: self, rows: own, space: false, label: self }, ...spaces, ...people];
+  }, [notes, self, received, owners]);
 
   // Which folders are *open*, not which are closed: the default has to survive
   // a vault growing a new folder, and an unknown folder should start shut.
@@ -380,6 +415,7 @@ export function Tree({
     const finding = findings.get(key);
     const where = displayPath(note.path, hidePrefixes);
     const deletable = onDeleteNote !== undefined && mayChange(self, received, note.owner, note.path);
+    const shareable = onShareNote !== undefined && mayShareNote !== undefined && mayShareNote(note.owner);
     const isRevealed = revealed !== null && revealed.owner === note.owner && revealed.path === note.path;
     return (
       <li key={`f:${key}`}>
@@ -404,6 +440,18 @@ export function Tree({
           </button>
           {/* Out of the tab order, like every row but one: the keyboard reaches
               it as the Delete key on the row, which the title names. */}
+          {shareable && (
+            <button
+              type="button"
+              className="node-act node-share"
+              tabIndex={-1}
+              title={copy.tree.shareNote(note.title)}
+              aria-label={copy.tree.shareNoteLabel(note.title)}
+              onClick={() => onShareNote?.(note.owner, note.path, note.title)}
+            >
+              <ShareIcon size={14} />
+            </button>
+          )}
           {deletable && (
             <button
               type="button"
@@ -475,13 +523,14 @@ export function Tree({
 
   return (
     <div className="treebox" ref={box} onKeyDown={onKeyDown} role="tree" aria-label="Notes">
-      {vaults.map(({ owner, rows }) => {
+      {vaults.map(({ owner, rows, space, label }) => {
         const isOwn = owner === self;
+        const writable = received.some((share) => share.owner === owner && share.canWrite && share.kind !== 'note');
         const hits =
           filter === '' ? [] : rows.filter((note) => matches(note, filter)).slice(0, 60);
 
         return (
-          <section className="vault" key={owner} data-foreign={!isOwn}>
+          <section className="vault" key={owner} data-foreign={!isOwn} data-kind={space ? 'space' : 'person'}>
             {/*
               Your own vault carries no header at all. Labelling it "Julian" would
               make the single-user case — which is every case until somebody
@@ -489,12 +538,24 @@ export function Tree({
             */}
             {!isOwn && (
               <h3 className="vault-head">
-                <span className="vault-owner">{owner}</span>
+                {space && <SpaceIcon size={14} className="vault-icon" />}
+                <span className="vault-owner">{label}</span>
                 {/* Neutral, not coloured: the right is a fact about the folder,
                     not a finding. Colour in this interface always means
                     "something is wrong here" or "this is not yours", and the
                     header itself already carries the second. */}
                 <span className="pill p-tag">{writeLabel(owner, received)}</span>
+                {space && writable && onCreateIn !== undefined && (
+                  <button
+                    type="button"
+                    className="node-act vault-new"
+                    title={copy.tree.newNoteIn(label)}
+                    aria-label={copy.tree.newNoteIn(label)}
+                    onClick={() => onCreateIn(owner)}
+                  >
+                    <NewNoteIcon size={14} />
+                  </button>
+                )}
               </h3>
             )}
 
@@ -513,7 +574,7 @@ export function Tree({
                   )}
                 </div>
               ) : (
-                <p className="empty">{copy.tree.nothingShared}</p>
+                <p className="empty">{space ? copy.tree.spaceEmpty : copy.tree.nothingShared}</p>
               )
             ) : filter !== '' ? (
               hits.length === 0 ? (

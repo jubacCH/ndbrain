@@ -183,6 +183,8 @@ describe('the pieces', () => {
       [
         row('julian', '50_Journal/2026/09/2026-09-16.md'),
         row('anna', '50_Journal/2026/09/2026-09-17.md'),
+        // A space, even one the caller may write in, keeps no days for them.
+        row('familie', '50_Journal/2026/09/2026-09-20.md'),
         row('julian', '50_Journal/2026/10/2026-09-18.md'),
         row('julian', 'Inbox/2026-09-19.md'),
       ],

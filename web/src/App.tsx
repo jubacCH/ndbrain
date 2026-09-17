@@ -28,6 +28,7 @@ import {
   type PulseEvent,
   type FileRow,
   type Share,
+  type ShareKind,
   type TaskRow,
   type User,
 } from './api';
@@ -45,7 +46,9 @@ import { NetworkFrame, type FullscreenFrame } from './NetworkFrame';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { MenuButton, type MenuItem } from './Menu';
-import { mayChange } from './rights';
+import { mayChange, mayShare } from './rights';
+import { OwnersContext, ownerDirectory, ownerKind, ownerLabel } from './owners';
+import { ShareDialog, type ShareTarget } from './ShareDialog';
 import { SettingsView } from './Settings';
 import { AdminView } from './Admin';
 import { TopicsPanel } from './Topics';
@@ -74,6 +77,7 @@ import {
   useSettings,
   useAdminUsers,
   useAdminKeys,
+  useAdminSpaces,
   useTopics,
   useFiles,
   useGraph,
@@ -303,6 +307,8 @@ function Shell({
   /** The finding the tidy view opens narrowed to, when it was reached from the home view's health card. */
   const [tidyFocus, setTidyFocus] = useState<HealthKey | 'stale' | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
+  /** The note the share dialog is open for, or null. */
+  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
   const [props, setProps] = useState<Array<{ key: string; count: number }>>([]);
   const [propValues, setPropValues] = useState<Array<{ value: string; count: number }>>([]);
   const [pulse, setPulse] = useState<PulseEvent[]>([]);
@@ -413,7 +419,11 @@ function Shell({
   const filesQuery = useFiles(view === 'files');
   const settingsQuery = useSettings(view === 'settings');
   const topicsQuery = useTopics(view === 'tidy');
-  const adminUsersQuery = useAdminUsers(view === 'admin');
+  const isAdmin = user.role === 'admin';
+  // Also while the share dialog is open, for its list of people: only an
+  // administrator can ask the server who has an account.
+  const adminUsersQuery = useAdminUsers(isAdmin && (view === 'admin' || shareTarget !== null));
+  const adminSpacesQuery = useAdminSpaces(isAdmin && view === 'admin');
   const adminKeysQuery = useAdminKeys(keyOwner, view === 'admin');
   // Built rather than spread with `dir: taskDir` directly: the filter type is
   // properly optional (`dir?: string`), and `exactOptionalPropertyTypes` draws
@@ -427,6 +437,8 @@ function Shell({
   const toggleTaskMutation = useToggleTask();
 
   const notes = treeQuery.data?.notes ?? [];
+  /** Which vaults are spaces, and what they are called; from the tree reply. */
+  const owners = useMemo(() => ownerDirectory(treeQuery.data?.owners), [treeQuery.data]);
   /** The days with a daily note, read off the tree: no request of their own. */
   const journalDays = useMemo(() => journalDaysOf(notes, user.id), [notes, user.id]);
   const tidy = tidyQuery.data ?? null;
@@ -815,8 +827,8 @@ function Shell({
       setAdminBusy(true);
       try {
         const result = await run();
-        await client.invalidateQueries({ queryKey: keys.adminUsers });
-        await client.invalidateQueries({ queryKey: ['admin', 'keys'] });
+        // Accounts, keys, spaces and their members: one prefix for all of them.
+        await client.invalidateQueries({ queryKey: ['admin'] });
         return result;
       } finally {
         setAdminBusy(false);
@@ -1019,6 +1031,85 @@ function Shell({
     },
     [client, settle, write, user.id, setOpenRef],
   );
+
+  /**
+   * What this page can see of each space, for the member picker: its notes and
+   * every folder above them, and the empty folders the tree lists.
+   */
+  const spacePaths = useMemo(() => {
+    const out = new Map<string, { notes: string[]; folders: string[] }>();
+    const entry = (owner: string): { notes: string[]; folders: string[] } => {
+      let found = out.get(owner);
+      if (found === undefined) {
+        found = { notes: [], folders: [] };
+        out.set(owner, found);
+      }
+      return found;
+    };
+    const folders = new Map<string, Set<string>>();
+    const addFolder = (owner: string, path: string): void => {
+      const set = folders.get(owner) ?? new Set<string>();
+      set.add(path);
+      folders.set(owner, set);
+    };
+    for (const row of notes) {
+      if (ownerKind(owners, row.owner) !== 'space') continue;
+      entry(row.owner).notes.push(row.path);
+      const segments = row.path.split('/');
+      segments.pop();
+      for (let i = 1; i <= segments.length; i += 1) addFolder(row.owner, segments.slice(0, i).join('/'));
+    }
+    for (const dir of treeQuery.data?.dirs ?? []) {
+      if (ownerKind(owners, dir.owner) === 'space') addFolder(dir.owner, dir.path);
+    }
+    for (const [owner, set] of folders) entry(owner).folders = [...set].sort((a, b) => a.localeCompare(b));
+    for (const value of out.values()) value.notes.sort((a, b) => a.localeCompare(b));
+    return out;
+  }, [notes, owners, treeQuery.data]);
+
+  /** Whether the caller may open the share dialog on notes of this vault. */
+  const mayShareNote = useCallback(
+    (owner: string): boolean => mayShare(user, owner, ownerKind(owners, owner)),
+    [user, owners],
+  );
+
+  const openShare = useCallback((owner: string, path: string, title: string): void => {
+    setShareTarget({ owner, path, title });
+  }, []);
+
+  /** Account names worth offering in the share dialog; any other name can be typed. */
+  const people = useMemo((): string[] => {
+    const names = new Set<string>();
+    for (const share of granted) names.add(share.grantee);
+    for (const share of received) if (ownerKind(owners, share.owner) === 'person') names.add(share.owner);
+    for (const account of adminUsersQuery.data?.users ?? []) {
+      if (ownerKind(owners, account.id) === 'person' && !account.disabled) names.add(account.id);
+    }
+    names.delete(user.id);
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [granted, received, owners, adminUsersQuery.data, user.id]);
+
+  /**
+   * Starts a note in a space.
+   *
+   * Never a daily note and never a vault picker on the main button: this is
+   * reached from the space's own header, and only where some share on it may
+   * write. The name typed may still land outside the writable part (a member
+   * who may write in one folder only), which is said here before anything is
+   * sent — the server refuses it regardless.
+   */
+  const createInSpace = async (owner: string): Promise<void> => {
+    const label = ownerLabel(owners, owner);
+    const name = window.prompt(copy.ask.newNoteIn(label));
+    if (name === null || name.trim() === '') return;
+    const trimmed = name.trim();
+    const path = trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
+    if (!mayChange(user.id, received, owner, path)) {
+      setError(copy.errors.noWriteHere(label));
+      return;
+    }
+    await createNoteAt(owner, trimmed);
+  };
 
   /** Whether a note may be deleted from a place that holds only its path. */
   const mayDelete = useCallback(
@@ -1458,10 +1549,10 @@ function Shell({
     setArriving((current) => (current === next ? null : current));
   };
 
-  const grantShare = async (grantee: string, prefix: string, canWrite: boolean): Promise<void> => {
+  const grantShare = async (grantee: string, kind: ShareKind, path: string, canWrite: boolean): Promise<void> => {
     setShareBusy(true);
     try {
-      await api.grantShare(grantee, prefix, canWrite);
+      await api.grantShare(grantee, kind, path, canWrite);
       await refreshShares();
       setError(null);
     } catch (caught) {
@@ -1604,6 +1695,7 @@ function Shell({
   const collapsed = prefs.sidebarCollapsed && !narrow;
 
   return (
+    <OwnersContext.Provider value={owners}>
     <div
       className="app"
       data-drawer={drawerOpen}
@@ -1644,6 +1736,9 @@ function Shell({
             }}
             onRenameFolder={(path) => void renameFolder(path)}
             onDeleteNote={(owner, path, title) => void deleteNote(owner, path, title)}
+            onShareNote={openShare}
+            mayShareNote={mayShareNote}
+            onCreateIn={(owner) => void createInSpace(owner)}
             revealed={revealed}
             onCreateFirst={() => void createNote()}
           />
@@ -1694,24 +1789,40 @@ function Shell({
               <>
                 {open !== null && open.owner !== user.id && (
                   <span className="pill p-info">
-                    {open.owner} · {open.canWrite ? copy.note.canWrite : copy.note.readOnly}
+                    {ownerLabel(owners, open.owner)} · {open.canWrite ? copy.note.canWrite : copy.note.readOnly}
                   </span>
                 )}
                 <SaveIndicator state={saveState} />
-                {/* Only where the server said this note may be written: a note
-                    read through a read-only share has nothing to offer here. */}
-                {open !== null && open.canWrite && (
+                {/* Share where the caller may hand the note on (their own, or a
+                    space's as administrator); delete only where the server said
+                    this note may be written. A note read through a read-only
+                    share has nothing to offer here. */}
+                {open !== null && (open.canWrite || mayShareNote(open.owner)) && (
                   <MenuButton
                     label={copy.note.actions}
                     icon={<MoreIcon />}
                     items={[
-                      {
-                        key: 'delete',
-                        label: copy.note.delete,
-                        icon: <TrashIcon size={16} />,
-                        danger: true,
-                        onSelect: () => void deleteNote(open.owner, open.note.path, open.note.title),
-                      },
+                      ...(mayShareNote(open.owner)
+                        ? [
+                            {
+                              key: 'share',
+                              label: copy.shareNote.menu,
+                              icon: <ShareIcon size={16} />,
+                              onSelect: () => openShare(open.owner, open.note.path, open.note.title),
+                            },
+                          ]
+                        : []),
+                      ...(open.canWrite
+                        ? [
+                            {
+                              key: 'delete',
+                              label: copy.note.delete,
+                              icon: <TrashIcon size={16} />,
+                              danger: true,
+                              onSelect: () => void deleteNote(open.owner, open.note.path, open.note.title),
+                            },
+                          ]
+                        : []),
                     ]}
                   />
                 )}
@@ -1809,6 +1920,8 @@ function Shell({
                     onReveal={revealNote}
                     onDelete={deleteNote}
                     mayDelete={mayDelete}
+                    onShare={openShare}
+                    mayShare={mayShareNote}
                   />
                 ))}
 
@@ -1910,7 +2023,10 @@ function Shell({
                   />
                 ))}
 
-              {view === 'admin' && (
+              {/* Rendered for an administrator only. The server refuses every
+                  admin call regardless; this keeps a stored or stale view from
+                  drawing the controls for somebody who cannot use them. */}
+              {view === 'admin' && isAdmin && (
                 <AdminView
                   users={adminUsersQuery.data?.users ?? []}
                   keys={adminKeysQuery.data?.keys ?? []}
@@ -1933,6 +2049,29 @@ function Shell({
                     adminAct(() => api.createKey(owner, name, scope, canWrite))
                   }
                   onRevokeKey={(id) => adminAct(() => api.revokeKey(id)).then(() => undefined)}
+                  spaces={{
+                    spaces: adminSpacesQuery.data ?? [],
+                    paths: spacePaths,
+                    onCreate: (id, displayName) =>
+                      adminAct(() => api.createSpace(id, displayName)).then(() => {
+                        // The new space is a vault this page may be showing soon.
+                        invalidate.afterStructure(client);
+                      }),
+                    onRename: (id, displayName) =>
+                      adminAct(() => api.updateSpace(id, { displayName })).then(() => {
+                        // Members see the display name in the tree.
+                        invalidate.afterStructure(client);
+                      }),
+                    onSetDisabled: (id, disabled) =>
+                      adminAct(() => api.updateSpace(id, { disabled })).then(() => undefined),
+                    onAddMember: (space, grantee, kind, path, canWrite) =>
+                      adminAct(() => api.addSpaceMember(space, grantee, kind, path, canWrite)).then(() => undefined),
+                    onRemoveMember: (space, share) =>
+                      adminAct(() => api.removeSpaceMember(space, share.id)).then(() => {
+                        void client.invalidateQueries({ queryKey: keys.shares });
+                        invalidate.afterStructure(client);
+                      }),
+                  }}
                 />
               )}
 
@@ -1958,7 +2097,9 @@ function Shell({
                   received={received}
                   dirs={ownDirs}
                   busy={shareBusy}
-                  onGrant={(grantee, prefix, canWrite) => void grantShare(grantee, prefix, canWrite)}
+                  onGrant={(grantee, prefix, canWrite) =>
+                    void grantShare(grantee, prefix === '' ? 'vault' : 'folder', prefix, canWrite)
+                  }
                   onRevoke={(share) => void revokeShare(share)}
                 />
               )}
@@ -2024,7 +2165,20 @@ function Shell({
         onClose={() => setPaletteOpen(false)}
         onOpenNote={(owner, path) => void openNote(owner, path)}
       />
+
+      {shareTarget !== null && mayShareNote(shareTarget.owner) && (
+        <ShareDialog
+          note={shareTarget}
+          user={user}
+          ownerKind={ownerKind(owners, shareTarget.owner)}
+          ownerLabel={ownerLabel(owners, shareTarget.owner)}
+          granted={granted}
+          people={people}
+          onClose={() => setShareTarget(null)}
+        />
+      )}
     </div>
+    </OwnersContext.Provider>
   );
 }
 

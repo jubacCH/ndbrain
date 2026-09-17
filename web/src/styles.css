@@ -1484,6 +1484,27 @@ tbody tr[data-selected='true']:hover td {
   color: var(--text-2);
 }
 
+/* A space: the icon is the difference from a person's vault, in the accent. */
+.vault-icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.vault-new {
+  margin-left: auto;
+}
+
+.vault-head:hover .vault-new {
+  opacity: 1;
+}
+
+/* Where there is no hover, the actions on a row have to be visible to exist. */
+@media (hover: none) {
+  .vault-new {
+    opacity: 1;
+  }
+}
+
 /*
  * A note shared read-only. The tint is deliberately faint: it marks a surface
  * that cannot be typed into, which is a state of the tool rather than a finding
@@ -1559,6 +1580,154 @@ tbody tr[data-selected='true']:hover td {
   margin: var(--s-2) 0 0;
   font-size: var(--t-sm);
   color: var(--text-2);
+}
+
+/* What a share opens: icon and word before the path, so a note and a folder
+   with near-identical paths never read the same. */
+.share-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-right: var(--s-2);
+  font-family: var(--font);
+  color: var(--text-2);
+}
+
+.share-kind svg {
+  color: var(--accent);
+}
+
+/* ---- dialogs ------------------------------------------------------------- */
+
+.dialog {
+  width: min(34rem, 92vw);
+  max-height: min(40rem, 84vh);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 12%), 0 24px 60px -20px rgb(0 0 0 / 45%);
+  padding: var(--s-4);
+  backdrop-filter: blur(18px);
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.dialog-head h2 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--t-lg);
+  overflow-wrap: anywhere;
+}
+
+.dialog-sub {
+  margin: var(--s-1) 0 var(--s-3);
+  font-size: var(--t-sm);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.sharedlg-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+
+.sharedlg-person {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  flex: 1 1 12rem;
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+.sharedlg-person input {
+  padding: var(--s-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--t-md);
+}
+
+.sharedlg-right {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  border: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--t-md);
+  color: var(--text-2);
+}
+
+.sharedlg-right legend {
+  padding: 0;
+  margin-bottom: var(--s-1);
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+.sharedlg-right label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.sharedlg-list {
+  margin-top: var(--s-3);
+}
+
+.sharedlg-list ul {
+  list-style: none;
+  margin: 0 0 var(--s-3);
+  padding: 0;
+}
+
+.sharedlg-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.sharedlg-list li .nm {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.sharedlg-where {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+/* Anything typed into on an iPhone is 16px or larger, or Safari zooms. */
+@media (max-width: 820px) {
+  .sharedlg-person input,
+  .spaces-form input,
+  .spaces-form select,
+  .members-form input,
+  .members-form select,
+  .spaces-rename input {
+    font-size: 16px;
+  }
 }
 
 /* ---- folder actions ------------------------------------------------------ */
@@ -3376,6 +3545,34 @@ tr[data-disabled='true'] .adminname {
   align-items: center;
   gap: var(--s-2);
 }
+.adminform select {
+  font: inherit;
+  font-size: var(--t-sm);
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--glass-line);
+  background: var(--glass);
+  color: var(--ink);
+}
+/* The extent and right choices: a row per option, the icon beside the word. */
+.adminform .sharedlg-right label {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s-2);
+}
+.members {
+  margin-top: var(--s-4);
+  padding: var(--s-3);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--r-md);
+}
+.members h4 {
+  margin: 0 0 var(--s-2);
+  font-size: var(--t-md);
+}
+.spaces .vault-icon {
+  vertical-align: -2px;
+}
 .adminform > button[type='submit'] {
   font: inherit;
   font-size: var(--t-sm);
@@ -3923,7 +4120,8 @@ kbd,
    appears on hover. On a phone the bin shows on the open note's row only —
    one on every row would be a column of bins. */
 @media (hover: none) {
-  .nav .node-row:has(.node[aria-current='true']) .node-del {
+  .nav .node-row:has(.node[aria-current='true']) .node-del,
+  .nav .node-row:has(.node[aria-current='true']) .node-share {
     opacity: 1;
   }
 }
@@ -5278,6 +5476,38 @@ th.pick input,
   border-color: rgba(239, 98, 98, 0.4);
   background: rgba(239, 98, 98, 0.12);
   color: #ffb4b4;
+}
+
+/* Share sits before the bin and takes over pushing both to the right edge. */
+.inspector-share {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px var(--s-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  font: inherit;
+  font-size: var(--t-sm);
+  color: rgba(200, 232, 240, 0.62);
+  cursor: pointer;
+}
+
+.inspector-share:hover {
+  border-color: rgba(127, 233, 240, 0.4);
+  background: rgba(127, 233, 240, 0.1);
+  color: #c8f6fa;
+}
+
+.inspector-share + .inspector-delete {
+  margin-left: 0;
+}
+
+.inspector-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .inspector button:focus-visible {

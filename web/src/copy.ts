@@ -151,6 +151,7 @@ export const copy = {
    */
   ask: {
     newNoteName: 'Name for the new note (use / for a folder)',
+    newNoteIn: (space: string) => `Name for the new note in ${space} (use / for a folder)`,
     newFolderName: 'Name for the new folder (use / to nest)',
     renameFolder: 'Rename or move this folder (new path)',
     moveTo: (count: number) => `Move ${count} notes to (empty = top of the vault)`,
@@ -172,6 +173,7 @@ export const copy = {
   errors: {
     serverQuiet: 'The server is not answering right now.',
     noteGone: 'That note is gone.',
+    noWriteHere: (space: string) => `You cannot write there in ${space}. Pick a folder you may write in.`,
     saveFailed: 'Could not save. Your text stays in the editor.',
     createFailed: 'Could not create that.',
     createFolderFailed: 'Could not create that folder.',
@@ -330,6 +332,38 @@ export const copy = {
     partlyWritable: 'partly writable',
     nobodySeesYours: 'Nobody can see into your vault.',
     nobodySharesWithYou: 'Nobody is sharing anything with you.',
+    wholeVault: 'whole vault',
+    vaultOf: 'Vault of',
+    decline: 'Decline',
+    what: 'Shared',
+    kind: { vault: 'Vault', folder: 'Folder', note: 'Note' } as const,
+    kindLabel: (kind: string) => `Shared ${kind.toLowerCase()}`,
+  },
+
+  /* The dialog behind "Share…" on one note — see `web/src/ShareDialog.tsx`. */
+  shareNote: {
+    menu: 'Share…',
+    title: (title: string) => `Share “${title}”`,
+    close: 'Close',
+    yours: 'Your note',
+    inSpace: (space: string) => `In the space ${space}`,
+    person: 'Person',
+    personPlaceholder: 'account name',
+    right: 'Access',
+    read: 'Can read',
+    write: 'Can read and write',
+    share: 'Share',
+    follows:
+      'Shares this one note. The share follows it when it is renamed or moved in ndBrain, ' +
+      'and never passes to another note that later takes its name.',
+    existing: 'Shared as this note',
+    none: 'Nobody has this note on its own yet.',
+    loading: 'Reading the members…',
+    wider: 'Also reaches this note',
+    withdrawLabel: (who: string) => `Withdraw ${who}’s access`,
+    confirmWithdraw: (who: string, title: string) => `Withdraw ${who}’s access to “${title}”?`,
+    grantFailed: 'Could not share the note.',
+    withdrawFailed: 'Could not withdraw that share.',
   },
 
   tree: {
@@ -345,6 +379,10 @@ export const copy = {
     renameFolderLabel: (name: string) => `Rename ${name}`,
     deleteNote: (name: string) => `Delete “${name}” (Delete key)`,
     deleteNoteLabel: (name: string) => `Delete ${name}`,
+    shareNote: (name: string) => `Share “${name}”…`,
+    shareNoteLabel: (name: string) => `Share ${name}`,
+    spaceEmpty: 'Nothing in this space yet.',
+    newNoteIn: (space: string) => `New note in ${space}`,
   },
 
   context: {
@@ -359,6 +397,7 @@ export const copy = {
     pointsNowhere: 'Points nowhere',
     file: 'File',
     vaultOf: (owner: string) => `${owner}'s vault`,
+    spaceOf: (space: string) => `Space ${space}`,
   },
 
   palette: {
@@ -615,6 +654,9 @@ export const copy = {
     keysExplain:
       'How an agent reaches a vault over MCP. A key is scoped to one account and, optionally, to one folder in it.',
     forAccount: 'For account',
+    people: 'People',
+    spacesGroup: 'Spaces',
+    keysForSpace: 'A key for a space reaches into that space and nowhere else.',
     noKeys: 'No keys for this account.',
     keyName: 'Name',
     scope: 'Folder',
@@ -638,6 +680,62 @@ export const copy = {
     gotIt: 'I have copied it',
   },
 
+  /* Admin → Spaces — see `web/src/AdminSpaces.tsx`. */
+  spaces: {
+    title: 'Spaces',
+    explain:
+      'A space is a vault several people keep together. Nobody signs in to it: you decide who sees ' +
+      'the whole space, one folder or a single note, and whether they may write. Members find it as ' +
+      'its own root in their tree.',
+    none: 'No spaces yet.',
+    name: 'Space',
+    members: 'Members',
+    manage: 'Members',
+    manageLabel: (name: string) => `Manage the members of ${name}`,
+    rename: 'Rename',
+    renameLabel: (name: string) => `Rename ${name}`,
+    displayNameFor: (id: string) => `Display name for ${id}`,
+    renamed: (name: string) => `Renamed to ${name}.`,
+    disableLabel: (name: string) => `Disable ${name}`,
+    enableLabel: (name: string) => `Enable ${name}`,
+    confirmDisable: (name: string) =>
+      `Disable ${name}? Its members lose access and its keys stop working until you enable it. Its notes stay where they are.`,
+    disabledNow: (name: string) => `${name} is disabled.`,
+    enabled: (name: string) => `${name} is enabled again.`,
+
+    newSpace: 'New space',
+    accountName: 'Account name',
+    nameRule:
+      'Account name: letters, digits, “-” and “_”, starting with a letter or digit, at most 64 ' +
+      'characters. It must differ from every person’s and every space’s name.',
+    idIsPermanent:
+      'The account name becomes the folder the space’s notes live in, so it cannot be changed later. The display name can.',
+    nameInvalid: 'Not a valid account name: see the rule above.',
+    nameTaken: (id: string) => `“${id}” is already taken by a person or a space.`,
+    create: 'Create space',
+    created: (name: string) => `${name} created.`,
+
+    membersOf: (name: string) => `Members of ${name}`,
+    membersFailed: 'Could not read the members.',
+    noMembers: 'Nobody is a member yet.',
+    addMember: 'Add a member',
+    pickPerson: 'Choose a person…',
+    extentLabel: 'Extent',
+    extent: { vault: 'Whole space', folder: 'Folder', note: 'Single note' } as const,
+    pickFolder: 'Which folder',
+    pickNote: 'Which note',
+    choose: 'Choose…',
+    folderExample: 'Folder/Subfolder',
+    noteExample: 'Folder/Note.md',
+    notVisible:
+      'Only the notes of spaces you are a member of can be listed here. Type the path as it is in the space.',
+    add: 'Add member',
+    memberAdded: (who: string, space: string) => `${who} added to ${space}.`,
+    removeLabel: (who: string) => `Withdraw ${who}`,
+    confirmRemove: (who: string, space: string) => `Withdraw ${who}’s access to ${space}?`,
+    memberRemoved: (who: string) => `${who} withdrawn.`,
+  },
+
   crash: {
     title: 'ndBrain stopped drawing this page',
     explain:
@@ -655,6 +753,8 @@ export const copy = {
   inspector: {
     label: (title: string) => `About ${title}`,
     close: 'Close',
+    space: 'Space',
+    vault: 'Vault of',
     type: 'Type',
     edited: 'Last edited',
     tags: 'Tags',

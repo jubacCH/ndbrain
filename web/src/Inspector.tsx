@@ -28,7 +28,8 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { noteKind } from './brain/kind';
 import { copy } from './copy';
-import { CloseIcon, FileIcon, TrashIcon } from './icons';
+import { CloseIcon, FileIcon, ShareIcon, SpaceIcon, TrashIcon } from './icons';
+import { ownerKind, ownerLabel, useOwners } from './owners';
 import type { GraphIndex, Neighbour } from './inspect';
 import { neighbourhood, summarize, whyConnected } from './inspect';
 import { absoluteTime, relativeTime } from './network/relativeTime';
@@ -54,10 +55,27 @@ export interface InspectorProps {
    * caller may change, so a note read through a read-only share offers none.
    */
   onDelete?: ((owner: string, path: string, title: string) => void) | undefined;
+  /**
+   * Opens the share dialog. Given only for a note the caller may share: their
+   * own, or, for an administrator, one in a space.
+   */
+  onShare?: ((owner: string, path: string, title: string) => void) | undefined;
+  /** The signed-in account; a note from any other vault says whose it is. */
+  self?: string | undefined;
 }
 
-export function Inspector({ index, picked, onPick, onOpen, onReveal, onDelete }: InspectorProps): React.JSX.Element | null {
+export function Inspector({
+  index,
+  picked,
+  onPick,
+  onOpen,
+  onReveal,
+  onDelete,
+  onShare,
+  self,
+}: InspectorProps): React.JSX.Element | null {
   const node = index.nodes.get(picked);
+  const owners = useOwners();
   const links = useMemo(() => neighbourhood(index, picked), [index, picked]);
   // Per note: a reason opened for one note says nothing about the next.
   const [open, setOpen] = useState<{ note: string; row: string } | null>(null);
@@ -136,6 +154,23 @@ export function Inspector({ index, picked, onPick, onOpen, onReveal, onDelete }:
 
       <div className="inspector-body">
         <dl className="inspector-facts">
+          {ownerKind(owners, owner) === 'space' ? (
+            <>
+              <dt>{copy.inspector.space}</dt>
+              <dd className="inspector-owner">
+                <SpaceIcon size={14} />
+                {ownerLabel(owners, owner)}
+              </dd>
+            </>
+          ) : (
+            self !== undefined &&
+            owner !== self && (
+              <>
+                <dt>{copy.inspector.vault}</dt>
+                <dd className="inspector-owner">{owner}</dd>
+              </>
+            )
+          )}
           {type !== '' && (
             <>
               <dt>{copy.inspector.type}</dt>
@@ -231,6 +266,18 @@ export function Inspector({ index, picked, onPick, onOpen, onReveal, onDelete }:
         {onReveal !== undefined && (
           <button type="button" className="inspector-reveal" onClick={() => onReveal(node.owner, node.path)}>
             {copy.inspector.reveal}
+          </button>
+        )}
+        {onShare !== undefined && (
+          <button
+            type="button"
+            className="inspector-share"
+            aria-label={copy.tree.shareNoteLabel(node.title)}
+            title={copy.tree.shareNoteLabel(node.title)}
+            onClick={() => onShare(node.owner, node.path, node.title)}
+          >
+            <ShareIcon size={15} />
+            <span>{copy.shareNote.menu}</span>
           </button>
         )}
         {onDelete !== undefined && (

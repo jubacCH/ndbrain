@@ -29,6 +29,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExterna
 
 import type { GraphData } from '../api';
 import { copy } from '../copy';
+import { ownerLabel, useOwners } from '../owners';
 import { displayName } from '../Tree';
 import { absoluteTime } from './relativeTime';
 import type { FolderNode, MapNode, Rect } from './treemap';
@@ -102,8 +103,9 @@ function useContainerSize(): [(el: HTMLDivElement | null) => void, { w: number; 
   return [setEl, size];
 }
 
-function folderName(folder: FolderNode, hidePrefixes: boolean): string {
-  if (folder.vault) return folder.owner;
+function folderName(folder: FolderNode, hidePrefixes: boolean, labelOf?: (owner: string) => string): string {
+  // Another vault, under its root: a space by its display name, a person by account.
+  if (folder.vault) return labelOf === undefined ? folder.owner : labelOf(folder.owner);
   return folder.path === '' ? copy.network.mapView.root : displayName(folder.name, hidePrefixes);
 }
 
@@ -140,7 +142,13 @@ export interface MapCell {
  * Pure and exported so that what a hover must *not* cause — running this
  * again — is something a test can count.
  */
-export function layoutMap(current: FolderNode, w: number, h: number, hidePrefixes: boolean): MapCell[] {
+export function layoutMap(
+  current: FolderNode,
+  w: number,
+  h: number,
+  hidePrefixes: boolean,
+  labelOf?: (owner: string) => string,
+): MapCell[] {
   const out: MapCell[] = [];
   const now = Date.now();
 
@@ -157,7 +165,7 @@ export function layoutMap(current: FolderNode, w: number, h: number, hidePrefixe
   });
 
   const folderLeaf = (folder: FolderNode, rect: Rect, small: boolean): MapCell => {
-    const name = folderName(folder, hidePrefixes);
+    const name = folderName(folder, hidePrefixes, labelOf);
     return {
       key: `f:${folder.key}`,
       kind: 'leaf',
@@ -434,6 +442,8 @@ export function MapView(props: {
   hidePrefixes?: boolean;
 }): React.JSX.Element {
   const { graph, onOpen, self, hidePrefixes = true } = props;
+  const owners = useOwners();
+  const labelOf = useCallback((owner: string): string => ownerLabel(owners, owner), [owners]);
 
   const [frameRef, { w: viewW, h: viewH }] = useContainerSize();
 
@@ -454,8 +464,8 @@ export function MapView(props: {
 
   const current = (zoom === null ? root : findFolder(root, zoom.path, zoom.owner)) ?? root;
   const cells = useMemo(
-    () => layoutMap(current, viewW, viewH, hidePrefixes),
-    [current, viewW, viewH, hidePrefixes],
+    () => layoutMap(current, viewW, viewH, hidePrefixes, labelOf),
+    [current, viewW, viewH, hidePrefixes, labelOf],
   );
 
   // The latest `onOpen` without making every render of the parent a new
@@ -512,7 +522,7 @@ export function MapView(props: {
                 setZoom(folder === root ? null : { owner: folder.owner, path: folder.path });
               }}
             >
-              {folderName(folder, hidePrefixes)}
+              {folderName(folder, hidePrefixes, labelOf)}
             </button>
           </span>
         ))}
@@ -520,7 +530,7 @@ export function MapView(props: {
 
       <div className="nv-map">
         <div className="nv-treemap-frame" ref={frameRef}>
-          <svg viewBox={`0 0 ${viewW} ${viewH}`} role="group" aria-label={folderName(current, hidePrefixes)}>
+          <svg viewBox={`0 0 ${viewW} ${viewH}`} role="group" aria-label={folderName(current, hidePrefixes, labelOf)}>
             <MapCells cells={cells} hover={hover} onActivate={onActivate} />
           </svg>
         </div>

@@ -197,8 +197,8 @@ beforeEach(() => {
     row('anna', 'Team/Gemeinsam.md'),
   ];
   server.received = [
-    { id: 's1', owner: 'anna', prefix: 'Lesen/', grantee: 'julian', canWrite: false, createdAt: 0 },
-    { id: 's2', owner: 'anna', prefix: 'Team/', grantee: 'julian', canWrite: true, createdAt: 0 },
+    { id: 's1', owner: 'anna', prefix: 'Lesen/', grantee: 'julian', canWrite: false, createdAt: 0, kind: 'folder' as const },
+    { id: 's2', owner: 'anna', prefix: 'Team/', grantee: 'julian', canWrite: true, createdAt: 0, kind: 'folder' as const },
   ];
   // Two notes link to the plan, one of them twice; the plan links to itself.
   server.backlinks = new Map([[PLAN, [{ source: 'Index.md' }, { source: 'Index.md' }, { source: 'Projects/Log.md' }, { source: PLAN }]]]);

@@ -314,8 +314,8 @@ describe('deleting a note', () => {
     { owner: 'anna', path: 'Team/Gemeinsam.md', title: 'Gemeinsam', size: 1, mtimeMs: 0 },
   ];
   const RECEIVED = [
-    { id: 's1', owner: 'anna', prefix: 'Lesen/', grantee: 'julian', canWrite: false, createdAt: 0 },
-    { id: 's2', owner: 'anna', prefix: 'Team/', grantee: 'julian', canWrite: true, createdAt: 0 },
+    { id: 's1', owner: 'anna', prefix: 'Lesen/', grantee: 'julian', canWrite: false, createdAt: 0, kind: 'folder' as const },
+    { id: 's2', owner: 'anna', prefix: 'Team/', grantee: 'julian', canWrite: true, createdAt: 0, kind: 'folder' as const },
   ];
 
   it('offers a bin on a note of your own, which hands the note to the shell', async () => {

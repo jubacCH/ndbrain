@@ -13,6 +13,7 @@
 import { isDailyNote, isPendingDayLink } from '../../shared/journal';
 import type { Ref } from './api';
 import { copy } from './copy';
+import { ownerKind, ownerLabel, useOwners } from './owners';
 import { useHistory, useLinks } from './queries';
 import { HistoryPanel } from './History';
 
@@ -36,6 +37,7 @@ export function ContextPanel({
   /** Changes whenever the note was saved, so the panel refreshes with it. */
 }): React.JSX.Element {
 
+  const owners = useOwners();
   const owner = note?.owner ?? null;
   const notePath = note?.path ?? null;
 
@@ -148,7 +150,9 @@ export function ContextPanel({
                   your own vault is never labelled. */}
               {owner !== null && owner !== self && (
                 <span className="ref mono" style={{ fontSize: '.74rem', display: 'block' }}>
-                  {copy.context.vaultOf(owner)}
+                  {ownerKind(owners, owner) === 'space'
+                    ? copy.context.spaceOf(ownerLabel(owners, owner))
+                    : copy.context.vaultOf(owner)}
                 </span>
               )}
             </section>
