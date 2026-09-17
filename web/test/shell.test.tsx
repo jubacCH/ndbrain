@@ -247,7 +247,7 @@ describe('the sidebar', () => {
 
   it('folded, keeps every entry reachable by name and drops the tree', async () => {
     const { onShowView, onToggleCollapsed } = renderSidebar({ collapsed: true });
-    for (const label of [copy.nav.overview, copy.nav.network, copy.nav.tidy, copy.nav.tasks, copy.nav.search]) {
+    for (const label of [copy.nav.overview, copy.nav.journal, copy.nav.network, copy.nav.tidy, copy.nav.search]) {
       const button = screen.getByRole('button', { name: label });
       expect(button).toHaveAttribute('title', label);
     }

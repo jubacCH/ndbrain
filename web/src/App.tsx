@@ -103,7 +103,6 @@ type View =
   | 'journal'
   | 'brain'
   | 'tidy'
-  | 'tasks'
   | 'search'
   | 'shares'
   | 'files'
@@ -423,7 +422,8 @@ function Shell({
     () => (taskDir === undefined ? { includeDone: taskIncludeDone } : { dir: taskDir, includeDone: taskIncludeDone }),
     [taskDir, taskIncludeDone],
   );
-  const tasksQuery = useTasks(taskFilter, view === 'tasks');
+  // Tasks sit beside the calendar, so they are wanted exactly while the journal is.
+  const tasksQuery = useTasks(taskFilter, view === 'journal');
   const toggleTaskMutation = useToggleTask();
 
   const notes = treeQuery.data?.notes ?? [];
@@ -1572,8 +1572,6 @@ function Shell({
           subtitle:
             tidy === null ? sub.loading : sub.tidy(tidy.totals.orphans, tidy.totals.deadLinks, tidy.totals.stale),
         };
-      case 'tasks':
-        return { title: copy.nav.tasks, subtitle: tasks === null ? sub.loading : sub.tasks(tasks.total) };
       case 'search':
         return {
           title: copy.nav.search,
@@ -1587,7 +1585,10 @@ function Shell({
       case 'journal': {
         const today = localDate(new Date());
         const inMonth = [...journalDays].filter((day) => day.startsWith(isoDate(today).slice(0, 8))).length;
-        return { title: copy.journal.title, subtitle: sub.journal(journalDays.size, inMonth) };
+        return {
+          title: copy.journal.title,
+          subtitle: sub.journal(journalDays.size, inMonth) + (tasks === null ? '' : ` · ${sub.tasks(tasks.total)}`),
+        };
       }
       case 'settings':
         return { title: copy.nav.settings, subtitle: sub.settings };
@@ -1781,7 +1782,7 @@ function Shell({
                   recents={recentRows}
                   hidePrefixes={prefs.hidePrefixes}
                   onOpen={(owner, path) => void openNote(owner, path)}
-                  onTasks={() => void showView('tasks')}
+                  onTasks={() => void showView('journal')}
                   onTidy={(focus) => {
                     setTidyFocus(focus ?? null);
                     void showView('tidy');
@@ -1792,7 +1793,34 @@ function Shell({
                 />
               )}
 
-              {view === 'journal' && <JournalView days={journalDays} onOpenDay={(date) => void openDay(date)} />}
+              {view === 'journal' && (
+                <JournalView
+                  days={journalDays}
+                  onOpenDay={(date) => void openDay(date)}
+                  aside={
+                    tasks === null ? (
+                      <section className="journal-tasks" aria-busy="true" aria-label={copy.tasks.title}>
+                        <h2 className="h-big">{copy.tasks.title}</h2>
+                        <p className="h-sub">{copy.shell.sub.loading}</p>
+                      </section>
+                    ) : (
+                      <TasksView
+                        embedded
+                        data={tasks}
+                        dirs={topLevelDirs(notes)}
+                        dir={taskDir}
+                        includeDone={taskIncludeDone}
+                        self={user.id}
+                        busy={taskBusy}
+                        onDir={setTaskDir}
+                        onIncludeDone={setTaskIncludeDone}
+                        onToggle={(task) => void toggleTask(task)}
+                        onOpen={(owner, path, line) => void openNote(owner, path, line)}
+                      />
+                    )
+                  }
+                />
+              )}
 
               {view === 'brain' &&
                 (graph === null ? (
@@ -1857,21 +1885,6 @@ function Shell({
                   }
                   onOpen={(path) => void openNote(user.id, path)}
                   onBulk={(action) => void runBulk(action)}
-                />
-              )}
-
-              {view === 'tasks' && tasks !== null && (
-                <TasksView
-                  data={tasks}
-                  dirs={topLevelDirs(notes)}
-                  dir={taskDir}
-                  includeDone={taskIncludeDone}
-                  self={user.id}
-                  busy={taskBusy}
-                  onDir={setTaskDir}
-                  onIncludeDone={setTaskIncludeDone}
-                  onToggle={(task) => void toggleTask(task)}
-                  onOpen={(owner, path, line) => void openNote(owner, path, line)}
                 />
               )}
 

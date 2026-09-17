@@ -19,7 +19,7 @@
  */
 
 export type Theme = 'system' | 'light' | 'dark';
-export type StartView = 'overview' | 'note' | 'search' | 'files';
+export type StartView = 'overview' | 'journal' | 'note' | 'search' | 'files';
 /** How wide a line of prose may get before it wraps. */
 export type Measure = 'narrow' | 'medium' | 'wide';
 /** How the whole network is shown: the brain, a table, or a map of the folders. */
@@ -110,6 +110,20 @@ function clamp(value: number, [min, max]: readonly [number, number], fallback: n
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 }
 
+const START_VIEWS: readonly StartView[] = ['overview', 'journal', 'note', 'search', 'files'];
+
+/**
+ * A stored start view the app still has.
+ *
+ * Tasks used to be a view of its own and now sits beside the calendar in the
+ * journal, so a browser that remembered it opens there rather than falling
+ * back to the overview as if the choice had never been made.
+ */
+function startViewOf(stored: unknown): StartView {
+  if (stored === 'tasks') return 'journal';
+  return START_VIEWS.includes(stored as StartView) ? (stored as StartView) : DEFAULT_PREFS.startView;
+}
+
 /**
  * Reads what is stored, and repairs whatever is not usable.
  *
@@ -133,11 +147,7 @@ export function loadPrefs(): Prefs {
       measure: (['narrow', 'medium', 'wide'] as Measure[]).includes(stored.measure as Measure)
         ? (stored.measure as Measure)
         : DEFAULT_PREFS.measure,
-      startView: (['overview', 'note', 'search', 'files'] as StartView[]).includes(
-        stored.startView as StartView,
-      )
-        ? (stored.startView as StartView)
-        : DEFAULT_PREFS.startView,
+      startView: startViewOf(stored.startView),
       hidePrefixes:
         typeof stored.hidePrefixes === 'boolean' ? stored.hidePrefixes : DEFAULT_PREFS.hidePrefixes,
       saveDelayMs: clamp(Number(stored.saveDelayMs), LIMITS.saveDelayMs, DEFAULT_PREFS.saveDelayMs),

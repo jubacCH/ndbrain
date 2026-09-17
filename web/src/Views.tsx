@@ -313,6 +313,7 @@ export function TasksView({
   onIncludeDone,
   onToggle,
   onOpen,
+  embedded = false,
 }: {
   data: Tasks;
   /** Top-level folders, for the folder filter — the same pattern `search` uses. */
@@ -327,6 +328,11 @@ export function TasksView({
   onIncludeDone: (value: boolean) => void;
   onToggle: (task: TaskRow) => void;
   onOpen: (owner: string, path: string, line: number) => void;
+  /**
+   * Drawn as a section of the page around it rather than as a pane of its own
+   * — the journal sets it beside the calendar.
+   */
+  embedded?: boolean;
 }): React.JSX.Element {
   const groups: Array<{ owner: string; path: string; tasks: TaskRow[] }> = [];
   for (const task of data.tasks) {
@@ -338,9 +344,15 @@ export function TasksView({
     }
   }
 
+  const Frame = embedded ? 'section' : 'div';
   return (
-    <div className="pane padded">
-      <h2 className="h-big">{copy.tasks.title}</h2>
+    <Frame
+      className={embedded ? 'journal-tasks' : 'pane padded'}
+      aria-labelledby={embedded ? 'journal-tasks-title' : undefined}
+    >
+      <h2 className="h-big" id={embedded ? 'journal-tasks-title' : undefined}>
+        {copy.tasks.title}
+      </h2>
 
       {data.truncated && (
         <p className="warnline" role="status">
@@ -426,7 +438,7 @@ export function TasksView({
           </div>
         </div>
       )}
-    </div>
+    </Frame>
   );
 }
 
