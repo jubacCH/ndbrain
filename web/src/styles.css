@@ -2044,6 +2044,12 @@ tbody tr[data-selected='true']:hover td {
   overflow-wrap: anywhere;
 }
 
+.braincard-space {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
 .braincard-none {
   color: rgba(140, 175, 185, 0.7);
   font-style: italic;
