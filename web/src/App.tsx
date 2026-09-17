@@ -28,6 +28,7 @@ import {
   type PulseEvent,
   type FileRow,
   type Share,
+  type ShareKind,
   type TaskRow,
   type User,
 } from './api';
@@ -1458,10 +1459,10 @@ function Shell({
     setArriving((current) => (current === next ? null : current));
   };
 
-  const grantShare = async (grantee: string, prefix: string, canWrite: boolean): Promise<void> => {
+  const grantShare = async (grantee: string, kind: ShareKind, path: string, canWrite: boolean): Promise<void> => {
     setShareBusy(true);
     try {
-      await api.grantShare(grantee, prefix, canWrite);
+      await api.grantShare(grantee, kind, path, canWrite);
       await refreshShares();
       setError(null);
     } catch (caught) {
@@ -1958,7 +1959,9 @@ function Shell({
                   received={received}
                   dirs={ownDirs}
                   busy={shareBusy}
-                  onGrant={(grantee, prefix, canWrite) => void grantShare(grantee, prefix, canWrite)}
+                  onGrant={(grantee, prefix, canWrite) =>
+                    void grantShare(grantee, prefix === '' ? 'vault' : 'folder', prefix, canWrite)
+                  }
                   onRevoke={(share) => void revokeShare(share)}
                 />
               )}
