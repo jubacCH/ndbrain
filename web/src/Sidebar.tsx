@@ -59,6 +59,8 @@ export interface SidebarProps {
   name: string;
   /** The view on screen; `note` and the account pages match no entry. */
   view: string;
+  /** A view that was asked for and is still loading; its entry says so. */
+  arriving?: string | null;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onShowView: (view: NavView) => void;
@@ -84,6 +86,7 @@ export interface SidebarProps {
 export function Sidebar({
   name,
   view,
+  arriving = null,
   collapsed,
   onToggleCollapsed,
   onShowView,
@@ -153,6 +156,7 @@ export function Sidebar({
             key={entry.view}
             type="button"
             aria-current={view === entry.view}
+            aria-busy={arriving === entry.view && view !== entry.view ? true : undefined}
             title={collapsed ? entry.label : undefined}
             onClick={() => onShowView(entry.view)}
           >

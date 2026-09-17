@@ -283,6 +283,8 @@ function Shell({
   /** On a narrow screen the tree overlays the page rather than keeping a column. */
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [treeFilter, setTreeFilter] = useState('');
+  /** The view a navigation is on its way to, while it waits for what it needs. */
+  const [arriving, setArriving] = useState<View | null>(null);
   /**
    * The note the tree is asked to show without opening it — the inspector's
    * "Show in tree". Counted, so asking twice for the same note scrolls to it
@@ -1264,6 +1266,10 @@ function Shell({
   }, [view]);
 
   const showView = async (next: View): Promise<void> => {
+    // Said at once, before anything is awaited: on a slow connection the graph
+    // can take a while, and a click that changes nothing looks like a click
+    // that did not land.
+    setArriving(next);
     if (pending.current !== null) await flush();
     if (next === 'overview') await refreshOverview();
     if (next === 'files') await refreshFiles();
@@ -1276,6 +1282,7 @@ function Shell({
     // costs nothing.
     if (next === 'brain') await client.prefetchQuery({ queryKey: keys.graph, queryFn: () => api.graph(), staleTime: 30_000 });
     setView(next);
+    setArriving((current) => (current === next ? null : current));
   };
 
   const grantShare = async (grantee: string, prefix: string, canWrite: boolean): Promise<void> => {
@@ -1415,10 +1422,12 @@ function Shell({
       data-wide={view !== 'note'}
       data-collapsed={collapsed}
       data-view={view}
+      data-busy={arriving !== null}
     >
       <Sidebar
         name={user.displayName}
         view={view}
+        arriving={arriving}
         collapsed={collapsed}
         onToggleCollapsed={() => setPrefs((current) => ({ ...current, sidebarCollapsed: !current.sidebarCollapsed }))}
         onShowView={(next) => {
@@ -1632,6 +1641,13 @@ function Shell({
                   }
                   onToggleAll={(paths) =>
                     setSelection((current) => (current.size === paths.length ? new Set() : new Set(paths)))
+                  }
+                  onKeepSelected={(paths) =>
+                    setSelection((current) => {
+                      const shown = new Set(paths);
+                      const kept = [...current].filter((path) => shown.has(path));
+                      return kept.length === current.size ? current : new Set(kept);
+                    })
                   }
                   onOpen={(path) => void openNote(user.id, path)}
                   onBulk={(action) => void runBulk(action)}

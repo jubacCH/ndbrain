@@ -57,6 +57,8 @@ const server = vi.hoisted(() => ({
   /** Every account's notes; `Shared/` is shared with everybody. */
   notes: [] as NoteRow[],
   failOpen: false,
+  /** When set, the graph answers only once this settles. */
+  graphGate: null as Promise<void> | null,
 }));
 
 vi.mock('../src/api', async (original) => {
@@ -100,7 +102,13 @@ vi.mock('../src/api', async (original) => {
     tags: async () => ({ tags: [] }),
     pulse: async () => ({ events: [], now: 1 }),
     propKeys: async () => ({ props: [] }),
-    graph: async () => ({
+    graph: async () => {
+      if (server.graphGate !== null) await server.graphGate;
+      return graphOf();
+    },
+  };
+  function graphOf() {
+    return {
       nodes: seen().map((n) => ({
         owner: n.owner,
         path: n.path,
@@ -111,7 +119,9 @@ vi.mock('../src/api', async (original) => {
         updatedAt: 0,
       })),
       edges: [],
-    }),
+    };
+  }
+  Object.assign(fake, {
     quickFind: async () => ({ notes: seen() }),
     getNote: async (owner: string, path: string) => {
       const row = seen().find((n) => n.owner === owner && n.path === path);
@@ -122,7 +132,7 @@ vi.mock('../src/api', async (original) => {
         note: { path, title: row.title, content: '', size: 0, mtimeMs: 0 },
       };
     },
-  };
+  });
   // Anything a test does not care about simply never answers.
   const api = new Proxy(fake, { get: (target, key: string) => target[key] ?? (() => new Promise(() => {})) });
   return { ...real, api };
@@ -176,6 +186,7 @@ beforeEach(() => {
 afterEach(() => {
   window.localStorage.clear();
   vi.unstubAllGlobals();
+  server.graphGate = null;
 });
 
 describe('the sidebar', () => {
@@ -524,6 +535,28 @@ describe('the shell, signed in', () => {
     observer.disconnect();
 
     expect(seen.some((text) => text.includes(copy.overview.loadingGraph))).toBe(false);
+  });
+
+  it('says at once that the network is on its way while the graph is slow', async () => {
+    let open: () => void = () => {};
+    server.graphGate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    const entry = await screen.findByRole('button', { name: copy.nav.network });
+
+    await userEvent.click(entry);
+    expect(entry).toHaveAttribute('aria-busy', 'true');
+    expect(entry).toHaveAttribute('aria-current', 'false');
+    expect(document.querySelector('.app')).toHaveAttribute('data-busy', 'true');
+    expect(screen.queryByTestId('brain')).toBeNull();
+
+    open();
+    await screen.findByTestId('brain');
+    expect(entry).not.toHaveAttribute('aria-busy');
+    expect(entry).toHaveAttribute('aria-current', 'true');
+    expect(document.querySelector('.app')).toHaveAttribute('data-busy', 'false');
+    server.graphGate = null;
   });
 
   it('offers the admin entry to an administrator', async () => {
