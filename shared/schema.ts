@@ -426,6 +426,10 @@ export const DeletedNote = z.object({
 
 export const DeletedResponse = z.object({ notes: z.array(DeletedNote) });
 
+export type DeletedNote = z.infer<typeof DeletedNote>;
+export type RestoreState = z.infer<typeof RestoreState>;
+export type DeletePreview = z.infer<typeof DeletePreviewResponse>;
+
 export const RestoreDeletedRequest = z.object({ owner: UserId, path: VaultPath }).strict();
 
 export const RestoreDeletedResponse = z.object({

@@ -156,12 +156,43 @@ export const copy = {
     renameFolder: 'Rename or move this folder (new path)',
     moveTo: (count: number) => `Move ${count} notes to (empty = top of the vault)`,
     tagWith: (count: number) => `Tag ${count} notes with`,
-    /* No longer 'cannot be undone': the sidecar keeps every version, and the
-       history panel puts them back. Saying otherwise was true last week. */
-    deleteNotes: (count: number) =>
-      `Delete ${count} notes? Earlier versions stay in the history.`,
+    /* The question only; what can be restored afterwards is appended from
+       what the server says (`afterDelete`), never promised in general — a host
+       without a history, or a note nobody saved yet, has no way back. */
+    deleteNotes: (count: number) => `Delete ${count} notes?`,
     deleteFile: (name: string) => `Delete “${name}”? This cannot be undone.`,
-    deleteNote: (name: string) => `Delete “${name}”? Earlier versions stay in the history.`,
+    deleteNote: (name: string) => `Delete “${name}”?`,
+    /**
+     * What a delete leaves to bring back, from the server's preview. Empty when
+     * the preview could not be had: better to say nothing than something untrue.
+     */
+    afterDelete: (
+      preview: { restorable: number; unsaved: number; notYours: number; history: boolean } | null,
+    ): string => {
+      if (preview === null) return '';
+      const total = preview.restorable + preview.unsaved + preview.notYours;
+      const one = total === 1;
+      if (preview.restorable === total) {
+        return one
+          ? 'Its last saved version can be restored from Tidy up for 30 days.'
+          : 'Their last saved versions can be restored from Tidy up for 30 days.';
+      }
+      if (preview.notYours === total) {
+        return one ? 'You will not be able to restore it.' : 'You will not be able to restore them.';
+      }
+      if (preview.restorable === 0 && preview.notYours === 0) {
+        if (!preview.history) {
+          return one
+            ? 'This server keeps no history, so it cannot be restored.'
+            : 'This server keeps no history, so they cannot be restored.';
+        }
+        return one
+          ? 'No version of it has been saved yet, so it cannot be restored.'
+          : 'No version of them has been saved yet, so they cannot be restored.';
+      }
+      const lost = total - preview.restorable;
+      return `${preview.restorable} can be restored from Tidy up for 30 days, ${lost} cannot.`;
+    },
     /** Appended to `deleteNote` when the note has text that has not been saved yet. */
     unsavedDropped: 'Changes not saved yet are discarded.',
     /** Appended to `deleteNote` when other notes the caller can see link to it. */
@@ -260,6 +291,35 @@ export const copy = {
     conflictCopy: 'Copy',
     conflictOriginal: 'Original',
     conflictNoOriginal: 'Original is gone',
+  },
+
+  /** Recently deleted, the last section of Tidy up. */
+  deleted: {
+    title: 'Recently deleted',
+    hint: 'Notes deleted in the last 30 days that you may put back. A restored note comes back with its last saved version.',
+    empty: 'Nothing deleted in the last 30 days.',
+    loading: 'Looking for deleted notes…',
+    failed: 'Could not load the deleted notes.',
+    note: 'Note',
+    folder: 'Folder',
+    deleted: 'Deleted',
+    by: (when: string, actor: string) => `${when} by ${actor}`,
+    restore: 'Restore',
+    restoreNamed: (title: string) => `Restore ${title}`,
+    restoring: 'Restoring…',
+    savedAt: (when: string) => `Saved ${when}`,
+    why: {
+      'no-history': 'This server keeps no history, so it cannot be restored.',
+      'no-commit': 'The history has not saved anything yet, so there is no version to restore.',
+      'no-version': 'It was deleted before a version of it was saved, so there is nothing to restore.',
+    },
+    confirm: (title: string) =>
+      `Restore “${title}” with its last saved version? Shares it had do not come back — share it again if needed.`,
+    restored: (title: string) => `Restored “${title}”.`,
+    restoredElsewhere: (title: string, path: string) =>
+      `Restored “${title}” as “${path}”, because its old place is taken now.`,
+    open: 'Open',
+    restoreFailed: 'Could not restore that note.',
   },
 
   tasks: {

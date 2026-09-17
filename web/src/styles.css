@@ -6039,6 +6039,43 @@ th.pick input,
   scroll-margin-top: var(--s-4);
 }
 
+/* Recently deleted, the last section of Tidy up. A row that cannot be restored
+   keeps its button, disabled, and says why right next to it. */
+.deleted {
+  margin-top: var(--s-6);
+}
+
+.deleted-title {
+  font-size: var(--t-md);
+}
+
+.deleted-outcome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0 0 var(--s-3);
+  color: var(--text-2);
+}
+
+.deleted-saved {
+  color: var(--text-3);
+}
+
+.deleted-action {
+  white-space: normal;
+}
+
+.deleted-why {
+  display: block;
+  max-width: 28ch;
+  margin-top: var(--s-1);
+  margin-left: auto;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  text-align: right;
+}
+
 /* A phone scrolls one column: Continue keeps five of each list there, so the
    health card is not pushed three screens down. The rest is a scroll away in
    the tree and the search. */
