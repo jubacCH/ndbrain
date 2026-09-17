@@ -44,13 +44,22 @@ vi.mock('../src/Editor', () => ({
     </div>
   ),
 }));
-vi.mock('../src/Context', () => ({ ContextPanel: () => <div /> }));
+// The context panel's one action here: following a link that points nowhere yet.
+vi.mock('../src/Context', () => ({
+  ContextPanel: (props: { onCreate: (target: string) => void }) => (
+    <button type="button" onClick={() => props.onCreate('50_Journal/2026/09/2026-09-18')}>
+      follow tomorrow
+    </button>
+  ),
+}));
 
 const server = vi.hoisted(() => ({
   signedIn: null as User | null,
   notes: [] as NoteRow[],
   contents: new Map<string, string>(),
   ensureCalls: [] as Array<{ owner: string; path: string; content: string }>,
+  /** Plain writes, which a followed link must not fall back to either. */
+  putCalls: [] as Array<{ owner: string; path: string }>,
   /** Held open until released, so a test can press twice while the first is in flight. */
   gate: null as Promise<void> | null,
 }));
@@ -84,6 +93,10 @@ vi.mock('../src/api', async (original) => {
         canWrite: owner === server.signedIn?.id,
         note: { path, title: path.split('/').pop()!.replace(/\.md$/, ''), content, size: content.length, mtimeMs: 1 },
       };
+    },
+    putNote: async (owner: string, path: string) => {
+      server.putCalls.push({ owner, path });
+      return { note: { path, title: '', content: '', size: 0, mtimeMs: 2 }, created: true };
     },
     ensureNote: async (owner: string, path: string, content: string) => {
       server.ensureCalls.push({ owner, path, content });
@@ -124,6 +137,7 @@ beforeEach(() => {
   server.notes = [];
   server.contents = new Map();
   server.ensureCalls = [];
+  server.putCalls = [];
   server.gate = null;
 });
 
@@ -341,6 +355,38 @@ describe('opening today from the shell', () => {
     await userEvent.click(todayButton());
     await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-owner', 'julian'));
     expect(server.ensureCalls.map((call) => call.owner)).toEqual(['julian']);
+  });
+
+  it('follows a day link from a daily note of your own into your journal', async () => {
+    at('2026-09-17T10:00:00Z');
+    server.notes = [row('julian', '50_Journal/2026/09/2026-09-17.md')];
+    server.contents.set('julian 50_Journal/2026/09/2026-09-17.md', 'Mein Tag');
+    await renderApp();
+    await userEvent.click(todayButton());
+    await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-owner', 'julian'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'follow tomorrow' }));
+    await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-path', '50_Journal/2026/09/2026-09-18.md'));
+    expect(server.ensureCalls.map((call) => `${call.owner} ${call.path}`)).toEqual(['julian 50_Journal/2026/09/2026-09-18.md']);
+    expect(server.putCalls).toEqual([]);
+  });
+
+  it('follows a day link in somebody else’s daily note nowhere: nothing is created, in either vault', async () => {
+    at('2026-09-17T10:00:00Z');
+    server.notes = [row('anna', '50_Journal/2026/09/2026-09-17.md')];
+    server.contents.set('anna 50_Journal/2026/09/2026-09-17.md', 'Annas Tag');
+    await renderApp();
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    await userEvent.click(await screen.findByRole('button', { name: /2026-09-17/ }));
+    await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-owner', 'anna'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'follow tomorrow' }));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(server.ensureCalls).toEqual([]);
+    expect(server.putCalls).toEqual([]);
+    expect(screen.getByTestId('editor')).toHaveAttribute('data-owner', 'anna');
+    expect(screen.getByTestId('editor')).toHaveAttribute('data-path', '50_Journal/2026/09/2026-09-17.md');
   });
 
   it('shows the journal view from the navigation', async () => {

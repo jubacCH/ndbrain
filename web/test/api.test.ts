@@ -154,3 +154,23 @@ describe('note identity', () => {
     expect(refKey('julian', 'a.md')).toBe(refKey('julian', 'a.md'));
   });
 });
+
+describe('creating a note only if it is absent', () => {
+  it('asks the server not to write over an existing note', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ note: { path: '50_Journal/2026/09/2026-09-17.md', title: '2026-09-17', content: 'x', size: 1, mtimeMs: 1 }, created: false }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await api.ensureNote('julian', '50_Journal/2026/09/2026-09-17.md', 'template');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/v1/notes/50_Journal/2026/09/2026-09-17.md');
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(String(init.body))).toEqual({ content: 'template', owner: 'julian', ifAbsent: true });
+  });
+});
