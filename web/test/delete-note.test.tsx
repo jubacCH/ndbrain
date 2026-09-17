@@ -92,7 +92,7 @@ vi.mock('../src/api', async (original) => {
       return { notes: server.notes, dirs: [] };
     },
     tidy: async () => ({
-      orphans: [],
+      orphans: server.notes.filter((n) => n.owner === server.signedIn?.id && n.path === 'Loose.md'),
       untagged: [],
       deadLinks: [],
       stale: [],
@@ -542,6 +542,22 @@ describe('what the question says about the way back', () => {
     server.preview = null;
     await deleteLoose();
     expect(confirm).toHaveBeenCalledWith(copy.ask.deleteNote('Loose'));
+  });
+});
+
+describe('a bulk delete from Tidy up', () => {
+  it('asks the server about the selection and says how many can come back', async () => {
+    server.preview = { restorable: 0, unsaved: 1, notYours: 0, history: true };
+    mount();
+    await user.click(await screen.findByRole('button', { name: copy.nav.tidy }));
+    await user.click(await screen.findByRole('checkbox', { name: copy.tidy.select('Loose') }));
+    await user.click(screen.getByRole('button', { name: copy.tidy.delete }));
+
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(server.previews).toEqual([['julian', ['Loose.md']]]);
+    expect(confirm).toHaveBeenCalledWith(
+      `${copy.ask.deleteNotes(1)} No version of it has been saved yet, so it cannot be restored.`,
+    );
   });
 });
 

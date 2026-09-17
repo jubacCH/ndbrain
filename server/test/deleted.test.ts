@@ -153,6 +153,44 @@ describe('with a history on the host', () => {
     expect(restored.body.note.content).toBe('Zweite Notiz mit dem Namen.\n');
   });
 
+  it('never brings back what was saved at the path after the delete', async () => {
+    await h.runtime.app.createNote('julian', 'Plan.md', 'Vor dem Löschen.\n', 'julian');
+    await commit('julian');
+    await del('julian', 'julian', 'Plan.md');
+    // Written behind ndBrain's back and saved by a later tick.
+    await fs.writeFile(path.join(vaultDir('julian'), 'Plan.md'), 'Danach, von aussen.\n');
+    const later = new Date(Date.now() + 10_000).toISOString();
+    const cwd = vaultDir('julian');
+    await run('git', ['add', '-A'], { cwd });
+    await run('git', ['commit', '-q', '-m', 'später'], {
+      cwd,
+      env: { ...GIT_ENV, GIT_AUTHOR_DATE: later, GIT_COMMITTER_DATE: later },
+    });
+
+    const restored = await restore('julian', 'julian', 'Plan.md');
+    expect(restored.status).toBe(200);
+    expect(restored.body.note.content).toBe('Vor dem Löschen.\n');
+  });
+
+  it('skips a saved state that recorded the note as gone, and shows when the version it brings was saved', async () => {
+    await h.runtime.app.createNote('julian', 'Plan.md', 'Erste Fassung.\n', 'julian');
+    await commit('julian');
+    await del('julian', 'julian', 'Plan.md');
+    await commit('julian');
+    const [first] = await h.runtime.history.versions('julian', 'Plan.md');
+    await h.runtime.app.createNote('julian', 'Plan.md', 'Nie gesichert.\n', 'julian');
+    await del('julian', 'julian', 'Plan.md');
+
+    const [row] = (await list('julian')).body.notes;
+    expect(row.restore).toBe('ready');
+    const versions = await h.runtime.history.versions('julian', 'Plan.md');
+    expect(versions[0]?.id).toBe(first?.id);
+    expect(row.savedAt).toBe(versions[1]?.at);
+    const restored = await restore('julian', 'julian', 'Plan.md');
+    expect(restored.status).toBe(200);
+    expect(restored.body.note.content).toBe('Erste Fassung.\n');
+  });
+
   it('comes back under a free name when the path is taken, and leaves what is there alone', async () => {
     await h.runtime.app.createNote('julian', 'Projekt/Plan.md', 'Alter Plan.\n', 'julian');
     await commit('julian');
