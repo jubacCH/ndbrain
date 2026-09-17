@@ -412,3 +412,76 @@ describe('agent keys of a disabled person', () => {
     expect((await h.tool(secret, 'get_note', { path: 'Privat.md' })).status).toBe(200);
   });
 });
+
+describe('one namespace, whatever the letter case', () => {
+  it('refuses a space or a person named like another account in a different case, from every door', async () => {
+    await h.runtime.app.createNote('julian', 'Privat/Tagebuch.md', '# Tagebuch\n', 'julian');
+
+    // The API, for a space and for a person.
+    const space = await h.as('admin', { method: 'POST', url: '/api/v1/admin/spaces', payload: { id: 'Julian', displayName: 'J' } });
+    const exact = await h.as('admin', { method: 'POST', url: '/api/v1/admin/spaces', payload: { id: 'julian', displayName: 'J' } });
+    expect({ status: space.status, raw: space.raw }).toEqual({ status: exact.status, raw: exact.raw });
+    expect(space.status).toBe(409);
+    const person = await h.as('admin', { method: 'POST', url: '/api/v1/admin/users', payload: { id: 'RAMONA', password: 'ein gutes passwort' } });
+    expect(person.status).toBe(409);
+
+    // The service the command line creates people through, and the space command.
+    await expect(h.runtime.users.create('Admin', 'ein gutes passwort')).rejects.toThrow('already exists');
+    await expect(runSpaceCommand(h.runtime, ['create', 'JULIAN'], () => undefined)).rejects.toThrow('already exists');
+
+    // And a person may not take a space's name in another case either.
+    await createSpace('familie', 'Familie');
+    await expect(h.runtime.users.create('Familie', 'ein gutes passwort')).rejects.toThrow('already exists');
+
+    expect(h.runtime.users.list().map((user) => user.id).sort()).toEqual(['admin', 'familie', 'julian', 'ramona']);
+    // Nothing reached julian's vault under another spelling.
+    const read = await h.as('ramona', { url: '/api/v1/notes/Privat/Tagebuch.md?owner=Julian' });
+    expect(read.status).toBe(404);
+  });
+
+  it('resolves no id to an account of another case: login, shares and keys are exact', async () => {
+    const login = await h.login('JULIAN', 'sein gutes passwort');
+    const wrong = await h.login('julian', 'falsches passwort');
+    expect({ status: login.status, raw: login.raw }).toEqual({ status: wrong.status, raw: wrong.raw });
+
+    const grant = await h.as('julian', { method: 'POST', url: '/api/v1/shares', payload: { grantee: 'RAMONA', kind: 'vault', path: '', canWrite: false } });
+    expect(grant.status).toBeGreaterThanOrEqual(400);
+    const key = await h.as('admin', { method: 'POST', url: '/api/v1/admin/keys', payload: { owner: 'Julian', name: 'k' } });
+    expect(key.status).toBe(404);
+  });
+});
+
+describe('the files of a space', () => {
+  it('are listed to a member as far as the membership reaches, the same whatever lies beside it', async () => {
+    await createSpace();
+    await h.runtime.app.createNote('familie', 'Ferien/Packliste.md', '# Packliste\n', 'admin');
+    await h.runtime.app.writeFile('familie', 'Ferien/karte.png', Buffer.from('png'), 'admin');
+    expect((await addMember('familie', { grantee: 'julian', kind: 'folder', path: 'Ferien', canWrite: false })).status).toBe(201);
+
+    const list = async (): Promise<Reply> => {
+      const reply = await h.as('julian', { url: '/api/v1/files?owner=familie' });
+      return { ...reply, raw: reply.raw.replace(/"mtimeMs":[0-9.]+/g, '"mtimeMs":0') };
+    };
+    const first = await list();
+    expect(first.status).toBe(200);
+    expect(first.body.files.map((file: { path: string }) => file.path)).toEqual(['Ferien/karte.png', 'Ferien/Packliste.md']);
+    expect(first.body.files.every((file: { owner: string }) => file.owner === 'familie')).toBe(true);
+
+    await h.runtime.app.createNote('familie', 'Budget.md', '# Budget\n', 'admin');
+    await h.runtime.app.writeFile('familie', 'Ferien2/geheim.pdf', Buffer.from('pdf'), 'admin');
+    await h.runtime.app.createFolder('familie', 'Leer');
+    expect((await list()).raw).toBe(first.raw);
+
+    // Not a member: as if the space were not there.
+    const stranger = await h.as('ramona', { url: '/api/v1/files?owner=familie' });
+    const nobody = await h.as('ramona', { url: '/api/v1/files?owner=niemand' });
+    expect({ status: stranger.status, raw: stranger.raw }).toEqual({ status: nobody.status, raw: nobody.raw });
+  });
+
+  it('are not listed while the space is disabled', async () => {
+    await createSpace();
+    await addMember('familie', { grantee: 'julian', kind: 'vault', path: '', canWrite: false });
+    await h.as('admin', { method: 'PATCH', url: '/api/v1/admin/spaces/familie', payload: { disabled: true } });
+    expect((await h.as('julian', { url: '/api/v1/files?owner=familie' })).status).toBe(404);
+  });
+});

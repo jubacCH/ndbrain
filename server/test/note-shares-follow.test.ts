@@ -422,7 +422,11 @@ describe('changes made around ndBrain', () => {
     await startWatching();
     // Edited in place first, so the text it comes back with is not the text
     // it had when it was shared.
-    await fs.writeFile(onDisk('Projekt/Plan.md'), '# Plan\n\nzweite Fassung\n', 'utf8');
+    await fs.writeFile(
+      onDisk('Projekt/Plan.md'),
+      '# Plan\n\nzweite Fassung, lang genug, dass ein gleicher Inhalt kein Zufall sein kann.\n',
+      'utf8',
+    );
     await waitForWatcher('the edit indexed', () =>
       h.runtime.app.queries.search('julian', 'Fassung').length === 1,
     );

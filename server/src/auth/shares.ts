@@ -231,11 +231,16 @@ export interface NoteLifecycle {
   /** A note is gone. Its note shares are withdrawn, not reinterpreted. */
   removed(owner: string, notePath: string): void;
   /**
-   * ndBrain replaced a note's file with new content (its saves write a new
-   * file and rename it into place). The note shares on it are bound to the new
-   * file, so the watcher does not take the save for a stranger's file.
+   * About to write over or move an existing note: withdraws the note shares
+   * given for some other file than the one there now, and returns the identity
+   * the rest are bound to (null when none are left). See `NoteBindings.confirm`.
    */
-  rewritten(owner: string, notePath: string, file: string, hash: string): void;
+  confirm(owner: string, notePath: string): Promise<string | null>;
+  /**
+   * A write or a move has put a new file at `notePath`: the shares bound to
+   * `confirmed` follow it, and no others. See `NoteBindings.rebind`.
+   */
+  rebind(owner: string, notePath: string, confirmed: string | null): Promise<void>;
 }
 
 /** What a note share was last confirmed against: the file, and its content. */
@@ -429,6 +434,24 @@ export class ShareService {
   }
 
   /**
+   * `check` for a folder path: only a vault or folder share can cover one.
+   *
+   * A note share is an exact region, and an exact region matched against a
+   * folder path would grant the folder whenever its name equals the shared
+   * note's path. Same refusal as `check`.
+   */
+  checkFolder(caller: string, owner: string, dirPath: string, need: Need = 'read'): void {
+    if (caller === owner) return;
+
+    const path = normalizeVaultPath(dirPath);
+    const permitted = this.toGrantee(caller).some((share) => {
+      const region = regionOf(share);
+      return share.owner === owner && !region.exact && inScope(region, path) && (need === 'read' || share.canWrite);
+    });
+    if (!permitted) throw new NoteNotFoundError('note does not exist');
+  }
+
+  /**
    * From when on `caller` may see the past of `notePath` — its history and its
    * edits. Zero for the owner and for anybody a vault or folder share reaches
    * the path through: those name places, and the place's past is theirs. For
@@ -522,6 +545,18 @@ export class ShareService {
     );
   }
 
+  /** Moves the note shares on `notePath` bound to `from` onto `file` and `hash`. */
+  rebindNote(owner: string, notePath: string, from: string, file: string, hash: string): void {
+    this.#db.run(
+      "UPDATE shares SET bound_file = ?, bound_hash = ? WHERE owner = ? AND kind = 'note' AND prefix = ? AND bound_file = ?",
+      file,
+      hash,
+      owner,
+      notePath,
+      from,
+    );
+  }
+
   /** Withdraws the note shares on `notePath` that were bound to `file`. */
   dropNoteBoundTo(owner: string, notePath: string, file: string): void {
     this.#db.run(
@@ -584,15 +619,5 @@ export class ShareService {
       prefix.length,
       prefix,
     );
-  }
-
-  /** The hooks the note write path calls from inside its lock. */
-  get lifecycle(): NoteLifecycle {
-    return {
-      created: (owner, notePath) => this.dropNote(owner, notePath),
-      moved: (owner, from, to) => this.moveNote(owner, from, to),
-      removed: (owner, notePath) => this.dropNote(owner, notePath),
-      rewritten: (owner, notePath, file, hash) => this.bindNote(owner, notePath, file, hash),
-    };
   }
 }

@@ -15,7 +15,8 @@ import { addTag, removeTag } from './markdown/edit.js';
 import { toggleTask as applyTaskToggle, type TaskExpectation } from './markdown/tasks.js';
 import { proposeFor, type TopicProposal } from './notes/topics.js';
 import { parseNote } from './markdown/parse.js';
-import { contentHash, type Note, type NoteService, type PutOptions, type PutResult } from './notes/service.js';
+import type { Note, NoteService, PutOptions, PutResult } from './notes/service.js';
+import { NoteBindings } from './auth/noteBindings.js';
 import type { Database } from './db/database.js';
 import type { VaultFile } from './vault/fs.js';
 import {
@@ -59,12 +60,16 @@ export class App {
   readonly shares: ShareService;
   readonly #db: Database;
 
+  /** Which file each note share names; see `NoteBindings`. */
+  readonly bindings: NoteBindings;
+
   constructor(db: Database, notes: NoteService, indexer: Indexer, shares: ShareService) {
     this.#db = db;
     this.notes = notes;
     this.indexer = indexer;
     this.shares = shares;
     this.queries = new Queries(db);
+    this.bindings = new NoteBindings(shares, notes.vault);
   }
 
   /* ---- shares -----------------------------------------------------------
@@ -99,9 +104,9 @@ export class App {
       // Whatever the other shares on this path were bound to is confirmed
       // first: a share given today must not make an older one's stale binding
       // look current, nor be withdrawn for a replacement that came before it.
-      await this.#confirmNoteShares(owner, resolved.prefix);
+      await this.bindings.confirm(owner, resolved.prefix);
       const share = this.shares.grant(owner, { kind: 'note', path: resolved.prefix }, grantee, canWrite);
-      await this.#bindCurrent(owner, resolved.prefix);
+      await this.bindings.bindAll(owner, resolved.prefix);
       return share;
     });
   }
@@ -121,11 +126,11 @@ export class App {
   /**
    * A note's file changed without going through ndBrain — the watcher saw a
    * `change`. Whether it is the same note edited or a different file under the
-   * same name, only the file can say; see `#confirmNoteShares`.
+   * same name, only the file can say; see `NoteBindings.confirm`.
    */
   async noteChanged(owner: string, notePath: string): Promise<void> {
     if (this.shares.noteBindings(owner, notePath).length === 0) return;
-    await this.notes.withLock(owner, notePath, () => this.#confirmNoteShares(owner, notePath));
+    await this.notes.withLock(owner, notePath, () => this.bindings.confirm(owner, notePath));
   }
 
   /**
@@ -137,67 +142,7 @@ export class App {
    */
   async dropDanglingShares(owner: string): Promise<void> {
     for (const notePath of this.shares.notePaths(owner)) {
-      await this.notes.withLock(owner, notePath, () => this.#confirmNoteShares(owner, notePath));
-    }
-  }
-
-  /**
-   * Checks the note shares on one path against the file there now. Call it
-   * holding the note's lock.
-   *
-   * - No note: every share on it is withdrawn.
-   * - The file they were bound to: kept, and bound to its current content, so
-   *   an edit made in place (nano, VS Code, Obsidian) keeps the share.
-   * - Another file with the content they were bound to: kept and bound to the
-   *   new file. That is a restore or a copy onto another disk; the text the
-   *   grantee was given is the text that is there, so nothing new is revealed.
-   * - Another file with other content: withdrawn. From outside, a replaced
-   *   note and an editor that saves by writing a new file (vim's default
-   *   `backupcopy=auto`) look the same, and only one of them is safe to carry
-   *   a grant over to.
-   * - Never bound (granted before bindings existed): bound to what is there.
-   */
-  async #confirmNoteShares(owner: string, notePath: string): Promise<void> {
-    const bindings = this.shares.noteBindings(owner, notePath);
-    if (bindings.length === 0) return;
-
-    if (!(await this.notes.exists(owner, notePath))) {
-      this.shares.dropNote(owner, notePath);
-      return;
-    }
-    const current = await this.#currentFile(owner, notePath);
-    if (current === null) {
-      this.shares.dropNote(owner, notePath);
-      return;
-    }
-
-    let keep = false;
-    for (const binding of bindings) {
-      if (binding.file === null || binding.file === current.file || binding.hash === current.hash) {
-        keep = true;
-      } else {
-        this.shares.dropNoteBoundTo(owner, notePath, binding.file);
-      }
-    }
-    if (keep) this.shares.bindNote(owner, notePath, current.file, current.hash);
-  }
-
-  async #bindCurrent(owner: string, notePath: string): Promise<void> {
-    const current = await this.#currentFile(owner, notePath);
-    if (current !== null) this.shares.bindNote(owner, notePath, current.file, current.hash);
-  }
-
-  async #currentFile(owner: string, notePath: string): Promise<{ file: string; hash: string } | null> {
-    const file = await this.notes.vault.fileIdentity(owner, notePath);
-    if (file === null) return null;
-    try {
-      const content = await this.notes.vault.readNote(owner, notePath);
-      // Read twice around the content: a file swapped in between would bind
-      // this content to the wrong file.
-      if ((await this.notes.vault.fileIdentity(owner, notePath)) !== file) return null;
-      return { file, hash: contentHash(content) };
-    } catch {
-      return null;
+      await this.notes.withLock(owner, notePath, () => this.bindings.confirm(owner, notePath));
     }
   }
 
@@ -397,6 +342,51 @@ export class App {
     return this.notes.vault.listAll(owner, limit);
   }
 
+  /**
+   * The files of `owner`'s vault that `view` may read, and the folders around
+   * them — for a grantee's file browser.
+   *
+   * The same regions as every note query (`inScope`), so a file listing never
+   * says more than the tree: a folder share lists what lies below the folder,
+   * a note share lists its one note if it is there. A folder is named when a
+   * folder or vault share covers it, or when it lies on the path to something
+   * listed; an empty folder beside a shared note is not.
+   *
+   * The walk is bounded like the owner's own listing, and `truncated` speaks
+   * about what the caller may see — not about the size of the vault behind it.
+   */
+  async listFilesIn(
+    viewable: Viewable,
+    owner: string,
+    limit = 5000,
+  ): Promise<{ files: VaultFile[]; dirs: string[]; truncated: boolean } | null> {
+    const regions = toView(viewable).filter((scope) => scope.owner === owner);
+    if (regions.length === 0) return null;
+
+    const all = await this.notes.vault.listAll(owner, 100_000);
+    const visible = all.files.filter((file) => regions.some((region) => inScope(region, file.path)));
+    const files = visible.slice(0, limit);
+
+    const dirs = new Set<string>();
+    const withAncestors = (dir: string): void => {
+      const segments = dir.split('/');
+      for (let i = 1; i <= segments.length; i += 1) dirs.add(segments.slice(0, i).join('/'));
+    };
+    for (const dir of all.dirs) {
+      if (regions.some((region) => !region.exact && inScope(region, `${dir}/`))) withAncestors(dir);
+    }
+    for (const file of files) {
+      const at = file.path.lastIndexOf('/');
+      if (at > 0) withAncestors(file.path.slice(0, at));
+    }
+
+    return {
+      files,
+      dirs: [...dirs].sort((a, b) => a.localeCompare(b)),
+      truncated: visible.length > limit,
+    };
+  }
+
   async readFile(owner: string, filePath: string): Promise<Buffer> {
     return this.notes.vault.readFileBytes(owner, filePath);
   }
@@ -422,10 +412,14 @@ export class App {
     // lock, and a new one inherits no share that once named its path.
     const write = async (): Promise<boolean> => {
       const existed = await this.notes.vault.exists(owner, canonical);
-      if (isNotePath(canonical) && !existed) assertLinkableName(canonical);
+      const note = isNotePath(canonical);
+      if (note && !existed) assertLinkableName(canonical);
+      // As for every write over a note: shares given for some other file are
+      // withdrawn before the bytes land, and only the confirmed ones follow.
+      const confirmed = note && existed ? await this.bindings.confirm(owner, canonical) : null;
       await this.notes.vault.writeFileBytes(owner, canonical, bytes);
-      if (isNotePath(canonical) && !existed) this.shares.dropNote(owner, canonical);
-      if (isNotePath(canonical) && existed) await this.notes.rewritten(owner, canonical, bytes);
+      if (note && !existed) this.shares.dropNote(owner, canonical);
+      if (note && existed) await this.bindings.rebind(owner, canonical, confirmed);
       return existed;
     };
     const replaced = isNotePath(canonical)
@@ -653,14 +647,24 @@ export class App {
     owner: string,
     paths: string[],
     targetDir: string,
-    options: { view: Viewable; actor?: string },
+    options: { view: Viewable; actor?: string; caller: string },
   ): Promise<BulkResult> {
     const folder = targetDir.replace(/^\/+|\/+$/g, '');
+    const { caller } = options;
 
     return this.#overSelection(paths, async (notePath) => {
       const name = notePath.slice(notePath.lastIndexOf('/') + 1);
       const target = folder === '' ? name : `${folder}/${name}`;
       if (target === notePath) return notePath;
+
+      // Both ends, for each note, on the path it would really have — the same
+      // check a single rename makes. Asking about the folder instead, through
+      // some stand-in note inside it, is answered "yes" by a share on exactly
+      // that stand-in, and a grantee walks notes out of her folder with it.
+      // A refusal reads like a missing note, as everywhere else.
+      if (!this.shares.allows(caller, owner, notePath, 'write') || !this.shares.allows(caller, owner, target, 'write')) {
+        throw new NoteNotFoundError('note does not exist');
+      }
 
       const { note } = await this.renameNote(owner, notePath, target, options);
       return note.path;

@@ -32,6 +32,7 @@ import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
 import { toProblem } from './errors.js';
 import { NoteNotFoundError } from '../errors.js';
+import { isNotePath, normalizeVaultPath } from '../vault/paths.js';
 import { LoginThrottle } from './throttle.js';
 import { ZipFile } from 'yazl';
 import type { ZodType } from 'zod';
@@ -97,6 +98,31 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     shares.check(caller, owner, path, need);
     return { owner, path };
+  }
+
+  /**
+   * `target` for a read of a note's content, by somebody else than its owner.
+   *
+   * A note share names one file. If that file was replaced behind ndBrain's
+   * back and the watcher has not said so yet, the share is withdrawn here,
+   * before the check — so the grantee is never shown the replacement, not even
+   * in the moment before the watcher catches up. Costs nothing for a path no
+   * note share names.
+   */
+  async function readTarget(request: FastifyRequest): Promise<{ owner: string; path: string }> {
+    const caller = requireUser(request).id;
+    const path = notePathOf(request);
+    const owner = ownerOf(request, caller);
+    if (owner !== caller) {
+      let canonical: string | null = null;
+      try {
+        canonical = normalizeVaultPath(path);
+      } catch {
+        // A malformed path is `target`'s to refuse, with its usual answer.
+      }
+      if (canonical !== null && isNotePath(canonical)) await app.noteChanged(owner, canonical);
+    }
+    return target(request, 'read');
   }
 
   const fastify = Fastify({
@@ -297,7 +323,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   fastify.get('/api/v1/notes/*', async (request) => {
-    const { owner, path } = target(request, 'read');
+    const { owner, path } = await readTarget(request);
     const caller = requireUser(request).id;
 
     return {
@@ -325,6 +351,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const options = baseMtimeMs !== undefined && baseMtimeMs > 0 ? { baseMtimeMs } : {};
 
     const result = await app.putNote(owner, path, content, caller, options);
+    // The copy of the displaced version sits beside the note, but a note share
+    // covers the note and not its neighbours: its path is named only to
+    // somebody who may read it. The copy is made either way.
+    if (result.conflictCopy !== undefined && !shares.allows(caller, owner, result.conflictCopy, 'read')) {
+      const { conflictCopy: _hidden, ...visible } = result;
+      return reply.code(result.created ? 201 : 200).send(visible);
+    }
     return reply.code(result.created ? 201 : 200).send(result);
   });
 
@@ -366,6 +399,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // The folder shared itself is not renamed or removed by its grantee: its
   // path is not *inside* the share, and letting it be would move the share's
   // own root out from under the owner.
+  //
+  // `checkFolder`, not `check`: a note share names one note and never a
+  // folder. Asked about a folder path that happens to be spelled like a shared
+  // note (`Archiv/x.md`), `check` would say yes — and a folder renamed to that
+  // name carries everything below it out of the grantee's region.
   fastify.post('/api/v1/folders', async (request, reply) => {
     const caller = requireUser(request).id;
     const { path: dir, owner: named } = body(request, S.CreateFolderRequest);
@@ -374,7 +412,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (dir.trim() === '') {
       return reply.code(400).send({ code: 'no_path', message: 'name the folder' });
     }
-    shares.check(caller, owner, dir, 'write');
+    shares.checkFolder(caller, owner, dir, 'write');
     return reply.code(201).send({ folder: await app.createFolder(owner, dir) });
   });
 
@@ -384,8 +422,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const owner = named ?? caller;
 
     // Both ends, as for a note: a folder may not be carried out of the region.
-    shares.check(caller, owner, from, 'write');
-    shares.check(caller, owner, to, 'write');
+    shares.checkFolder(caller, owner, from, 'write');
+    shares.checkFolder(caller, owner, to, 'write');
 
     // The caller's view bounds what is reported about links, exactly as a
     // note rename does.
@@ -397,7 +435,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const dir = notePathOf(request);
     const owner = ownerOf(request, caller);
 
-    shares.check(caller, owner, dir, 'write');
+    shares.checkFolder(caller, owner, dir, 'write');
     await app.deleteFolder(owner, dir);
     return reply.code(204).send();
   });
@@ -626,25 +664,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const query = (request.query ?? {}) as { owner?: unknown };
     const owner = typeof query.owner === 'string' && query.owner !== '' ? query.owner : caller;
 
-    // **A foreign vault is not listable at all.** The line below reads as "only
-    // where something has been shared", and that is not what it does:
-    // `shares.check` normalises its path first, and `normalizeVaultPath('')`
-    // throws `path is empty` before any share is ever consulted. So every
-    // `?owner=` for somebody else answers 400 — with a prefix share, with a
-    // whole-vault share, with no share at all. It fails closed, which is why
-    // this is written down rather than hurried.
-    //
-    // It is left alone on purpose, because "repairing" the guard would open a
-    // hole rather than close one: `listFiles(owner)` below takes no prefix, so
-    // the moment this check starts passing for a prefix share, a grantee of one
-    // folder is handed a listing of the whole vault, `Privat/` included. What a
-    // prefix share should mean for files is a design question — a file listing
-    // is not a note listing and the vault layer has no per-prefix walk — and it
-    // belongs in a task of its own.
-    //
-    // Until then the behaviour is pinned by tests (`files.test.ts`), so whoever
-    // does take it on gets a red light rather than a silent widening.
-    if (owner !== caller) shares.check(caller, owner, '', 'read');
+    // Somebody else's vault — a space, typically — lists exactly what the
+    // caller's shares on it cover, by the rule every note query uses: a
+    // grantee of `Homelab/` sees the files below it and nothing beside it. No
+    // share on that vault reads exactly like a vault that does not exist.
+    if (owner !== caller) {
+      const listed = await app.listFilesIn(shares.view(caller), owner);
+      if (listed === null) throw new NoteNotFoundError('note does not exist');
+      return { ...listed, files: listed.files.map((file) => ({ ...file, owner })) };
+    }
 
     const { files, dirs, truncated } = await app.listFiles(owner);
     return {
@@ -665,7 +693,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   ]);
 
   fastify.get('/api/v1/files/*', async (request, reply) => {
-    const { owner, path: filePath } = target(request, 'read');
+    const { owner, path: filePath } = await readTarget(request);
     const bytes = await app.readFile(owner, filePath);
 
     const name = filePath.slice(filePath.lastIndexOf('/') + 1);
@@ -891,7 +919,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   }
 
   fastify.get('/api/v1/history/*', async (request) => {
-    const { owner, path } = target(request, 'read');
+    const { owner, path } = await readTarget(request);
     const caller = requireUser(request).id;
     const query = (request.query ?? {}) as { version?: unknown };
 
@@ -1216,15 +1244,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     switch (action) {
       case 'move':
-        // The destination too — otherwise a grantee could walk notes out of the
-        // shared folder into the rest of the vault.
-        if (!shares.allows(caller, owner, `${dir}/x.md`.replace(/^\/+/, ''), 'write')) {
-          return reply.code(404).send({ code: 'not_found', message: 'no such note' });
-        }
-        // The caller's view, not the owner's: this route takes an `owner` from
-        // the body, so a bulk move is routinely made by somebody else. A move
-        // renames, and a rename reports which notes its links were rewritten in.
-        return merge(app.bulkMove(owner, allowed, dir, { view: shares.view(caller), actor: caller }));
+        // The destination is checked per note, on the path each one would get
+        // (`App.bulkMove`) — otherwise a grantee could walk notes out of the
+        // shared folder into the rest of the vault. The caller's view, not the
+        // owner's: this route takes an `owner` from the body, so a bulk move is
+        // routinely made by somebody else, and a rename reports which notes its
+        // links were rewritten in.
+        return merge(app.bulkMove(owner, allowed, dir, { view: shares.view(caller), actor: caller, caller }));
       case 'tag':
         if (tag === '') {
           return reply.code(400).send({ code: 'no_tag', message: 'no tag given' });

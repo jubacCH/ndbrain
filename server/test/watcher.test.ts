@@ -344,3 +344,32 @@ describe('bursts', () => {
     expect(errors).toEqual([]);
   });
 });
+
+describe('a delete inside one batch', () => {
+  it('still counts as the note going when a file of that name follows before the batch runs', async () => {
+    const removed: string[] = [];
+    // A long settle time, so the delete and the new file land in the same
+    // batch however slow the machine is; flushed by hand below.
+    const slow = new VaultWatcher(dataDir, indexer, {
+      debounceMs: 60_000,
+      reconcileIntervalMs: 0,
+      onNoteRemoved: (owner, notePath) => removed.push(`${owner}:${notePath}`),
+    });
+    await slow.start();
+    try {
+      await notes.createNote('julian', 'Plan.md', '# Plan\n');
+      await indexer.sync('julian');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      await externalDelete('julian', 'Plan.md');
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await externalWrite('julian', 'Plan.md', '# Plan\n');
+      await new Promise((resolve) => setTimeout(resolve, 900));
+
+      await slow.flushNow();
+      expect(removed).toEqual(['julian:Plan.md']);
+    } finally {
+      await slow.stop();
+    }
+  });
+});

@@ -11,6 +11,7 @@ import path from 'node:path';
 
 import { App } from './app.js';
 import { ApiKeyService } from './auth/keys.js';
+import { NoteBindings, noteLifecycle } from './auth/noteBindings.js';
 import { ShareService } from './auth/shares.js';
 import { SettingsService } from './auth/settings.js';
 import { History } from './vault/history.js';
@@ -50,7 +51,7 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   // Shares first: the note write path tells them, from inside its lock, when a
   // note moves or goes, so a note share follows its note and never outlives it.
   const shares = new ShareService(db);
-  const notes = new NoteService(vault, shares.lifecycle);
+  const notes = new NoteService(vault, noteLifecycle(shares, new NoteBindings(shares, vault)));
   const indexer = new Indexer(db, notes);
   const app = new App(db, notes, indexer, shares);
   const users = new UserService(db, vault);

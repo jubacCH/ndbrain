@@ -15,17 +15,22 @@ import { startHarness, type Harness } from './support/harness.js';
 let h: Harness;
 
 beforeEach(async () => {
-  h = await startHarness('spaces-surface');
+  // Built on a local and published only when complete. Three password hashes
+  // and three sign-ins are slow on a busy machine; if this hook ever overran
+  // its timeout, the late remainder would otherwise carry on against the next
+  // test's harness and fail there with "a user with that name already exists".
+  const harness = await startHarness('spaces-surface');
   for (const [id, password, role] of [
     ['admin', 'ein gutes passwort', 'admin'],
     ['julian', 'sein gutes passwort', 'user'],
     ['ramona', 'ihr gutes passwort', 'user'],
   ] as const) {
-    await h.runtime.users.create(id, password, { role });
-    await h.login(id, password);
+    await harness.runtime.users.create(id, password, { role });
+    await harness.login(id, password);
   }
-  await h.runtime.users.createSpace('familie', 'Familie');
-});
+  await harness.runtime.users.createSpace('familie', 'Familie');
+  h = harness;
+}, 60_000);
 
 afterEach(async () => {
   await h.close();
