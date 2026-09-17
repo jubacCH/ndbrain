@@ -509,6 +509,23 @@ describe('the shell, signed in', () => {
     expect(screen.queryByRole('menuitem', { name: copy.nav.admin })).toBeNull();
   });
 
+  it('goes from home to the network without a loading line in between', async () => {
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await screen.findByRole('button', { name: copy.shell.account });
+    const seen: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) seen.push(node.textContent ?? '');
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.network }));
+    await screen.findByTestId('brain');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    observer.disconnect();
+
+    expect(seen.some((text) => text.includes(copy.overview.loadingGraph))).toBe(false);
+  });
+
   it('offers the admin entry to an administrator', async () => {
     mount({ id: 'julian', displayName: 'Julian', role: 'admin' });
     await userEvent.click(await screen.findByRole('button', { name: copy.shell.account }));
