@@ -203,8 +203,6 @@ export const Share = z.object({
    * one that starts the same way.
    */
   prefix: z.string(),
-  /** The region as a person names it: `''`, `Projekt`, `Projekt/Plan.md`. */
-  path: z.string(),
   grantee: z.string(),
   canWrite: z.boolean(),
   createdAt: Timestamp,
