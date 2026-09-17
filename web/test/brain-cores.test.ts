@@ -23,11 +23,12 @@ import {
   NOTE_PLANES,
   PLANE_LIGHT,
   PLANE_SIZE,
-  RECENT_DAYS,
   SceneBuilder,
-  accentShare,
+  WARM_HUE,
+  amber,
   bodyRadius,
 } from '../src/brain/scene';
+import { createCanvasRenderer } from '../src/brain/renderer';
 import { paraVault } from './fixtures/para-vault';
 
 const graph = buildGraph(paraVault().data);
@@ -82,26 +83,124 @@ describe('the cores', () => {
   });
 });
 
-describe('the warm accent', () => {
-  const DAY = 1 / RECENT_DAYS;
-  it('is none at all after a fortnight and all of it the day a note was written', () => {
-    expect(accentShare(0)).toBe(0);
-    expect(accentShare(1)).toBe(1);
-  });
+/** 8-bit sRGB to OKLCH: lightness, chroma, hue in degrees. */
+function toOklch(r: number, g: number, b: number): { l: number; c: number; h: number } {
+  const lin = (v: number): number => {
+    const x = v / 255;
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  };
+  const [R, G, B] = [lin(r), lin(g), lin(b)];
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+  const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+  const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+  const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+  const A = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+  const Bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+  const h = ((Math.atan2(Bb, A) * 180) / Math.PI + 360) % 360;
+  return { l: L, c: Math.hypot(A, Bb), h };
+}
 
-  it('rises with the warmth without a step anywhere', () => {
-    let last = 0;
-    for (let k = 1; k <= 1000; k += 1) {
-      const share = accentShare(k / 1000);
-      expect(share).toBeGreaterThan(last);
-      expect(share - last).toBeLessThan(0.02);
-      last = share;
+type Lch = { l: number; c: number; h: number; text: string };
+
+/** Every colour in a CSS colour string, as OKLCH. */
+function coloursIn(style: string): Lch[] {
+  const out: Lch[] = [];
+  for (const m of style.matchAll(/rgba?\((\d+),\s*(\d+),\s*(\d+)/g)) {
+    out.push({ ...toOklch(Number(m[1]), Number(m[2]), Number(m[3])), text: m[0] });
+  }
+  return out;
+}
+
+/**
+ * The band between the two hues: greens and mints. A colour here with any
+ * real chroma is what a blend of cyan and amber looks like.
+ */
+const MINT = { from: 100, to: 180, chroma: 0.025 };
+const isMint = (c: { c: number; h: number }): boolean => c.c > MINT.chroma && c.h > MINT.from && c.h < MINT.to;
+
+describe('the warm accent', () => {
+  it('keeps one amber hue across the whole fortnight, brighter the more recent', () => {
+    let last = -1;
+    for (let k = 0; k <= 1000; k += 1) {
+      const [r, g, b] = amber(k / 1000);
+      const c = toOklch(r, g, b);
+      // The map's hue, give or take what rounding to 8 bits does.
+      expect(Math.abs(c.h - WARM_HUE), `warmth ${k / 1000}: ${r},${g},${b}`).toBeLessThan(3);
+      expect(c.l).toBeGreaterThanOrEqual(last - 1e-3);
+      last = c.l;
     }
   });
 
-  it('is amber for the last few days and cyan with a trace for the rest of the fortnight', () => {
-    expect(accentShare(1 - 2 * DAY)).toBeGreaterThan(0.8);
-    expect(accentShare(1 - 6 * DAY)).toBeLessThan(0.1);
+  it('is never drawn as a blend: no colour the renderer is handed is mint, at any warmth', () => {
+    const styles: string[] = [];
+    const gradient = { addColorStop: (_: number, colour: string) => styles.push(colour) };
+    const ctx = {
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      lineWidth: 1,
+      lineCap: 'butt',
+      font: '',
+      textAlign: 'start',
+      textBaseline: 'alphabetic',
+      lineJoin: 'miter',
+      set fillStyle(v: unknown) {
+        if (typeof v === 'string') styles.push(v);
+      },
+      get fillStyle(): unknown {
+        return '';
+      },
+      set strokeStyle(v: unknown) {
+        if (typeof v === 'string') styles.push(v);
+      },
+      get strokeStyle(): unknown {
+        return '';
+      },
+      setTransform: () => {},
+      fillRect: () => {},
+      beginPath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      closePath: () => {},
+      arc: () => {},
+      fill: () => {},
+      stroke: () => {},
+      fillText: () => {},
+      strokeText: () => {},
+      quadraticCurveTo: () => {},
+      drawImage: () => {},
+      measureText: (t: string) => ({ width: t.length * 6 }),
+      createRadialGradient: () => gradient,
+      createLinearGradient: () => gradient,
+    };
+    const canvas = { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement;
+    const paint = createCanvasRenderer(canvas);
+    paint.resize(W, H);
+
+    for (let k = 0; k <= 20; k += 1) {
+      const warmth = k / 20;
+      const builder = new SceneBuilder(graph);
+      builder.recent(new Float64Array(graph.nodes.length).fill(warmth));
+      // Settled layout, overview: bodies, links, rays, branches and the tissue.
+      const scene = builder.build(layout, new Activity(graph), overview(), -1, W, H);
+      const before = styles.length;
+      paint.draw(scene);
+      expect(styles.length).toBeGreaterThan(before);
+    }
+    const all = styles.flatMap(coloursIn);
+    const mint = all.filter(isMint);
+    expect(mint.map((c) => `${c.text} (h ${c.h.toFixed(0)}, c ${c.c.toFixed(3)})`)).toEqual([]);
+    // And the amber is really there, so the check above is not passing on nothing.
+    expect(all.some((c) => Math.abs(c.h - WARM_HUE) < 4 && c.c > 0.05)).toBe(true);
+  });
+
+  it('recognises a blend of cyan and amber as mint', () => {
+    // The check itself, against the colour the straight mix used to produce.
+    const [r0, g0, b0] = NOTE_PLANES[2];
+    const [r1, g1, b1] = amber(1);
+    const half = toOklch(Math.round((r0 + r1) / 2), Math.round((g0 + g1) / 2), Math.round((b0 + b1) / 2));
+    expect(isMint(half)).toBe(true);
+    expect(isMint(toOklch(r0, g0, b0))).toBe(false);
+    expect(isMint(toOklch(r1, g1, b1))).toBe(false);
   });
 });
 

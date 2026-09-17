@@ -99,6 +99,8 @@ const edge = (alpha: number, y: number): SceneEdge => {
     depth: 1,
     strands: false,
     radiant: 0,
+    warm: 0,
+    warmColour: [0, 0, 0],
   };
 };
 

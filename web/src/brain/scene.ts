@@ -73,13 +73,8 @@ export const PULSE_COLOUR: Record<PulseKind, Rgb> = {
   write: [255, 184, 107],
 };
 
-/** The tissue's cyan, and the warm accent for a note worked on recently. */
+/** The tissue's cyan. */
 export const TISSUE: Rgb = [140, 240, 250];
-/**
- * Saturated since 2026-09-17: the paler amber, lit additively and bloomed, read
- * as cream next to the cyan rather than as a colour of its own.
- */
-export const ACCENT: Rgb = [250, 192, 104];
 /** A link of the selected note. */
 export const FOCUSED: Rgb = [230, 255, 255];
 /**
@@ -131,11 +126,13 @@ export interface SceneNode {
   /** The one hub the whole picture is organised around (see `SceneEdge.radiant`). */
   centre: boolean;
   /**
-   * How warm this note is drawn, 0 to 1: 1 the day it was written, 0 a
-   * fortnight later, along `accentShare`. Already folded into `colour`; the
-   * renderer reads it to pick the halo sprite.
+   * How warm this note is, 0 to 1: 1 the day it was written, 0 a fortnight
+   * later. Not folded into `colour`: the renderer draws it as an amber core of
+   * this share of the radius, in `warmColour`.
    */
   warm: number;
+  /** The accent at this warmth (`amber`). */
+  warmColour: Rgb;
   /**
    * The same note with no pulse on it: what the cached depth layers paint.
    *
@@ -169,6 +166,9 @@ export interface SceneEdge {
   colour: Rgb;
   /** Which plane it is painted into: its thick end's. */
   depth: Depth;
+  /** The warmth of its thick end, 0 to 1, and the accent for it. Amber reaches along the link by this share. */
+  warm: number;
+  warmColour: Rgb;
   /** Twice more, fainter and wider apart: a hub's link reads as a bundle of fibres. */
   strands: boolean;
   /**
@@ -363,41 +363,54 @@ const RADIANT_NEAR = 0.35;
 /** A note worked on within this many days carries the warm accent. */
 export const RECENT_DAYS = 14;
 /**
- * How the accent follows the warmth: a logistic step, soft over about a day and
- * a half, centred where the warmth is `WARM_MID` (three and a half days).
+ * The warm accent: one amber hue, the map's (`network.css`, OKLCH hue 76).
  *
- * The accent used to be a straight mix, cyan to amber by the warmth. Two things
- * made that wrong. A straight mix of cyan and amber passes through a pale mint,
- * which is neither colour and reads as white once the bloom adds to it. And a
- * vault is edited in waves: on the real one, 117 of 118 notes were within six
- * days on 2026-09-17, so every note was somewhere in the mint. Now the notes of
- * the last few days are amber, the rest of the fortnight is cyan with a trace,
- * and the mint is the short way between. Still continuous and monotonic: no
- * note changes colour overnight.
+ * Only lightness and chroma rise with the warmth; the hue never moves. And the
+ * accent is never mixed into the cyan. A straight mix of the two passes through
+ * a pale mint, which is neither colour and read as white once the bloom added
+ * to it — on 2026-09-17 nearly every note was somewhere in that mint, because
+ * the vault had just been migrated and 117 of 118 notes were within six days.
+ * That part is true and stays: the window is Julian's fortnight, as in the map
+ * and the legend. What changed is how warmth is drawn: as *area* of amber, not
+ * as a share of a blend (see `renderer.ts`): a pixel is cyan or amber, never
+ * both.
  */
-const WARM_MID = 0.75;
-const WARM_STEEP = 16;
-const logistic = (w: number): number => 1 / (1 + Math.exp(-WARM_STEEP * (w - WARM_MID)));
-const WARM_FLOOR = logistic(0);
-const WARM_SPAN = logistic(1) - WARM_FLOOR;
-/** The accent's share for a warmth of 0 to 1: exactly 0 at 0, exactly 1 at 1. */
-export function accentShare(warmth: number): number {
-  if (!(warmth > 0)) return 0;
-  if (warmth >= 1) return 1;
-  return (logistic(warmth) - WARM_FLOOR) / WARM_SPAN;
+export const WARM_HUE = 76;
+/** Lightness and chroma of the accent at the faintest warmth and at the full one. */
+const WARM_L0 = 0.56;
+const WARM_L1 = 0.82;
+const WARM_C0 = 0.075;
+const WARM_C1 = 0.135;
+
+/** OKLCH to 8-bit sRGB, clamped. */
+export function oklch(l: number, c: number, hue: number): Rgb {
+  const h = (hue * Math.PI) / 180;
+  const a = c * Math.cos(h);
+  const b = c * Math.sin(h);
+  const l_ = (l + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m_ = (l - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s_ = (l - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const linear = [
+    4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
+    -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
+    -0.0041960863 * l_ - 0.7034186147 * m_ + 1.707614701 * s_,
+  ];
+  const [r, g, bl] = linear.map((v) => {
+    const x = Math.min(1, Math.max(0, v));
+    const srgb = x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055;
+    return Math.round(srgb * 255);
+  }) as [number, number, number];
+  return [r, g, bl];
+}
+
+/** The accent for a warmth of 0 to 1: always hue `WARM_HUE`, brighter and purer as it rises. */
+export function amber(warmth: number): Rgb {
+  const t = warmth < 0 ? 0 : warmth > 1 ? 1 : warmth;
+  return oklch(WARM_L0 + (WARM_L1 - WARM_L0) * t, WARM_C0 + (WARM_C1 - WARM_C0) * t, WARM_HUE);
 }
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-/** A colour part way between two, for the warm accent fading with a note's age. */
-function mix(from: Rgb, to: Rgb, t: number): Rgb {
-  const k = clamp01(t);
-  return [
-    Math.round(from[0] + (to[0] - from[0]) * k),
-    Math.round(from[1] + (to[1] - from[1]) * k),
-    Math.round(from[2] + (to[2] - from[2]) * k),
-  ];
-}
 
 /**
  * Which plane a note sits in.
@@ -548,6 +561,7 @@ export class SceneBuilder {
         hub: 0,
         centre: false,
         warm: 0,
+        warmColour: amber(0),
         restColour: TISSUE,
         restAlpha: 0,
         restGlow: 0,
@@ -566,6 +580,8 @@ export class SceneBuilder {
         tail: 0,
         colour: TISSUE,
         depth: 1,
+        warm: 0,
+        warmColour: amber(0),
         strands: false,
         radiant: 0,
         restAlpha: 0,
@@ -605,7 +621,7 @@ export class SceneBuilder {
    */
   recent(heat: Float64Array): void {
     if (heat.length !== this.#recent.length) return;
-    this.#recent = heat.map(accentShare);
+    this.#recent = heat;
     this.#curvesStale = true;
     this.#stamp = nextStamp();
   }
@@ -789,7 +805,7 @@ export class SceneBuilder {
       // then moved apart under the pointer but looked alike.
       const plane = this.#plane[i] as Depth;
       const cool: Rgb = node.degree === 0 ? LONELY_BODY : node.degree >= 8 ? HUB_PLANES[plane] : NOTE_PLANES[plane];
-      const base = warm > 0 ? mix(cool, ACCENT, warm) : cool;
+      const base = cool;
 
       const out = scene.nodes[i]!;
       out.x = layout.x[i]!;
@@ -809,6 +825,7 @@ export class SceneBuilder {
       out.hub = Math.min(1, node.degree / HUB_FULL);
       out.centre = i === this.#centre;
       out.warm = warm;
+      out.warmColour = amber(warm);
     }
 
     scene.zoom = zoom;
@@ -886,8 +903,12 @@ export class SceneBuilder {
       // The far end of a tract fades out: that is what makes a link grow out of
       // a note rather than lie between two of them.
       out.tail = alpha * 0.32;
-      const heat = this.#recent[thick]!;
-      out.colour = focused ? FOCUSED : heat > 0 ? mix(RAY, ACCENT, heat) : RAY;
+      out.colour = focused ? FOCUSED : RAY;
+      // The warmth of the note a link grows out of, drawn as how far amber
+      // reaches along it — not as a tint of the whole link. A selected link
+      // stays in the selection's colour.
+      out.warm = focused ? 0 : this.#recent[thick]!;
+      out.warmColour = amber(out.warm);
       out.depth = this.#plane[thick] as Depth;
       out.strands = nodes[thick]!.degree >= 8 && resting > 0.1;
       // A ray of the centre, unless the overview holds it back. Quieter while

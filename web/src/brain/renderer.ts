@@ -40,7 +40,7 @@ import type { PlacedLabel } from './labels';
 import { LINE_HEIGHT, placeRegionNames } from './labels';
 import { DENDRITE_ALPHA, DENDRITE_TIP_ALPHA, DENDRITE_TIP_WIDTH, DENDRITE_WIDTH, TISSUE_LEVEL } from './deco';
 import type { Depth, Rgb, Scene, SceneEdge, SceneNode } from './scene';
-import { FOCUSED } from './scene';
+import { FOCUSED, WARM_HUE, amber, oklch } from './scene';
 
 export interface BrainRenderer {
   /** CSS pixels; the backing store is sized from this and the display's ratio. */
@@ -72,6 +72,13 @@ const TISSUE_BLOOM = 0.4;
 const PLANE_SOFTEN: readonly number[] = [1.1, 0, 0];
 
 const rgba = (c: Rgb, a: number): string => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+/** The accent for the tissue's warm grains. */
+const DUST_AMBER: Rgb = amber(0.3);
+/** The accent per warmth, in 64 steps: a dendrite layer asks for it thousands of times. */
+const AMBER_STEPS = 64;
+const amberSteps: Rgb[] = Array.from({ length: AMBER_STEPS + 1 }, (_, k) => amber(k / AMBER_STEPS));
+const amberFor = (warmth: number): Rgb => amberSteps[Math.round(Math.min(1, Math.max(0, warmth)) * AMBER_STEPS)]!;
 
 /** Where a tract cools to at its far end, and a selected one. The prototype's colours. */
 const TAIL: Rgb = [30, 150, 200];
@@ -111,8 +118,30 @@ const lighten = (c: Rgb, t: number): Rgb => [
   Math.round(c[2] + (255 - c[2]) * t),
 ];
 
-/** What a tract needs to be drawn: a link, or a branch off one. */
-type Tract = Pick<SceneEdge, 'pts' | 'n' | 'w0' | 'w1' | 'colour'>;
+/** What a tract needs to be drawn: a link, or a branch off one (which carries no warmth). */
+type Tract = Pick<SceneEdge, 'pts' | 'n' | 'w0' | 'w1' | 'colour'> & Partial<Pick<SceneEdge, 'warm' | 'warmColour'>>;
+
+/**
+ * How warmth is drawn, everywhere in the brain: as area, never as a blend.
+ *
+ * A pixel is cyan or amber. A warm note's core is amber out to `sqrt(warm)` of
+ * its radius, with the cyan taken out underneath first; a warm link is amber
+ * for `WARM_REACH · warm` of its length and fades through dark into its cyan;
+ * a halo fades out in one colour before it fades in in the other. So the
+ * strength follows the warmth continuously and no mint is ever painted.
+ */
+const WARM_REACH = 0.35;
+/** How bright the accent is at full warmth, as a share of the body's own opacity. */
+const WARM_INTENSITY = 0.8;
+/**
+ * How far out the amber core reaches at full warmth, as a share of the radius.
+ * Below 1, so a cyan rim always stays: right after the migration nearly every
+ * note is warm, which is true, and the picture must still read as cyan with
+ * amber in it rather than as gold.
+ */
+const WARM_CORE = 0.72;
+/** The near-white pinpoint of a warm core, in the accent's hue. */
+const WARM_PINPOINT: Rgb = oklch(0.95, 0.045, WARM_HUE);
 
 export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
   const ctx = canvas.getContext('2d');
@@ -257,8 +286,20 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     // optics prototype.
     // `lead` fades the first stretch in: a fibre then leaves from beside its
     // ray instead of adding to the knot where every ray of a hub meets.
-    if (lead > 0) grad.addColorStop(0, rgba(e.colour, 0));
-    grad.addColorStop(lead, rgba(e.colour, 1));
+    const warm = e.warm ?? 0;
+    if (warm > 0.001 && e.warmColour !== undefined) {
+      // Amber out of the warm end, fading to nothing, then the cyan fading in
+      // from nothing: the two meet in the dark, not in a mix.
+      const reach = lead + (1 - lead) * WARM_REACH * Math.min(1, warm);
+      if (lead > 0) grad.addColorStop(0, rgba(e.warmColour, 0));
+      grad.addColorStop(lead, rgba(e.warmColour, 1));
+      grad.addColorStop(reach, rgba(e.warmColour, 0));
+      grad.addColorStop(reach, rgba(e.colour, 0));
+      grad.addColorStop(Math.min(1, reach + 0.12), rgba(e.colour, 1));
+    } else {
+      if (lead > 0) grad.addColorStop(0, rgba(e.colour, 0));
+      grad.addColorStop(lead, rgba(e.colour, 1));
+    }
     grad.addColorStop(1, rgba(e.colour === FOCUSED ? FOCUS_TAIL : TAIL, Math.min(1, tail / Math.max(1e-6, alpha))));
     g.fillStyle = grad;
     g.globalAlpha = Math.min(1, alpha);
@@ -284,8 +325,12 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     // Resting values only. This is painted into a cached layer, and the cache
     // does not know about pulses (see `SceneNode.restColour`).
     const halo = n.r * (1.7 + n.restGlow * 0.9 + n.hub * 1.4);
-    const sprite = sprites.halo(n.warm >= 0.4 ? 'warm' : 'cyan', halo);
-    const haloAlpha = Math.min(1, (0.2 + 0.24 * n.restGlow) * n.restAlpha);
+    // The halo changes colour through nothing: the cyan one is gone at half
+    // warmth, where the amber one begins.
+    const warmHalo = n.warm > 0.5;
+    const sprite = sprites.halo(warmHalo ? 'warm' : 'cyan', halo);
+    const haloShare = warmHalo ? (2 * n.warm - 1) * WARM_INTENSITY : 1 - 2 * n.warm;
+    const haloAlpha = Math.min(1, (0.2 + 0.24 * n.restGlow) * n.restAlpha) * haloShare;
     g.globalAlpha = haloAlpha;
     if (sprite !== null) g.drawImage(sprite, n.x - halo, n.y - halo, halo * 2, halo * 2);
     else {
@@ -333,9 +378,35 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     g.beginPath();
     g.arc(n.x, n.y, n.r, 0, Math.PI * 2);
     g.fill();
-    // The pinpoint: nearly white, and only in the middle.
+
+    // Warmth as an amber core, its area the note's warmth, cut out of the cyan
+    // rather than laid over it.
+    const core = n.warm > 0.001 ? n.r * WARM_CORE * Math.sqrt(Math.min(1, n.warm)) : 0;
+    if (core > 0) {
+      g.globalCompositeOperation = 'destination-out';
+      g.globalAlpha = 1;
+      g.fillStyle = '#000';
+      g.beginPath();
+      g.arc(n.x, n.y, core, 0, Math.PI * 2);
+      g.fill();
+      g.globalCompositeOperation = 'lighter';
+      const bright = oklch(0.9, 0.09, WARM_HUE);
+      const heart = g.createRadialGradient(n.x, n.y, 0, n.x, n.y, core);
+      heart.addColorStop(0, rgba(bright, 0.95));
+      heart.addColorStop(0.55, rgba(n.warmColour, 1));
+      heart.addColorStop(0.9, rgba(n.warmColour, 0.9));
+      heart.addColorStop(1, rgba(n.warmColour, 0));
+      g.globalAlpha = Math.min(1, n.restAlpha * WARM_INTENSITY);
+      g.fillStyle = heart;
+      g.beginPath();
+      g.arc(n.x, n.y, core, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    // The pinpoint: nearly white, and only in the middle — in the colour of
+    // whatever lies under it.
     g.globalAlpha = Math.min(1, 0.4 + 0.6 * n.restAlpha);
-    g.fillStyle = rgba(lighten(n.restColour, 0.82), 0.9);
+    g.fillStyle = core >= n.r * PINPOINT ? rgba(WARM_PINPOINT, 0.9) : rgba(lighten(n.restColour, 0.82), 0.9);
     g.beginPath();
     g.arc(n.x, n.y, n.r * PINPOINT, 0, Math.PI * 2);
     g.fill();
@@ -416,7 +487,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       const size = deco.dust[i * 5 + 2]! * grain;
       const a = deco.dust[i * 5 + 3]! * dim * TISSUE_LEVEL;
       const warm = deco.dust[i * 5 + 4]! === 1;
-      g.fillStyle = warm ? `rgba(200,160,100,${a * 0.8})` : `rgba(80,195,210,${a})`;
+      g.fillStyle = warm ? rgba(DUST_AMBER, a * 0.8) : `rgba(80,195,210,${a})`;
       g.beginPath();
       g.arc(x, y, size, 0, Math.PI * 2);
       g.fill();
@@ -434,10 +505,10 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       const warm = deco.dendrites[i * 6 + 5]!;
       g.lineWidth = (DENDRITE_WIDTH + (DENDRITE_TIP_WIDTH - DENDRITE_WIDTH) * d) * grain;
       const a = (DENDRITE_ALPHA + (DENDRITE_TIP_ALPHA - DENDRITE_ALPHA) * d) * dim * TISSUE_LEVEL;
-      // The branches of a note being worked on warm with it, by the same amount.
-      g.strokeStyle = warm > 0
-        ? `rgba(${Math.round(100 + 120 * warm)},${Math.round(215 - 30 * warm)},${Math.round(230 - 110 * warm)},${a})`
-        : `rgba(100,215,230,${a})`;
+      // The branches of a note being worked on warm with it the same way its
+      // body does: amber out to the warmth's share of their length, cyan
+      // beyond, never a blend.
+      g.strokeStyle = warm > 0.001 && d < warm ? rgba(amberFor(warm), a) : `rgba(100,215,230,${a})`;
       g.beginPath();
       g.moveTo(deco.dendrites[i * 6]!, deco.dendrites[i * 6 + 1]!);
       g.lineTo(deco.dendrites[i * 6 + 2]!, deco.dendrites[i * 6 + 3]!);
