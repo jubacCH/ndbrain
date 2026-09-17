@@ -205,13 +205,18 @@ function scopeSql(
   alias: string,
   pathColumn: string,
   viewable: Viewable,
+  timeColumn?: string,
 ): { sql: string; params: SqlValue[] } {
   const view = toView(viewable);
   const parts: string[] = [];
   const params: SqlValue[] = [];
 
   for (const scope of view) {
-    const region = regionSql(`${alias}.${pathColumn}`, scope);
+    const region = regionSql(
+      `${alias}.${pathColumn}`,
+      scope,
+      timeColumn === undefined ? undefined : `${alias}.${timeColumn}`,
+    );
     if (region.sql === null) {
       parts.push(`${alias}.owner = ?`);
       params.push(scope.owner);
@@ -1231,7 +1236,9 @@ export class Queries {
    * somebody needs.
    */
   activity(view: Viewable, sinceMs: number, limit = 50): ActivityRow[] {
-    const scope = scopeSql('e', 'path', view);
+    // With the edit time: a note share reaches its path's edits only from when
+    // it came to name that path, never those of an earlier note of that name.
+    const scope = scopeSql('e', 'path', view, 'at');
     return this.#db
       .all(
         `SELECT e.owner,

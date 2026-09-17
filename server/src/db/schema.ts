@@ -325,6 +325,11 @@ const MIGRATIONS: Array<(db: Database) => void> = [
   //
   // Both columns are checked, so a typo in a kind fails the write instead of
   // producing a share that no scope rule recognises.
+  //
+  // `bound_at` is when a note share came to name its current path: granted, or
+  // last moved with its note. The git history and the edit log belong to a
+  // path, not to a note, and whatever carried that name before is not the
+  // grantee's to read. Empty for vault and folder shares, which name places.
   (db) => {
     db.exec(`
       ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person'
@@ -332,6 +337,8 @@ const MIGRATIONS: Array<(db: Database) => void> = [
 
       ALTER TABLE shares ADD COLUMN kind TEXT NOT NULL DEFAULT 'folder'
         CHECK (kind IN ('vault', 'folder', 'note'));
+
+      ALTER TABLE shares ADD COLUMN bound_at INTEGER;
 
       UPDATE shares SET kind = CASE WHEN prefix = '' THEN 'vault' ELSE 'folder' END;
 
