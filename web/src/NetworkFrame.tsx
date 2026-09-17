@@ -56,6 +56,8 @@ export function NetworkFrame({
   onReveal,
   onDelete,
   mayDelete,
+  onShare,
+  mayShare,
   hidePrefixes = true,
 }: {
   graph: GraphData;
@@ -86,6 +88,9 @@ export function NetworkFrame({
    */
   onDelete?: (owner: string, path: string, title: string) => Promise<boolean>;
   mayDelete?: (owner: string, path: string) => boolean;
+  /** Opens the share dialog; the inspector offers it where `mayShare` allows it. */
+  onShare?: (owner: string, path: string, title: string) => void;
+  mayShare?: (owner: string) => boolean;
   /** Show folder names without their sort prefixes, as the tree does. */
   hidePrefixes?: boolean;
 }): React.JSX.Element {
@@ -232,6 +237,12 @@ export function NetworkFrame({
               onPick={pick}
               onOpen={onOpen}
               onReveal={onReveal}
+              self={account}
+              onShare={
+                onShare !== undefined && pickedNode !== undefined && mayShare !== undefined && mayShare(pickedNode.owner)
+                  ? onShare
+                  : undefined
+              }
               onDelete={
                 onDelete !== undefined &&
                 pickedNode !== undefined &&

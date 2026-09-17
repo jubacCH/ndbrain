@@ -13,6 +13,7 @@ import { copy } from './copy';
 import { HealthHeader, healthLabel } from './Health';
 import type { HealthKey } from './healthScore';
 
+import { ShareKindIcon } from './ShareDialog';
 import { refKey, type ConflictRow, type LinkRow, type NoteRow, type SearchHit, type Share, type TaskRow, type Tasks, type Tidy } from './api';
 
 const RELATIVE = new Intl.RelativeTimeFormat(copy.locale, { numeric: 'auto' });
@@ -837,7 +838,7 @@ function ShareTable({
           <thead>
             <tr>
               <th>{column}</th>
-              <th>{copy.shares.folder}</th>
+              <th>{copy.shares.what}</th>
               <th>Recht</th>
               <th className="n" />
             </tr>
@@ -846,7 +847,17 @@ function ShareTable({
             {shares.map((share) => (
               <tr key={share.id}>
                 <td className="nm">{nameOf(share)}</td>
-                <td className="pth">{share.prefix === '' ? 'ganzer Vault' : share.prefix}</td>
+                <td className="pth">
+                  {/* What the share opens, said three ways at once: an icon, the
+                      word, and the path. A note share and a folder share can
+                      carry near-identical paths, and only one of them reaches
+                      everything underneath. */}
+                  <span className="share-kind" data-kind={share.kind}>
+                    <ShareKindIcon kind={share.kind} size={14} />
+                    <span className="share-kind-word">{copy.shares.kind[share.kind]}</span>
+                  </span>
+                  {share.kind === 'vault' ? copy.shares.wholeVault : share.prefix}
+                </td>
                 <td>
                   {/* Neutral either way. Half the rows in a colour would read as
                       a warning about those grants specifically, and this table
