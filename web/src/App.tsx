@@ -252,8 +252,24 @@ function Shell({
    * note pane and the effect below opens the note as soon as the tree arrives.
    */
   const [view, setView] = useState<View>(() => loadPrefs().startView as View);
+  /** The view on screen as of the last render, for the same reason as `openNow`. */
+  const viewNow = useRef(view);
+  viewNow.current = view;
   /** Which note is open — the identity, not its content. */
-  const [openRef, setOpenRef] = useState<{ owner: string; path: string } | null>(null);
+  const [openRef, setOpenRefState] = useState<{ owner: string; path: string } | null>(null);
+  /**
+   * The open note as of this moment, not as of the last render.
+   *
+   * Read by code that resumes after a request — a save answering, a delete
+   * answering — and must act on what is open *now*. A value captured in a
+   * callback's closure is whatever was open when it started, which is how a
+   * slow delete closed the note opened while it ran.
+   */
+  const openNow = useRef<{ owner: string; path: string } | null>(null);
+  const setOpenRef = useCallback((next: { owner: string; path: string } | null): void => {
+    openNow.current = next;
+    setOpenRefState(next);
+  }, []);
   /** Where to place the cursor on the next open — a task's line, or nowhere. */
   const [jumpLine, setJumpLine] = useState<number | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
@@ -331,23 +347,42 @@ function Shell({
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<{ owner: string; path: string; content: string } | null>(null);
   /**
-   * The version the editor started from, sent with every write.
+   * The version each note's text on this screen started from, by `refKey`, sent
+   * with every write of that note.
    *
    * Kept in a ref rather than state because it has to be right at the moment the
    * debounce fires, not at the next render — and it is updated from each save's
    * response, so a run of autosaves does not report the first one's version and
    * make every later save look like a conflict.
+   *
+   * Per note, not one slot: a save answering after a switch used to write its
+   * version into the slot of the note opened meanwhile, and that note's next
+   * save then claimed a base it had never been read at.
    */
-  const baseMtime = useRef<number | null>(null);
+  const versions = useRef(new Map<string, number>());
+  /**
+   * The write in flight, if any. Writes run one after another, and opening or
+   * deleting a note waits for them: a read that overtakes a running save shows
+   * the text from before it, and a delete that overtakes one is undone by it.
+   */
+  const saving = useRef<Promise<void> | null>(null);
+  /**
+   * Unsaved text of notes being deleted, by `refKey` — see `deleting`. A slot of
+   * its own per note, because `pending` has one and a note opened while the
+   * question is open types into it.
+   */
+  const held = useRef(new Map<string, { owner: string; path: string; content: string }>());
   /**
    * Notes being deleted right now, by `refKey`.
    *
    * From the moment the question is about to be asked until the delete has
    * answered, nothing writes to them: not the debounce, not a switch, not a tab
    * being hidden. Any of those used to be able to send a PUT that landed after
-   * the DELETE and brought the note straight back. Their unsaved text stays in
-   * `pending` meanwhile — it is written after a cancel or a failed delete, and
+   * the DELETE and brought the note straight back. Their unsaved text waits in
+   * `held` meanwhile — it is written after a cancel or a failed delete, and
    * dropped after a successful one. Mirrored in state so the editor can lock.
+   * One delete per note at a time: a second request for a note already being
+   * deleted returns at once.
    */
   const deleting = useRef(new Set<string>());
   const [deletingKeys, setDeletingKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -450,6 +485,69 @@ function Shell({
   }, []);
 
 
+  /**
+   * Writes one note's text, after any write still running.
+   *
+   * The version sent is the note's own, read when the write actually goes out
+   * — after the one before it has answered, so a run of saves chains each on
+   * the version the previous one produced.
+   */
+  const write = useCallback(
+    (outstanding: { owner: string; path: string; content: string }): Promise<void> => {
+      const key = refKey(outstanding.owner, outstanding.path);
+      const previous = saving.current;
+      const isOpen = (): boolean =>
+        openNow.current?.owner === outstanding.owner && openNow.current.path === outstanding.path;
+
+      const run = (async (): Promise<void> => {
+        if (previous !== null) await previous;
+        if (isOpen()) setSaveState('saving');
+        try {
+          const result = await api.putNote(
+            outstanding.owner,
+            outstanding.path,
+            outstanding.content,
+            versions.current.get(key),
+          );
+          // This write is now the version to compare this note's next one against.
+          versions.current.set(key, result.note.mtimeMs);
+          // Cleared only when nothing was typed while the write was in flight —
+          // otherwise this would drop text newer than the version just stored.
+          if (pending.current === null) window.__ndbrainPending = null;
+          if (isOpen()) setSaveState(pending.current === null ? 'saved' : 'dirty');
+
+          // Somebody else's version was displaced and kept. Reported plainly and
+          // left on screen: the text on this screen won, and the other one is only
+          // recoverable if the person is told the file exists.
+          if (result.conflictCopy !== undefined) {
+            setError(copy.errors.conflict(result.conflictCopy));
+          }
+
+          // An edit can move links, so the panel, the findings and the graph are
+          // marked stale. Note what is *not* here: the note list. Notes appear and
+          // disappear on create, delete and rename — not when their text changes —
+          // and re-reading the whole tree plus a four-scan tidy pass on every pause
+          // in typing was pure waste. Marking is also not fetching: a stale query
+          // nobody is rendering costs nothing until something asks for it.
+          invalidate.afterEdit(client, outstanding.owner, outstanding.path);
+          // A newly created note *is* a structural change: the conflict copy above
+          // is a new file, and so is a first save of a note typed into the palette.
+          if (result.created || result.conflictCopy !== undefined) invalidate.afterStructure(client);
+        } catch (caught) {
+          if (isOpen()) setSaveState('failed');
+          setError(caught instanceof ApiError ? caught.message : copy.errors.saveFailed);
+        }
+      })();
+
+      saving.current = run;
+      void run.finally(() => {
+        if (saving.current === run) saving.current = null;
+      });
+      return run;
+    },
+    [client],
+  );
+
   /** Writes whatever is pending right now. */
   const flush = useCallback(async (): Promise<void> => {
     const outstanding = pending.current;
@@ -457,61 +555,30 @@ function Shell({
     // Held, not written: see `deleting`.
     if (deleting.current.has(refKey(outstanding.owner, outstanding.path))) return;
     pending.current = null;
-    setSaveState('saving');
+    await write(outstanding);
+  }, [write]);
 
-    try {
-      const result = await api.putNote(
-        outstanding.owner,
-        outstanding.path,
-        outstanding.content,
-        baseMtime.current ?? undefined,
-      );
-      // This write is now the version to compare the next one against.
-      baseMtime.current = result.note.mtimeMs;
-      // Cleared only when nothing was typed while the write was in flight —
-      // otherwise this would drop text newer than the version just stored.
-      if (pending.current === null) window.__ndbrainPending = null;
-      setSaveState(pending.current === null ? 'saved' : 'dirty');
-
-      // Somebody else's version was displaced and kept. Reported plainly and
-      // left on screen: the text on this screen won, and the other one is only
-      // recoverable if the person is told the file exists.
-      if (result.conflictCopy !== undefined) {
-        setError(
-          copy.errors.conflict(result.conflictCopy),
-        );
-      }
-
-      // An edit can move links, so the panel, the findings and the graph are
-      // marked stale. Note what is *not* here: the note list. Notes appear and
-      // disappear on create, delete and rename — not when their text changes —
-      // and re-reading the whole tree plus a four-scan tidy pass on every pause
-      // in typing was pure waste. Marking is also not fetching: a stale query
-      // nobody is rendering costs nothing until something asks for it.
-      invalidate.afterEdit(client, outstanding.owner, outstanding.path);
-      // A newly created note *is* a structural change: the conflict copy above
-      // is a new file, and so is a first save of a note typed into the palette.
-      if (result.created || result.conflictCopy !== undefined) invalidate.afterStructure(client);
-    } catch (caught) {
-      setSaveState('failed');
-      setError(
-        caught instanceof ApiError ? caught.message : copy.errors.saveFailed,
-      );
-    }
-  }, [client]);
+  /** Writes what is pending and waits until no write is running any more. */
+  const settle = useCallback(async (): Promise<void> => {
+    await flush();
+    while (saving.current !== null) await saving.current;
+  }, [flush]);
 
   const scheduleSave = useCallback(
     (owner: string, path: string, content: string): void => {
+      // Typed into a note being deleted — possible only in the moment before
+      // its editor locks: kept with that note's held text, never in `pending`.
+      if (deleting.current.has(refKey(owner, path))) {
+        held.current.set(refKey(owner, path), { owner, path, content });
+        window.__ndbrainPending = { path, content };
+        return;
+      }
       pending.current = { owner, path, content };
       // Mirrored where the error boundary can still reach it: if a render fault
       // tears this tree down, the boundary is what hands the text back.
       window.__ndbrainPending = { path, content };
       setSaveState('dirty');
       if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-      // Kept, but not timed, while the note is being deleted; `deleteNote`
-      // starts the wait again if the note survives.
-      if (deleting.current.has(refKey(owner, path))) return;
       saveTimer.current = window.setTimeout(() => void flush(), prefsRef.current.saveDelayMs);
     },
     [flush],
@@ -532,8 +599,10 @@ function Shell({
 
   const openNote = useCallback(
     async (owner: string, path: string, line?: number): Promise<void> => {
-      // Never switch away from unsaved text without writing it first.
-      if (pending.current !== null) await flush();
+      // Never switch away from unsaved text without writing it first — and
+      // never read a note while a write is still on its way: the read would
+      // show the text from before it.
+      await settle();
       setJumpLine(line ?? null);
 
       try {
@@ -557,7 +626,7 @@ function Shell({
           staleTime: 0,
         });
         setOpenRef({ owner, path });
-        baseMtime.current = opened.note.mtimeMs;
+        versions.current.set(refKey(owner, path), opened.note.mtimeMs);
         setView('note');
         setSaveState('saved');
         setDrawerOpen(false);
@@ -574,7 +643,7 @@ function Shell({
         invalidate.afterStructure(client);
       }
     },
-    [flush, client, user.id],
+    [settle, client, user.id, setOpenRef],
   );
 
   /**
@@ -866,25 +935,32 @@ function Shell({
   const deleteNote = useCallback(
     async (owner: string, path: string, title: string): Promise<boolean> => {
       const key = refKey(owner, path);
-      const typingHere = (): boolean =>
-        pending.current !== null && pending.current.owner === owner && pending.current.path === path;
-      // Text waiting for a different note is written first, as on any switch.
-      if (pending.current !== null && !typingHere()) await flush();
-      // From here until the delete answers, nothing is written to this note.
+      // One delete of a note at a time. Checked and taken before anything is
+      // awaited, so a double click or a second ⌘⌫ cannot start a second one —
+      // whose cancel used to release the note while the first delete ran.
+      if (deleting.current.has(key)) return false;
       deleting.current.add(key);
       setDeletingKeys(new Set(deleting.current));
-      if (saveTimer.current !== null && typingHere()) {
-        window.clearTimeout(saveTimer.current);
+      // Its unsaved text moves to a slot of its own, out of reach of a note
+      // opened while the question is open.
+      if (pending.current !== null && pending.current.owner === owner && pending.current.path === path) {
+        held.current.set(key, pending.current);
+        pending.current = null;
+        if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
         saveTimer.current = null;
       }
-      /** The note stays: release it, and let its unsaved text be written. */
+      const typingHere = (): boolean => held.current.has(key);
+      /** The note stays: release it, and write its unsaved text as it was held. */
       const release = (): void => {
         deleting.current.delete(key);
         setDeletingKeys(new Set(deleting.current));
-        if (typingHere() && saveTimer.current === null) {
-          saveTimer.current = window.setTimeout(() => void flush(), prefsRef.current.saveDelayMs);
-        }
+        const text = held.current.get(key);
+        held.current.delete(key);
+        if (text !== undefined) void write(text);
       };
+      // Text waiting for a different note is written first, as on any switch,
+      // and a write of this one that is already running is let finish.
+      await settle();
 
       let linking = 0;
       try {
@@ -919,14 +995,8 @@ function Shell({
 
       // Unsaved text in the deleted note is dropped, not written: a save landing
       // now would bring the note straight back.
-      if (typingHere()) {
-        pending.current = null;
-        window.__ndbrainPending = null;
-      }
-      if (saveTimer.current !== null && pending.current === null) {
-        window.clearTimeout(saveTimer.current);
-        saveTimer.current = null;
-      }
+      if (held.current.delete(key) && pending.current === null) window.__ndbrainPending = null;
+      versions.current.delete(key);
       deleting.current.delete(key);
       setDeletingKeys(new Set(deleting.current));
 
@@ -934,19 +1004,20 @@ function Shell({
       setRecents(loadRecents(user.id));
       // Off the screen before its cache entry goes: an editor still mounted on
       // a removed entry would fetch it again, and get a 404 for its trouble.
+      // What is open *now*: a note opened while the delete ran stays open.
       flushSync(() => {
         setRevealed((current) => (current?.owner === owner && current.path === path ? null : current));
-        if (openRef?.owner === owner && openRef.path === path) {
+        if (openNow.current?.owner === owner && openNow.current.path === path) {
           setOpenRef(null);
           setSaveState('saved');
-          if (view === 'note') setView('overview');
+          if (viewNow.current === 'note') setView('overview');
         }
       });
       invalidate.afterDelete(client, owner, path);
       setError(null);
       return true;
     },
-    [client, flush, openRef, user.id, view],
+    [client, settle, write, user.id, setOpenRef],
   );
 
   /** Whether a note may be deleted from a place that holds only its path. */
