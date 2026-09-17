@@ -44,8 +44,14 @@ import type { Place } from './layout';
  *    would sit outside the silhouette or in the wrong cell, and a remembered
  *    note is never moved by the simulation, so it would stay there. The review
  *    of 2026-09-15 named discarding them as the condition for the change.
+ *  - v3 → v4: the journal and the centre. Daily notes left the region cells
+ *    for a lobe of their own at the back of the left hemisphere, the other
+ *    cells are relaxed around that lobe, and the best-connected map moved to
+ *    the fissure with its region round it. A v3 arrangement has the days spread
+ *    over two "Journal" cells and the centre off to one side, and since a
+ *    remembered note never moves, nobody would ever see the new form.
  */
-const VERSION = 3;
+const VERSION = 4;
 
 /** The first format: `ndbrain.brain.<store>`, CSS pixels, no account. */
 const LEGACY = 'ndbrain.brain.';

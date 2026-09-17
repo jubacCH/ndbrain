@@ -38,7 +38,6 @@ import type { EdgeGeometry, EdgePlan, RoutePlan } from './edges';
 import {
   CURVE_STEPS,
   FORK_POINTS,
-  MAP_DEGREE,
   RAY_FORKS,
   TWIN,
   VISIBLE,
@@ -700,8 +699,9 @@ export class SceneBuilder {
     // The centre only exists where there is a brain to organise, and only for a
     // map: a vault whose best-connected note has a handful of links has no
     // centre, and pretending otherwise would crown an arbitrary note.
-    const hub = this.#graph.hub;
-    this.#centre = regions && view.shaped && hub >= 0 && nodes[hub]!.degree >= MAP_DEGREE ? hub : -1;
+    // The layout decides which note that is (`BrainLayout.centre`): it is also
+    // the note it put at the fissure, and the two must not disagree.
+    this.#centre = regions && view.shaped ? layout.centre : -1;
     this.#routes = planRoutes({
       edges,
       keys,
