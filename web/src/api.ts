@@ -39,7 +39,6 @@ export type {
   Overview,
   PulseEvent,
   SearchHit,
-  Share,
   TaskRow,
   Tasks,
   Tidy,
@@ -72,6 +71,110 @@ export interface DirRow {
   owner: string;
   path: string;
 }
+
+/* ---- sharing and spaces (phase 8) -------------------------------------------
+ *
+ * Declared here rather than in `shared/schema.ts`, which the server strand owns
+ * while both halves are built side by side against the written contract. Every
+ * schema below is that contract as this page reads it; where the contract left
+ * a shape open, the parser accepts each reading it allows and says so.
+ */
+
+/** What a share opens: a whole vault, a folder with everything under it, or one note. */
+export const ShareKind = z.enum(['vault', 'folder', 'note']);
+export type ShareKind = z.infer<typeof ShareKind>;
+
+/**
+ * One share.
+ *
+ * `prefix` is `''` for a vault, a folder path ending in `/` for a folder, and
+ * the exact note path (no trailing slash) for a note. `kind` is required: a
+ * note share read as a folder would widen what this page believes is covered.
+ */
+export const ShareSchema = S.Share.extend({ kind: ShareKind });
+export type Share = z.infer<typeof ShareSchema>;
+
+export const SharesResponse = z.object({
+  granted: z.array(ShareSchema),
+  received: z.array(ShareSchema),
+});
+
+/** A vault is a person's or a space's. A space cannot sign in. */
+export const OwnerKind = z.enum(['person', 'space']);
+export type OwnerKind = z.infer<typeof OwnerKind>;
+
+/** One vault the caller can see into, with what it is and what to call it. */
+export const OwnerInfo = z.object({
+  id: z.string(),
+  kind: OwnerKind,
+  displayName: z.string(),
+});
+export type OwnerInfo = z.infer<typeof OwnerInfo>;
+
+/**
+ * The tree, with the vaults it spans.
+ *
+ * `owners` is optional so a server without it still draws every vault, only
+ * without a space's name and icon.
+ */
+export const TreeResponse = S.TreeResponse.extend({
+  owners: z.array(OwnerInfo).optional(),
+});
+export type TreeData = z.infer<typeof TreeResponse>;
+
+export const AdminSpace = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  disabled: z.boolean(),
+  noteCount: z.number(),
+  members: z.number(),
+});
+export type AdminSpace = z.infer<typeof AdminSpace>;
+
+/** The contract writes a bare list; the rest of the API wraps lists. Both are read. */
+const AdminSpacesResponse = z.union([
+  z.array(AdminSpace),
+  z.object({ spaces: z.array(AdminSpace) }).transform((reply) => reply.spaces),
+]);
+
+/**
+ * One member of a space: a share whose owner is the space.
+ *
+ * The contract names the region `path` here and `prefix` on `/shares`; either
+ * is read, and the row comes out in the same shape as every other share so one
+ * rule (`rights.ts`) and one table serve both.
+ */
+const SpaceMemberRow = z
+  .object({
+    id: z.string(),
+    grantee: z.string(),
+    kind: ShareKind,
+    canWrite: z.boolean(),
+    path: z.string().optional(),
+    prefix: z.string().optional(),
+    createdAt: z.number().optional(),
+  })
+  .refine((row) => row.path !== undefined || row.prefix !== undefined, 'path is missing');
+
+function memberRows(space: string) {
+  const rows = z.array(SpaceMemberRow);
+  return z
+    .union([rows, z.object({ members: rows }).transform((reply) => reply.members)])
+    .transform((list): Share[] =>
+      list.map((row) => ({
+        id: row.id,
+        owner: space,
+        prefix: row.path ?? row.prefix ?? '',
+        grantee: row.grantee,
+        kind: row.kind,
+        canWrite: row.canWrite,
+        createdAt: row.createdAt ?? 0,
+      })),
+    );
+}
+
+/** For writes whose reply this page does not read: it re-reads the list instead. */
+const Ignored = z.unknown().transform(() => undefined);
 
 
 
@@ -223,7 +326,7 @@ export const api = {
 
   logout: () => request('/api/v1/auth/logout', S.LogoutResponse, { method: 'POST' }),
 
-  tree: () => request('/api/v1/tree', S.TreeResponse),
+  tree: () => request('/api/v1/tree', TreeResponse),
 
   getNote: (owner: string, path: string) =>
     request(`/api/v1/notes/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, S.OpenNote),
@@ -457,6 +560,41 @@ export const api = {
       body: JSON.stringify({ owner, name, ...(scope === '' ? {} : { scope }), canWrite }),
     }),
 
+  // ---- spaces -----------------------------------------------------------------
+  //
+  // A space is a vault nobody signs in to. Admin-only like the rest of this
+  // block; its members are ordinary shares whose owner is the space.
+
+  adminSpaces: () => request('/api/v1/admin/spaces', AdminSpacesResponse),
+
+  createSpace: (id: string, displayName: string) =>
+    request('/api/v1/admin/spaces', Ignored, {
+      method: 'POST',
+      body: JSON.stringify({ id, displayName }),
+    }),
+
+  updateSpace: (id: string, patch: { displayName?: string; disabled?: boolean }) =>
+    request(`/api/v1/admin/spaces/${encodeURIComponent(id)}`, Ignored, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+
+  spaceMembers: (id: string) =>
+    request(`/api/v1/admin/spaces/${encodeURIComponent(id)}/members`, memberRows(id)),
+
+  addSpaceMember: (id: string, grantee: string, kind: ShareKind, path: string, canWrite: boolean) =>
+    request(`/api/v1/admin/spaces/${encodeURIComponent(id)}/members`, Ignored, {
+      method: 'POST',
+      body: JSON.stringify({ grantee, kind, path, canWrite }),
+    }),
+
+  removeSpaceMember: (id: string, shareId: string) =>
+    request(
+      `/api/v1/admin/spaces/${encodeURIComponent(id)}/members/${encodeURIComponent(shareId)}`,
+      Empty,
+      { method: 'DELETE' },
+    ),
+
   revokeKey: (id: string) =>
     request(`/api/v1/admin/keys/${encodeURIComponent(id)}`, Empty, { method: 'DELETE' }),
 
@@ -521,13 +659,16 @@ export const api = {
     request('/api/v1/account/sessions/revoke', S.OkResponse, { method: 'POST' }),
 
   // ---- sharing ------------------------------------------------------------
-  shares: () => request('/api/v1/shares', S.SharesResponse),
+  shares: () => request('/api/v1/shares', SharesResponse),
 
-  /** Only ever opens a region of the caller's *own* vault — a held share is not theirs to pass on. */
-  grantShare: (grantee: string, prefix: string, canWrite: boolean) =>
-    request('/api/v1/shares', S.GrantShareResponse, {
+  /**
+   * Only ever opens a region of the caller's *own* vault — a held share is not
+   * theirs to pass on. `path` is `''` for the vault, a folder, or one note.
+   */
+  grantShare: (grantee: string, kind: ShareKind, path: string, canWrite: boolean) =>
+    request('/api/v1/shares', z.object({ share: ShareSchema }), {
       method: 'POST',
-      body: JSON.stringify({ grantee, prefix, canWrite }),
+      body: JSON.stringify({ grantee, kind, path, canWrite }),
     }),
 
   /** Withdraw as the owner, or decline as the grantee — the same call either way. */
