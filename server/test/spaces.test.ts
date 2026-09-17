@@ -379,3 +379,36 @@ describe('agent keys of a space', () => {
     expect((await h.tool(secret, 'get_note', { path: 'Budget.md' })).status).toBe(200);
   });
 });
+
+describe('agent keys of a disabled person', () => {
+  it('are refused exactly like an unknown key, and work again once the account is enabled', async () => {
+    await h.runtime.app.createNote('julian', 'Privat.md', '# Privat\n', 'julian');
+    const created = await h.as('admin', {
+      method: 'POST',
+      url: '/api/v1/admin/keys',
+      payload: { owner: 'julian', name: 'julians-agent' },
+    });
+    expect(created.status).toBe(201);
+    const secret: string = created.body.secret;
+    expect((await h.tool(secret, 'get_note', { path: 'Privat.md' })).status).toBe(200);
+
+    const setDisabled = async (disabled: boolean): Promise<void> => {
+      const reply = await h.as('admin', {
+        method: 'POST',
+        url: '/api/v1/admin/users/julian/disabled',
+        payload: { disabled },
+      });
+      expect(reply.status).toBe(200);
+    };
+
+    await setDisabled(true);
+    const refused = await h.tool(secret, 'get_note', { path: 'Privat.md' });
+    const unknown = await h.tool('ndb_0000', 'get_note', { path: 'Privat.md' });
+    expect({ status: refused.status, raw: refused.raw }).toEqual({ status: unknown.status, raw: unknown.raw });
+    expect(refused.status).toBe(401);
+    expect(h.runtime.keys.resolve(secret)).toBeNull();
+
+    await setDisabled(false);
+    expect((await h.tool(secret, 'get_note', { path: 'Privat.md' })).status).toBe(200);
+  });
+});
