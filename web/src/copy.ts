@@ -623,6 +623,72 @@ export const copy = {
     reload: 'Reload',
     whatWentWrong: 'What went wrong',
   },
+
+  /** The start page: where to pick up, what happened today, how the vault is doing. */
+  home: {
+    summary: (notes: number, attention: number) =>
+      `${notes} ${notes === 1 ? 'note' : 'notes'} · ` +
+      (attention === 0 ? 'nothing needs attention' : `${attention} need attention`),
+
+    continue: 'Continue',
+    opened: 'Opened lately',
+    edited: 'Edited lately',
+    noOpened: 'Notes you open show up here.',
+    noEdited: 'Nothing edited yet.',
+    /** The folder a note sits in, when it sits at the top of its vault. */
+    topLevel: 'top level',
+    editedAgo: (when: string) => `edited ${when}`,
+    openNote: (title: string, folder: string) => `${title}, in ${folder} — open note`,
+
+    today: 'Your brain today',
+    newNotes: (n: number) => (n === 1 ? 'new note' : 'new notes'),
+    editedNotes: (n: number) => (n === 1 ? 'note edited' : 'notes edited'),
+    agentReads: (n: number) => (n === 1 ? 'agent read' : 'agent reads'),
+    agentWrites: (n: number) => (n === 1 ? 'agent write' : 'agent writes'),
+    quietToday: 'Nothing has changed in your vault today.',
+    /** Under the counts: whose numbers they are. */
+    ownVaultOnly: 'In your own vault.',
+    trace: 'Last 14 days',
+    traceLabel: (total: number, days: number) =>
+      `Notes changed per day over the last ${days} days, ${total} in total`,
+    traceDay: (date: string, n: number) => `${date}: ${n} ${n === 1 ? 'note' : 'notes'} changed`,
+    sinceYesterday: 'Since yesterday',
+
+    tasks: 'Open tasks',
+    tasksMore: (n: number) => `${n} more`,
+
+    brain: 'Your brain',
+    brainHint: 'Every note and the links between them.',
+    openNetwork: 'Open whole network',
+  },
+
+  /** Brain health: a calm number and what it is made of. Never a reward. */
+  health: {
+    title: 'Brain health',
+    of100: 'of 100',
+    noScore: 'No notes yet, so nothing to measure.',
+    scoreLabel: (score: number) => `Brain health ${score} of 100`,
+    orphans: (n: number) => (n === 1 ? 'orphaned note' : 'orphaned notes'),
+    broken: (n: number) => (n === 1 ? 'broken link' : 'broken links'),
+    untagged: (n: number) => (n === 1 ? 'untagged note' : 'untagged notes'),
+    conflicts: (n: number) => (n === 1 ? 'conflict copy' : 'conflict copies'),
+    /** A category with nothing in it: said plainly, not celebrated. */
+    none: 'none',
+    notUsed: 'tags not in use',
+    untouched: (n: number) => `${n} untouched — not part of the score`,
+    attention: (n: number) => `${n} ${n === 1 ? 'note needs' : 'notes need'} attention`,
+    open: 'Open Tidy up',
+    showFinding: (count: number, label: string) => `Show the ${count} ${label}`,
+    showAll: 'Show all findings',
+    showing: (label: string) => `Showing ${label} only`,
+    how: 'How the score is calculated',
+    formula:
+      'Each finding is taken as a share of your notes, capped at the whole, and weighted: ' +
+      'orphaned 30 %, broken links 30 %, untagged 20 %, conflict copies 20 %. ' +
+      'The score is 100 minus the weighted shares. Untouched notes do not count — ' +
+      'a finished note is not a neglected one.',
+    cost: (points: string) => `−${points}`,
+  },
 } as const;
 
 /**
