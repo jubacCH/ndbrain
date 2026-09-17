@@ -170,6 +170,19 @@ describe('the inspector', () => {
     expect(onReveal).toHaveBeenCalledWith(O, '10_Projects/13_Kunden/Backup to Azure.md');
   });
 
+  it('offers delete only when the shell passes it, and hands over the note', async () => {
+    const onDelete = vi.fn();
+    const first = wrap(<Inspector index={index} picked={AZURE} onPick={vi.fn()} onOpen={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /^Delete / })).toBeNull();
+    first.unmount();
+
+    wrap(<Inspector index={index} picked={AZURE} onPick={vi.fn()} onOpen={vi.fn()} onDelete={onDelete} />);
+    const button = screen.getByRole('button', { name: 'Delete Backup to Azure' });
+    expect(button).toHaveTextContent(copy.inspector.delete);
+    await userEvent.click(button);
+    expect(onDelete).toHaveBeenCalledWith(O, '10_Projects/13_Kunden/Backup to Azure.md', 'Backup to Azure');
+  });
+
   it('is reached with Tab, a neighbour is focused with Enter, and Escape ends the focus', async () => {
     const onPick = vi.fn();
     wrap(<Inspector index={index} picked={AZURE} onPick={onPick} onOpen={vi.fn()} />);

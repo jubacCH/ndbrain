@@ -307,3 +307,142 @@ describe('the first screen a new account sees', () => {
     expect(onCreateFirst).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('deleting a note', () => {
+  const SHARED: NoteRow[] = [
+    { owner: 'anna', path: 'Lesen/Nur lesen.md', title: 'Nur lesen', size: 1, mtimeMs: 0 },
+    { owner: 'anna', path: 'Team/Gemeinsam.md', title: 'Gemeinsam', size: 1, mtimeMs: 0 },
+  ];
+  const RECEIVED = [
+    { id: 's1', owner: 'anna', prefix: 'Lesen/', grantee: 'julian', canWrite: false, createdAt: 0 },
+    { id: 's2', owner: 'anna', prefix: 'Team/', grantee: 'julian', canWrite: true, createdAt: 0 },
+  ];
+
+  it('offers a bin on a note of your own, which hands the note to the shell', async () => {
+    const onDeleteNote = vi.fn();
+    const { onSelect } = renderTree({ onDeleteNote });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Willkommen' }));
+
+    expect(onDeleteNote).toHaveBeenCalledWith('julian', 'Willkommen.md', 'Willkommen');
+    // Deleting is not opening.
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('offers no bin on a folder, and none at all without a handler', () => {
+    const first = render(
+      <Tree
+        notes={NOTES}
+        self="julian"
+        received={[]}
+        selected={null}
+        findings={new Map()}
+        filter=""
+        hidePrefixes
+        onSelect={vi.fn()}
+        onRenameFolder={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /^Delete / })).toBeNull();
+    first.unmount();
+
+    renderTree({ onDeleteNote: vi.fn() });
+    expect(screen.queryByRole('button', { name: 'Delete Areas' })).toBeNull();
+    // Willkommen is the only note at the top level; the rest sit in shut folders.
+    expect(screen.getAllByRole('button', { name: /^Delete / })).toHaveLength(1);
+  });
+
+  it('deletes the focused note with the Delete key, and does nothing on a folder', async () => {
+    const user = userEvent.setup();
+    const onDeleteNote = vi.fn();
+    renderTree({ onDeleteNote });
+
+    // Top level in order: 00_Inbox, 20_Areas, Willkommen.
+    screen.getByText('Inbox').closest('button')!.focus();
+    await user.keyboard('{Delete}');
+    expect(onDeleteNote).not.toHaveBeenCalled();
+
+    await user.keyboard('{End}');
+    expect(screen.getByText('Willkommen').closest('button')).toHaveFocus();
+    // A bare Backspace is too easy to press by accident.
+    await user.keyboard('{Backspace}');
+    expect(onDeleteNote).not.toHaveBeenCalled();
+    await user.keyboard('{Delete}');
+    expect(onDeleteNote).toHaveBeenCalledWith('julian', 'Willkommen.md', 'Willkommen');
+    await user.keyboard('{Meta>}{Backspace}{/Meta}');
+    expect(onDeleteNote).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the tree a single tab stop: the bins are not in the tab order', () => {
+    renderTree({ onDeleteNote: vi.fn() });
+    const bins = screen.getAllByRole('button', { name: /^Delete / });
+    expect(bins.every((b) => b.getAttribute('tabindex') === '-1')).toBe(true);
+    expect(screen.getByText('Willkommen').closest('button')).toHaveAttribute('aria-keyshortcuts', 'Delete Meta+Backspace');
+  });
+
+  it('offers nothing on a note shared read-only, by bin or by key, and both on a writable share', async () => {
+    const user = userEvent.setup();
+    const onDeleteNote = vi.fn();
+    renderTree({ notes: [...NOTES, ...SHARED], received: RECEIVED, onDeleteNote });
+    await user.click(screen.getByText('Lesen'));
+    await user.click(screen.getByText('Team'));
+
+    expect(screen.queryByRole('button', { name: 'Delete Nur lesen' })).toBeNull();
+    screen.getByText('Nur lesen').closest('button')!.focus();
+    await user.keyboard('{Delete}');
+    expect(onDeleteNote).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Delete Gemeinsam' }));
+    expect(onDeleteNote).toHaveBeenCalledWith('anna', 'Team/Gemeinsam.md', 'Gemeinsam');
+  });
+});
+
+describe('showing a note without opening it', () => {
+  const base = {
+    notes: NOTES,
+    self: 'julian',
+    received: [],
+    selected: null,
+    findings: new Map<string, 'crit' | 'warn'>(),
+    filter: '',
+    hidePrefixes: true,
+    onRenameFolder: vi.fn(),
+  };
+
+  afterEach(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it('opens the folders above it, marks the row and scrolls to it, without selecting it', () => {
+    const onSelect = vi.fn();
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    render(
+      <Tree
+        {...base}
+        onSelect={onSelect}
+        revealed={{ owner: 'julian', path: '20_Areas/21_Homelab/Proxmox Cluster.md', seq: 1 }}
+      />,
+    );
+
+    const row = screen.getByText('Proxmox Cluster').closest('button')!;
+    expect(row).toHaveAttribute('data-revealed', 'true');
+    expect(row).toHaveAttribute('aria-current', 'false');
+    expect(screen.getByText('Areas').closest('button')).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Homelab').closest('button')).toHaveAttribute('aria-expanded', 'true');
+    expect(document.querySelectorAll('[data-revealed]')).toHaveLength(1);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll.mock.contexts[0]).toBe(row);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('scrolls once per request, and again when the same note is asked for a second time', () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const { rerender } = render(<Tree {...base} onSelect={vi.fn()} revealed={{ owner: 'julian', path: 'Willkommen.md', seq: 1 }} />);
+    rerender(<Tree {...base} onSelect={vi.fn()} revealed={{ owner: 'julian', path: 'Willkommen.md', seq: 1 }} />);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    rerender(<Tree {...base} onSelect={vi.fn()} revealed={{ owner: 'julian', path: 'Willkommen.md', seq: 2 }} />);
+    expect(scroll).toHaveBeenCalledTimes(2);
+  });
+});
