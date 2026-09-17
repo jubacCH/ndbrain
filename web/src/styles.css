@@ -3677,6 +3677,33 @@ body {
   color: var(--accent);
 }
 
+/* On its way: the entry takes the accent and its icon breathes, after a beat,
+   so an answer that is already cached does not flash it. */
+.nav-views button[aria-busy='true'] {
+  color: var(--text);
+}
+
+.nav-views button[aria-busy='true'] svg {
+  color: var(--accent);
+  animation: nav-arriving 0.9s ease-in-out 0.12s infinite;
+}
+
+@keyframes nav-arriving {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.app[data-busy='true'] {
+  cursor: progress;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-views button[aria-busy='true'] svg {
+    animation: none;
+  }
+}
+
 /* The name filter. */
 .nav-find {
   position: relative;
