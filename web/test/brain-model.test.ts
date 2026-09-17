@@ -17,7 +17,7 @@ import { Activity } from '../src/brain/activity';
 import { IDENTITY } from '../src/brain/camera';
 import { BrainLayout } from '../src/brain/layout';
 import { buildGraph, nodeKey } from '../src/brain/model';
-import { HUB_BODY, LONELY_BODY, PULSE_COLOUR, SceneBuilder } from '../src/brain/scene';
+import { HUB_PLANES, LONELY_BODY, PULSE_COLOUR, SceneBuilder } from '../src/brain/scene';
 
 const VAULT: GraphData = {
   nodes: [
@@ -138,9 +138,11 @@ describe('the render model', () => {
     const hub = scene.nodes[g.hub]!;
     expect(lonely.alpha).toBeLessThan(hub.alpha);
     // The colour itself is named rather than spelled out: it was raised on
-    // 2026-09-16 towards the prototype's bright cores, and what this test
-    // guards is the relation — a hub drawn in the hub colour, a lonely note dim.
-    expect(hub.colour).toEqual(HUB_BODY);
+    // 2026-09-16 towards the prototype's bright cores, and since 2026-09-17 it
+    // depends on the plane the hub is painted in (bluer further back). What this
+    // test guards is the relation — a hub drawn in the hub colour of its plane,
+    // a lonely note dim.
+    expect(hub.colour).toEqual(HUB_PLANES[hub.depth]);
     expect(lonely.colour).toEqual(LONELY_BODY);
   });
 

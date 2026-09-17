@@ -60,6 +60,11 @@
  *
  * The control points are pulled back inside the silhouette (`keepInside`): a
  * curve is free to bow, but not out of the tissue and into the dark.
+ *
+ * **The centre** is the one exception. The best-connected map organises the
+ * picture, and bundled its links left in two or three trunks; its links are
+ * rays instead, run nearly straight out to their notes, and carry a few fine
+ * branches (`branchRay`) that are decoration and fade with the tissue.
  */
 
 import { unit } from './seed';
@@ -492,6 +497,11 @@ const DETOUR_MAX = 2.2;
 /** How far a link inside one region bows, and one into another that is not bundled. */
 const BEND_WITHIN = 0.8;
 const BEND_ACROSS = 1.4;
+/**
+ * How far a ray of the centre bows. Much less than any other link: a ray runs
+ * nearly straight out to its note, which is what makes a star of it.
+ */
+const BEND_RAY = 0.3;
 
 /** The geometry a route needs from the layout. Everything else is the layout's business. */
 export interface EdgeGeometry {
@@ -515,6 +525,8 @@ export interface RoutePlan {
   readonly jitter: Float64Array;
   /** The bow shared by every link into the same region, by region id. */
   readonly trunk: Float64Array;
+  /** 1 for a ray of the centre: never bundled, barely bowed. */
+  readonly ray: Uint8Array;
 }
 
 export interface RouteInput {
@@ -523,6 +535,13 @@ export interface RouteInput {
   keys: readonly string[];
   degree: ArrayLike<number>;
   geometry: EdgeGeometry | null;
+  /**
+   * The note the picture is organised around, or -1. Its links are rays: drawn
+   * straight out to every note it links to rather than bundled through the
+   * other regions' hubs, where forty links used to leave in two or three trunks
+   * and the centre radiated in only those directions.
+   */
+  centre?: number;
 }
 
 /**
@@ -533,7 +552,7 @@ export interface RouteInput {
  * which region a note is in — so a note moving does not re-decide a route, it
  * only moves the curve that was decided.
  */
-export function planRoutes({ edges, keys, degree, geometry }: RouteInput): RoutePlan {
+export function planRoutes({ edges, keys, degree, geometry, centre = -1 }: RouteInput): RoutePlan {
   const m = edges.length;
   const hubEnd = new Int32Array(m);
   const leafEnd = new Int32Array(m);
@@ -541,6 +560,7 @@ export function planRoutes({ edges, keys, degree, geometry }: RouteInput): Route
   const bend = new Float64Array(m);
   const jitter = new Float64Array(m);
   const trunk = new Float64Array(geometry === null ? 0 : geometry.regions.length);
+  const ray = new Uint8Array(m);
 
   for (let r = 0; r < trunk.length; r += 1) trunk[r] = (unit(`region:${r}`, 'trunk') - 0.5) * 2;
 
@@ -559,6 +579,10 @@ export function planRoutes({ edges, keys, degree, geometry }: RouteInput): Route
     jitter[i] = unit(pair, 'fibre') - 0.5;
 
     if (geometry === null) continue;
+    if (centre >= 0 && hub === centre) {
+      ray[i] = 1;
+      continue;
+    }
     const ra = geometry.regionOf[hub]!;
     const rb = geometry.regionOf[leaf]!;
     if (ra < 0 || rb < 0 || ra === rb) continue;
@@ -568,7 +592,7 @@ export function planRoutes({ edges, keys, degree, geometry }: RouteInput): Route
     if (target !== undefined && target.hub !== leaf) via[i] = target.hub;
   }
 
-  return { hubEnd, leafEnd, via, bend, jitter, trunk };
+  return { hubEnd, leafEnd, via, bend, jitter, trunk, ray };
 }
 
 /**
@@ -666,7 +690,7 @@ export function traceEdge(
   // A plain bowed cubic. The hub end leaves outwards from its region's centre,
   // so the links of a hub radiate instead of lying on top of one another.
   const sameRegion = geometry !== null && geometry.regionOf[hub] === geometry.regionOf[leaf];
-  const bow = plan.bend[i]! * len * (sameRegion ? BEND_WITHIN : BEND_ACROSS);
+  const bow = plan.bend[i]! * len * (plan.ray[i] === 1 ? BEND_RAY : sameRegion ? BEND_WITHIN : BEND_ACROSS);
   const nx = -dy / len;
   const ny = dx / len;
   let outX = 0;
@@ -771,4 +795,122 @@ export function alongCurve(pts: Float64Array, n: number, t: number, out: { x: nu
   const by = pts[(i + 1) * 2 + 1] ?? ay;
   out.x = ax + (bx - ax) * f;
   out.y = ay + (by - ay) * f;
+}
+
+/* ===================== the centre's branches ===================== */
+
+/**
+ * Branches per ray of the centre, and points per branch.
+ *
+ * In the target picture one hub organises the whole area: its rays do not end
+ * as single lines but split, thin out and reach into the regions around. A ray
+ * here is still exactly one link, drawn as before; what is added are a few fine
+ * branches off it — three off the ray, and a twig off the first two of those.
+ * They are decoration and are treated as such: never hit tested, faded out with
+ * the tissue, and grown from the curve that is already there rather than from
+ * anything in the vault, so they claim no relation that does not exist.
+ */
+export const RAY_FORKS = 5;
+export const FORK_POINTS = 8;
+/** Where along a ray the three branches leave it, before their jitter. */
+const FORK_AT: readonly number[] = [0.3, 0.5, 0.7];
+/** A branch's length as a share of the ray's chord, at the ray's start; shorter further out. */
+const FORK_LENGTH = 0.16;
+const FORK_LENGTH_RANGE = 0.1;
+/** Angle off the ray, radians: a branch leaves at 20 to 40 degrees and bends back towards it. */
+const FORK_ANGLE = 0.35;
+const FORK_ANGLE_RANGE = 0.35;
+const FORK_CURL = 0.45;
+/** Below this chord, in world units, a ray is too short to branch. */
+const FORK_MIN_CHORD = 40;
+
+/** One branch off a ray: its points, where along the ray it leaves (0 to 1), and whether it is a twig. */
+export interface RayFork {
+  readonly pts: Float64Array;
+  n: number;
+  at: number;
+  twig: boolean;
+}
+
+/**
+ * Grows the branches of one ray into `out`, which holds `RAY_FORKS` forks of
+ * `FORK_POINTS` points each. Returns how many were grown.
+ *
+ * Deterministic in `seed`. A branch stops at the silhouette: its first point
+ * outside ends it, so no branch leaves the tissue.
+ */
+export function branchRay(
+  pts: Float64Array,
+  n: number,
+  seed: string,
+  inside: ((x: number, y: number) => boolean) | null,
+  out: readonly RayFork[],
+): number {
+  if (n < 3) return 0;
+  const chord = Math.hypot(pts[(n - 1) * 2]! - pts[0]!, pts[(n - 1) * 2 + 1]! - pts[1]!);
+  if (!(chord >= FORK_MIN_CHORD)) return 0;
+
+  const grow = (
+    fork: RayFork,
+    x0: number,
+    y0: number,
+    dx: number,
+    dy: number,
+    length: number,
+    side: number,
+    angle: number,
+  ): void => {
+    // Leave at `angle` to the side, then curl back towards the ray's direction.
+    let a = Math.atan2(dy, dx) + side * angle;
+    const turn = (-side * angle * FORK_CURL) / (FORK_POINTS - 1);
+    const step = length / (FORK_POINTS - 1);
+    let x = x0;
+    let y = y0;
+    fork.pts[0] = x;
+    fork.pts[1] = y;
+    let used = 1;
+    for (let k = 1; k < FORK_POINTS; k += 1) {
+      x += Math.cos(a) * step;
+      y += Math.sin(a) * step;
+      a += turn;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || (inside !== null && !inside(x, y))) break;
+      fork.pts[k * 2] = x;
+      fork.pts[k * 2 + 1] = y;
+      used += 1;
+    }
+    fork.n = used;
+  };
+
+  let count = 0;
+  const side0 = unit(seed, 'fork-side') < 0.5 ? 1 : -1;
+  for (let f = 0; f < FORK_AT.length && count < out.length; f += 1) {
+    const t = Math.min(0.85, Math.max(0.15, FORK_AT[f]! + (unit(seed, `fork-at-${f}`) - 0.5) * 0.12));
+    const i = Math.max(1, Math.min(n - 2, Math.round(t * (n - 1))));
+    const dx = pts[(i + 1) * 2]! - pts[(i - 1) * 2]!;
+    const dy = pts[(i + 1) * 2 + 1]! - pts[(i - 1) * 2 + 1]!;
+    if (Math.hypot(dx, dy) === 0) continue;
+    // Alternating sides, starting on a side of the ray's own choosing.
+    const side = side0 * (f % 2 === 0 ? 1 : -1);
+    const length = chord * (FORK_LENGTH + FORK_LENGTH_RANGE * unit(seed, `fork-length-${f}`)) * (1 - t * 0.45);
+    const angle = FORK_ANGLE + FORK_ANGLE_RANGE * unit(seed, `fork-angle-${f}`);
+    const fork = out[count]!;
+    fork.at = i / (n - 1);
+    fork.twig = false;
+    grow(fork, pts[i * 2]!, pts[i * 2 + 1]!, dx, dy, length, side, angle);
+    if (fork.n < 2) continue;
+    count += 1;
+
+    // A twig off the first two branches, to the other side: the ray splits twice.
+    if (f < 2 && count < out.length && fork.n >= 4) {
+      const j = Math.floor(fork.n * 0.55);
+      const tx = fork.pts[j * 2]! - fork.pts[(j - 1) * 2]!;
+      const ty = fork.pts[j * 2 + 1]! - fork.pts[(j - 1) * 2 + 1]!;
+      const twig = out[count]!;
+      twig.at = fork.at;
+      twig.twig = true;
+      grow(twig, fork.pts[j * 2]!, fork.pts[j * 2 + 1]!, tx, ty, length * 0.45, -side, angle * 1.1);
+      if (twig.n >= 2) count += 1;
+    }
+  }
+  return count;
 }

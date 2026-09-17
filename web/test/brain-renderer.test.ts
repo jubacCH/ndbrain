@@ -98,6 +98,9 @@ const edge = (alpha: number, y: number): SceneEdge => {
     colour: TISSUE,
     depth: 1,
     strands: false,
+    radiant: 0,
+    warm: 0,
+    warmColour: [0, 0, 0],
   };
 };
 
@@ -105,6 +108,7 @@ const sceneWith = (edges: SceneEdge[]): Scene => ({
   nodes: [],
   order: [],
   edges,
+  forks: [],
   sparks: [],
   labels: [],
   regions: [],
