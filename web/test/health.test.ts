@@ -50,12 +50,15 @@ describe('brain health', () => {
     expect(brainHealth({ notes: 3, orphans: 99, broken: 99, untagged: 99, conflicts: 99 }).score).toBe(0);
   });
 
-  it('leaves untagged out where tagging is not a convention, and rescales the rest', () => {
-    const health = brainHealth({ ...clean, untagged: null, orphans: 10 });
-    expect(health.parts.map((p) => p.key)).toEqual(['orphans', 'broken', 'conflicts']);
-    // 0.3 / 0.8 = 0.375 → 10 % of it is 3.75 points.
-    expect(health.parts[0]!.weight).toBeCloseTo(0.375, 10);
-    expect(health.score).toBe(96);
+  it('gives the same score whether or not tagging is known to be unused', () => {
+    // The server reports zero untagged where tags are not a convention, so both
+    // views must land on the same number from the same findings.
+    const known = brainHealth({ ...clean, untagged: null, orphans: 10 });
+    const unknown = brainHealth({ ...clean, untagged: 0, orphans: 10 });
+    expect(known.score).toBe(unknown.score);
+    expect(known.score).toBe(97);
+    expect(known.parts.find((p) => p.key === 'untagged')!.applies).toBe(false);
+    expect(unknown.parts.find((p) => p.key === 'untagged')!.applies).toBe(true);
   });
 
   it('keeps the base weights summing to one', () => {

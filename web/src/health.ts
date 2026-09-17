@@ -18,10 +18,13 @@
  * links are counted as links, and a vault can hold more of them than notes —
  * one category may take its whole weight, never more.
  *
- * "Untagged" applies only where tagging is a convention (see the server's
- * `Queries.tagsInUse`). Where it is not, the category is left out and the
- * remaining weights are scaled back up to 1, so a vault that files by folder is
- * not marked down for something it never meant to do.
+ * "Untagged" is a finding only where tagging is a convention (see the server's
+ * `Queries.tagsInUse`), and the server already reports zero where it is not.
+ * The weights are *not* rescaled in that case: the score must come out the same
+ * whether or not the caller knows about the convention — the home view does,
+ * the tidy view only approximates it — and a category that finds nothing costs
+ * nothing either way. The part is still returned, marked `applies: false`, so a
+ * view can say "not used" instead of "none".
  *
  * "Untouched" is deliberately not part of it. A note nobody has edited in a
  * year may be finished rather than neglected, and a score that falls simply
@@ -50,7 +53,7 @@ export interface HealthInput {
   orphans: number;
   /** Broken links — links, not notes. */
   broken: number;
-  /** `null` where tagging is not a convention in this vault. */
+  /** `null` where tagging is not a convention in this vault: counts as zero. */
   untagged: number | null;
   conflicts: number;
 }
@@ -60,8 +63,9 @@ export interface HealthPart {
   count: number;
   /** `findings / notes`, capped at 1. */
   share: number;
-  /** The weight after scaling over the applicable categories. */
   weight: number;
+  /** False only for untagged, where tagging is not a convention. */
+  applies: boolean;
   /** Points this category takes off 100, unrounded. */
   cost: number;
 }
@@ -69,34 +73,37 @@ export interface HealthPart {
 export interface Health {
   /** 0–100, or `null` for an empty vault, which has nothing to be healthy about. */
   score: number | null;
-  /** Only the categories that apply, in `HEALTH_ORDER`. */
+  /** Every category, in `HEALTH_ORDER`. */
   parts: HealthPart[];
 }
 
 const finite = (n: number): number => (Number.isFinite(n) && n > 0 ? n : 0);
 
 export function brainHealth(input: HealthInput): Health {
-  const counts: Record<HealthKey, number | null> = {
+  const counts: Record<HealthKey, number> = {
     orphans: finite(input.orphans),
     broken: finite(input.broken),
-    untagged: input.untagged === null ? null : finite(input.untagged),
+    untagged: input.untagged === null ? 0 : finite(input.untagged),
     conflicts: finite(input.conflicts),
   };
-
-  const applicable = HEALTH_ORDER.filter((key) => counts[key] !== null);
-  const total = applicable.reduce((sum, key) => sum + HEALTH_WEIGHTS[key], 0);
   const notes = finite(input.notes);
 
-  const parts = applicable.map((key): HealthPart => {
-    const count = counts[key] ?? 0;
+  const parts = HEALTH_ORDER.map((key): HealthPart => {
+    const count = counts[key];
     const share = notes === 0 ? 0 : Math.min(1, count / notes);
-    const weight = HEALTH_WEIGHTS[key] / total;
-    return { key, count, share, weight, cost: 100 * weight * share };
+    const weight = HEALTH_WEIGHTS[key];
+    return {
+      key,
+      count,
+      share,
+      weight,
+      applies: !(key === 'untagged' && input.untagged === null),
+      cost: 100 * weight * share,
+    };
   });
 
   if (notes === 0) return { score: null, parts };
 
   const lost = parts.reduce((sum, part) => sum + part.cost, 0);
-  const score = Math.round(100 - lost);
-  return { score: Math.max(0, Math.min(100, score)), parts };
+  return { score: Math.max(0, Math.min(100, Math.round(100 - lost))), parts };
 }
