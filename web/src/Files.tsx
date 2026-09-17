@@ -21,13 +21,28 @@ import { useMemo, useRef, useState } from 'react';
 import { copy } from './copy';
 
 import { api, type FileRow } from './api';
+import { SpaceIcon } from './icons';
 import { displayName } from './Tree';
+
+/** A vault the browser can show: the caller's own, or a space they are a member of. */
+export interface FilesVault {
+  id: string;
+  label: string;
+  space: boolean;
+}
 
 export interface FilesProps {
   files: FileRow[];
   dirs: string[];
   truncated: boolean;
   owner: string;
+  /** Every vault on offer, own first. The picker is shown only when there is more than one. */
+  vaults?: readonly FilesVault[];
+  onVault?: (owner: string) => void;
+  /** Whether a file may be written at this path; defaults to yes, for the caller's own vault. */
+  mayWrite?: (path: string) => boolean;
+  /** Whether files may be added to this folder. */
+  mayAddTo?: (dir: string) => boolean;
   busy: boolean;
   /** Where we are in the vault; `''` is the root. */
   dir: string;
@@ -66,6 +81,10 @@ export function FilesView({
   dirs,
   truncated,
   owner,
+  vaults = [],
+  onVault,
+  mayWrite = () => true,
+  mayAddTo = () => true,
   busy,
   dir,
   onDir,
@@ -101,9 +120,15 @@ export function FilesView({
 
   const crumbs = dir === '' ? [] : dir.split('/');
 
+  const current = vaults.find((vault) => vault.id === owner);
+  // Export zips the caller's own vault on the server, never a share.
+  const own = vaults.length === 0 || vaults[0]?.id === owner;
+  const addable = mayAddTo(dir);
+
   const drop = (event: React.DragEvent): void => {
     event.preventDefault();
     setDragging(false);
+    if (!addable) return;
     const dropped = [...(event.dataTransfer?.files ?? [])];
     if (dropped.length > 0) onUpload(dropped, dir);
   };
@@ -114,7 +139,7 @@ export function FilesView({
       data-dragging={dragging}
       onDragOver={(event) => {
         event.preventDefault();
-        setDragging(true);
+        if (addable) setDragging(true);
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={drop}
@@ -125,10 +150,35 @@ export function FilesView({
         {truncated && <strong>{copy.files.capped}</strong>}
       </p>
 
+      {vaults.length > 1 && onVault !== undefined && (
+        <label className="files-vault">
+          <span>{copy.files.vaultPicker}</span>
+          <select
+            value={owner}
+            onChange={(event) => {
+              onDir('');
+              onVault(event.target.value);
+            }}
+          >
+            {vaults.map((vault) => (
+              <option key={vault.id} value={vault.id}>
+                {vault.space ? copy.files.spaceOption(vault.label) : copy.files.ownVault}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <div className="files-bar">
         <nav className="crumbs" aria-label={copy.files.folderLabel}>
           <button type="button" onClick={() => onDir('')} disabled={dir === ''}>
-            {copy.files.vault}
+            {current?.space === true ? (
+              <>
+                <SpaceIcon size={13} /> {current.label}
+              </>
+            ) : (
+              copy.files.vault
+            )}
           </button>
           {crumbs.map((segment, i) => (
             <button
@@ -143,14 +193,18 @@ export function FilesView({
         </nav>
 
         <div className="files-actions">
-          <button type="button" onClick={() => importRef.current?.click()} disabled={busy}>
-            {copy.files.import}
-          </button>
+          {addable && (
+            <button type="button" onClick={() => importRef.current?.click()} disabled={busy}>
+              {copy.files.import}
+            </button>
+          )}
           {/* An ordinary link, not a fetch: the browser saves the stream as it
               arrives instead of the page holding an entire vault in memory. */}
-          <a className="btn" href={api.exportUrl()} download>
-            {copy.files.downloadAll}
-          </a>
+          {own && (
+            <a className="btn" href={api.exportUrl()} download>
+              {copy.files.downloadAll}
+            </a>
+          )}
         </div>
       </div>
 
@@ -229,24 +283,28 @@ export function FilesView({
                     <a href={api.fileUrl(owner, file.path)} download={name}>
                       {copy.files.download}
                     </a>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setReplacing(file.path);
-                        replaceRef.current?.click();
-                      }}
-                      disabled={busy}
-                    >
-                      {copy.files.replace}
-                    </button>
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={() => onDelete(file)}
-                      disabled={busy}
-                    >
-                      {copy.files.delete}
-                    </button>
+                    {mayWrite(file.path) && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReplacing(file.path);
+                            replaceRef.current?.click();
+                          }}
+                          disabled={busy}
+                        >
+                          {copy.files.replace}
+                        </button>
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => onDelete(file)}
+                          disabled={busy}
+                        >
+                          {copy.files.delete}
+                        </button>
+                      </>
+                    )}
                   </td>
                 </tr>
               );

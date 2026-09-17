@@ -2653,6 +2653,14 @@ td.n,
  * sees it, so it is laid out as a table: names, kinds and sizes are things you
  * compare down a column. */
 
+.files-vault {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  font-size: var(--t-sm);
+}
+
 .files-bar {
   display: flex;
   align-items: center;

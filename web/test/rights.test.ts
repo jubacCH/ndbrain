@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Share } from '../src/api';
-import { covers, mayChange, mayRead, mayShare } from '../src/rights';
+import { covers, mayChange, mayChangeFolder, mayRead, mayShare } from '../src/rights';
 
 function share(kind: Share['kind'], prefix: string, canWrite = true, owner = 'anna'): Share {
   return { id: `${kind}:${prefix}`, owner, prefix, grantee: 'julian', canWrite, createdAt: 0, kind };
@@ -85,5 +85,24 @@ describe('who may share a note', () => {
   it('is an administrator inside a space, and nobody else there', () => {
     expect(mayShare({ id: 'julian', role: 'admin' }, 'familie', 'space')).toBe(true);
     expect(mayShare({ id: 'julian', role: 'user' }, 'familie', 'space')).toBe(false);
+  });
+});
+
+describe('adding files to a folder', () => {
+  const inSpace = (kind: Share['kind'], prefix: string, canWrite = true): Share => share(kind, prefix, canWrite, 'familie');
+
+  it('is allowed at and below a writable folder share, and in the own vault anywhere', () => {
+    expect(mayChangeFolder('julian', [], 'julian', '')).toBe(true);
+    expect(mayChangeFolder('julian', [inSpace('folder', 'Ferien/')], 'familie', 'Ferien')).toBe(true);
+    expect(mayChangeFolder('julian', [inSpace('folder', 'Ferien/')], 'familie', 'Ferien/2026')).toBe(true);
+    expect(mayChangeFolder('julian', [inSpace('vault', '')], 'familie', '')).toBe(true);
+  });
+
+  it('is refused beside it, above it, read-only, and through a note share spelled like the folder', () => {
+    expect(mayChangeFolder('julian', [inSpace('folder', 'Ferien/')], 'familie', '')).toBe(false);
+    expect(mayChangeFolder('julian', [inSpace('folder', 'Ferien/')], 'familie', 'Ferien2')).toBe(false);
+    expect(mayChangeFolder('julian', [inSpace('folder', 'Ferien/', false)], 'familie', 'Ferien')).toBe(false);
+    expect(mayChangeFolder('julian', [inSpace('note', 'Ferien/Plan.md')], 'familie', 'Ferien/Plan.md')).toBe(false);
+    expect(mayChangeFolder('julian', [inSpace('folder', 'Ferien/')], 'verein', 'Ferien')).toBe(false);
   });
 });

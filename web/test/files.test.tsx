@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Boundary } from '../src/Boundary';
 import { FilesView, humanSize } from '../src/Files';
 import type { FileRow } from '../src/api';
+import { copy } from '../src/copy';
 
 function file(path: string, size = 100, isNote = path.endsWith('.md')): FileRow {
   return { owner: 'julian', path, size, mtimeMs: 1_700_000_000_000, isNote };
@@ -50,6 +51,51 @@ function renderFiles(props: Partial<Parameters<typeof FilesView>[0]> = {}) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe('a space in the file browser', () => {
+  const VAULTS = [
+    { id: 'julian', label: 'julian', space: false },
+    { id: 'familie', label: 'Familie Bachmann', space: true },
+  ];
+
+  it('offers the spaces beside the own vault, by display name, and switches to the root of one', async () => {
+    const onVault = vi.fn();
+    const handlers = renderFiles({ vaults: VAULTS, onVault, dir: '20_Areas' });
+    const picker = screen.getByLabelText(copy.files.vaultPicker);
+    expect(within(picker).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      copy.files.ownVault,
+      copy.files.spaceOption('Familie Bachmann'),
+    ]);
+    await userEvent.selectOptions(picker, 'familie');
+    expect(onVault).toHaveBeenCalledWith('familie');
+    expect(handlers.onDir).toHaveBeenCalledWith('');
+  });
+
+  it('shows no picker when there is only the own vault', () => {
+    renderFiles({ vaults: VAULTS.slice(0, 1), onVault: vi.fn() });
+    expect(screen.queryByLabelText(copy.files.vaultPicker)).toBeNull();
+  });
+
+  it('offers only what the membership allows: no import, replace or delete where it cannot write, no export of a space', () => {
+    renderFiles({
+      owner: 'familie',
+      vaults: VAULTS,
+      onVault: vi.fn(),
+      dir: '20_Areas/21_Homelab',
+      mayWrite: (path) => path.endsWith('.png'),
+      mayAddTo: () => false,
+    });
+    expect(screen.getByRole('button', { name: /Familie Bachmann/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: copy.files.import })).toBeNull();
+    expect(screen.queryByRole('link', { name: copy.files.downloadAll })).toBeNull();
+    const rows = screen.getAllByRole('row').slice(1);
+    const proxmox = rows.find((row) => row.textContent?.includes('Proxmox.md'))!;
+    const rack = rows.find((row) => row.textContent?.includes('rack.png'))!;
+    expect(within(proxmox).queryByRole('button', { name: copy.files.delete })).toBeNull();
+    expect(within(proxmox).getByRole('link', { name: copy.files.download })).toBeInTheDocument();
+    expect(within(rack).getByRole('button', { name: copy.files.delete })).toBeInTheDocument();
+  });
 });
 
 describe('sizes', () => {

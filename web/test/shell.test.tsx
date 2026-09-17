@@ -50,6 +50,20 @@ vi.mock('../src/Brain', async () => {
 // The whole shell, over a server that is a handful of functions. The editor and
 // the context panel have their own tests and nothing to show here.
 vi.mock('../src/Editor', () => ({ Editor: () => <div data-testid="editor" /> }));
+
+// The view a shell starts in, forced for one test: a state no stored preference
+// can produce, for checking what the shell does when it is in it anyway.
+const forcedStart = vi.hoisted(() => ({ view: null as string | null }));
+vi.mock('../src/prefs', async (original) => {
+  const real = await original<typeof import('../src/prefs')>();
+  return {
+    ...real,
+    loadPrefs: () => {
+      const prefs = real.loadPrefs();
+      return forcedStart.view === null ? prefs : { ...prefs, startView: forcedStart.view as typeof prefs.startView };
+    },
+  };
+});
 vi.mock('../src/Context', () => ({ ContextPanel: () => <div /> }));
 
 const server = vi.hoisted(() => ({
@@ -218,6 +232,7 @@ afterEach(() => {
   server.owners = [];
   server.sharedWritable = false;
   server.adminCalls = [];
+  forcedStart.view = null;
 });
 
 describe('the sidebar', () => {
@@ -611,6 +626,20 @@ describe('the shell, signed in', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.queryByRole('region', { name: copy.spaces.title })).toBeNull();
     expect(screen.queryByLabelText(copy.spaces.accountName)).toBeNull();
+    expect(server.adminCalls).toEqual([]);
+  });
+
+  it('draws nothing of the administration for an account that is not an administrator, even in its view', async () => {
+    // However the shell came to be on the admin view — an account demoted while
+    // the page was open, a state restored from somewhere — the role decides.
+    forcedStart.view = 'admin';
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await screen.findByRole('button', { name: copy.shell.account });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.queryByRole('heading', { name: copy.admin.accounts })).toBeNull();
+    expect(screen.queryByRole('region', { name: copy.spaces.title })).toBeNull();
     expect(server.adminCalls).toEqual([]);
   });
 
