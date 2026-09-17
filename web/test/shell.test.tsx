@@ -59,6 +59,12 @@ const server = vi.hoisted(() => ({
   failOpen: false,
   /** When set, the graph answers only once this settles. */
   graphGate: null as Promise<void> | null,
+  /** Vaults the tree names, with their kind; spaces' notes are visible to everybody. */
+  owners: [] as Array<{ id: string; kind: 'person' | 'space'; displayName: string }>,
+  /** Whether `Shared/` notes of other people open writable. */
+  sharedWritable: false,
+  /** Every admin call the shell made, by name. */
+  adminCalls: [] as string[],
 }));
 
 vi.mock('../src/api', async (original) => {
@@ -70,8 +76,12 @@ vi.mock('../src/api', async (original) => {
     real.reportUnauthenticated();
     throw new real.ApiError(401, 'unauthenticated', 'sign in first');
   };
+  const isSpace = (owner: string): boolean => server.owners.some((o) => o.id === owner && o.kind === 'space');
   const seen = (): NoteRow[] =>
-    server.notes.filter((n) => server.signedIn !== null && (n.owner === server.signedIn.id || n.path.startsWith('Shared/')));
+    server.notes.filter(
+      (n) =>
+        server.signedIn !== null && (n.owner === server.signedIn.id || n.path.startsWith('Shared/') || isSpace(n.owner)),
+    );
   const fake: Record<string, (...args: never[]) => Promise<unknown>> = {
     me: async () => {
       if (server.signedIn === null) await unauthenticated();
@@ -87,7 +97,23 @@ vi.mock('../src/api', async (original) => {
     },
     tree: async () => {
       if (server.signedIn === null) await unauthenticated();
-      return { notes: seen(), dirs: [] };
+      return server.owners.length === 0 ? { notes: seen(), dirs: [] } : { notes: seen(), dirs: [], owners: server.owners };
+    },
+    adminSpaces: async () => {
+      server.adminCalls.push('adminSpaces');
+      return [{ id: 'familie', displayName: 'Familie', disabled: false, noteCount: 1, members: 2 }];
+    },
+    adminUsers: async () => {
+      server.adminCalls.push('adminUsers');
+      return { users: [] };
+    },
+    adminKeys: async () => {
+      server.adminCalls.push('adminKeys');
+      return { keys: [] };
+    },
+    spaceMembers: async () => {
+      server.adminCalls.push('spaceMembers');
+      return [];
     },
     tidy: async () => ({
       orphans: [],
@@ -128,7 +154,7 @@ vi.mock('../src/api', async (original) => {
       if (server.failOpen || row === undefined) throw new real.ApiError(404, 'not_found', 'gone');
       return {
         owner,
-        canWrite: owner === server.signedIn?.id,
+        canWrite: owner === server.signedIn?.id || (server.sharedWritable && path.startsWith('Shared/')),
         note: { path, title: row.title, content: '', size: 0, mtimeMs: 0 },
       };
     },
@@ -189,6 +215,9 @@ afterEach(() => {
   window.localStorage.clear();
   vi.unstubAllGlobals();
   server.graphGate = null;
+  server.owners = [];
+  server.sharedWritable = false;
+  server.adminCalls = [];
 });
 
 describe('the sidebar', () => {
@@ -559,6 +588,88 @@ describe('the shell, signed in', () => {
     expect(entry).toHaveAttribute('aria-current', 'true');
     expect(document.querySelector('.app')).toHaveAttribute('data-busy', 'false');
     server.graphGate = null;
+  });
+
+  it('never draws or asks for the spaces administration for an account that is not an administrator', async () => {
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await userEvent.click(await screen.findByRole('button', { name: copy.shell.account }));
+    // Should the entry ever be drawn by mistake, following it must still show nothing.
+    const entry = screen.queryByRole('menuitem', { name: copy.nav.admin });
+    await userEvent.click(entry ?? screen.getByRole('menuitem', { name: copy.nav.settings }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole('region', { name: copy.spaces.title })).toBeNull();
+    expect(screen.queryByLabelText(copy.spaces.accountName)).toBeNull();
+    expect(server.adminCalls).toEqual([]);
+  });
+
+  it('shows an administrator the spaces in the administration', async () => {
+    mount({ id: 'julian', displayName: 'Julian', role: 'admin' });
+    await userEvent.click(await screen.findByRole('button', { name: copy.shell.account }));
+    await userEvent.click(screen.getByRole('menuitem', { name: copy.nav.admin }));
+    const section = await screen.findByRole('region', { name: copy.spaces.title });
+    expect(await within(section).findByText('Familie')).toBeInTheDocument();
+    expect(server.adminCalls).toContain('adminSpaces');
+  });
+
+  it('offers “Share…” among the note actions of your own note, and opens the dialog', async () => {
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await openFromPalette('Julian only');
+    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
+    expect(screen.getByRole('menuitem', { name: copy.note.delete })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('menuitem', { name: copy.shareNote.menu }));
+    expect(await screen.findByRole('dialog', { name: copy.shareNote.title('Julian only') })).toBeInTheDocument();
+  });
+
+  it('offers no “Share…” on somebody else’s note, even one you may write', async () => {
+    server.sharedWritable = true;
+    mount({ id: 'julian', displayName: 'Julian', role: 'admin' });
+    await openFromPalette('Salary review');
+    await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
+    expect(screen.getByRole('menuitem', { name: copy.note.delete })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: copy.shareNote.menu })).toBeNull();
+    // Nor in the tree beside it.
+    expect(screen.queryByRole('button', { name: copy.tree.shareNoteLabel('Salary review') })).toBeNull();
+  });
+
+  describe('with a space', () => {
+    function withSpace(): void {
+      server.owners = [
+        { id: 'julian', kind: 'person', displayName: 'Julian' },
+        { id: 'familie', kind: 'space', displayName: 'Familie' },
+      ];
+    }
+
+    async function mountWithSpace(role: 'user' | 'admin'): Promise<void> {
+      withSpace();
+      mount({ id: 'julian', displayName: 'Julian', role });
+      server.notes.push(row('familie', 'Ferien.md'));
+      await client!.invalidateQueries();
+    }
+
+    it('says whose note is open by the space’s name, and that it is read only', async () => {
+      await mountWithSpace('user');
+      await openFromPalette('Ferien');
+      expect(await screen.findByText(`Familie · ${copy.note.readOnly}`)).toBeInTheDocument();
+      // A read-only space note has nothing to offer a member who is no administrator.
+      expect(screen.queryByRole('button', { name: copy.note.actions })).toBeNull();
+    });
+
+    it('draws the space as its own root in the tree, under its display name', async () => {
+      await mountWithSpace('user');
+      const heading = await screen.findByRole('heading', { name: /^Familie/ });
+      expect(heading.closest('section')).toHaveAttribute('data-kind', 'space');
+    });
+
+    it('lets an administrator share a note of the space, through its members', async () => {
+      await mountWithSpace('admin');
+      await openFromPalette('Ferien');
+      await userEvent.click(screen.getByRole('button', { name: copy.note.actions }));
+      expect(screen.queryByRole('menuitem', { name: copy.note.delete })).toBeNull();
+      await userEvent.click(screen.getByRole('menuitem', { name: copy.shareNote.menu }));
+      const dialog = await screen.findByRole('dialog', { name: copy.shareNote.title('Ferien') });
+      expect(within(dialog).getByText(copy.shareNote.inSpace('Familie'), { exact: false })).toBeInTheDocument();
+      await waitFor(() => expect(server.adminCalls).toContain('spaceMembers'));
+    });
   });
 
   it('offers the admin entry to an administrator', async () => {
