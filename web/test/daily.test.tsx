@@ -300,13 +300,17 @@ describe('opening today from the shell', () => {
     at('2026-09-17T10:00:00Z');
     await renderApp();
 
+    // Without the shift it is somebody else's key: the browser's bookmark, the
+    // editor's next occurrence.
+    fireEvent.keyDown(window, { key: 'd', code: 'KeyD', metaKey: true });
+    fireEvent.keyDown(window, { key: 'd', code: 'KeyD', ctrlKey: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId('editor')).toBeNull();
+    expect(server.ensureCalls).toHaveLength(0);
+
     fireEvent.keyDown(window, { key: 'd', code: 'KeyD', ctrlKey: true, shiftKey: true });
     await screen.findByTestId('editor');
     expect(server.ensureCalls.map((call) => call.path)).toEqual(['50_Journal/2026/09/2026-09-17.md']);
-
-    // Without the shift it is somebody else's key.
-    fireEvent.keyDown(window, { key: 'd', code: 'KeyD', metaKey: true });
-    expect(server.ensureCalls).toHaveLength(1);
   });
 
   it('is a command in the palette', async () => {
