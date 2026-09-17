@@ -418,6 +418,32 @@ export const AdminUser = z.object({
 
 export const AdminUsersResponse = z.object({ users: z.array(AdminUser) });
 
+/**
+ * A shared vault nobody signs in to. `members` counts its shares; the shares
+ * themselves come from `/admin/spaces/:id/members`.
+ */
+export const AdminSpace = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  disabled: z.boolean(),
+  noteCount: z.number(),
+  members: z.number(),
+});
+
+/** A bare list, as the contract names it. */
+export const AdminSpacesResponse = z.array(AdminSpace);
+
+export const CreateSpaceRequest = z
+  .object({ id: UserId, displayName: z.string().min(1).max(64).optional() })
+  .strict();
+
+export const UpdateSpaceRequest = z
+  .object({ displayName: z.string().min(1).max(64).optional(), disabled: z.boolean().optional() })
+  .strict();
+
+/** The members of a space: shares whose owner is the space. */
+export const SpaceMembersResponse = z.array(Share);
+
 export const CreateUserRequest = z
   .object({
     id: UserId,
@@ -575,6 +601,7 @@ export type ActivityDay = z.infer<typeof ActivityDay>;
 export type FileRow = z.infer<typeof FileRow>;
 export type UserSettings = z.infer<typeof UserSettings>;
 export type AdminUser = z.infer<typeof AdminUser>;
+export type AdminSpace = z.infer<typeof AdminSpace>;
 export type ApiKey = z.infer<typeof ApiKey>;
 export type Version = z.infer<typeof Version>;
 export type TopicProposal = z.infer<typeof TopicProposal>;
