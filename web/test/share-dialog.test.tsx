@@ -26,6 +26,7 @@ const GRANTED = [
   share('s1', 'note', 'Projekt/Plan.md', 'anna', true),
   share('s2', 'note', 'Projekt/Plan.md.bak', 'bert'),
   share('s3', 'note', 'Projekt/Plan2.md', 'carla'),
+  share('s8', 'note', 'Projekt/Plan', 'hanna'),
   share('s4', 'folder', 'Projekt/', 'dora'),
   share('s5', 'folder', 'Projekte/', 'emil'),
   share('s6', 'vault', '', 'finn'),
@@ -67,7 +68,7 @@ describe('sharing a note of your own', () => {
     const exact = within(own).getAllByRole('list')[0]!;
 
     expect(within(exact).getByText('anna')).toBeInTheDocument();
-    for (const name of ['bert', 'carla', 'gina']) expect(within(own).queryByText(name)).toBeNull();
+    for (const name of ['bert', 'carla', 'gina', 'hanna']) expect(within(own).queryByText(name)).toBeNull();
   });
 
   it('shows the folder and vault shares that reach the note, without a way to withdraw them here', () => {
