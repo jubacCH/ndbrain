@@ -144,9 +144,11 @@ function renderSidebar(props: Partial<SidebarProps> = {}) {
     onNewNote: vi.fn(),
     onNewFolder: vi.fn(),
     onSettings: vi.fn(),
+    onToday: vi.fn(),
   };
   render(
     <Sidebar
+      onTodayNote={false}
       name="Julian"
       view="brain"
       collapsed={false}

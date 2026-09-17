@@ -23,6 +23,7 @@ import { refKey, type NoteRow } from './api';
 import { copy } from './copy';
 import {
   BrainIcon,
+  CalendarIcon,
   CloseIcon,
   CollapseIcon,
   FileIcon,
@@ -34,13 +35,15 @@ import {
   SearchIcon,
   SparkleIcon,
   TasksIcon,
+  TodayIcon,
 } from './icons';
 
 /** The views the sidebar navigates between. */
-export type NavView = 'overview' | 'brain' | 'tidy' | 'tasks' | 'search' | 'files';
+export type NavView = 'overview' | 'journal' | 'brain' | 'tidy' | 'tasks' | 'search' | 'files';
 
 const ENTRIES: Array<{ view: NavView; label: string; icon: ReactNode }> = [
   { view: 'overview', label: copy.nav.overview, icon: <HomeIcon /> },
+  { view: 'journal', label: copy.nav.journal, icon: <CalendarIcon /> },
   { view: 'brain', label: copy.nav.network, icon: <NetworkIcon /> },
   { view: 'tidy', label: copy.nav.tidy, icon: <SparkleIcon /> },
   { view: 'tasks', label: copy.nav.tasks, icon: <TasksIcon /> },
@@ -79,6 +82,10 @@ export interface SidebarProps {
   onNewNote: () => void;
   onNewFolder: () => void;
   onSettings: () => void;
+  /** Opens today's daily note, creating it if needed. */
+  onToday: () => void;
+  /** Whether the note on screen is today's daily note. */
+  onTodayNote: boolean;
 }
 
 export function Sidebar({
@@ -100,6 +107,8 @@ export function Sidebar({
   onNewNote,
   onNewFolder,
   onSettings,
+  onToday,
+  onTodayNote,
 }: SidebarProps): React.JSX.Element {
   const filterInput = useRef<HTMLInputElement>(null);
 
@@ -147,6 +156,28 @@ export function Sidebar({
         a note. The way back to a note you stepped away from is the recents
         list below.
       */}
+      {/*
+        Today's note is an action, not a view: it opens (and if need be starts)
+        one note. So it stands above the views rather than among them, and
+        stays a single click in the folded sidebar too.
+      */}
+      <div className="nav-views nav-today">
+        <button
+          type="button"
+          aria-current={onTodayNote}
+          title={collapsed ? `${copy.nav.todayHint} (${copy.journal.shortcut})` : copy.nav.todayHint}
+          aria-label={copy.nav.todayHint}
+          aria-keyshortcuts="Meta+Shift+D Control+Shift+D"
+          onClick={onToday}
+        >
+          <TodayIcon />
+          <span className="nav-label">{copy.nav.today}</span>
+          <kbd className="nav-label nav-today-kbd" aria-hidden="true">
+            {copy.journal.shortcut}
+          </kbd>
+        </button>
+      </div>
+
       <div className="nav-views" role="group" aria-label={copy.nav.view}>
         {ENTRIES.map((entry) => (
           <button

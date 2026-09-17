@@ -16,13 +16,15 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 import { api, refKey, type ActivityDay, type NoteRow, type Overview, type TaskRow } from './api';
 import { copy } from './copy';
 import { HealthCard } from './Health';
 import type { HealthKey } from './healthScore';
-import { NetworkIcon } from './icons';
+import { ChevronIcon, ChevronLeftIcon, NetworkIcon, TodayIcon } from './icons';
+import { dayName } from './Journal';
+import { addDays, isoDate, journalPath, localDate, notesPreview, type JournalDate } from './daily';
 import { relativeTime } from './network/relativeTime';
 import { displayPath } from './Tree';
 
@@ -64,6 +66,10 @@ export interface HomeProps {
   onTasks: () => void;
   onTidy: (focus?: HealthKey | 'stale') => void;
   onNetwork: () => void;
+  /** ISO dates of the days with a daily note in the caller's own vault. */
+  journalDays: ReadonlySet<string>;
+  /** Opens a day's note, creating it if it is not there. */
+  onOpenDay: (date: JournalDate) => void;
 }
 
 export function HomeView(props: HomeProps): React.JSX.Element {
@@ -98,6 +104,8 @@ export function HomeView(props: HomeProps): React.JSX.Element {
           the stacks dissolve and `order` in the stylesheet interleaves them. */}
       <div className="home-grid">
         <div className="home-stack home-main">
+        <DailyCard self={self} days={props.journalDays} now={now} onOpenDay={props.onOpenDay} />
+
         <Continue
           recents={props.recents}
           edited={overview.recent}
@@ -149,6 +157,119 @@ export function HomeView(props: HomeProps): React.JSX.Element {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Today's daily note, a glance at it, and the days on either side.
+ *
+ * The arrows page the card, not the app: looking at what yesterday said is a
+ * glance, and leaving the start page for it would be a detour. Opening is one
+ * click on the day. A day with no note offers to start it — for today in the
+ * words the button in the sidebar would use, for any other day by its date.
+ *
+ * The preview is read under the overview's key, so a save that marks the
+ * overview stale refreshes it too, and returning here after writing shows what
+ * was written rather than what the note said when it was first opened.
+ */
+function DailyCard({
+  self,
+  days,
+  now,
+  onOpenDay,
+}: {
+  self: string;
+  days: ReadonlySet<string>;
+  now: number;
+  onOpenDay: (date: JournalDate) => void;
+}): React.JSX.Element {
+  const [offset, setOffset] = useState(0);
+  const today = localDate(new Date(now));
+  const date = addDays(today, offset);
+  const exists = days.has(isoDate(date));
+  const path = journalPath(date);
+
+  const noteQuery = useQuery({
+    queryKey: ['overview', 'daily', self, path],
+    queryFn: () => api.getNote(self, path),
+    enabled: exists,
+    staleTime: 0,
+    retry: false,
+  });
+  const preview = exists && noteQuery.data !== undefined ? notesPreview(noteQuery.data.note.content) : null;
+  const name = dayName(date);
+
+  return (
+    <section className="tile home-daily" aria-labelledby="home-daily-title">
+      <div className="home-daily-head">
+        <p className="cap" id="home-daily-title">{copy.journal.card}</p>
+        <div className="home-daily-nav">
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label={copy.journal.previousDay}
+            title={copy.journal.previousDay}
+            onClick={() => setOffset((o) => o - 1)}
+          >
+            <ChevronLeftIcon size={16} />
+          </button>
+          {offset !== 0 && (
+            <button type="button" className="btn home-daily-today" onClick={() => setOffset(0)}>
+              {copy.journal.backToToday}
+            </button>
+          )}
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label={copy.journal.nextDay}
+            title={copy.journal.nextDay}
+            onClick={() => setOffset((o) => o + 1)}
+          >
+            <ChevronIcon size={16} />
+          </button>
+        </div>
+      </div>
+
+      {exists ? (
+        <button
+          type="button"
+          className="home-daily-open"
+          aria-label={`${copy.journal.open}: ${name}`}
+          onClick={() => onOpenDay(date)}
+        >
+          <span className="home-daily-date">
+            <TodayIcon size={16} />
+            {name}
+          </span>
+          {preview === null && !noteQuery.isError ? (
+            <span className="home-daily-lines" aria-hidden="true">
+              <span className="skel skel-row" style={{ width: '70%' }} />
+            </span>
+          ) : preview === null || preview.length === 0 ? (
+            <span className="home-daily-empty">{copy.journal.emptyNotes}</span>
+          ) : (
+            <span className="home-daily-lines">
+              {preview.map((line, i) => (
+                <span key={i} className="home-daily-line">
+                  {line}
+                </span>
+              ))}
+            </span>
+          )}
+        </button>
+      ) : (
+        <div className="home-daily-missing">
+          <span className="home-daily-date">
+            <TodayIcon size={16} />
+            {name}
+          </span>
+          <p className="empty">{copy.journal.cardNoNote}</p>
+          <button type="button" className="btn btn-solid" onClick={() => onOpenDay(date)}>
+            {offset === 0 ? copy.journal.start : copy.journal.startDay(name)}
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 

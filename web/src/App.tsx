@@ -51,7 +51,19 @@ import { AdminView } from './Admin';
 import { TopicsPanel } from './Topics';
 import { FilesView } from './Files';
 import { Login } from './Login';
-import { Palette } from './Palette';
+import { Palette, type PaletteCommand } from './Palette';
+import { JournalView } from './Journal';
+import {
+  dailyNoteTemplate,
+  isoDate,
+  journalDays as journalDaysOf,
+  journalPath,
+  localDate,
+  parseJournalLinkTarget,
+  parseJournalPath,
+  sameDate,
+  type JournalDate,
+} from './daily';
 import { Tree, displayPath, type Finding } from './Tree';
 import { SearchView, SharesView, TasksView, TidyView } from './Views';
 import { HomeView } from './Home';
@@ -88,6 +100,7 @@ export interface Filters {
 type View =
   | 'note'
   | 'overview'
+  | 'journal'
   | 'brain'
   | 'tidy'
   | 'tasks'
@@ -365,6 +378,8 @@ function Shell({
   const toggleTaskMutation = useToggleTask();
 
   const notes = treeQuery.data?.notes ?? [];
+  /** The days with a daily note, read off the tree: no request of their own. */
+  const journalDays = useMemo(() => journalDaysOf(notes, user.id), [notes, user.id]);
   const tidy = tidyQuery.data ?? null;
   const tasks = tasksQuery.data ?? null;
   const overview = overviewQuery.data ?? null;
@@ -533,6 +548,61 @@ function Shell({
     },
     [flush, client, user.id],
   );
+
+  /**
+   * Opens a day's daily note, creating it first if it is not there.
+   *
+   * Always in the caller's own vault. A daily note is personal by definition,
+   * and a share that happens to include somebody's `50_Journal` is not an
+   * invitation to start their day for them — nothing here takes an owner.
+   *
+   * Idempotent where it has to be, on the server: `ensureNote` creates the note
+   * only if it is absent and otherwise hands back what is there, so a double
+   * click, the shortcut pressed alongside the button, or a second tab can never
+   * overwrite the note or leave a conflict copy. The in-flight map only saves
+   * the duplicate request within this tab; correctness does not depend on it.
+   *
+   * The tree is consulted first so that opening an existing day costs no write
+   * request, but it is never trusted to say a day is missing: it may be a few
+   * seconds old, which is precisely the window the server-side check covers.
+   */
+  const dailyInFlight = useRef(new Map<string, Promise<void>>());
+  const openDay = useCallback(
+    (date: JournalDate): Promise<void> => {
+      const path = journalPath(date);
+      const running = dailyInFlight.current.get(path);
+      if (running !== undefined) return running;
+
+      const run = (async (): Promise<void> => {
+        fullscreenRef.current?.leave();
+        if (pending.current !== null) await flush();
+
+        const known = notes.some((note) => note.owner === user.id && note.path === path);
+        if (!known) {
+          try {
+            const result = await api.ensureNote(user.id, path, dailyNoteTemplate(date));
+            // What the server holds now — the fresh template, or a note another
+            // tab already wrote into — so the editor opens on that and not on
+            // anything this tab cached earlier.
+            client.setQueryData(keys.note(user.id, path), { note: result.note, owner: user.id, canWrite: true });
+            if (result.created) invalidate.afterStructure(client);
+          } catch (caught) {
+            setError(caught instanceof ApiError ? caught.message : copy.journal.failed);
+            return;
+          }
+        }
+        await openNote(user.id, path);
+      })();
+
+      dailyInFlight.current.set(path, run);
+      void run.finally(() => dailyInFlight.current.delete(path));
+      return run;
+    },
+    [notes, user.id, flush, client, openNote],
+  );
+
+  /** Today by the device's clock, read at the moment of asking — never cached across midnight. */
+  const openToday = useCallback((): Promise<void> => openDay(localDate(new Date())), [openDay]);
 
   /**
    * Reopens the last note, when that is what the preferences ask for.
@@ -743,6 +813,14 @@ function Shell({
     // Same vault as the note that links to it, not the caller's own: a link
     // inside somebody's shared folder means a note in *their* vault, and filling
     // the gap in yours would leave the link just as broken as before.
+    // A daily note's link to a day not written yet starts that day's note, from
+    // the template and in the journal — not an empty note named after the link
+    // beside this one. Only in your own journal; see `openDay`.
+    const day = parseJournalLinkTarget(target);
+    if (day !== null && open.owner === user.id && parseJournalPath(open.note.path) !== null) {
+      await openDay(day);
+      return;
+    }
     const folder = open.note.path.split('/').slice(0, -1).join('/');
     await createNoteAt(open.owner, folder === '' ? target : `${folder}/${target}`);
   };
@@ -932,6 +1010,24 @@ function Shell({
   }, []);
   const paletteOpenRef = useRef(paletteOpen);
   paletteOpenRef.current = paletteOpen;
+
+  // ⌘⇧D (Ctrl-Shift-D elsewhere) opens today's note. Plain ⌘D is the
+  // browser's bookmark and the editor's "select next occurrence", so the shift
+  // is what keeps this clear of both; the browsers' own ⌘⇧D (bookmark all tabs,
+  // or Safari's reading list) is taken over while the app has focus.
+  const openTodayRef = useRef(openToday);
+  openTodayRef.current = openToday;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.altKey) return;
+      if (event.key.toLowerCase() !== 'd' && event.code !== 'KeyD') return;
+      event.preventDefault();
+      setPaletteOpen(false);
+      void openTodayRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // ⌘K on a Mac, Ctrl-K elsewhere. Registered on the window so it works while
   // the editor has focus, which is where it will usually be pressed.
@@ -1306,6 +1402,16 @@ function Shell({
 
   const heading = headingOf();
 
+  const paletteCommands: PaletteCommand[] = [
+    {
+      key: 'today',
+      label: copy.palette.openToday,
+      keywords: copy.palette.openTodayKeywords,
+      shortcut: copy.journal.shortcut,
+      run: () => void openToday(),
+    },
+  ];
+
   const errorBox =
     error === null ? null : (
       <div className="floaterror" role="status">
@@ -1364,6 +1470,11 @@ function Shell({
           title: copy.nav.files,
           subtitle: files === null ? sub.loading : sub.files(files.files.length, files.dirs.length),
         };
+      case 'journal': {
+        const today = localDate(new Date());
+        const inMonth = [...journalDays].filter((day) => day.startsWith(isoDate(today).slice(0, 8))).length;
+        return { title: copy.journal.title, subtitle: sub.journal(journalDays.size, inMonth) };
+      }
       case 'settings':
         return { title: copy.nav.settings, subtitle: sub.settings };
       case 'admin':
@@ -1444,6 +1555,19 @@ function Shell({
           setDrawerOpen(false);
           void showView('settings');
         }}
+        onToday={() => {
+          setDrawerOpen(false);
+          void openToday();
+        }}
+        onTodayNote={
+          view === 'note' &&
+          open !== null &&
+          open.owner === user.id &&
+          (() => {
+            const day = parseJournalPath(open.note.path);
+            return day !== null && sameDate(day, localDate(new Date()));
+          })()
+        }
       />
 
       <div className="work">
@@ -1544,8 +1668,12 @@ function Shell({
                     void showView('tidy');
                   }}
                   onNetwork={() => void showView('brain')}
+                  journalDays={journalDays}
+                  onOpenDay={(date) => void openDay(date)}
                 />
               )}
+
+              {view === 'journal' && <JournalView days={journalDays} onOpenDay={(date) => void openDay(date)} />}
 
               {view === 'brain' &&
                 (graph === null ? (
@@ -1767,6 +1895,7 @@ function Shell({
       <Palette
         open={paletteOpen}
         self={user.id}
+        commands={paletteCommands}
         onClose={() => setPaletteOpen(false)}
         onOpenNote={(owner, path) => void openNote(owner, path)}
       />
