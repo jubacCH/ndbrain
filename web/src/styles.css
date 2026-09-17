@@ -5296,11 +5296,13 @@ th.pick input,
   white-space: nowrap;
 }
 
+/* No margin above: the page's own heading is off screen and its count line is
+   gone (the header carries both), so the cards start where any view's content
+   starts. */
 .home-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--s-4);
-  margin-top: var(--s-4);
 }
 
 /* On a phone the two stacks are not boxes at all: their tiles join the grid
