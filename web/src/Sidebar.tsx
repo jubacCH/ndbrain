@@ -34,23 +34,22 @@ import {
   NewNoteIcon,
   SearchIcon,
   SparkleIcon,
-  TasksIcon,
   TodayIcon,
 } from './icons';
 
 /** The views the sidebar navigates between. */
-export type NavView = 'overview' | 'journal' | 'brain' | 'tidy' | 'tasks' | 'search' | 'files';
+export type NavView = 'overview' | 'journal' | 'brain' | 'tidy' | 'search' | 'files';
 
 /**
  * Files is not among them: attachments are looked after now and then, not
- * reached for all day, so it sits in the account menu under Settings.
+ * reached for all day, so it sits in the account menu under Settings. Nor are
+ * tasks: they sit beside the calendar in the journal.
  */
 const ENTRIES: Array<{ view: NavView; label: string; icon: ReactNode }> = [
   { view: 'overview', label: copy.nav.overview, icon: <HomeIcon /> },
   { view: 'journal', label: copy.nav.journal, icon: <CalendarIcon /> },
   { view: 'brain', label: copy.nav.network, icon: <NetworkIcon /> },
   { view: 'tidy', label: copy.nav.tidy, icon: <SparkleIcon /> },
-  { view: 'tasks', label: copy.nav.tasks, icon: <TasksIcon /> },
   { view: 'search', label: copy.nav.search, icon: <SearchIcon /> },
 ];
 

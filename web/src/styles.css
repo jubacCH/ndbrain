@@ -5874,9 +5874,35 @@ th.pick input,
   color: var(--text-3);
 }
 
-/* The calendar. */
+/* The calendar, with the open tasks to its right. Wrapping rather than a
+   breakpoint: the room left over depends on the sidebar as much as on the
+   window, and a flex row that wraps puts the tasks under the calendar exactly
+   when there is no longer space for both. */
+.journal-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--s-5) var(--s-6);
+}
+
 .journal {
+  flex: 1 1 26rem;
+  min-width: 0;
   max-width: 46rem;
+}
+
+.journal-tasks {
+  flex: 1 1 22rem;
+  min-width: 0;
+}
+
+/* A column, not a page: the table's page-wide minimum would scroll it sideways. */
+.journal-tasks table {
+  min-width: 0;
+}
+
+.journal-tasks td {
+  overflow-wrap: anywhere;
 }
 
 .journal-head {
