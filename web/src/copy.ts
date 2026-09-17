@@ -465,6 +465,7 @@ export const copy = {
     decoration: 'cortex tissue (decoration, not notes)',
     /** The card under the pointer. */
     card: {
+      space: 'Space',
       type: 'Type',
       links: (count: number) => `${count} linked ${count === 1 ? 'note' : 'notes'}`,
       linksLabel: 'Links',

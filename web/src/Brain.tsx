@@ -39,6 +39,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import type { GraphData, PulseEvent } from './api';
 import { copy } from './copy';
+import { SpaceIcon } from './icons';
+import { ownerKind, ownerLabel, useOwners } from './owners';
 import { Activity } from './brain/activity';
 import type { Camera, Inset } from './brain/camera';
 import { between, ease, fit, limitsFor, panBy, toWorld, zoomAt } from './brain/camera';
@@ -208,6 +210,8 @@ interface Card {
   flipX: boolean;
   flipY: boolean;
   title: string;
+  /** Whose vault the note is in; a space is named on the card. */
+  owner: string;
   kind: string;
   links: number;
   folder: string;
@@ -327,6 +331,7 @@ interface Engine {
 export function Brain({ data, events, onOpen, remember, view, arrangement, inset, focus }: BrainProps): React.JSX.Element {
   const host = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
+  const owners = useOwners();
   /** Set by the frame effect, called by the reset control. */
   const home = useRef<() => void>(() => {});
   /** Set by the frame effect: selects a node and, in focus mode, glides to it. */
@@ -776,6 +781,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
           flipX,
           flipY,
           title: node.title,
+          owner: node.owner,
           kind: kind.kind === 'folder' ? kind.label : copy.network.card.kind[kind.kind],
           links: node.degree,
           folder: node.folder,
@@ -1015,6 +1021,17 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         >
           <p className="braincard-title">{card.title}</p>
           <dl>
+            {/* The brain mixes every vault into one picture; a note from a
+                space says which, by the name its members know it by. */}
+            {ownerKind(owners, card.owner) === 'space' && (
+              <>
+                <dt>{copy.network.card.space}</dt>
+                <dd className="braincard-space">
+                  <SpaceIcon size={12} />
+                  {ownerLabel(owners, card.owner)}
+                </dd>
+              </>
+            )}
             <dt>{copy.network.card.type}</dt>
             <dd>{card.kind}</dd>
             <dt>{copy.network.card.linksLabel}</dt>
