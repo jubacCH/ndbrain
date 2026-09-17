@@ -103,17 +103,22 @@ export class Vault {
    *
    * The inode alone is not enough — a filesystem hands a freed inode number to
    * the next file created, which is exactly the file that replaces a deleted
-   * note. The birth time tells those two apart. A filesystem without birth
-   * times reports zero there, which leaves the inode to decide on its own, or
-   * the change time, which moves with every write — the identity then changes
-   * more often than the file does, never less.
+   * note. The birth time tells those two apart.
+   *
+   * Where the filesystem keeps no birth time — NFS, some FUSE and SMB mounts,
+   * older tmpfs — Node reports zero, and the inode alone would decide. There
+   * the change time stands in: it moves with every write and every rename, so
+   * the identity changes more often than the file does, never less. An edit
+   * made in place from outside then withdraws a note share instead of letting
+   * a replacement inherit it; ndBrain's own writes and renames rebind.
    */
   async fileIdentity(owner: string, vaultPath: string): Promise<string | null> {
     const absolute = await this.resolve(owner, vaultPath);
     try {
       const stat = await fs.stat(absolute, { bigint: true });
       if (!stat.isFile()) return null;
-      return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
+      const born = stat.birthtimeNs === 0n ? `c${stat.ctimeNs}` : `${stat.birthtimeNs}`;
+      return `${stat.dev}:${stat.ino}:${born}`;
     } catch {
       return null;
     }

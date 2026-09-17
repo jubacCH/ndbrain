@@ -89,6 +89,24 @@ export class UserService {
     return row ? toUser(row) : undefined;
   }
 
+  /**
+   * Refuses a name another account already has in any letter case.
+   *
+   * The id is the vault's directory name, and on macOS and Windows `Julian`
+   * and `julian` are the same directory: a space `Julian` beside the person
+   * `julian` would hand its members julian's notes. Every lookup by id is exact
+   * (no `NOCASE` anywhere), so the one place two spellings can meet is the
+   * filesystem — and that is closed here, for people and spaces alike, from the
+   * interface, the API and the command line, which all create through this
+   * service. Ids that already exist stay as they are.
+   */
+  #assertNameFree(id: string): void {
+    // `lower` folds ASCII only, which is all an id may contain (`assertUserId`).
+    if (this.#db.get('SELECT id FROM users WHERE lower(id) = lower(?)', id) !== undefined) {
+      throw new UserExistsError('a user with that name already exists');
+    }
+  }
+
   /** Creates an account and its vault directory. */
   async create(
     id: string,
@@ -99,9 +117,7 @@ export class UserService {
     // vault layer applies — otherwise an account name is a traversal vector.
     assertUserId(id);
 
-    if (this.get(id) !== undefined) {
-      throw new UserExistsError('a user with that name already exists');
-    }
+    this.#assertNameFree(id);
 
     const hash = await hashPassword(password);
     this.#db.run(
@@ -132,9 +148,7 @@ export class UserService {
   async createSpace(id: string, displayName?: string): Promise<User> {
     assertUserId(id);
 
-    if (this.get(id) !== undefined) {
-      throw new UserExistsError('a user with that name already exists');
-    }
+    this.#assertNameFree(id);
 
     const name = displayName === undefined ? id : checkedDisplayName(displayName);
     this.#db.run(

@@ -290,46 +290,72 @@ describe('the tenant boundary', () => {
   });
 
   /**
-   * Listing a foreign vault does not work, at all, under any share.
+   * Listing somebody else's vault lists what the caller's shares cover, and
+   * nothing else — the same regions as every note query.
    *
-   * Pinned because the code reads as though it did: the guard is
-   * `shares.check(caller, owner, '', 'read')`, and `normalizeVaultPath('')`
-   * throws before any share is consulted — so this answers 400 rather than
-   * either listing or a 404. It fails closed, and it is left that way on
-   * purpose: `listFiles(owner)` behind it takes no prefix, so a guard that
-   * started passing for a prefix share would hand a grantee of one folder the
-   * whole vault. What a prefix share means for files is a design question of
-   * its own.
-   *
-   * These cases exist so that whoever takes that question on gets a red light
-   * instead of a silent widening, and so the answer is written down where
-   * somebody reading the route will find it.
+   * Two worlds for each share: the second has more in the owner's vault beside
+   * what is shared (a private folder, a sibling of a shared note, a file named
+   * like the shared note plus a suffix, an empty folder next to it). The
+   * grantee's listing must not change by a byte.
    */
   describe('listing somebody else\'s vault', () => {
-    it('refuses with a prefix share', async () => {
-      runtime.shares.grant('julian', 'Homelab/', 'ramona', true);
+    async function listing(): Promise<{ status: number; body: string }> {
+      const response = await server.inject({ url: '/api/v1/files?owner=julian', headers: { cookie: ramonaCookie } });
+      return { status: response.statusCode, body: response.body.replace(/"mtimeMs":[0-9.]+/g, '"mtimeMs":0') };
+    }
 
-      const response = await server.inject({
-        url: '/api/v1/files?owner=julian',
-        headers: { cookie: ramonaCookie },
-      });
+    async function secondWorld(): Promise<void> {
+      await upload('/api/v1/files/Privat/geheim.pdf', Buffer.from('privat'));
+      await upload('/api/v1/files/Homelab.pdf', Buffer.from('daneben'));
+      await upload('/api/v1/files/Homelab2/nah.txt', Buffer.from('fast'));
+      await upload('/api/v1/files/Homelab/Proxmox.md.bak', Buffer.from('kopie'));
+      await runtime.app.createNote('julian', 'Homelab/Nachbar.md', '# Nachbar\n');
+      await runtime.app.createFolder('julian', 'Leer');
+    }
 
-      expect(response.statusCode).toBe(400);
-      expect(response.json().code).toBe('invalid_path');
-      // Whatever else changes here, nothing from the foreign vault comes back.
-      expect(response.body).not.toContain('Homelab/');
+    it('lists a shared folder, and nothing beside it', async () => {
+      await upload('/api/v1/files/Homelab/schema.png', Buffer.from('png'));
+      runtime.shares.grant('julian', 'Homelab', 'ramona', false);
+      const first = await listing();
+      expect(first.status).toBe(200);
+      const parsed = S.FilesResponse.parse(JSON.parse(first.body));
+      expect(parsed.files.map((f) => f.path)).toEqual(['Homelab/Proxmox.md', 'Homelab/schema.png']);
+      expect(parsed.dirs).toEqual(['Homelab']);
+
+      await upload('/api/v1/files/Privat/geheim.pdf', Buffer.from('privat'));
+      await upload('/api/v1/files/Homelab2/nah.txt', Buffer.from('fast'));
+      await upload('/api/v1/files/Homelab.pdf', Buffer.from('daneben'));
+      await runtime.app.createFolder('julian', 'Leer');
+      expect(await listing()).toEqual(first);
     });
 
-    it('refuses with a whole-vault share too', async () => {
-      runtime.shares.grant('julian', '', 'ramona', true);
+    it('lists a shared note alone, the same whether its neighbours exist or not', async () => {
+      await runtime.app.createNote('julian', 'Homelab/Plan.md', '# Plan\n');
+      runtime.shares.grant('julian', { kind: 'note', path: 'Homelab/Plan.md' }, 'ramona', false);
+      await runtime.app.bindings.bindAll('julian', 'Homelab/Plan.md');
+      const first = await listing();
+      const parsed = S.FilesResponse.parse(JSON.parse(first.body));
+      expect(parsed.files.map((f) => f.path)).toEqual(['Homelab/Plan.md']);
+      expect(parsed.dirs).toEqual(['Homelab']);
 
-      const response = await server.inject({
-        url: '/api/v1/files?owner=julian',
-        headers: { cookie: ramonaCookie },
-      });
+      await secondWorld();
+      await upload('/api/v1/files/Homelab/Plan.md.bak', Buffer.from('kopie'));
+      await runtime.app.createFolder('julian', 'Homelab/Plan.md.d');
+      expect(await listing()).toEqual(first);
+    });
 
-      expect(response.statusCode).toBe(400);
-      expect(response.body).not.toContain('Homelab/');
+    it('answers a vault with no share on it exactly like one that does not exist', async () => {
+      const foreign = await listing();
+      const missing = await server.inject({ url: '/api/v1/files?owner=niemand', headers: { cookie: ramonaCookie } });
+      expect(foreign).toEqual({ status: missing.statusCode, body: missing.body });
+      expect(foreign.status).toBe(404);
+    });
+
+    it('lists a whole-vault share as the vault', async () => {
+      runtime.shares.grant('julian', '', 'ramona', false);
+      await upload('/api/v1/files/Privat/geheim.pdf', Buffer.from('privat'));
+      const parsed = S.FilesResponse.parse(JSON.parse((await listing()).body));
+      expect(parsed.files.map((f) => f.path)).toEqual(['Homelab/Proxmox.md', 'Privat/geheim.pdf']);
     });
 
     it('still lists your own vault', async () => {
