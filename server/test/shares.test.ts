@@ -565,11 +565,11 @@ describe('renaming inside a share', () => {
   });
 
   /**
-   * A folder rename is the caller's own vault by construction — the route takes
-   * the owner from the session and never from the request. Asserted rather than
-   * assumed, because the note rename above looked the same way until it did not.
+   * A folder rename in somebody else's vault needs write access to the folder
+   * path itself, at both ends. The shared folder is not inside its own share,
+   * so the grantee cannot move it — nor, therefore, anything next to it.
    */
-  it('refuses a folder rename in somebody else\'s vault outright', async () => {
+  it('refuses a folder rename of the shared folder itself, as missing', async () => {
     await linkedFromBothHalves();
 
     const { status, body } = await as('ramona', {
@@ -578,13 +578,36 @@ describe('renaming inside a share', () => {
       payload: { owner: 'julian', from: 'Projekt', to: 'Projekt-neu' },
     });
 
-    // `movedNotes` and `updatedLinks` would carry the same class, so the route
-    // never lets a request name a vault: the owner comes from the session, and
-    // the body schema is strict, so the attempt is rejected before it is read.
-    expect(status).toBe(400);
-    expect(body.code).toBe('invalid_body');
+    expect(status).toBe(404);
     expect(JSON.stringify(body)).not.toContain('Privat');
     expect(runtime.app.queries.getNote('julian', 'julian', 'Projekt/Plan.md')).toBeDefined();
+  });
+
+  /**
+   * Inside the share it is allowed, and then `movedNotes` and `updatedLinks`
+   * carry the class of leak the note rename had: the report is bounded by the
+   * grantee's view, while the rewrite still reaches the owner's private note.
+   */
+  it('reports a folder rename inside the share through the grantee\'s view', async () => {
+    await runtime.app.createNote('julian', 'Projekt/Unter/Tiefer.md', '# Tiefer\n');
+    await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Tiefer]].\n');
+    await runtime.app.createNote('julian', 'Projekt/Offen.md', 'Siehe [[Projekt/Unter/Tiefer]].\n');
+    await share('Projekt', true);
+
+    const { status, body } = await as('ramona', {
+      method: 'POST',
+      url: '/api/v1/folders/rename',
+      payload: { owner: 'julian', from: 'Projekt/Unter', to: 'Projekt/Drunter' },
+    });
+
+    expect(status).toBe(200);
+    expect(body.movedNotes).toEqual(['Projekt/Drunter/Tiefer.md']);
+    expect(body.updatedLinks).toEqual(['Projekt/Offen.md']);
+    expect(JSON.stringify(body)).not.toContain('Privat');
+    const hidden = await runtime.app.notes.getNote('julian', 'Privat/Heimlich.md');
+    expect(hidden.content).toContain('[[Tiefer]]');
+    const open = await runtime.app.notes.getNote('julian', 'Projekt/Offen.md');
+    expect(open.content).toContain('[[Projekt/Drunter/Tiefer]]');
   });
 });
 

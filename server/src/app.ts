@@ -10,7 +10,7 @@
 
 import type { Indexer } from './index/indexer.js';
 import { Queries, toView, type NoteRow, type Viewable } from './index/queries.js';
-import { withinPrefix } from './auth/shares.js';
+import { inScope, shareTarget, type Share, type ShareKind, type ShareService } from './auth/shares.js';
 import { addTag, removeTag } from './markdown/edit.js';
 import { toggleTask as applyTaskToggle, type TaskExpectation } from './markdown/tasks.js';
 import { proposeFor, type TopicProposal } from './notes/topics.js';
@@ -56,13 +56,75 @@ export class App {
   readonly notes: NoteService;
   readonly indexer: Indexer;
   readonly queries: Queries;
+  readonly shares: ShareService;
   readonly #db: Database;
 
-  constructor(db: Database, notes: NoteService, indexer: Indexer) {
+  constructor(db: Database, notes: NoteService, indexer: Indexer, shares: ShareService) {
     this.#db = db;
     this.notes = notes;
     this.indexer = indexer;
+    this.shares = shares;
     this.queries = new Queries(db);
+  }
+
+  /* ---- shares -----------------------------------------------------------
+   *
+   * Who may see what is decided in `ShareService`. What lives here is the part
+   * that needs the vault: a note share must name a note that is there, and
+   * must go when the note does.
+   */
+
+  /**
+   * Grants a share on `owner`'s vault — a person's own, or a space's.
+   *
+   * A note share is only granted on a note that exists under exactly that
+   * name, checked and granted under the note's own write lock. Checked outside
+   * it, a delete landing between the look and the insert would leave a share
+   * on a path with nothing behind it, waiting for the next note of that name.
+   * A missing note answers like every other missing note.
+   */
+  async grantShare(
+    owner: string,
+    grantee: string,
+    target: string | { kind: ShareKind; path: string },
+    canWrite: boolean,
+  ): Promise<Share> {
+    const resolved = shareTarget(target);
+    if (resolved.kind !== 'note') return this.shares.grant(owner, target, grantee, canWrite);
+
+    return this.notes.withLock(owner, resolved.prefix, async () => {
+      if (!(await this.notes.exists(owner, resolved.prefix))) {
+        throw new NoteNotFoundError('note does not exist');
+      }
+      return this.shares.grant(owner, { kind: 'note', path: resolved.prefix }, grantee, canWrite);
+    });
+  }
+
+  /**
+   * A note vanished without going through ndBrain — the watcher saw it go.
+   *
+   * Its note shares are withdrawn, not kept for whatever turns up under that
+   * name next: from outside, "deleted and recreated" and "replaced by some
+   * other file" look identical, and only one of them would be safe to carry a
+   * grant over to.
+   */
+  noteVanished(owner: string, notePath: string): void {
+    this.shares.dropNote(owner, notePath);
+  }
+
+  /**
+   * Withdraws note shares whose note is gone, for everything the watcher's
+   * events did not report.
+   *
+   * Each one is looked at under its note's lock, so a rename or a create in
+   * flight is seen either before or after, never half-done.
+   */
+  async dropDanglingShares(owner: string): Promise<void> {
+    for (const notePath of this.shares.notePaths(owner)) {
+      await this.notes.withLock(owner, notePath, async () => {
+        if (!(await this.notes.exists(owner, notePath))) this.shares.dropNote(owner, notePath);
+      });
+    }
   }
 
   /**
@@ -281,11 +343,19 @@ export class App {
     actor?: string,
   ): Promise<{ path: string; size: number; replaced: boolean }> {
     const canonical = normalizeVaultPath(filePath);
-    const replaced = await this.notes.vault.exists(owner, canonical);
 
-    if (isNotePath(canonical) && !replaced) assertLinkableName(canonical);
-
-    await this.notes.vault.writeFileBytes(owner, canonical, bytes);
+    // A note arriving as a file is still a note appearing: it takes the note's
+    // lock, and a new one inherits no share that once named its path.
+    const write = async (): Promise<boolean> => {
+      const existed = await this.notes.vault.exists(owner, canonical);
+      if (isNotePath(canonical) && !existed) assertLinkableName(canonical);
+      await this.notes.vault.writeFileBytes(owner, canonical, bytes);
+      if (isNotePath(canonical) && !existed) this.shares.dropNote(owner, canonical);
+      return existed;
+    };
+    const replaced = isNotePath(canonical)
+      ? await this.notes.withLock(owner, canonical, write)
+      : await write();
 
     if (isNotePath(canonical)) {
       await this.indexer.indexNote(owner, canonical);
@@ -586,20 +656,20 @@ export class App {
    * have taken them, and losing them would quietly flatten a structure somebody
    * built on purpose.
    *
-   * **Own vault only, and it takes no view for that reason.** `movedNotes` and
-   * `updatedLinks` are both lists of paths, so a caller acting for somebody else
-   * would leak the same way `renameNote` did — but filtering the report would be
-   * the smaller half of the problem here. A folder may straddle the edge of a
-   * share, and this moves everything under it: the damage would be notes written
-   * outside the grantee's region, not merely named. The route therefore takes
-   * the owner from the session and never from the request, and this stays a
-   * whole-vault operation. Anything else needs the boundary decided first.
+   * **Whose view, and why it is required.** `movedNotes` and `updatedLinks`
+   * are both lists of paths, so a caller acting in somebody else's vault — a
+   * member renaming a folder in a space — would leak the way `renameNote` once
+   * did. Both are therefore reported through the caller's view. The larger
+   * danger, a folder straddling the edge of a share so that the move writes
+   * notes outside the grantee's region, is ruled out before this runs: the
+   * route requires write access to the folder's own path at both ends, and
+   * everything below a path inside a folder share is inside that share.
    */
   async renameFolder(
     owner: string,
     from: string,
     to: string,
-    actor?: string,
+    options: { view: Viewable; actor?: string },
   ): Promise<{ folder: string; movedNotes: string[]; updatedLinks: string[] }> {
     const source = normalizeVaultPath(from);
     const target = normalizeVaultPath(to);
@@ -624,8 +694,8 @@ export class App {
     // neither turns it into two moves that are safe everywhere.
     if (caseKey(source) === caseKey(target)) {
       const temporary = `${source}.${Date.now().toString(36)}.tmp`;
-      const first = await this.renameFolder(owner, source, temporary, actor);
-      const second = await this.renameFolder(owner, temporary, target, actor);
+      const first = await this.renameFolder(owner, source, temporary, options);
+      const second = await this.renameFolder(owner, temporary, target, options);
       return {
         folder: target,
         movedNotes: second.movedNotes,
@@ -644,16 +714,16 @@ export class App {
     const updatedLinks = new Set<string>();
 
     for (const notePath of notes) {
-      const result = await this.renameNote(owner, notePath, rebase(notePath), {
-        // `owner` as the view, spelled out: this operation is the owner's own
-        // vault by construction (see the docstring), so the whole vault is what
-        // may be reported. Nothing here is allowed to inherit that silently.
-        view: owner,
-        ...(actor === undefined ? {} : { actor }),
-      });
+      const result = await this.renameNote(owner, notePath, rebase(notePath), options);
       movedNotes.push(result.note.path);
       for (const link of result.updatedLinks) updatedLinks.add(link);
     }
+
+    // Note shares went along one note at a time, inside each note's lock.
+    // Folder shares name the folder, so they follow once the folder has moved.
+    // Until this line a grantee of the old folder sees the moved notes vanish
+    // from it rather than appear somewhere they were not given.
+    this.shares.moveFolder(owner, source, target);
 
     // Whatever the note moves did not carry: the folder itself when it held no
     // notes, and any empty subfolder below it.
@@ -665,7 +735,11 @@ export class App {
       await this.notes.vault.removeDirIfEmpty(owner, dir);
     }
 
-    return { folder: target, movedNotes, updatedLinks: [...updatedLinks] };
+    return {
+      folder: target,
+      movedNotes: visibleIn(options.view, owner, movedNotes),
+      updatedLinks: [...updatedLinks],
+    };
   }
 
   /**
@@ -684,6 +758,7 @@ export class App {
     if (!(await this.notes.vault.removeDirIfEmpty(owner, canonical))) {
       throw new NotAFileError('the folder is not empty');
     }
+    this.shares.dropFolder(owner, canonical);
   }
 
   /**
@@ -697,18 +772,35 @@ export class App {
    */
   async tree(viewable: Viewable): Promise<{ notes: NoteRow[]; dirs: DirRow[] }> {
     const view = toView(viewable);
+    const notes = this.queries.recentNotes(view, 100_000);
     const dirs: DirRow[] = [];
+    const seen = new Set<string>();
+    const add = (owner: string, dir: string): void => {
+      const key = `${owner}:${dir}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      dirs.push({ owner, path: dir });
+    };
 
     for (const scope of view) {
+      if (scope.exact) {
+        // A shared note brings the folders on its own path and nothing else.
+        // They are read off the path of a note the caller can already see —
+        // never off the filesystem — so a sibling, an empty folder or a
+        // subfolder next to it changes nothing in this answer, and a share on
+        // a note that is gone brings no folders at all.
+        if (!notes.some((note) => note.owner === scope.owner && note.path === scope.prefix)) continue;
+        const segments = scope.prefix.split('/').slice(0, -1);
+        for (let i = 1; i <= segments.length; i += 1) add(scope.owner, segments.slice(0, i).join('/'));
+        continue;
+      }
       for (const dir of await this.notes.listDirs(scope.owner)) {
         // `${dir}/` so a shared `Homelab` does not also surface `Homelab2`.
-        if (scope.prefix === '' || `${dir}/`.startsWith(scope.prefix)) {
-          dirs.push({ owner: scope.owner, path: dir });
-        }
+        if (inScope(scope, `${dir}/`)) add(scope.owner, dir);
       }
     }
 
-    return { notes: this.queries.recentNotes(view, 100_000), dirs };
+    return { notes, dirs };
   }
 }
 
@@ -724,7 +816,7 @@ export class App {
 function visibleIn(viewable: Viewable, owner: string, paths: string[]): string[] {
   const view = toView(viewable);
   return paths.filter((notePath) =>
-    view.some((scope) => scope.owner === owner && withinPrefix(scope.prefix, notePath)),
+    view.some((scope) => scope.owner === owner && inScope(scope, notePath)),
   );
 }
 

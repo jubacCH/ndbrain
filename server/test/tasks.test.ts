@@ -10,6 +10,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { App } from '../src/app.js';
+import { ShareService } from '../src/auth/shares.js';
 import { Database } from '../src/db/database.js';
 import { migrate } from '../src/db/schema.js';
 import { TaskChangedError } from '../src/errors.js';
@@ -105,7 +106,7 @@ beforeEach(async () => {
 
   db = new Database(':memory:');
   migrate(db);
-  app = new App(db, notes, new Indexer(db, notes));
+  app = new App(db, notes, new Indexer(db, notes), new ShareService(db));
 });
 
 afterEach(async () => {

@@ -16,6 +16,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Database } from '../db/database.js';
 import { NdbrainError } from '../errors.js';
 import { normalizeVaultPath } from '../vault/paths.js';
+import { inScope } from './shares.js';
 
 export interface ApiKey {
   id: string;
@@ -114,7 +115,14 @@ export class ApiKeyService {
   resolve(secret: string, now = Date.now()): ApiKey | null {
     if (typeof secret !== 'string' || !secret.startsWith(KEY_PREFIX)) return null;
 
-    const row = this.#db.get('SELECT * FROM api_keys WHERE key_hash = ?', hashKey(secret));
+    // A key of a disabled space answers like an unknown key: switching a space
+    // off has to stop its agents too, not only its members. Keys of a disabled
+    // person are left as they were.
+    const row = this.#db.get(
+      `SELECT k.* FROM api_keys k JOIN users u ON u.id = k.owner
+        WHERE k.key_hash = ? AND NOT (u.kind = 'space' AND u.disabled_at IS NOT NULL)`,
+      hashKey(secret),
+    );
     if (!row) return null;
 
     const key = toKey(row);
@@ -180,6 +188,7 @@ export class ApiKeyService {
  * a case-insensitive comparison here would widen the scope for no benefit.
  */
 export function withinScope(key: ApiKey, notePath: string): boolean {
-  if (key.scope === '') return true;
-  return notePath.startsWith(key.scope);
+  // A key's scope is always a folder or the whole vault; the rule itself is the
+  // one every share goes through, not a second copy of it.
+  return inScope({ prefix: key.scope, exact: false }, notePath);
 }

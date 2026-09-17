@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -309,10 +309,51 @@ const MIGRATIONS: Array<(db: Database) => void> = [
     `);
   },
 
+  // v8 -> v9: spaces and note shares
+  //
+  // Two kinds where there was one of each. An account is a person or a space:
+  // a space is a vault of its own that nobody signs in to, whose members are
+  // ordinary shares with the space as owner. A share is the whole vault, a
+  // folder, or exactly one note.
+  //
+  // The kind is a column rather than something read off the prefix. A note
+  // share stores the note's exact path without a trailing slash, and "no
+  // trailing slash" already means "the whole vault" for the empty prefix — a
+  // rule that has to be inferred is a rule some later query infers wrongly.
+  // Every existing row is derived here once: an empty prefix was the vault,
+  // anything else a folder, because nothing else could be granted before.
+  //
+  // Both columns are checked, so a typo in a kind fails the write instead of
+  // producing a share that no scope rule recognises.
+  //
+  // `bound_at` is when a note share came to name its current path: granted, or
+  // last moved with its note. The git history and the edit log belong to a
+  // path, not to a note, and whatever carried that name before is not the
+  // grantee's to read. Empty for vault and folder shares, which name places.
+  (db) => {
+    db.exec(`
+      ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person'
+        CHECK (kind IN ('person', 'space'));
+
+      ALTER TABLE shares ADD COLUMN kind TEXT NOT NULL DEFAULT 'folder'
+        CHECK (kind IN ('vault', 'folder', 'note'));
+
+      ALTER TABLE shares ADD COLUMN bound_at INTEGER;
+
+      UPDATE shares SET kind = CASE WHEN prefix = '' THEN 'vault' ELSE 'folder' END;
+
+      CREATE INDEX shares_owner_kind ON shares (owner, kind, prefix);
+    `);
+  },
 ];
 
-/** Applies pending migrations. Safe to call on every start. */
-export function migrate(db: Database): void {
+/**
+ * Applies pending migrations. Safe to call on every start.
+ *
+ * `upTo` stops at an earlier version, so a test can build the database a
+ * previous release left behind and watch the next migration convert it.
+ */
+export function migrate(db: Database, upTo: number = MIGRATIONS.length): void {
   const current = db.userVersion;
 
   if (current > MIGRATIONS.length) {
@@ -322,7 +363,7 @@ export function migrate(db: Database): void {
     );
   }
 
-  for (let version = current; version < MIGRATIONS.length; version += 1) {
+  for (let version = current; version < Math.min(upTo, MIGRATIONS.length); version += 1) {
     const migration = MIGRATIONS[version];
     if (!migration) continue;
     db.transaction(() => {

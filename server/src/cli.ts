@@ -9,6 +9,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { loadConfig } from './config.js';
+import { SPACE_USAGE, runSpaceCommand } from './cliSpaces.js';
 import { createRuntime } from './runtime.js';
 
 const USAGE = `ndbrain-user — manage ndBrain accounts
@@ -25,6 +26,7 @@ const USAGE = `ndbrain-user — manage ndBrain accounts
   key revoke <key-id>         revoke a key immediately
   key log <user>              recent agent tool calls
 
+${SPACE_USAGE}
 The password is read from stdin when it is not a terminal, otherwise generated:
 
   echo -n 'my password' | ndbrain-user passwd julian
@@ -183,6 +185,10 @@ async function main(): Promise<void> {
         throw new Error('usage: key create|list|revoke|log ...');
       }
 
+      case 'space':
+        await runSpaceCommand(runtime, [name ?? '', ...rest], (text) => process.stdout.write(text));
+        break;
+
       case 'list': {
         const users = runtime.users.list();
         if (users.length === 0) {
@@ -190,7 +196,9 @@ async function main(): Promise<void> {
           break;
         }
         for (const user of users) {
-          const flags = [user.role, user.disabled ? 'disabled' : null].filter(Boolean).join(', ');
+          const flags = [user.kind === 'space' ? 'space' : user.role, user.disabled ? 'disabled' : null]
+            .filter(Boolean)
+            .join(', ');
           process.stdout.write(`${user.id.padEnd(20)} ${flags}\n`);
         }
         break;
