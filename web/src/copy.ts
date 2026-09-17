@@ -333,6 +333,8 @@ export const copy = {
     nobodySeesYours: 'Nobody can see into your vault.',
     nobodySharesWithYou: 'Nobody is sharing anything with you.',
     wholeVault: 'whole vault',
+    vaultOf: 'Vault of',
+    decline: 'Decline',
     what: 'Shared',
     kind: { vault: 'Vault', folder: 'Folder', note: 'Note' } as const,
     kindLabel: (kind: string) => `Shared ${kind.toLowerCase()}`,
@@ -395,6 +397,7 @@ export const copy = {
     pointsNowhere: 'Points nowhere',
     file: 'File',
     vaultOf: (owner: string) => `${owner}'s vault`,
+    spaceOf: (space: string) => `Space ${space}`,
   },
 
   palette: {

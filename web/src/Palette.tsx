@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { copy } from './copy';
 
 import { api, refKey, type NoteRow } from './api';
+import { ownerLabel, useOwners } from './owners';
 
 /**
  * Something the palette can do besides opening a note by name.
@@ -58,6 +59,7 @@ export function Palette({
   onOpenNote: (owner: string, path: string) => void;
 }): React.JSX.Element | null {
   const [query, setQuery] = useState('');
+  const owners = useOwners();
   const [results, setResults] = useState<NoteRow[]>([]);
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -183,7 +185,7 @@ export function Palette({
                 {/* Two vaults can hold the same title, so a hit that is not yours
                     has to say so — otherwise the switcher offers two identical
                     rows and picking is a coin toss. */}
-                {note.owner !== self && <span className="pill p-info">{note.owner}</span>}
+                {note.owner !== self && <span className="pill p-info">{ownerLabel(owners, note.owner)}</span>}
                 {note.path.split('/').slice(0, -1).join('/') || '/'}
               </span>
             </button>
