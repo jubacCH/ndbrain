@@ -4889,21 +4889,35 @@ th.pick input,
   margin-top: var(--s-4);
 }
 
-.home-grid > .tile {
+/* On a phone the two stacks are not boxes at all: their tiles join the grid
+   and are ordered continue, health, today, tasks, network, tags. */
+.home-stack {
+  display: contents;
+}
+
+.home-grid .tile {
   min-width: 0;
   padding: var(--s-4) var(--s-4) var(--s-3);
 }
 
+.home-continue { order: 1; }
+.health-card { order: 2; }
+.home-today { order: 3; }
+.home-tasks { order: 4; }
+.home-brain { order: 5; }
+.home-tags { order: 6; }
+
 @media (min-width: 60rem) {
   .home-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
     align-items: start;
   }
 
-  .home-continue,
-  .home-today,
-  .home-tags {
-    grid-column: span 2;
+  .home-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    min-width: 0;
   }
 }
 
@@ -5299,4 +5313,13 @@ th.pick input,
 
 .tidy-findings {
   scroll-margin-top: var(--s-4);
+}
+
+/* A phone scrolls one column: Continue keeps five of each list there, so the
+   health card is not pushed three screens down. The rest is a scroll away in
+   the tree and the search. */
+@media (max-width: 40rem) {
+  .home-notes > .home-note:nth-child(n + 6) {
+    display: none;
+  }
 }

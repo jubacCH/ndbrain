@@ -90,7 +90,11 @@ export function HomeView(props: HomeProps): React.JSX.Element {
       <h2 className="h-big">{copy.overview.title}</h2>
       <p className="h-sub">{copy.home.summary(counts.notes, counts.attention)}</p>
 
+      {/* Two stacks on a wide screen, so a tall list on the left never leaves a
+          hole under a short card on the right; one column on a phone, where
+          the stacks dissolve and `order` in the stylesheet interleaves them. */}
       <div className="home-grid">
+        <div className="home-stack home-main">
         <Continue
           recents={props.recents}
           edited={overview.recent}
@@ -100,6 +104,28 @@ export function HomeView(props: HomeProps): React.JSX.Element {
           onOpen={props.onOpen}
         />
 
+        <Today
+          days={daysQuery.data?.days ?? null}
+          activity={overview.activity}
+          now={now}
+          onOpen={props.onOpen}
+        />
+
+        {overview.tags.length > 0 && (
+          <section className="tile home-tags">
+            <p className="cap">{copy.overview.tags}</p>
+            <div className="tagcloud">
+              {overview.tags.slice(0, 14).map((tag) => (
+                <span className="pill p-tag" key={tag.tag}>
+                  #{tag.tag} <span style={{ opacity: 0.6 }}>{tag.count}</span>
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+        </div>
+
+        <div className="home-stack home-side">
         <HealthCard
           input={{
             notes: props.ownNotes,
@@ -114,29 +140,10 @@ export function HomeView(props: HomeProps): React.JSX.Element {
           onOpen={() => props.onTidy()}
         />
 
-        <Today
-          days={daysQuery.data?.days ?? null}
-          activity={overview.activity}
-          now={now}
-          onOpen={props.onOpen}
-        />
-
         <Tasks tasks={overview.tasks} self={self} hidePrefixes={props.hidePrefixes} onOpen={props.onOpen} onTasks={props.onTasks} />
 
         <BrainEntry notes={counts.notes} onNetwork={props.onNetwork} />
-
-        {overview.tags.length > 0 && (
-          <section className="tile home-tags">
-            <p className="cap">{copy.overview.tags}</p>
-            <div className="tagcloud">
-              {overview.tags.slice(0, 14).map((tag) => (
-                <span className="pill p-tag" key={tag.tag}>
-                  #{tag.tag} <span style={{ opacity: 0.6 }}>{tag.count}</span>
-                </span>
-              ))}
-            </div>
-          </section>
-        )}
+        </div>
       </div>
     </div>
   );
