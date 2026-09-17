@@ -242,6 +242,20 @@ export const api = {
       body: JSON.stringify({ content, owner, baseMtimeMs }),
     }),
 
+  /**
+   * Makes sure a note exists, creating it with `content` only if it does not.
+   *
+   * Never writes over anything: an existing note comes back untouched with
+   * `created: false`. Safe to call twice at once — from a double click, a
+   * shortcut and a button, or two tabs — because the server decides under its
+   * write lock, not this page from a tree that may be a second old.
+   */
+  ensureNote: (owner: string, path: string, content: string) =>
+    request(`/api/v1/notes/${encodePath(path)}`, S.PutNoteResponse, {
+      method: 'PUT',
+      body: JSON.stringify({ content, owner, ifAbsent: true }),
+    }),
+
   deleteNote: (owner: string, path: string) =>
     request(`/api/v1/notes/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, Empty, {
       method: 'DELETE',

@@ -68,6 +68,9 @@ export const copy = {
     filterShortcut: 'Filter the tree',
     /** Which entry of the recents list is the note on screen. */
     openNow: 'open now',
+    journal: 'Journal',
+    today: 'Today',
+    todayHint: "Open today's note",
   },
 
   /** The frame around every view: the header bar and its menus. */
@@ -96,6 +99,8 @@ export const copy = {
       settings: 'This browser, and your account',
       admin: (accounts: number) => `${accounts} ${accounts === 1 ? 'account' : 'accounts'}`,
       shares: (out: number, inbound: number) => `${out} shared by you · ${inbound} shared with you`,
+      journal: (days: number, inMonth: number) =>
+        `${days} ${days === 1 ? 'daily note' : 'daily notes'} · ${inMonth} this month`,
       loading: 'Loading…',
     },
     network: {
@@ -351,6 +356,11 @@ export const copy = {
   },
 
   palette: {
+    /** Beside a command row, where a note row names its folder. */
+    command: 'command',
+    openToday: "Open today's note",
+    /** Extra words a command is also found by. */
+    openTodayKeywords: 'today daily journal heute',
     label: 'Find a note',
     placeholder: 'Open a note…',
     titleLabel: 'Note title',
@@ -702,6 +712,40 @@ export const copy = {
     brain: 'Your brain',
     brainHint: 'Every note and the links between them.',
     openNetwork: 'Open whole network',
+  },
+
+  /**
+   * Daily notes: the calendar view, the home card and the prompts around them.
+   * The note itself is written in the vault's language — see `dayHeading` in
+   * `shared/journal.ts` — and none of its text is here.
+   */
+  journal: {
+    title: 'Journal',
+    calendarLabel: (month: string) => `Daily notes in ${month}`,
+    previousMonth: 'Previous month',
+    nextMonth: 'Next month',
+    thisMonth: 'Today',
+    hasNote: 'has a note',
+    noNote: 'no note yet',
+    today: 'today',
+    dayLabel: (date: string, state: string, isToday: boolean) =>
+      `${date}${isToday ? ', today' : ''}, ${state}`,
+    hint: 'Arrow keys move between days, Enter opens one. Page Up and Page Down change the month.',
+    askCreate: (date: string) => `There is no note for ${date} yet. Start one?`,
+    count: (n: number) => `${n} ${n === 1 ? 'day' : 'days'} with a note this month`,
+    failed: "Could not open that day's note.",
+    shortcut: '⌘⇧D',
+
+    card: 'Daily note',
+    previousDay: 'Previous day',
+    nextDay: 'Next day',
+    backToToday: 'Back to today',
+    open: 'Open note',
+    start: "Start today's note",
+    startDay: (date: string) => `Start the note for ${date}`,
+    emptyNotes: 'Nothing under “Notizen” yet.',
+    cardNoNote: 'No note for this day.',
+    openCalendar: 'Open journal',
   },
 
   /** Brain health: a calm number and what it is made of. Never a reward. */
