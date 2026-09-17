@@ -48,6 +48,8 @@ export type {
   UploadResult,
   User,
   Version,
+  DeletedNote,
+  RestoreState,
 } from '../../shared/schema';
 
 /** What it takes to name one note: which vault, and where in it. */
@@ -636,6 +638,25 @@ export const api = {
     request('/api/v1/history/restore', S.RestoreResponse, {
       method: 'POST',
       body: JSON.stringify({ owner, path, version }),
+    }),
+
+  // ---- recently deleted -----------------------------------------------------
+
+  /** Deleted notes of the last 30 days the caller may bring back. */
+  deleted: () => request('/api/v1/deleted', S.DeletedResponse),
+
+  /** Brings one back at its old path, or beside it when the path is taken. */
+  restoreDeleted: (owner: string, path: string) =>
+    request('/api/v1/deleted/restore', S.RestoreDeletedResponse, {
+      method: 'POST',
+      body: JSON.stringify({ owner, path }),
+    }),
+
+  /** Whether notes about to be deleted could be brought back afterwards. */
+  deletePreview: (owner: string, paths: string[]) =>
+    request('/api/v1/deleted/preview', S.DeletePreviewResponse, {
+      method: 'POST',
+      body: JSON.stringify({ owner, paths }),
     }),
 
   // ---- settings and account -------------------------------------------------
