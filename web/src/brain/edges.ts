@@ -60,6 +60,11 @@
  *
  * The control points are pulled back inside the silhouette (`keepInside`): a
  * curve is free to bow, but not out of the tissue and into the dark.
+ *
+ * **The centre** is the one exception. The best-connected map organises the
+ * picture, and bundled its links left in two or three trunks; its links are
+ * rays instead, run nearly straight out to their notes, and carry a few fine
+ * branches (`branchRay`) that are decoration and fade with the tissue.
  */
 
 import { unit } from './seed';
