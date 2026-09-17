@@ -1087,6 +1087,43 @@ td.n {
   flex: none;
 }
 
+/* The two halves of the list: notes by title, then notes by what they say. */
+.palette-section {
+  margin: var(--s-2) var(--s-3) var(--s-1);
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.palette-hit {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.palette-hit .snip {
+  flex-basis: 100%;
+  min-width: 0;
+  font-size: var(--t-sm);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-hit .snip mark {
+  background: var(--accent-soft);
+  box-shadow: inset 0 -1px 0 var(--accent-line);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.palette-all .t {
+  font-weight: normal;
+  color: var(--text-2);
+}
+
 .palette-foot {
   border-top: 1px solid var(--line);
   padding: var(--s-2) var(--s-3);
