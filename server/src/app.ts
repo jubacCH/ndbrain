@@ -15,7 +15,7 @@ import { addTag, removeTag } from './markdown/edit.js';
 import { toggleTask as applyTaskToggle, type TaskExpectation } from './markdown/tasks.js';
 import { proposeFor, type TopicProposal } from './notes/topics.js';
 import { parseNote } from './markdown/parse.js';
-import type { Note, NoteService, PutOptions, PutResult } from './notes/service.js';
+import type { Authorized, Note, NoteService, PutOptions, PutResult, RenameOptions } from './notes/service.js';
 import { NoteBindings } from './auth/noteBindings.js';
 import type { Database } from './db/database.js';
 import type { VaultFile } from './vault/fs.js';
@@ -209,8 +209,14 @@ export class App {
    * and recording it as a create would put a second "new note" into today's
    * counts for every extra click on the button.
    */
-  async createNoteIfAbsent(owner: string, notePath: string, content: string, actor?: string): Promise<PutResult> {
-    const result = await this.notes.createNoteIfAbsent(owner, notePath, content);
+  async createNoteIfAbsent(
+    owner: string,
+    notePath: string,
+    content: string,
+    actor?: string,
+    options: Authorized = {},
+  ): Promise<PutResult> {
+    const result = await this.notes.createNoteIfAbsent(owner, notePath, content, options);
     if (result.created) {
       await this.indexer.indexNote(owner, result.note.path);
       this.#recordEdit(owner, result.note.path, 'create', actor);
@@ -258,8 +264,12 @@ export class App {
     expected: TaskExpectation,
     done: boolean,
     actor?: string,
+    options: Authorized = {},
   ): Promise<PutResult> {
-    const note = await this.notes.getNote(owner, notePath);
+    // Read the way the write path reads: this answer is made of the file's
+    // content — the note in a 200, and the 409 that says the expected task is
+    // not on that line, which asks the file a yes/no question about its text.
+    const note = await this.readAuthorized(owner, notePath, options.authorize);
     const result = applyTaskToggle(note.content, line, expected, done);
 
     if (!result.ok) {
@@ -274,7 +284,27 @@ export class App {
       return { note, created: false };
     }
 
-    return this.updateNote(owner, notePath, result.content, actor, { baseMtimeMs: note.mtimeMs });
+    const write: PutOptions = { baseMtimeMs: note.mtimeMs };
+    if (options.authorize !== undefined) write.authorize = options.authorize;
+    return this.updateNote(owner, notePath, result.content, actor, write);
+  }
+
+  /**
+   * A note's content, read as the write path sees it.
+   *
+   * The lock, then `confirm`, then the caller's permission, then the bytes. A
+   * read that reaches the file directly would answer out of a file replaced
+   * behind ndBrain's back in the moment before the watcher says so — which is
+   * the whole of what a note share protects against. For an owner reading their
+   * own vault `authorize` is absent and `confirm` finds no note share, so this
+   * is the plain read it always was.
+   */
+  async readAuthorized(owner: string, notePath: string, authorize?: () => void): Promise<Note> {
+    return this.notes.withLock(owner, notePath, async () => {
+      await this.bindings.confirm(owner, notePath);
+      authorize?.();
+      return this.notes.getNote(owner, notePath);
+    });
   }
 
   /* ---- topics -------------------------------------------------------------
@@ -405,6 +435,7 @@ export class App {
     filePath: string,
     bytes: Buffer,
     actor?: string,
+    options: Authorized = {},
   ): Promise<{ path: string; size: number; replaced: boolean }> {
     const canonical = normalizeVaultPath(filePath);
 
@@ -417,6 +448,7 @@ export class App {
       // As for every write over a note: shares given for some other file are
       // withdrawn before the bytes land, and only the confirmed ones follow.
       const confirmed = note && existed ? await this.bindings.confirm(owner, canonical) : null;
+      options.authorize?.();
       await this.notes.vault.writeFileBytes(owner, canonical, bytes);
       if (note && !existed) this.shares.dropNote(owner, canonical);
       if (note && existed) await this.bindings.rebind(owner, canonical, confirmed);
@@ -435,11 +467,11 @@ export class App {
     return { path: canonical, size: bytes.length, replaced };
   }
 
-  async deleteFile(owner: string, filePath: string, actor?: string): Promise<void> {
+  async deleteFile(owner: string, filePath: string, actor?: string, options: Authorized = {}): Promise<void> {
     const canonical = normalizeVaultPath(filePath);
 
     if (isNotePath(canonical)) {
-      await this.deleteNote(owner, canonical, actor);
+      await this.deleteNote(owner, canonical, actor, options);
       return;
     }
 
@@ -447,8 +479,8 @@ export class App {
     await this.notes.vault.pruneEmptyDirs(owner, canonical);
   }
 
-  async deleteNote(owner: string, notePath: string, actor?: string): Promise<void> {
-    await this.notes.deleteNote(owner, notePath);
+  async deleteNote(owner: string, notePath: string, actor?: string, options: Authorized = {}): Promise<void> {
+    await this.notes.deleteNote(owner, notePath, options);
     const canonical = normalizeVaultPath(notePath);
     this.indexer.removeNote(owner, canonical);
     this.indexer.resolveLinks(owner);
@@ -514,9 +546,15 @@ export class App {
     owner: string,
     from: string,
     to: string,
-    options: { view: Viewable; actor?: string },
+    options: {
+      view: Viewable;
+      actor?: string;
+      /** Re-checked in the lock, after `confirm`; see `Authorized`. */
+      authorizeSource?: () => void;
+      authorizeTarget?: () => void;
+    },
   ): Promise<RenameResult> {
-    const { view, actor } = options;
+    const { view, actor, authorizeSource, authorizeTarget } = options;
     const source = normalizeVaultPath(from);
     const target = normalizeVaultPath(to);
 
@@ -524,8 +562,10 @@ export class App {
       throw new InvalidPathError(`a note path must end in ${NOTE_EXTENSION}`);
     }
 
+    // Renaming a note to its own name is a read of it — the note comes back in
+    // the answer — so it is read like one.
     if (source === target) {
-      return { note: await this.notes.getNote(owner, source), updatedLinks: [] };
+      return { note: await this.readAuthorized(owner, source, authorizeSource), updatedLinks: [] };
     }
 
     // Owner's own vault on both sides, even when the person doing the renaming is
@@ -546,7 +586,10 @@ export class App {
       if (rewritten) updated.push(referrer);
     }
 
-    const note = await this.notes.renameNote(owner, source, target);
+    const move: RenameOptions = {};
+    if (authorizeSource !== undefined) move.authorizeSource = authorizeSource;
+    if (authorizeTarget !== undefined) move.authorizeTarget = authorizeTarget;
+    const note = await this.notes.renameNote(owner, source, target, move);
 
     // The moved note may contain links to itself under the old name.
     if (referrers.includes(source)) {
@@ -662,44 +705,78 @@ export class App {
       // some stand-in note inside it, is answered "yes" by a share on exactly
       // that stand-in, and a grantee walks notes out of her folder with it.
       // A refusal reads like a missing note, as everywhere else.
-      if (!this.shares.allows(caller, owner, notePath, 'write') || !this.shares.allows(caller, owner, target, 'write')) {
-        throw new NoteNotFoundError('note does not exist');
-      }
+      const authorizeSource = (): void => this.shares.check(caller, owner, notePath, 'write');
+      const authorizeTarget = (): void => this.shares.check(caller, owner, target, 'write');
+      authorizeSource();
+      authorizeTarget();
 
-      const { note } = await this.renameNote(owner, notePath, target, options);
+      // And again inside the lock, once `confirm` has had its say about the
+      // file on the source path — see `Authorized`. The caller is somebody
+      // else's grantee here often enough that this is the ordinary case.
+      const { note } = await this.renameNote(owner, notePath, target, {
+        ...options,
+        authorizeSource,
+        authorizeTarget,
+      });
       return note.path;
     });
   }
 
-  /** Adds a tag to a selection. Notes that already carry it are left untouched. */
-  async bulkTag(owner: string, paths: string[], tag: string, actor?: string): Promise<BulkResult> {
+  /**
+   * Adds a tag to a selection. Notes that already carry it are left untouched.
+   *
+   * `authorize` is a function of the path, because a bulk action is a list of
+   * separate operations and each one asks about its own note — the same shape
+   * the per-note permission check outside already has.
+   */
+  async bulkTag(
+    owner: string,
+    paths: string[],
+    tag: string,
+    actor?: string,
+    authorize?: (notePath: string) => void,
+  ): Promise<BulkResult> {
     return this.#overSelection(paths, async (notePath) => {
-      const note = await this.notes.getNote(owner, notePath);
+      const gate = authorize === undefined ? undefined : (): void => authorize(notePath);
+      const note = await this.readAuthorized(owner, notePath, gate);
       const updated = addTag(note.content, tag);
 
       // Unchanged means the tag was already there. Writing anyway would bump the
       // modification date and make an untouched note look edited.
       if (updated !== note.content) {
-        await this.updateNote(owner, notePath, updated, actor);
+        await this.updateNote(owner, notePath, updated, actor, gate === undefined ? {} : { authorize: gate });
       }
       return notePath;
     });
   }
 
-  async bulkUntag(owner: string, paths: string[], tag: string, actor?: string): Promise<BulkResult> {
+  async bulkUntag(
+    owner: string,
+    paths: string[],
+    tag: string,
+    actor?: string,
+    authorize?: (notePath: string) => void,
+  ): Promise<BulkResult> {
     return this.#overSelection(paths, async (notePath) => {
-      const note = await this.notes.getNote(owner, notePath);
+      const gate = authorize === undefined ? undefined : (): void => authorize(notePath);
+      const note = await this.readAuthorized(owner, notePath, gate);
       const updated = removeTag(note.content, tag);
       if (updated !== note.content) {
-        await this.updateNote(owner, notePath, updated, actor);
+        await this.updateNote(owner, notePath, updated, actor, gate === undefined ? {} : { authorize: gate });
       }
       return notePath;
     });
   }
 
-  async bulkDelete(owner: string, paths: string[], actor?: string): Promise<BulkResult> {
+  async bulkDelete(
+    owner: string,
+    paths: string[],
+    actor?: string,
+    authorize?: (notePath: string) => void,
+  ): Promise<BulkResult> {
     return this.#overSelection(paths, async (notePath) => {
-      await this.deleteNote(owner, notePath, actor);
+      const gate = authorize === undefined ? undefined : (): void => authorize(notePath);
+      await this.deleteNote(owner, notePath, actor, gate === undefined ? {} : { authorize: gate });
       return notePath;
     });
   }
