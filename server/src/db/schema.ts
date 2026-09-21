@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -359,6 +359,36 @@ const MIGRATIONS: Array<(db: Database) => void> = [
       ALTER TABLE shares ADD COLUMN bound_file TEXT;
       ALTER TABLE shares ADD COLUMN bound_hash TEXT;
     `);
+  },
+
+  // v10 -> v11: one account per name, whatever the letter case.
+  //
+  // The id is the vault's directory name, and on macOS and Windows `Julian`
+  // and `julian` are one directory — a space named like a person hands its
+  // members that person's notes. `UserService` refuses the pair, but a check
+  // in application code is a check with a gap: two creations in flight at once
+  // both looked before either wrote, and password hashing is long enough to
+  // fit a whole second request inside. The index closes it where the write
+  // actually happens.
+  //
+  // A database that already holds such a pair is not something a migration may
+  // quietly leave half-done: the index would simply fail to be created and the
+  // collision would live on with nothing said. It is named and the start
+  // refused instead, because renaming one of the two is a decision about
+  // somebody's vault directory and not ours to make.
+  (db) => {
+    const clashes = db.all(
+      `SELECT group_concat(id, ' / ') AS ids FROM users
+        GROUP BY lower(id) HAVING COUNT(*) > 1 ORDER BY lower(id)`,
+    );
+    if (clashes.length > 0) {
+      const named = clashes.map((row) => String(row['ids'])).join(', ');
+      throw new Error(
+        `these accounts differ only in letter case and cannot both exist: ${named}. ` +
+          'Rename one of each pair (its vault directory too) and start again.',
+      );
+    }
+    db.exec('CREATE UNIQUE INDEX users_id_lower ON users (lower(id));');
   },
 ];
 
