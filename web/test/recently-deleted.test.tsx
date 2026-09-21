@@ -134,6 +134,16 @@ describe('restoring', () => {
     expect(onOpen).toHaveBeenCalledWith('julian', 'Projekt/Plan.md');
   });
 
+  it('drops the row once the note is back, without a reload', async () => {
+    const user = userEvent.setup();
+    server.notes = [deleted(), deleted({ path: 'Anderes.md', title: 'Anderes', folder: '' })];
+    mount();
+
+    await user.click(await screen.findByRole('button', { name: copy.deleted.restoreNamed('Plan') }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: copy.deleted.restoreNamed('Plan') })).toBeNull());
+    expect(screen.getByRole('button', { name: copy.deleted.restoreNamed('Anderes') })).toBeInTheDocument();
+  });
+
   it('restores nothing when the question is cancelled', async () => {
     const user = userEvent.setup();
     confirm.mockReturnValue(false);
