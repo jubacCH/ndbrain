@@ -68,3 +68,19 @@ export class TaskChangedError extends NdbrainError {}
  * reachability, and the message has to say so or the refusal looks arbitrary.
  */
 export class UnlinkableNameError extends NdbrainError {}
+
+/**
+ * What a failure before the server is listening looks like on the console.
+ *
+ * Everything that can stop a start is something a person has to act on: a
+ * migration refusing a database it must not silently half-convert, a port
+ * already taken, a data directory it cannot write. Those errors carry their
+ * instructions in the message, and the message is the whole of what helps — a
+ * stack trace only buries it. Left as an unhandled rejection it arrived with
+ * one, and a container restarting in a loop printed the pile again every
+ * second, which is how a clear sentence becomes unreadable.
+ */
+export function startupMessage(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return `ndbrain cannot start: ${text}`;
+}

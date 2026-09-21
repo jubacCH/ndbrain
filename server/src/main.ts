@@ -8,6 +8,7 @@
  */
 
 import { loadConfig } from './config.js';
+import { startupMessage } from './errors.js';
 import { buildServer } from './http/server.js';
 import { createRuntime, createWatcher, syncAllVaults } from './runtime.js';
 
@@ -62,4 +63,13 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+try {
+  await main();
+} catch (error) {
+  // One line and a non-zero exit rather than the unhandled rejection this used
+  // to be; see `startupMessage`. Nothing here is recoverable — the server is
+  // not listening yet — so there is nothing to do but say what happened and
+  // leave the decision about restarting to whatever supervises the process.
+  console.error(startupMessage(error));
+  process.exit(1);
+}
