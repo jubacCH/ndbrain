@@ -169,14 +169,15 @@ export class DeletedNotes {
       for (let attempt = 0; attempt <= MAX_NAME_ATTEMPTS; attempt += 1) {
         const target = attempt === 0 ? path : restoredPath(path, when, attempt);
         const authorize = (): void => this.#assertMayRestore(caller, owner, target);
-        // Checked again for the name actually written, which a taken path
-        // moves. On a branch where the write path takes an `authorize` hook,
-        // this call passes `{ authorize }` as its fifth argument and the same
-        // right is re-checked inside the note's lock.
+        // Checked twice for the name actually written, which a taken path
+        // moves: here, and again inside the note's lock. Between the two a
+        // share can be withdrawn — by the owner, or by the binding check that
+        // runs in that same lock — and a restore that started as allowed must
+        // not finish anyway.
         authorize();
         let result;
         try {
-          result = await this.#app.createNoteIfAbsent(owner, target, content, caller);
+          result = await this.#app.createNoteIfAbsent(owner, target, content, caller, { authorize });
         } catch (error) {
           // A differently-cased note holds the name: taken, like an equal one.
           if (error instanceof CaseCollisionError) continue;
