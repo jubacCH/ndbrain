@@ -262,6 +262,18 @@ describe('with a history on the host', () => {
     await expect(fs.access(path.join(vaultDir('julian'), 'Flüchtig.md'))).rejects.toThrow();
   });
 
+  it('lists a note created and deleted within the same millisecond', async () => {
+    await h.runtime.app.createNote('julian', 'Schnell.md', 'im selben Takt\n', 'julian');
+    await commit('julian');
+    await del('julian', 'julian', 'Schnell.md');
+    // A fast machine writes both edits with the same stamp; the order of the
+    // rows, not the clock, decides what happened last.
+    const [row] = h.runtime.db.all("SELECT at FROM edits WHERE path = 'Schnell.md' AND action = 'delete'");
+    h.runtime.db.run("UPDATE edits SET at = ? WHERE path = 'Schnell.md'", Number(row!['at']));
+
+    expect((await list('julian')).body.notes[0]).toMatchObject({ path: 'Schnell.md', restore: 'ready' });
+  });
+
   it('leaves out deletes older than the window and notes that are back', async () => {
     await h.runtime.app.createNote('julian', 'Alt.md', 'alt\n', 'julian');
     await h.runtime.app.createNote('julian', 'Wieder.md', 'wieder\n', 'julian');
