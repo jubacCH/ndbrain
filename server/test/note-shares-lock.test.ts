@@ -372,3 +372,120 @@ describe('the destination of a rename is decided in the lock too', () => {
     expect(await exists('Archiv/x.md')).toBe(true);
   });
 });
+
+/**
+ * A rename that is refused leaves the vault exactly as it found it.
+ *
+ * The link rewrite used to run before the move — before the lock, before
+ * `confirm`, before the permission was asked a second time. A move the lock
+ * then refused left every note in the owner's vault pointing at a path nothing
+ * had moved to, and left them unindexed on top, because the reindex is at the
+ * end. The rewrite now happens after the move.
+ */
+describe('a refused rename rewrites no links', () => {
+  beforeEach(async () => {
+    await h.runtime.app.createNote('julian', 'Projekt/Ref.md', '# Ref\n\nsiehe [[Archiv/x]]\n', 'julian');
+  });
+
+  const referrer = (): Promise<string> => read('Projekt/Ref.md');
+
+  it('when the share is withdrawn in the lock', async () => {
+    await share('ramona', 'folder', 'Projekt', true);
+    await share('ramona', 'note', 'Archiv/x.md', true);
+    await replaceBehind('Archiv/x.md');
+
+    const reply = await h.as('ramona', {
+      method: 'POST',
+      url: '/api/v1/rename',
+      payload: { owner: 'julian', from: 'Archiv/x.md', to: 'Projekt/x.md' },
+    });
+
+    expect(reply.status).toBe(404);
+    expect(await referrer()).toContain('[[Archiv/x]]');
+    expect(await exists('Projekt/x.md')).toBe(false);
+  });
+
+  it('when the owner renames onto a name that is taken', async () => {
+    const reply = await h.as('julian', {
+      method: 'POST',
+      url: '/api/v1/rename',
+      payload: { from: 'Archiv/x.md', to: 'Projekt/Plan.md' },
+    });
+
+    expect(reply.status).toBe(409);
+    expect(await referrer()).toContain('[[Archiv/x]]');
+    expect(await read('Projekt/Plan.md')).toContain('geteilt');
+  });
+
+  it('and a rename that goes through rewrites them and indexes what it wrote', async () => {
+    const reply = await h.as('julian', {
+      method: 'POST',
+      url: '/api/v1/rename',
+      payload: { from: 'Archiv/x.md', to: 'Projekt/x.md' },
+    });
+
+    expect(reply.status).toBe(200);
+    expect(reply.body.updatedLinks).toEqual(['Projekt/Ref.md']);
+    expect(await referrer()).toContain('[[Projekt/x]]');
+
+    // The index agrees with the file, without waiting for the watcher: the
+    // rewritten note is found by its new text and its link resolves.
+    const found = await h.as('julian', { url: '/api/v1/backlinks/Projekt/x.md' });
+    expect(found.body.backlinks.map((link: { source: string }) => link.source)).toEqual(['Projekt/Ref.md']);
+  });
+
+  it('carries a note´s link to its own old name with it', async () => {
+    await h.runtime.app.putNote('julian', 'Archiv/x.md', '# x\n\nich selbst: [[Archiv/x]]\n', 'julian');
+
+    const reply = await h.as('julian', {
+      method: 'POST',
+      url: '/api/v1/rename',
+      payload: { from: 'Archiv/x.md', to: 'Projekt/x.md' },
+    });
+
+    expect(reply.status).toBe(200);
+    expect(await read('Projekt/x.md')).toContain('[[Projekt/x]]');
+    expect(await exists('Archiv/x.md')).toBe(false);
+  });
+});
+
+/**
+ * A note renamed to another letter case behind ndBrain's back is still a note
+ * that is gone from the path the share names. Saying so by name would hand the
+ * grantee the new one.
+ */
+describe('the letter-case collision is reported to the owner only', () => {
+  beforeEach(async () => {
+    await share('ramona', 'note', 'Projekt/Plan.md', true);
+    await fs.rename(onDisk('Projekt/Plan.md'), onDisk('Projekt/plan.md'));
+  });
+
+  for (const [what, payload] of [
+    ['a save', { content: '# von ramona\n' }],
+    ['a create-if-absent', { content: '# von ramona\n', ifAbsent: true }],
+  ] as const) {
+    it(`answers a grantee's ${what} as a missing note`, async () => {
+      const reply = await h.as('ramona', {
+        method: 'PUT',
+        url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+        payload,
+      });
+
+      expect(reply).toMatchObject(await absentAnswer());
+      expect(reply.raw).not.toContain('plan.md');
+      expect(await read('Projekt/plan.md')).not.toContain('ramona');
+    });
+
+    it(`names it to the owner, whose only explanation it is (${what})`, async () => {
+      const reply = await h.as('julian', {
+        method: 'PUT',
+        url: '/api/v1/notes/Projekt/Plan.md',
+        payload,
+      });
+
+      expect(reply.status).toBe(409);
+      expect(reply.body.code).toBe('case_collision');
+      expect(reply.body.message).toContain('plan.md');
+    });
+  }
+});
