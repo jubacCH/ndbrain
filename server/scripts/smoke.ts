@@ -8,10 +8,12 @@
  * Run with:  node scripts/smoke.ts
  */
 
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { indexFile, loadConfig } from '../src/config.js';
 import { Database } from '../src/db/database.js';
 import { migrate } from '../src/db/schema.js';
 import { Indexer } from '../src/index/indexer.js';
@@ -189,6 +191,8 @@ async function main(): Promise<void> {
 
     db.close();
 
+    failures += await startRefusesAnUnmigratableIndex();
+
     if (failures > 0) {
       console.error(`\n${failures} Problem(e).`);
       process.exitCode = 1;
@@ -201,3 +205,59 @@ async function main(): Promise<void> {
 }
 
 await main();
+
+/**
+ * The one check that needs the built entry point rather than the modules:
+ * a start that cannot happen says so in one line and exits non-zero.
+ *
+ * `migrate` refuses a database holding two accounts whose names differ only in
+ * letter case, because it must not silently leave the unique index uncreated.
+ * That refusal used to surface as an unhandled rejection with a stack, which a
+ * container restarting in a loop printed again every second. Nothing under
+ * `test/` can see this: it is about the process, and the process only exists
+ * after `tsc`, which is exactly what `npm run smoke` runs first.
+ */
+async function startRefusesAnUnmigratableIndex(): Promise<number> {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-start-'));
+  try {
+    await fs.mkdir(path.dirname(indexFile({ ...loadConfig(), dataDir })), { recursive: true });
+    const db = new Database(indexFile({ ...loadConfig(), dataDir }));
+    migrate(db, 10);
+    for (const id of ['julian', 'Julian']) {
+      db.run(
+        `INSERT INTO users (id, display_name, password_hash, role, created_at, disabled_at)
+         VALUES (?, ?, 'x', 'user', 1, NULL)`,
+        id,
+        id,
+      );
+    }
+    db.close();
+
+    const entry = path.join(import.meta.dirname, '..', 'src', 'main.js');
+    const started = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', entry], {
+      env: { ...process.env, NDBRAIN_DATA_DIR: dataDir, NDBRAIN_PORT: '0' },
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+
+    const said = (started.stderr ?? '').trim();
+    const lines = said === '' ? [] : said.split('\n');
+    const ok =
+      started.status === 1 &&
+      lines.length === 1 &&
+      lines[0]!.startsWith('ndbrain cannot start:') &&
+      lines[0]!.includes('letter case') &&
+      !said.includes('    at ');
+
+    if (ok) {
+      console.log(`\nStart auf einer unmigrierbaren DB: ${lines[0]}`);
+      return 0;
+    }
+    console.error(
+      `\nStart auf einer unmigrierbaren DB: Code ${started.status}, ${lines.length} Zeile(n):\n${said.slice(0, 500)}`,
+    );
+    return 1;
+  } finally {
+    await fs.rm(dataDir, { recursive: true, force: true });
+  }
+}
