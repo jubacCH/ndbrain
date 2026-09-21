@@ -49,6 +49,22 @@ describe('normalizeVaultPath', () => {
     expect(normalized.size).toBe(1);
   });
 
+  /*
+   * A leading dot hides the entry from every listing and from the watcher, so
+   * a file written under one could never be seen, indexed or removed again.
+   * `.git` is the one that decides it: the vault's history lives there, and the
+   * timer that commits it runs git as root over this directory — git reads
+   * several settings out of the repository and runs them as commands.
+   */
+  it('names the dot as the reason, so the message is actionable', () => {
+    expect(() => normalizeVaultPath('.git/config')).toThrow(/begin with a dot/);
+  });
+
+  it('keeps a dot inside a name, which is ordinary', () => {
+    expect(normalizeVaultPath('Homelab/v1.2 Notizen.md')).toBe('Homelab/v1.2 Notizen.md');
+    expect(normalizeVaultPath('Archiv/2026.09.21.md')).toBe('Archiv/2026.09.21.md');
+  });
+
   it('keeps unicode and spaces, which are legitimate in note names', () => {
     expect(normalizeVaultPath('Küche/Rezept für Brot.md')).toBe('Küche/Rezept für Brot.md');
     expect(normalizeVaultPath('Notizen/2026 — Juli.md')).toBe('Notizen/2026 — Juli.md');
@@ -68,6 +84,10 @@ describe('normalizeVaultPath', () => {
     ['reserved name in a folder', 'Homelab/con.md'],
     ['trailing space', 'Homelab/Proxmox.md '],
     ['trailing dot', 'Homelab/Proxmox.'],
+    ['the history repository', '.git/config'],
+    ['a hidden file anywhere below', 'Homelab/.git/hooks/pre-commit'],
+    ['a hidden folder of another tool', '.obsidian/workspace.json'],
+    ['a hidden note', 'Homelab/.secret.md'],
     ['empty', ''],
     ['root itself', '.'],
   ])('rejects %s', (_label, input) => {
@@ -103,8 +123,18 @@ describe('resolveInVault — the tenant boundary', () => {
     // traversal. v1 shipped exactly that bug and it was caught in review, so the
     // HTTP layer decodes once, then calls this function, and never the other way
     // round. Asserting containment here makes the contract explicit.
-    const resolved = resolveInVault(DATA, 'julian', '..%2Framona%2FGeheim.md');
+    const resolved = resolveInVault(DATA, 'julian', 'Homelab%2F..%2Framona%2FGeheim.md');
     expect(resolved.startsWith(vaultRoot(DATA, 'julian') + path.sep)).toBe(true);
+  });
+
+  it('refuses the same name spelled as a hidden one, for the other reason', () => {
+    // `..%2Framona%2FGeheim.md` is no more traversal than the name above, but it
+    // is a file whose name begins with a dot, so the rule against hidden entries
+    // catches it first. Named here so that a later reader does not mistake the
+    // rejection for a traversal defence that never applied.
+    expect(() => resolveInVault(DATA, 'julian', '..%2Framona%2FGeheim.md')).toThrow(
+      /begin with a dot/,
+    );
   });
 
   it('keeps two users with the same note path apart', () => {
