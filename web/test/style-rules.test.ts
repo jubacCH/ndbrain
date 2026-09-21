@@ -103,3 +103,46 @@ describe('words in copy.ts', () => {
     for (const pattern of patterns) expect(source).not.toMatch(pattern);
   });
 });
+
+/**
+ * Height has to reach the view, or `overflow-y: auto` inside it never scrolls.
+ *
+ * `.main` hides its overflow and every view asks for `flex: 1`. If the wrapper
+ * between them grows with its content instead of passing the constraint down,
+ * a long note or a long list is simply cut off at the bottom of the window.
+ */
+describe('the view fills its column', () => {
+  /** Every declaration of one selector, across all the rules that name it. */
+  function declarations(selector: string): string {
+    return rules(css)
+      .filter(([selectors]) => selectors.split(',').some((one) => one.trim() === selector))
+      .map(([, body]) => body)
+      .join(';');
+  }
+
+  it('the stage hands its height to the column, not to the content', () => {
+    expect(declarations('.stage')).toMatch(/min-height:\s*0/);
+  });
+
+  it('the column is a flex column that does not grow with its content', () => {
+    const main = declarations('.main');
+
+    expect(main).toMatch(/min-height:\s*0/);
+    expect(main).toMatch(/flex-direction:\s*column/);
+  });
+
+  it('the body of a view passes the height on, so the view can scroll', () => {
+    const body = declarations('.main-body');
+
+    expect(body).toMatch(/min-height:\s*0/);
+    expect(body).toMatch(/flex:\s*1/);
+    expect(body).toMatch(/flex-direction:\s*column/);
+  });
+
+  it('a view scrolls its own content', () => {
+    const pane = declarations('.pane');
+
+    expect(pane).toMatch(/overflow-y:\s*auto/);
+    expect(pane).toMatch(/flex:\s*1/);
+  });
+});
