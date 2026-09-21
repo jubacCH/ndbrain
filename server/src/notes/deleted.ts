@@ -94,6 +94,18 @@ export class DeletedNotes {
     );
   }
 
+  /**
+   * The same question as a gate: the answer for a caller without the right is
+   * the answer for a note that never existed.
+   *
+   * Written as a function so it can be handed to the write path as its
+   * `authorize` hook, which re-checks the right inside the note's lock — see
+   * the one call site in `restore`.
+   */
+  #assertMayRestore(caller: string, owner: string, path: string): void {
+    if (!this.#mayRestore(caller, owner, path)) throw new NoteNotFoundError('note does not exist');
+  }
+
   /** The notes `caller` may bring back, deleted within the window. */
   async list(caller: string, now = Date.now()): Promise<DeletedNote[]> {
     const rows = this.#app.queries.deletedNotes(this.#shares.view(caller), now - DELETED_WINDOW_MS);
@@ -135,7 +147,7 @@ export class DeletedNotes {
    */
   async restore(caller: string, owner: string, notePath: string, now = Date.now()): Promise<RestoreResult> {
     const path = normalizeVaultPath(notePath);
-    if (!this.#mayRestore(caller, owner, path)) throw new NoteNotFoundError('note does not exist');
+    this.#assertMayRestore(caller, owner, path);
 
     return this.#restoring.run(`${owner}:${path}`, async () => {
       // Looked up again under the lock: a restore that got here first has
@@ -156,6 +168,12 @@ export class DeletedNotes {
       const when = new Date(now);
       for (let attempt = 0; attempt <= MAX_NAME_ATTEMPTS; attempt += 1) {
         const target = attempt === 0 ? path : restoredPath(path, when, attempt);
+        const authorize = (): void => this.#assertMayRestore(caller, owner, target);
+        // Checked again for the name actually written, which a taken path
+        // moves. On a branch where the write path takes an `authorize` hook,
+        // this call passes `{ authorize }` as its fifth argument and the same
+        // right is re-checked inside the note's lock.
+        authorize();
         let result;
         try {
           result = await this.#app.createNoteIfAbsent(owner, target, content, caller);

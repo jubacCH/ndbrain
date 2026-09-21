@@ -1361,7 +1361,12 @@ export class Queries {
         WHERE ${scope.sql} AND e.action = 'delete' AND e.at >= ? ${narrow}
           AND NOT EXISTS (SELECT 1 FROM edits y
                            WHERE y.owner = e.owner AND y.path = e.path
-                             AND y.action <> 'delete' AND y.at >= e.at)
+                             AND y.action <> 'delete'
+                             -- Ordered by the row, not only by the millisecond:
+                             -- a note created and deleted within one tick of the
+                             -- clock is deleted, and two rows of the same stamp
+                             -- must not read as "it is back".
+                             AND (y.at > e.at OR (y.at = e.at AND y.rowid > e.rowid)))
         GROUP BY e.owner, e.path
         ORDER BY at DESC
         LIMIT ?`,
