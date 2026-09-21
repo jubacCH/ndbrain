@@ -510,9 +510,17 @@ export class App {
    * links into dead ones. That is data damage discovered weeks later, which is why
    * it counts as correctness rather than convenience.
    *
-   * Order matters. Links are rewritten *before* the file moves: the backlink
-   * index still points at the old path at that moment, and reversing the order
-   * would mean searching for links to a note that no longer exists.
+   * Order matters, and it is: read who links here, **move**, then rewrite.
+   *
+   * The backlink index still points at the old path until the move is indexed,
+   * so the question "who links to this note" has to be asked before the move —
+   * but only asked. Rewriting before it meant that a move refused in the lock
+   * (a note share withdrawn by `confirm`, a destination already taken) left
+   * every referrer in the owner's vault pointing at a path nothing was ever
+   * moved to, and left them unindexed on top, because the reindex is at the
+   * end. A broken link somebody can repair; half a rename is not something
+   * they can even see. So the rewrite is now the part that only happens once
+   * the file has really moved.
    *
    * Each source note is rewritten by replacing the exact `[[…]]` text at its
    * recorded offset, back to front so earlier offsets stay valid. Replacing by
@@ -590,32 +598,27 @@ export class App {
     const referrers = [
       ...new Set(this.queries.backlinks(owner, owner, source).map((l) => l.source)),
     ];
-    const updated: string[] = [];
-
-    for (const referrer of referrers) {
-      // A note that links to itself is handled after the move, together with its
-      // own reindex — rewriting it here would be undone by the move.
-      if (referrer === source) continue;
-
-      const rewritten = await this.#rewriteLinksIn(owner, referrer, source, target);
-      if (rewritten) updated.push(referrer);
-    }
 
     const move: RenameOptions = {};
     if (authorizeSource !== undefined) move.authorizeSource = authorizeSource;
     if (authorizeTarget !== undefined) move.authorizeTarget = authorizeTarget;
     const note = await this.notes.renameNote(owner, source, target, move);
 
-    // The moved note may contain links to itself under the old name.
-    if (referrers.includes(source)) {
-      const selfRewritten = await this.#rewriteLinksIn(owner, target, source, target);
-      if (selfRewritten) updated.push(target);
+    const updated: string[] = [];
+    for (const referrer of referrers) {
+      // A note that links to itself has moved with the rest: its links are at
+      // the new path now, and so is the one pointing at its own old name.
+      const at = referrer === source ? target : referrer;
+      const rewritten = await this.#rewriteLinksIn(owner, at, source, target);
+      if (rewritten) updated.push(at);
     }
 
     this.indexer.removeNote(owner, source);
     await this.indexer.indexNote(owner, target);
     for (const path of updated) {
-      await this.indexer.indexNote(owner, path);
+      // The moved note itself is already indexed, above, with its self-link
+      // rewritten — every rewrite happens before any of this.
+      if (path !== target) await this.indexer.indexNote(owner, path);
     }
     this.indexer.resolveLinks(owner);
     this.#recordEdit(owner, target, 'rename', actor);
