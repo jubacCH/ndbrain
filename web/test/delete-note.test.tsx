@@ -75,6 +75,9 @@ const server = vi.hoisted(() => ({
   writes: [] as Array<{ path: string; base: number | undefined }>,
   /** The order requests started and ended in. */
   log: [] as string[],
+  /** What the delete preview answers; null makes it fail. */
+  preview: null as { restorable: number; unsaved: number; notYours: number; history: boolean } | null,
+  previews: [] as Array<[string, string[]]>,
 }));
 
 vi.mock('../src/api', async (original) => {
@@ -89,7 +92,7 @@ vi.mock('../src/api', async (original) => {
       return { notes: server.notes, dirs: [] };
     },
     tidy: async () => ({
-      orphans: [],
+      orphans: server.notes.filter((n) => n.owner === server.signedIn?.id && n.path === 'Loose.md'),
       untagged: [],
       deadLinks: [],
       stale: [],
@@ -152,6 +155,11 @@ vi.mock('../src/api', async (original) => {
       server.versions.set(path, version);
       server.log.push(`put-end ${path}`);
       return { note: { path, title: '', content: '', size: 0, mtimeMs: version }, created: false };
+    },
+    deletePreview: async (owner: string, paths: string[]) => {
+      server.previews.push([owner, paths]);
+      if (server.preview === null) throw new real.ApiError(500, 'internal', 'no');
+      return server.preview;
     },
     deleteNote: async (owner: string, path: string) => {
       server.log.push(`delete-start ${path}`);
@@ -237,6 +245,8 @@ beforeEach(() => {
   server.versions = new Map([[PLAN, 111], ['Loose.md', 222]]);
   server.writes = [];
   server.log = [];
+  server.preview = { restorable: 1, unsaved: 0, notYours: 0, history: true };
+  server.previews = [];
 });
 
 afterEach(() => {
@@ -279,7 +289,14 @@ function storedRecents(): string {
   return window.localStorage.getItem(recentsKey('julian')) ?? '';
 }
 
-const QUESTION_PLAN = `${copy.ask.deleteNote('Plan')} ${copy.ask.linksWillBreak(2)}`;
+const RESTORABLE = copy.ask.afterDelete({ restorable: 1, unsaved: 0, notYours: 0, history: true });
+
+/** The question for a note whose last saved version can be restored. */
+function ask(title: string): string {
+  return `${copy.ask.deleteNote(title)} ${RESTORABLE}`;
+}
+
+const QUESTION_PLAN = `${ask('Plan')} ${copy.ask.linksWillBreak(2)}`;
 
 describe("deleting from the note's header", () => {
   it('asks with the number of linking notes, deletes, and goes home with the note gone everywhere', async () => {
@@ -469,7 +486,7 @@ describe("deleting from the note's header", () => {
     await user.click(screen.getByRole('button', { name: copy.note.actions }));
     await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
     await waitFor(() => expect(server.deleted).toEqual([['julian', 'Loose.md']]));
-    expect(confirm).toHaveBeenCalledWith(copy.ask.deleteNote('Loose'));
+    expect(confirm).toHaveBeenCalledWith(ask('Loose'));
   });
 
   it('offers no actions on a note shared read-only, and delete on one shared writable', async () => {
@@ -484,6 +501,66 @@ describe("deleting from the note's header", () => {
   });
 });
 
+describe('what the question says about the way back', () => {
+  async function deleteLoose(): Promise<void> {
+    mount();
+    await openFromPalette('Loose');
+    await user.click(screen.getByRole('button', { name: copy.note.actions }));
+    await user.click(screen.getByRole('menuitem', { name: copy.note.delete }));
+    await waitFor(() => expect(server.deleted).toEqual([['julian', 'Loose.md']]));
+  }
+
+  it('asks the server about exactly this note', async () => {
+    await deleteLoose();
+    expect(server.previews).toEqual([['julian', ['Loose.md']]]);
+    expect(RESTORABLE).toBe('Its last saved version can be restored from Tidy up for 30 days.');
+  });
+
+  it('says a note cannot come back where the host keeps no history', async () => {
+    server.preview = { restorable: 0, unsaved: 1, notYours: 0, history: false };
+    await deleteLoose();
+    expect(confirm).toHaveBeenCalledWith(
+      `${copy.ask.deleteNote('Loose')} This server keeps no history, so it cannot be restored.`,
+    );
+  });
+
+  it('says a note cannot come back when no version of it was saved yet', async () => {
+    server.preview = { restorable: 0, unsaved: 1, notYours: 0, history: true };
+    await deleteLoose();
+    expect(confirm).toHaveBeenCalledWith(
+      `${copy.ask.deleteNote('Loose')} No version of it has been saved yet, so it cannot be restored.`,
+    );
+  });
+
+  it('tells somebody who could not restore it so', async () => {
+    server.preview = { restorable: 0, unsaved: 0, notYours: 1, history: false };
+    await deleteLoose();
+    expect(confirm).toHaveBeenCalledWith(`${copy.ask.deleteNote('Loose')} You will not be able to restore it.`);
+  });
+
+  it('promises nothing when the server could not say', async () => {
+    server.preview = null;
+    await deleteLoose();
+    expect(confirm).toHaveBeenCalledWith(copy.ask.deleteNote('Loose'));
+  });
+});
+
+describe('a bulk delete from Tidy up', () => {
+  it('asks the server about the selection and says how many can come back', async () => {
+    server.preview = { restorable: 0, unsaved: 1, notYours: 0, history: true };
+    mount();
+    await user.click(await screen.findByRole('button', { name: copy.nav.tidy }));
+    await user.click(await screen.findByRole('checkbox', { name: copy.tidy.select('Loose') }));
+    await user.click(screen.getByRole('button', { name: copy.tidy.delete }));
+
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(server.previews).toEqual([['julian', ['Loose.md']]]);
+    expect(confirm).toHaveBeenCalledWith(
+      `${copy.ask.deleteNotes(1)} No version of it has been saved yet, so it cannot be restored.`,
+    );
+  });
+});
+
 describe('deleting from the tree', () => {
   it('asks, deletes, and leaves the open note alone when it is a different one', async () => {
     mount();
@@ -492,7 +569,7 @@ describe('deleting from the tree', () => {
     await user.click(await screen.findByRole('button', { name: copy.tree.deleteNoteLabel('Loose') }));
 
     await waitFor(() => expect(server.deleted).toEqual([['julian', 'Loose.md']]));
-    expect(confirm).toHaveBeenCalledWith(copy.ask.deleteNote('Loose'));
+    expect(confirm).toHaveBeenCalledWith(ask('Loose'));
     expect(screen.getByTestId('editor')).toHaveTextContent(PLAN);
   });
 

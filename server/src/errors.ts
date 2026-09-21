@@ -84,3 +84,11 @@ export function startupMessage(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   return `ndbrain cannot start: ${text}`;
 }
+
+/**
+  * A deleted note the caller may bring back, with nothing to bring it back from:
+ * the host keeps no history, or no saved version holds the note. Only ever
+ * raised after the caller's right to restore there has been established — to
+ * anybody else the note does not exist.
+ */
+export class NothingToRestoreError extends NdbrainError {}

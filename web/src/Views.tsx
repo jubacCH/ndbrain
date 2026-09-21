@@ -54,6 +54,7 @@ export function TidyView({
   dirs,
   health,
   initialFocus = null,
+  after,
 }: {
   data: Tidy;
   selected: Set<string>;
@@ -77,6 +78,8 @@ export function TidyView({
   health?: { notes: number; tagsInUse: boolean };
   /** A finding to narrow the list to on arrival — a click on the home view's card. */
   initialFocus?: HealthKey | 'stale' | null;
+  /** Rendered at the end of the pane, below the findings: Recently deleted. */
+  after?: React.ReactNode;
 }): React.JSX.Element {
   type Row = { path: string; title: string; finding: string; kind: 'crit' | 'warn'; when: string; key: HealthKey | 'stale' };
 
@@ -284,6 +287,7 @@ export function TidyView({
         />
       )}
       </div>
+      {after}
     </div>
   );
 }

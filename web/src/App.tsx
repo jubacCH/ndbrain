@@ -70,6 +70,7 @@ import {
 import { Tree, displayPath, type Finding } from './Tree';
 import { lineOfHit } from './snippet';
 import { SearchView, SharesView, TasksView, TidyView } from './Views';
+import { RecentlyDeleted } from './RecentlyDeleted';
 import { HomeView } from './Home';
 import type { HealthKey } from './healthScore';
 import {
@@ -1004,21 +1005,22 @@ function Shell({
       // and a write of this one that is already running is let finish.
       await settle();
 
-      let linking = 0;
-      try {
-        const { backlinks } = await client.fetchQuery({
-          queryKey: keys.links(owner, path),
-          queryFn: () => api.links(owner, path),
-          staleTime: 0,
-        });
-        linking = new Set(backlinks.filter((row) => row.source !== path).map((row) => row.source)).size;
-      } catch {
-        // Unknown is not zero, but the question still names the note, and the
-        // server has the final word on whether it exists at all.
-      }
+      // Asked side by side: the links it breaks, and whether it can come back.
+      const [linking, preview] = await Promise.all([
+        client
+          .fetchQuery({ queryKey: keys.links(owner, path), queryFn: () => api.links(owner, path), staleTime: 0 })
+          .then(({ backlinks }) => new Set(backlinks.filter((row) => row.source !== path).map((row) => row.source)).size)
+          // Unknown is not zero, but the question still names the note, and the
+          // server has the final word on whether it exists at all.
+          .catch(() => 0),
+        // Unknown says nothing about the way back rather than something untrue.
+        api.deletePreview(owner, [path]).catch(() => null),
+      ]);
+      const afterwards = copy.ask.afterDelete(preview);
 
       const question =
         copy.ask.deleteNote(title) +
+        (afterwards !== '' ? ` ${afterwards}` : '') +
         (linking > 0 ? ` ${copy.ask.linksWillBreak(linking)}` : '') +
         (typingHere() ? ` ${copy.ask.unsavedDropped}` : '');
       if (!window.confirm(question)) {
@@ -1508,8 +1510,10 @@ function Shell({
       const tag = window.prompt(copy.ask.tagWith(paths.length));
       if (tag === null || tag.trim() === '') return;
       extra = { tag };
-    } else if (!window.confirm(copy.ask.deleteNotes(paths.length))) {
-      return;
+    } else {
+      const preview = await api.deletePreview(user.id, paths).catch(() => null);
+      const afterwards = copy.ask.afterDelete(preview);
+      if (!window.confirm(copy.ask.deleteNotes(paths.length) + (afterwards !== '' ? ` ${afterwards}` : ''))) return;
     }
 
     setBulkBusy(true);
@@ -2012,6 +2016,7 @@ function Shell({
                   }
                   onOpen={(path) => void openNote(user.id, path)}
                   onBulk={(action) => void runBulk(action)}
+                  after={<RecentlyDeleted self={user.id} onOpen={(owner, path) => void openNote(owner, path)} />}
                 />
               )}
 

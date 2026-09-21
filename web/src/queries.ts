@@ -49,6 +49,7 @@ import { parseTagRegistry, REGISTRY_PATH } from './editor/tagRegistry';
 export const keys = {
   tree: ['tree'] as const,
   tidy: ['tidy'] as const,
+  deleted: ['deleted'] as const,
   tasks: (filters: { dir?: string; includeDone?: boolean }) => ['tasks', filters] as const,
   overview: ['overview'] as const,
   shares: ['shares'] as const,
@@ -85,6 +86,14 @@ export function useTree(): UseQueryResult<TreeData> {
 
 export function useTidy(): UseQueryResult<Awaited<ReturnType<typeof api.tidy>>> {
   return useQuery({ queryKey: keys.tidy, queryFn: () => api.tidy(), staleTime: FRESH_MS });
+}
+
+/**
+ * Recently deleted notes. Only while the tidy view is open: every row asks the
+ * host's history whether it can be brought back, which is a look, not a poll.
+ */
+export function useDeleted(enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.deleted>>> {
+  return useQuery({ queryKey: keys.deleted, queryFn: () => api.deleted(), staleTime: FRESH_MS, enabled });
 }
 
 export function useTasks(
@@ -343,6 +352,9 @@ export const invalidate = {
   afterStructure: (client: QueryClient): void => {
     void client.invalidateQueries({ queryKey: keys.tree });
     void client.invalidateQueries({ queryKey: keys.tidy });
+    // Recently deleted is a list of notes like any other: a delete adds to it,
+    // a restore or a new note under the same name takes a row out of it.
+    void client.invalidateQueries({ queryKey: keys.deleted });
     void client.invalidateQueries({ queryKey: keys.graph });
     void client.invalidateQueries({ queryKey: keys.overview });
     void client.invalidateQueries({ queryKey: keys.files });

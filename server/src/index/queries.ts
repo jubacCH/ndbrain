@@ -183,6 +183,57 @@ export interface PulseEvent {
   owner: string;
 }
 
+/** A note deleted through ndBrain, as `Queries.deletedNotes` lists it. */
+export interface DeletedRow {
+  owner: string;
+  path: string;
+  title: string;
+  /** Who deleted it: the account, or an agent key's owner. */
+  actor: string;
+  at: number;
+}
+
+/**
+ * The regions of a view somebody may bring a deleted note back into.
+ *
+ * **The** rule for deleted notes, used by the list and by the restore alike:
+ * a region the caller may write, and never a note share. A note share names
+ * one note and is withdrawn when that note is deleted; one that happened to
+ * survive — or a new one on a note that later took the path — must not become
+ * a key to the note that was there before.
+ */
+export function restoreScopes(viewable: Viewable): View {
+  return toView(viewable).filter((scope) => scope.canWrite && !scope.exact);
+}
+
+/** The word a restore under another name puts into the new name. */
+export const RESTORED_WORD = 'wiederhergestellt';
+
+/**
+ * The name a deleted note is restored under when its own path is taken:
+ * `Plan (wiederhergestellt 2026-09-17).md`, then `… 2026-09-17 2).md` and on.
+ * Local date, like a conflict copy's name.
+ */
+export function restoredPath(notePath: string, when: Date, attempt = 1): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  const day = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
+  const suffix = attempt > 1 ? ` ${attempt}` : '';
+  return `${notePath.replace(/\.md$/i, '')} (${RESTORED_WORD} ${day}${suffix}).md`;
+}
+
+/** The original path a `restoredPath` name was made from, or null for any other name. */
+export function restoredOriginal(notePath: string): string | null {
+  const match = new RegExp(`^(.+) \\(${RESTORED_WORD} (\\d{4})-(\\d{2})-(\\d{2})(?: ([2-9]|[1-9]\\d+))?\\)\\.md$`).exec(
+    notePath,
+  );
+  if (match === null) return null;
+  return `${match[1] ?? ''}.md`;
+}
+
+function noteTitleOf(notePath: string): string {
+  return notePath.slice(notePath.lastIndexOf('/') + 1).replace(/\.md$/i, '');
+}
+
 /** A view, or the shorthand for "just this owner's own vault". */
 export type Viewable = string | View;
 
@@ -1276,6 +1327,77 @@ export class Queries {
         edits: Number(row['edits']),
         deleted: row['title'] === null || row['title'] === undefined,
       }));
+  }
+
+  /**
+   * Notes deleted through ndBrain since `sinceMs` and not back since, newest
+   * first — within the regions the caller may bring a note back into.
+   *
+   * A delete counts while it is the last thing that happened to its path. Any
+   * later edit there — a restore, a new note of that name, a rename onto it —
+   * ends it. So does a restore that had to take another name
+   * (`restoredPath`): the note is back, only somewhere else.
+   *
+   * Scoped by `restoreScopes`, not by the read view: the title and the path of
+   * a deleted note are its content, and only somebody who could put the note
+   * back may see them. That leaves out every note share, which is exactly the
+   * grant the delete withdrew.
+   */
+  deletedNotes(
+    view: Viewable,
+    sinceMs: number,
+    limit = 200,
+    only?: { owner: string; path: string },
+  ): DeletedRow[] {
+    const scope = scopeSql('e', 'path', restoreScopes(view));
+    const narrow = only === undefined ? '' : 'AND e.owner = ? AND e.path = ?';
+    const narrowParams = only === undefined ? [] : [only.owner, only.path];
+    const rows = this.#db.all(
+      `SELECT e.owner, e.path, MAX(e.at) AS at,
+              (SELECT actor FROM edits x
+                WHERE x.owner = e.owner AND x.path = e.path AND x.action = 'delete'
+                ORDER BY x.at DESC LIMIT 1) AS actor
+         FROM edits e
+        WHERE ${scope.sql} AND e.action = 'delete' AND e.at >= ? ${narrow}
+          AND NOT EXISTS (SELECT 1 FROM edits y
+                           WHERE y.owner = e.owner AND y.path = e.path
+                             AND y.action <> 'delete'
+                             -- Ordered by the row, not only by the millisecond:
+                             -- a note created and deleted within one tick of the
+                             -- clock is deleted, and two rows of the same stamp
+                             -- must not read as "it is back".
+                             AND (y.at > e.at OR (y.at = e.at AND y.rowid > e.rowid)))
+        GROUP BY e.owner, e.path
+        ORDER BY at DESC
+        LIMIT ?`,
+      ...scope.params,
+      Math.trunc(sinceMs),
+      ...narrowParams,
+      Math.trunc(limit),
+    );
+
+    const out: DeletedRow[] = [];
+    for (const row of rows) {
+      const owner = String(row['owner']);
+      const path = String(row['path']);
+      const at = Number(row['at']);
+      // A restore under another name: a create, after the delete, of a path
+      // that names this one as its original.
+      const base = `${path.replace(/\.md$/i, '')} (${RESTORED_WORD} `;
+      const restoredElsewhere = this.#db
+        .all(
+          `SELECT path FROM edits
+            WHERE owner = ? AND action = 'create' AND at >= ? AND substr(path, 1, ?) = ?`,
+          owner,
+          at,
+          base.length,
+          base,
+        )
+        .some((copy) => restoredOriginal(String(copy['path'])) === path);
+      if (restoredElsewhere) continue;
+      out.push({ owner, path, title: noteTitleOf(path), actor: String(row['actor']), at });
+    }
+    return out;
   }
 
   notesWithTag(view: Viewable, tag: string): NoteRow[] {
