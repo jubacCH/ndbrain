@@ -21,6 +21,7 @@ import {
   NotAFileError,
   NoteExistsError,
   NoteNotFoundError,
+  NothingToRestoreError,
   TaskChangedError,
   UnlinkableNameError,
 } from '../errors.js';
@@ -55,6 +56,9 @@ export function toProblem(error: unknown): HttpProblem {
   }
   if (error instanceof CaseCollisionError) {
     return { status: 409, code: 'case_collision', message: error.message };
+  }
+  if (error instanceof NothingToRestoreError) {
+    return { status: 409, code: 'nothing_to_restore', message: error.message };
   }
   if (error instanceof TaskChangedError) {
     return { status: 409, code: 'task_changed', message: error.message };

@@ -402,6 +402,53 @@ export const RestoreRequest = z
 
 export const RestoreResponse = z.object({ note: Note, created: z.boolean() });
 
+/* ---- recently deleted ---------------------------------------------------- */
+
+/**
+ * Why a deleted note can or cannot be brought back: a saved version exists; the
+ * host keeps no history; it does but has recorded nothing yet; or no saved
+ * version holds this note.
+ */
+export const RestoreState = z.enum(['ready', 'no-history', 'no-commit', 'no-version']);
+
+export const DeletedNote = z.object({
+  owner: z.string(),
+  path: z.string(),
+  title: z.string(),
+  folder: z.string(),
+  /** Who deleted it. */
+  actor: z.string(),
+  at: Timestamp,
+  restore: RestoreState,
+  /** When the version a restore brings back was saved; null unless `ready`. */
+  savedAt: Timestamp.nullable(),
+});
+
+export const DeletedResponse = z.object({ notes: z.array(DeletedNote) });
+
+export type DeletedNote = z.infer<typeof DeletedNote>;
+export type RestoreState = z.infer<typeof RestoreState>;
+export type DeletePreview = z.infer<typeof DeletePreviewResponse>;
+
+export const RestoreDeletedRequest = z.object({ owner: UserId, path: VaultPath }).strict();
+
+export const RestoreDeletedResponse = z.object({
+  note: Note,
+  /** False when the old path was taken and the note came back under another name. */
+  samePath: z.boolean(),
+});
+
+export const DeletePreviewRequest = z
+  .object({ owner: UserId, paths: z.array(VaultPath).min(1).max(10_000) })
+  .strict();
+
+export const DeletePreviewResponse = z.object({
+  restorable: z.number(),
+  unsaved: z.number(),
+  notYours: z.number(),
+  history: z.boolean(),
+});
+
 /* ---- administration ------------------------------------------------------ */
 
 export const AdminUser = z.object({

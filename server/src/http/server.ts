@@ -27,6 +27,7 @@ import type { ApiKeyService } from '../auth/keys.js';
 import { InvalidShareError, type Need, type Share, type ShareService } from '../auth/shares.js';
 import type { SettingsService } from '../auth/settings.js';
 import type { History, Version } from '../vault/history.js';
+import { DeletedNotes } from '../notes/deleted.js';
 import { SessionService, UnknownUserError, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
@@ -81,6 +82,7 @@ const PUBLIC_ROUTES = new Set(['/api/v1/auth/login', '/api/v1/health']);
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const { app, users, sessions, keys, shares, settings, history, config } = deps;
   const throttle = deps.throttle ?? new LoginThrottle();
+  const deleted = new DeletedNotes(app, shares, history);
 
   /**
    * Resolves what a request is addressing, and whether the caller may.
@@ -989,6 +991,32 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       authorize: recheck(caller, owner, path, 'write'),
     });
     return { note: result.note, created: result.created };
+  });
+
+  /* ---- recently deleted ----------------------------------------------------
+   *
+   * The way back for a deleted note, which the history above cannot offer: it
+   * hangs off an open note. Everything about who may see and restore what is in
+   * `DeletedNotes`; these routes only carry the caller in.
+   */
+
+  fastify.get('/api/v1/deleted', async (request) => {
+    const caller = requireUser(request).id;
+    return { notes: await deleted.list(caller) };
+  });
+
+  fastify.post('/api/v1/deleted/restore', async (request) => {
+    const caller = requireUser(request).id;
+    const { owner, path } = body(request, S.RestoreDeletedRequest);
+    const result = await deleted.restore(caller, owner, path);
+    return { note: result.note, samePath: result.samePath };
+  });
+
+  /** Asked before a delete is confirmed, so the question can be honest about the way back. */
+  fastify.post('/api/v1/deleted/preview', async (request) => {
+    const caller = requireUser(request).id;
+    const { owner, paths } = body(request, S.DeletePreviewRequest);
+    return deleted.preview(caller, owner, paths);
   });
 
   /* ---- topics --------------------------------------------------------------
