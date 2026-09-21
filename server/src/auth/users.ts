@@ -9,7 +9,7 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
-import type { Database } from '../db/database.js';
+import type { Database, SqlValue } from '../db/database.js';
 import { InvalidUserError, NdbrainError } from '../errors.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { assertUserId } from '../vault/paths.js';
@@ -107,6 +107,27 @@ export class UserService {
     }
   }
 
+  /**
+   * The insert, with the database's own verdict on the name translated back.
+   *
+   * `users_id_lower` says the same thing `#assertNameFree` says, one layer
+   * down and without a gap to slip through — but it says it as a driver error
+   * naming an index, which is neither an answer a caller can act on nor
+   * anything that should reach a client. The two are the same refusal and read
+   * as one.
+   */
+  #insertAccount(sql: string, ...params: SqlValue[]): void {
+    try {
+      this.#db.run(sql, ...params);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (/UNIQUE constraint failed/i.test(message)) {
+        throw new UserExistsError('a user with that name already exists');
+      }
+      throw error;
+    }
+  }
+
   /** Creates an account and its vault directory. */
   async create(
     id: string,
@@ -117,10 +138,14 @@ export class UserService {
     // vault layer applies — otherwise an account name is a traversal vector.
     assertUserId(id);
 
-    this.#assertNameFree(id);
-
+    // Hashing a password takes long enough for a second request to run from
+    // start to finish, and this is the only `await` in the method: checked
+    // before it, the name is free at a moment that has passed by the time the
+    // row is written. Checked here, the check and the insert are one
+    // uninterrupted stretch of synchronous work.
     const hash = await hashPassword(password);
-    this.#db.run(
+    this.#assertNameFree(id);
+    this.#insertAccount(
       `INSERT INTO users (id, display_name, password_hash, role, created_at, disabled_at)
        VALUES (?, ?, ?, ?, ?, NULL)`,
       id,
@@ -151,7 +176,7 @@ export class UserService {
     this.#assertNameFree(id);
 
     const name = displayName === undefined ? id : checkedDisplayName(displayName);
-    this.#db.run(
+    this.#insertAccount(
       `INSERT INTO users (id, display_name, password_hash, role, kind, created_at, disabled_at)
        VALUES (?, ?, '!space', 'user', 'space', ?, NULL)`,
       id,

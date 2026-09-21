@@ -439,6 +439,37 @@ describe('one namespace, whatever the letter case', () => {
     expect(read.status).toBe(404);
   });
 
+  it('holds when two spellings of one name are created at the same moment', async () => {
+    // The check used to sit before the password hash, and hashing takes long
+    // enough for a second creation to run from beginning to end inside it —
+    // both looked, both found the name free, both wrote.
+    const pair = await Promise.allSettled([
+      h.runtime.users.create('Kim', 'ein gutes passwort'),
+      h.runtime.users.create('kim', 'ein gutes passwort'),
+    ]);
+    expect(pair.map((outcome) => outcome.status).sort()).toEqual(['fulfilled', 'rejected']);
+
+    // A person and a space, over HTTP, which is where the pair was found: on
+    // APFS the two would share one vault directory.
+    const [person, space] = await Promise.all([
+      h.as('admin', {
+        method: 'POST',
+        url: '/api/v1/admin/users',
+        payload: { id: 'Lea', password: 'ein gutes passwort' },
+      }),
+      h.as('admin', {
+        method: 'POST',
+        url: '/api/v1/admin/spaces',
+        payload: { id: 'lea', displayName: 'L' },
+      }),
+    ]);
+    expect([person.status, space.status].sort()).toEqual([201, 409]);
+
+    const ids = h.runtime.users.list().map((user) => user.id.toLowerCase());
+    expect(ids).toEqual([...new Set(ids)]);
+    expect(ids.filter((id) => id === 'kim' || id === 'lea').sort()).toEqual(['kim', 'lea']);
+  });
+
   it('resolves no id to an account of another case: login, shares and keys are exact', async () => {
     const login = await h.login('JULIAN', 'sein gutes passwort');
     const wrong = await h.login('julian', 'falsches passwort');

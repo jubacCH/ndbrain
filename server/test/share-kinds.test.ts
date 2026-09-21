@@ -28,6 +28,40 @@ afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+describe('the v11 migration: one account per name, whatever the letter case', () => {
+  const insert = (id: string): void =>
+    db.run(
+      `INSERT INTO users (id, display_name, password_hash, role, created_at, disabled_at)
+       VALUES (?, ?, 'x', 'user', 1, NULL)`,
+      id,
+      id,
+    );
+
+  it('refuses a pair of spellings that cannot both have a vault directory', () => {
+    migrate(db, 10);
+    insert('julian');
+    insert('Julian');
+    insert('ramona');
+
+    // Named, not silently skipped: the index would simply fail to be created
+    // and the collision would live on with nothing said.
+    expect(() => migrate(db)).toThrow(/julian \/ Julian|Julian \/ julian/);
+    expect(db.userVersion).toBe(10);
+  });
+
+  it('closes the gap the application check leaves open', () => {
+    migrate(db);
+    expect(db.userVersion).toBe(SCHEMA_VERSION);
+    insert('julian');
+    expect(() => insert('JULIAN')).toThrow(/UNIQUE constraint failed/);
+    insert('ramona');
+    expect(db.all('SELECT id FROM users ORDER BY id').map((row) => row['id'])).toEqual([
+      'julian',
+      'ramona',
+    ]);
+  });
+});
+
 describe('the v9 migration', () => {
   it('marks existing accounts as people and derives share kinds from their prefix', () => {
     migrate(db, 8);
