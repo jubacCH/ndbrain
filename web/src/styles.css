@@ -6062,18 +6062,12 @@ th.pick input,
   color: var(--text-3);
 }
 
-.deleted-action {
-  white-space: normal;
-}
-
 .deleted-why {
   display: block;
-  max-width: 28ch;
   margin-top: var(--s-1);
-  margin-left: auto;
   font-size: var(--t-sm);
   color: var(--text-2);
-  text-align: right;
+  text-wrap: pretty;
 }
 
 /* A phone scrolls one column: Continue keeps five of each list there, so the

@@ -124,6 +124,13 @@ export function RecentlyDeleted({
                         {ready && row.savedAt !== null && (
                           <span className="deleted-saved"> · {copy.deleted.savedAt(ago(row.savedAt))}</span>
                         )}
+                        {/* The reason sits in the wide column, where it can wrap;
+                            beside the button it would run off the table. */}
+                        {row.restore !== 'ready' && (
+                          <span id={whyId} className="deleted-why">
+                            {copy.deleted.why[row.restore]}
+                          </span>
+                        )}
                       </td>
                       <td className="n deleted-action">
                         <button
@@ -136,11 +143,6 @@ export function RecentlyDeleted({
                         >
                           {busy === key ? copy.deleted.restoring : copy.deleted.restore}
                         </button>
-                        {row.restore !== 'ready' && (
-                          <span id={whyId} className="deleted-why">
-                            {copy.deleted.why[row.restore]}
-                          </span>
-                        )}
                       </td>
                     </tr>
                   );
