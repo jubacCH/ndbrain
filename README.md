@@ -55,6 +55,26 @@ The vault layer has no function that does not take an owner, and every index row
   A periodic reconciliation pass is what actually guarantees the index matches the vault.
 - **Unresolved links are kept.** A link into the void is a finding to report, not an error to discard.
 
+## Note shares and editing files outside ndBrain
+
+A note share grants another user (or an MCP key) access to one specific note. That grant is bound
+to the file itself, not just its path: the share is confirmed against the file's identity and
+content hash before every read and before every write ndBrain makes to that path. This is a
+security boundary, not an implementation detail — a path alone cannot prove that the file behind
+it is still the note the owner meant to share, so ndBrain refuses to carry a grant across a file
+it cannot vouch for.
+
+This means a note share is withdrawn when a file is externally replaced rather than edited in
+place — for example when an editor deletes the file and writes a new one at the same path on save.
+**vim does this by default.** Add `set backupcopy=yes` to your vimrc so vim edits the existing file
+instead of replacing it, and shares on notes you edit with vim survive the save. VS Code, nano and
+Obsidian all edit in place and are unaffected.
+
+If the replacement file's content is at least 64 bytes of non-whitespace and matches what the
+share was bound to, ndBrain treats it as the same note restored (a `git checkout`, a copy from
+backup) and keeps the share. Below that size the rescue is not reliable enough to trust, so the
+share is withdrawn.
+
 ## Development
 
 ```bash
