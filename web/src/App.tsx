@@ -580,6 +580,15 @@ function Shell({
     const outstanding = pending.current;
     if (outstanding === null) return;
     // Held, not written: see `deleting`.
+    //
+    // The second layer, not the only one. `scheduleSave` already keeps text
+    // typed into a note being deleted out of `pending` entirely, so this check
+    // is unreachable through the editor and stays anyway: `flush` is called
+    // from a timer, from `pagehide` and from `visibilitychange`, and a delete
+    // starting between such a call being queued and it running would otherwise
+    // recreate the note from the text still sitting in `pending`. Removing it
+    // leaves every test green — which says the hole is narrow, not that it is
+    // closed.
     if (deleting.current.has(refKey(outstanding.owner, outstanding.path))) return;
     pending.current = null;
     await write(outstanding);
