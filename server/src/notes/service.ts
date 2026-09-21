@@ -261,12 +261,15 @@ export class NoteService {
       const name = canonical.slice(canonical.lastIndexOf('/') + 1);
       const existing = siblings.get(caseKey(name));
 
+      // The binding first, then the permission, and only then anything at all
+      // about what is on this path. The note that is there is handed back in
+      // full, and the collision below would name a file — a note renamed to
+      // another letter case behind ndBrain's back would otherwise tell a
+      // grantee its new name, where an unshared note answers 404.
+      await this.#lifecycle.confirm(owner, canonical);
+      options.authorize?.();
+
       if (existing === name) {
-        // The note that is there is handed back in full, so this branch is a
-        // read of somebody's file: the binding decides first, the permission
-        // second, and only then is anything said about the content.
-        await this.#lifecycle.confirm(owner, canonical);
-        options.authorize?.();
         return { note: await this.getNote(owner, canonical), created: false };
       }
       if (existing !== undefined) {
@@ -277,7 +280,6 @@ export class NoteService {
       }
 
       assertLinkableName(canonical);
-      options.authorize?.();
       await this.#vault.writeNote(owner, canonical, content);
       this.#lifecycle.created(owner, canonical);
       return { note: await this.getNote(owner, canonical), created: true };
@@ -341,6 +343,15 @@ export class NoteService {
       const name = canonical.slice(canonical.lastIndexOf('/') + 1);
       const existing = siblings.get(caseKey(name));
 
+      // Before anything is said about what is on this path, including the
+      // collision below: it names the file that is there, and a note renamed
+      // to another letter case behind ndBrain's back would otherwise tell a
+      // grantee its new name where an unshared note answers 404. `confirm`
+      // returns null of its own accord when no note exists under exactly this
+      // spelling — having withdrawn the shares that named one.
+      const confirmed = await this.#lifecycle.confirm(owner, canonical);
+      options.authorize?.();
+
       if (existing !== undefined && existing !== name) {
         throw new CaseCollisionError(
           `"${existing}" already exists and differs only in letter case; ` +
@@ -360,8 +371,6 @@ export class NoteService {
       if (existing === undefined && options.baseMtimeMs !== undefined) {
         throw new NoteNotFoundError('note does not exist');
       }
-      const confirmed = existing === undefined ? null : await this.#lifecycle.confirm(owner, canonical);
-      options.authorize?.();
 
       // Everything about the conflict check happens inside the lock. Outside it,
       // the file could change between the comparison and the write, which is
