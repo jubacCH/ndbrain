@@ -281,10 +281,9 @@ describe('with a history on the host', () => {
     await del('julian', 'julian', 'Alt.md');
     await del('julian', 'julian', 'Wieder.md');
     await h.runtime.app.createNote('julian', 'Wieder.md', 'neu angelegt\n', 'julian');
-    h.runtime.db.run(
-      "UPDATE edits SET at = ? WHERE path = 'Alt.md' AND action = 'delete'",
-      Date.now() - DELETED_WINDOW_MS - 60_000,
-    );
+    // The whole note, moved out of the window: its create as well, or the
+    // create would be the last thing that happened to the path anyway.
+    h.runtime.db.run("UPDATE edits SET at = ? WHERE path = 'Alt.md'", Date.now() - DELETED_WINDOW_MS - 60_000);
 
     expect((await list('julian')).body.notes).toEqual([]);
     expect((await restore('julian', 'julian', 'Alt.md')).status).toBe(404);
@@ -301,6 +300,15 @@ describe('without a history on the host', () => {
     const refused = await restore('julian', 'julian', 'Plan.md');
     expect(refused.status).toBe(409);
     expect(refused.body.code).toBe('nothing_to_restore');
+  });
+
+  it('answers a path that was never deleted like a note that never existed, history or not', async () => {
+    // The owner, in their own vault, with no sidecar at all: still the 404 of a
+    // missing note, not a complaint about the history — that answer is only for
+    // a note that really is in the list.
+    const refused = await restore('julian', 'julian', 'Nie.md');
+    expect(refused.status).toBe(404);
+    expect(refused.body.code).toBe('not_found');
   });
 
   it('tells a repository without a commit apart from none', async () => {
