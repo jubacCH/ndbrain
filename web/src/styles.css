@@ -4579,6 +4579,22 @@ kbd,
   background: var(--canvas);
 }
 
+/*
+ * The body of a view has to carry the height down to it, or nothing scrolls.
+ *
+ * `.main` is a flex column that hides its overflow, and every view inside asks
+ * for `flex: 1; overflow-y: auto`. Between them sits this wrapper: as a plain
+ * block it grew with its content, the `flex: 1` inside it addressed nobody, and
+ * everything past the bottom of the window was simply clipped — a long note, a
+ * long list, the tidy table. Passing the constraint on is the whole fix.
+ */
+.main-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* The view's own heading repeats what the header already says; it stays for a
    screen reader and for anything that looks for it, and leaves the screen. */
 .main-body > .pane.padded > h2.h-big:first-child {

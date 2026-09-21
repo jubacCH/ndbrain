@@ -14,7 +14,12 @@
  */
 
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+} from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { bracketMatching, indentOnInput } from '@codemirror/language';
@@ -134,6 +139,18 @@ export function noteExtensions({
       ...formatKeymap,
       ...searchKeymap,
       ...historyKeymap,
+      // Tab indents, Shift-Tab outdents. Left unbound it belongs to the
+      // browser and moves the focus out of the note, which is the accessible
+      // default and the wrong one here: this is a text editor, and a nested
+      // list is typed with Tab.
+      //
+      // The way out by keyboard stays: CodeMirror answers Escape by handing
+      // Tab back to the browser for two seconds, or until the next other key,
+      // so Escape and then Tab leaves the note. Nothing needs binding for it.
+      //
+      // A table cell takes Tab first — the table editor reads it off its own
+      // inputs — and the completion list takes it through its own keymap.
+      indentWithTab,
       ...defaultKeymap,
     ]),
     // GFM is needed for task lists, strikethrough and tables, all of which
