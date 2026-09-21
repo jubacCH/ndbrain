@@ -384,13 +384,28 @@ export class App {
    *
    * The walk is bounded like the owner's own listing, and `truncated` speaks
    * about what the caller may see — not about the size of the vault behind it.
+   * It also speaks about the walk: a vault larger than the walk's own ceiling
+   * ends the listing early, and reporting that as complete would say the files
+   * left out are not there.
+   *
+   * Takes the caller rather than a ready-made view, because the bindings are
+   * confirmed first and the confirmation may withdraw a share the view would
+   * still be carrying.
    */
   async listFilesIn(
-    viewable: Viewable,
+    caller: string,
     owner: string,
     limit = 5000,
   ): Promise<{ files: VaultFile[]; dirs: string[]; truncated: boolean } | null> {
-    const regions = toView(viewable).filter((scope) => scope.owner === owner);
+    // A note share names a file, and this listing describes files: until the
+    // watcher reports a replacement, the size and the modification time here
+    // would be the stranger's. The same refusal a read of the note itself
+    // makes, through the other door.
+    for (const notePath of this.shares.noteSharePaths(caller, owner)) {
+      await this.noteChanged(owner, notePath);
+    }
+
+    const regions = this.shares.view(caller).filter((scope) => scope.owner === owner);
     if (regions.length === 0) return null;
 
     const all = await this.notes.vault.listAll(owner, 100_000);
@@ -413,7 +428,7 @@ export class App {
     return {
       files,
       dirs: [...dirs].sort((a, b) => a.localeCompare(b)),
-      truncated: visible.length > limit,
+      truncated: visible.length > limit || all.truncated,
     };
   }
 

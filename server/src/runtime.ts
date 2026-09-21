@@ -88,10 +88,14 @@ export async function createRuntime(config: Config): Promise<Runtime> {
  */
 export async function syncAllVaults(runtime: Runtime): Promise<void> {
   for (const user of runtime.users.list()) {
-    await runtime.indexer.sync(user.id);
-    // Whatever disappeared while the process was down took its note shares
-    // with it; nothing that is created later may find them waiting.
+    // Before the index, not after. Whatever was replaced or removed while the
+    // process was down took its note shares with it, and indexing first would
+    // put the stranger's words into the search, the task list and the tags of
+    // everybody the old note was shared with — for the length of one sync,
+    // which on a large vault is not a moment. The watcher confirms before it
+    // indexes for exactly this reason; the start and the reconcile now do too.
     await runtime.app.dropDanglingShares(user.id);
+    await runtime.indexer.sync(user.id);
   }
 }
 
@@ -100,6 +104,6 @@ export function createWatcher(runtime: Runtime): VaultWatcher {
     reconcileIntervalMs: runtime.config.reconcileIntervalMs,
     onNoteRemoved: (owner, notePath) => runtime.app.noteVanished(owner, notePath),
     onNoteChanged: (owner, notePath) => runtime.app.noteChanged(owner, notePath),
-    afterSync: (owner) => runtime.app.dropDanglingShares(owner),
+    beforeSync: (owner) => runtime.app.dropDanglingShares(owner),
   });
 }

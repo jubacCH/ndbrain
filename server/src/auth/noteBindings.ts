@@ -99,16 +99,24 @@ export class NoteBindings {
     }
 
     let keep = false;
+    let alreadyBound = true;
     for (const binding of bindings) {
       const same =
         binding.file === null ||
         binding.file === current.file ||
         (current.substantial && binding.hash === current.hash);
-      if (same) keep = true;
-      else this.#shares.dropNoteBoundTo(owner, notePath, binding.file!);
+      if (same) {
+        keep = true;
+        if (binding.file !== current.file || binding.hash !== current.hash) alreadyBound = false;
+      } else this.#shares.dropNoteBoundTo(owner, notePath, binding.file!);
     }
     if (!keep) return null;
-    this.#shares.bindNote(owner, notePath, current.file, current.hash);
+    // Every read of a shared note comes through here, and nearly all of them
+    // find the binding already naming this file and this content. Writing it
+    // back unchanged would put an `UPDATE` on the read path of every shared
+    // note: a row touched, a page dirtied and a journal entry written to say
+    // what the row already said.
+    if (!alreadyBound) this.#shares.bindNote(owner, notePath, current.file, current.hash);
     return current.file;
   }
 
