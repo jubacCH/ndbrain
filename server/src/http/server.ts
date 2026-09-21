@@ -101,6 +101,20 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   }
 
   /**
+   * The check `target` just made, packaged to be made again inside the note's
+   * lock — after `confirm` has had its say about the file on that path.
+   *
+   * Between the route's decision and the write, `confirm` may withdraw the very
+   * note share the route said yes to: a file replaced behind ndBrain's back is
+   * recognised only under the lock, and until the watcher reports it (250 ms at
+   * best, five minutes when the event was lost) the share still stands out
+   * here. See `Authorized` in `notes/service.ts` for what rides on this.
+   */
+  function recheck(caller: string, owner: string, path: string, need: Need): () => void {
+    return () => shares.check(caller, owner, path, need);
+  }
+
+  /**
    * `target` for a read of a note's content, by somebody else than its owner.
    *
    * A note share names one file. If that file was replaced behind ndBrain's
@@ -342,13 +356,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     // "Make sure it exists": the one form of this request that may never write
     // over anything, so it does not take a base version and cannot make a copy.
+    const authorize = recheck(caller, owner, path, 'write');
+
     if (ifAbsent === true) {
-      const result = await app.createNoteIfAbsent(owner, path, content, caller);
+      const result = await app.createNoteIfAbsent(owner, path, content, caller, { authorize });
       return reply.code(result.created ? 201 : 200).send(result);
     }
 
     // Optional and only meaningful for a shared note: see App.putNote.
-    const options = baseMtimeMs !== undefined && baseMtimeMs > 0 ? { baseMtimeMs } : {};
+    const options =
+      baseMtimeMs !== undefined && baseMtimeMs > 0 ? { baseMtimeMs, authorize } : { authorize };
 
     const result = await app.putNote(owner, path, content, caller, options);
     // The copy of the displaced version sits beside the note, but a note share
@@ -363,7 +380,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   fastify.delete('/api/v1/notes/*', async (request, reply) => {
     const { owner, path } = target(request, 'write');
-    await app.deleteNote(owner, path, requireUser(request).id);
+    const caller = requireUser(request).id;
+    await app.deleteNote(owner, path, caller, { authorize: recheck(caller, owner, path, 'write') });
     return reply.code(204).send();
   });
 
@@ -383,7 +401,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // rewrite itself still covers the whole of the owner's vault — see
     // App.renameNote — because links the grantee cannot see still have to keep
     // working for the person whose notes they are.
-    return app.renameNote(owner, from, to, { view: shares.view(caller), actor: caller });
+    return app.renameNote(owner, from, to, {
+      view: shares.view(caller),
+      actor: caller,
+      // Both ends again in the lock: a note share on the source withdrawn by
+      // `confirm` is exactly the one that would otherwise walk a stranger's
+      // file into a folder the caller keeps.
+      authorizeSource: recheck(caller, owner, from, 'write'),
+      authorizeTarget: recheck(caller, owner, to, 'write'),
+    });
   });
 
   // ---- folders ------------------------------------------------------------
@@ -636,7 +662,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     shares.check(caller, owner, path, 'write');
 
-    return app.toggleTask(owner, path, line, { text: expectedText, done: expectedDone }, done, caller);
+    return app.toggleTask(owner, path, line, { text: expectedText, done: expectedDone }, done, caller, {
+      authorize: recheck(caller, owner, path, 'write'),
+    });
   });
 
   /* ---- files ---------------------------------------------------------------
@@ -738,13 +766,19 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       });
     }
 
-    const result = await app.writeFile(owner, filePath, bytes, requireUser(request).id);
+    const caller = requireUser(request).id;
+    const result = await app.writeFile(owner, filePath, bytes, caller, {
+      authorize: recheck(caller, owner, filePath, 'write'),
+    });
     return reply.code(result.replaced ? 200 : 201).send({ ...result, ok: true });
   });
 
   fastify.delete('/api/v1/files/*', async (request, reply) => {
     const { owner, path: filePath } = target(request, 'write');
-    await app.deleteFile(owner, filePath, requireUser(request).id);
+    const caller = requireUser(request).id;
+    await app.deleteFile(owner, filePath, caller, {
+      authorize: recheck(caller, owner, filePath, 'write'),
+    });
     return reply.code(204).send();
   });
 
@@ -943,7 +977,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     shares.check(caller, owner, path, 'write');
 
     const content = await visibleContentAt(caller, owner, path, version);
-    const result = await app.putNote(owner, path, content, caller);
+    const result = await app.putNote(owner, path, content, caller, {
+      authorize: recheck(caller, owner, path, 'write'),
+    });
     return { note: result.note, created: result.created };
   });
 
@@ -1237,6 +1273,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       .filter((path) => !allowed.includes(path))
       .map((path) => ({ path, reason: 'note does not exist' }));
 
+    const inLock = (path: string): void => shares.check(caller, owner, path, 'write');
+
     const merge = async (run: Promise<BulkResult>): Promise<BulkResult> => {
       const result = await run;
       return { ok: result.ok, failed: [...result.failed, ...refused] };
@@ -1251,18 +1289,20 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         // routinely made by somebody else, and a rename reports which notes its
         // links were rewritten in.
         return merge(app.bulkMove(owner, allowed, dir, { view: shares.view(caller), actor: caller, caller }));
+      // The other three take the same check as a function of the path: each
+      // note is authorized again inside its own lock, after `confirm`.
       case 'tag':
         if (tag === '') {
           return reply.code(400).send({ code: 'no_tag', message: 'no tag given' });
         }
-        return merge(app.bulkTag(owner, allowed, tag, caller));
+        return merge(app.bulkTag(owner, allowed, tag, caller, inLock));
       case 'untag':
         if (tag === '') {
           return reply.code(400).send({ code: 'no_tag', message: 'no tag given' });
         }
-        return merge(app.bulkUntag(owner, allowed, tag, caller));
+        return merge(app.bulkUntag(owner, allowed, tag, caller, inLock));
       case 'delete':
-        return merge(app.bulkDelete(owner, allowed, caller));
+        return merge(app.bulkDelete(owner, allowed, caller, inLock));
       default:
         return reply.code(400).send({ code: 'unknown_action', message: 'unknown bulk action' });
     }

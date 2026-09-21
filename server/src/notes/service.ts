@@ -38,12 +38,38 @@ export interface ParsedNoteRecord extends Note {
   parsed: ParsedNote;
 }
 
-export interface PutOptions {
+/**
+ * The permission check, run again inside the note's lock.
+ *
+ * A route decides whether the caller may write long before the write reaches
+ * the file, and in between `confirm` may withdraw the very note share the route
+ * said yes to — a file replaced behind ndBrain's back is recognised only once
+ * the lock is held. Everything the caller would get out of that gap (the
+ * stranger's bytes overwritten, deleted, moved into a folder the caller can
+ * read for good, or handed straight back in a response body) happens after this
+ * runs, so the withdrawal takes effect on the operation that is already under
+ * way rather than on the next one.
+ *
+ * It throws the same `NoteNotFoundError` the route's own check throws:
+ * refusal looks like absence, here as everywhere.
+ */
+export interface Authorized {
+  /** Called in the note's lock, after `confirm` and before anything is written. */
+  authorize?: () => void;
+}
+
+export interface PutOptions extends Authorized {
   /**
    * The `mtimeMs` the client last saw. When the note on disk is newer, the
    * version about to be overwritten is kept as a conflict copy.
    */
   baseMtimeMs?: number;
+}
+
+/** Both ends of a move are checked again in the lock; see `Authorized`. */
+export interface RenameOptions {
+  authorizeSource?: () => void;
+  authorizeTarget?: () => void;
 }
 
 export interface PutResult {
@@ -222,7 +248,12 @@ export class NoteService {
    * that one wrote. A differently-cased sibling is still refused: opening it
    * would hand back a note under a name the caller did not ask for.
    */
-  async createNoteIfAbsent(owner: string, notePath: string, content: string): Promise<PutResult> {
+  async createNoteIfAbsent(
+    owner: string,
+    notePath: string,
+    content: string,
+    options: Authorized = {},
+  ): Promise<PutResult> {
     const canonical = this.#assertNotePath(notePath);
 
     return this.#locks.run(lockKey(owner, canonical), async () => {
@@ -231,6 +262,11 @@ export class NoteService {
       const existing = siblings.get(caseKey(name));
 
       if (existing === name) {
+        // The note that is there is handed back in full, so this branch is a
+        // read of somebody's file: the binding decides first, the permission
+        // second, and only then is anything said about the content.
+        await this.#lifecycle.confirm(owner, canonical);
+        options.authorize?.();
         return { note: await this.getNote(owner, canonical), created: false };
       }
       if (existing !== undefined) {
@@ -241,6 +277,7 @@ export class NoteService {
       }
 
       assertLinkableName(canonical);
+      options.authorize?.();
       await this.#vault.writeNote(owner, canonical, content);
       this.#lifecycle.created(owner, canonical);
       return { note: await this.getNote(owner, canonical), created: true };
@@ -270,6 +307,7 @@ export class NoteService {
       // since the watcher last looked must not have its shares carried over
       // to the stranger by this write.
       const confirmed = await this.#lifecycle.confirm(owner, canonical);
+      options.authorize?.();
       const conflictCopy = await this.#preserveDisplaced(owner, canonical, content, options);
       await this.#vault.writeNote(owner, canonical, content);
       await this.#lifecycle.rebind(owner, canonical, confirmed);
@@ -323,6 +361,7 @@ export class NoteService {
         throw new NoteNotFoundError('note does not exist');
       }
       const confirmed = existing === undefined ? null : await this.#lifecycle.confirm(owner, canonical);
+      options.authorize?.();
 
       // Everything about the conflict check happens inside the lock. Outside it,
       // the file could change between the comparison and the write, which is
@@ -381,11 +420,16 @@ export class NoteService {
     return copyPath;
   }
 
-  async deleteNote(owner: string, notePath: string): Promise<void> {
+  async deleteNote(owner: string, notePath: string, options: Authorized = {}): Promise<void> {
     const canonical = this.#assertNotePath(notePath);
 
     await this.#locks.run(lockKey(owner, canonical), async () => {
       await this.#assertExactNoteExists(owner, canonical);
+      // A delete destroys a file as thoroughly as a write overwrites one, so it
+      // asks the same question first: is the file on this path still the one
+      // the caller's note share was given for?
+      await this.#lifecycle.confirm(owner, canonical);
+      options.authorize?.();
       await this.#vault.deleteNote(owner, canonical);
       this.#lifecycle.removed(owner, canonical);
       await this.#vault.pruneEmptyDirs(owner, canonical);
@@ -400,7 +444,7 @@ export class NoteService {
    * scheduled there rather than later precisely because renaming without it
    * silently breaks links the moment the tool is used daily.
    */
-  async renameNote(owner: string, from: string, to: string): Promise<Note> {
+  async renameNote(owner: string, from: string, to: string, options: RenameOptions = {}): Promise<Note> {
     const source = this.#assertNotePath(from);
     const target = this.#assertNotePath(to);
     // Only the destination. A note that arrived from another tool with an
@@ -420,6 +464,11 @@ export class NoteService {
 
       // Only shares still naming the file that is moved go with it.
       const confirmed = await this.#lifecycle.confirm(owner, source);
+      // Both ends, after the confirmation: a share withdrawn here is exactly
+      // the one that would otherwise carry a stranger's file into a folder the
+      // caller can read for good.
+      options.authorizeSource?.();
+      options.authorizeTarget?.();
       await this.#vault.moveNote(owner, source, target);
       this.#lifecycle.moved(owner, source, target);
       // A rename may change what identifies the file (the change time, where a
