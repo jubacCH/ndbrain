@@ -45,12 +45,14 @@ beforeEach(async () => {
   }
   const app = h.runtime.app;
   await app.createNote('julian', 'Projekt/Plan.md', '# Plan\n\ngeteilt\n\n- [ ] eins\n', 'julian');
+  await app.createNote('julian', 'Projekt/Plan2.md', '# Plan 2\n\ngeteilt\n\n- [ ] eins\n', 'julian');
   await app.createNote('julian', 'Projekt/Geheim.md', '# Geheim\n\nnur für Julian\n', 'julian');
   await app.createNote('julian', 'Archiv/x.md', '# x\n\nlange genug, damit der Hash-Rettungsweg greifen könnte\n', 'julian');
   await app.createNote('julian', 'Archiv/Geheim.md', '# Archiv-Geheim\n\nnur für Julian\n', 'julian');
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await h.close();
 });
 
@@ -177,7 +179,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
 
       expect(reply).toMatchObject(await absentAnswer());
       expect(await read('Projekt/Plan.md')).toContain('fremder');
-      expect(await fs.readdir(onDisk('Projekt'))).toEqual(['Geheim.md', 'Plan.md']);
+      expect(await fs.readdir(onDisk('Projekt'))).toEqual(['Geheim.md', 'Plan.md', 'Plan2.md']);
     });
 
     it('PUT with a base version: no write and no conflict copy', async () => {
@@ -194,7 +196,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
       expect(await read('Projekt/Plan.md')).toContain('fremder');
       // A conflict copy would be the foreign content written out a second time,
       // under a name in a folder Ramona may not even read.
-      expect(await fs.readdir(onDisk('Projekt'))).toEqual(['Geheim.md', 'Plan.md']);
+      expect(await fs.readdir(onDisk('Projekt'))).toEqual(['Geheim.md', 'Plan.md', 'Plan2.md']);
     });
 
     it('DELETE: the file stays', async () => {
@@ -210,17 +212,22 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
     });
 
     it('toggle: the same answer for a matching and a mismatching task, so it is no oracle', async () => {
-      await replaceBehind(
-        'Projekt/Plan.md',
-        `# Fremd\n\n- [ ] geheime Aufgabe\n${'füllsel '.repeat(12)}\n`,
-      );
-      const toggle = async (text: string): ReturnType<Harness['as']> =>
+      // Two notes in the same state, not one asked twice: the first call
+      // withdraws the share, and the second would then be refused by the route
+      // before it ever looked at the file — which would make the pair agree for
+      // a reason that says nothing about the oracle.
+      await share('ramona', 'note', 'Projekt/Plan2.md', true);
+      const foreign = `# Fremd\n\n- [ ] geheime Aufgabe\n${'füllsel '.repeat(12)}\n`;
+      await replaceBehind('Projekt/Plan.md', foreign);
+      await replaceBehind('Projekt/Plan2.md', foreign);
+
+      const toggle = async (notePath: string, text: string): ReturnType<Harness['as']> =>
         h.as('ramona', {
           method: 'POST',
           url: '/api/v1/tasks/toggle?owner=julian',
           payload: {
             owner: 'julian',
-            path: 'Projekt/Plan.md',
+            path: notePath,
             line: 3,
             expectedText: text,
             expectedDone: false,
@@ -228,13 +235,43 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
           },
         });
 
-      const hit = await toggle('geheime Aufgabe');
-      const miss = await toggle('etwas ganz anderes');
+      const hit = await toggle('Projekt/Plan.md', 'geheime Aufgabe');
+      const miss = await toggle('Projekt/Plan2.md', 'etwas ganz anderes');
 
       expect(hit).toMatchObject(await absentAnswer());
       expect(hit.raw).toEqual(miss.raw);
       expect(hit.status).toEqual(miss.status);
       expect(await read('Projekt/Plan.md')).toContain('[ ] geheime Aufgabe');
+    });
+
+    it('toggle: the write is authorized again, not only the read', async () => {
+      // The toggle reads under one lock and writes under the next, and the
+      // replacement can land in between. Wedged in exactly there, because that
+      // gap is not otherwise reachable from outside.
+      const app = h.runtime.app;
+      const realRead = app.readAuthorized.bind(app);
+      vi.spyOn(app, 'readAuthorized').mockImplementation(async (owner, notePath, authorize) => {
+        const note = await realRead(owner, notePath, authorize);
+        await replaceBehind('Projekt/Plan.md', `# Fremd\n\n- [ ] eins\n${'füllsel '.repeat(12)}\n`);
+        return note;
+      });
+
+      const reply = await h.as('ramona', {
+        method: 'POST',
+        url: '/api/v1/tasks/toggle?owner=julian',
+        payload: {
+          owner: 'julian',
+          path: 'Projekt/Plan.md',
+          line: 5,
+          expectedText: 'eins',
+          expectedDone: false,
+          done: true,
+        },
+      });
+
+      expect(reply).toMatchObject(await absentAnswer());
+      expect(await read('Projekt/Plan.md')).toContain('[ ] eins');
+      expect(await read('Projekt/Plan.md')).toContain('füllsel');
     });
 
     it('restore: writes nothing over the file', async () => {
@@ -307,33 +344,29 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
  * grant going away while the operation waits for the lock it needs.
  */
 describe('the destination of a rename is decided in the lock too', () => {
-  it('a folder share withdrawn while the rename waits stops the move', async () => {
+  it('a folder share withdrawn after the route said yes stops the move', async () => {
     await share('ramona', 'folder', 'Projekt', true);
     await share('ramona', 'note', 'Archiv/x.md', true);
 
     const destination = h.runtime.shares.byOwner('julian').find((s) => s.kind === 'folder');
     expect(destination).toBeDefined();
 
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
+    // Withdrawn from inside the rename, after the route's own check and before
+    // the lock: the one point in the sequence where the two decisions can
+    // disagree about the destination, and the reason the second one exists.
+    const queries = h.runtime.app.queries;
+    const realBacklinks = queries.backlinks.bind(queries);
+    vi.spyOn(queries, 'backlinks').mockImplementation((...args) => {
+      h.runtime.shares.revoke(destination!.id);
+      return realBacklinks(...args);
     });
 
-    // The lock `renameNote` needs for the destination, taken first and let go
-    // after the share is gone. Without the in-lock check the note lands in
-    // `Projekt/` and Ramona keeps it.
-    const blocking = h.runtime.app.notes.withLock('julian', 'Projekt/x.md', () => held);
-    const renaming = h.as('ramona', {
+    const reply = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/rename',
       payload: { owner: 'julian', from: 'Archiv/x.md', to: 'Projekt/x.md' },
     });
 
-    await h.as('julian', { method: 'DELETE', url: `/api/v1/shares/${destination!.id}` });
-    release();
-    await blocking;
-
-    const reply = await renaming;
     expect(reply.status).toBe(404);
     expect(await exists('Projekt/x.md')).toBe(false);
     expect(await exists('Archiv/x.md')).toBe(true);
