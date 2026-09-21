@@ -341,7 +341,6 @@ export const invalidate = {
     void client.invalidateQueries({ queryKey: keys.links(owner, path) });
     void client.invalidateQueries({ queryKey: keys.history(owner, path) });
     void client.invalidateQueries({ queryKey: keys.tidy });
-    void client.invalidateQueries({ queryKey: keys.deleted });
     void client.invalidateQueries({ queryKey: keys.graph });
     void client.invalidateQueries({ queryKey: keys.overview });
     // Every `keys.tasks(filters)` entry, whatever filters it was fetched with —
@@ -353,6 +352,9 @@ export const invalidate = {
   afterStructure: (client: QueryClient): void => {
     void client.invalidateQueries({ queryKey: keys.tree });
     void client.invalidateQueries({ queryKey: keys.tidy });
+    // Recently deleted is a list of notes like any other: a delete adds to it,
+    // a restore or a new note under the same name takes a row out of it.
+    void client.invalidateQueries({ queryKey: keys.deleted });
     void client.invalidateQueries({ queryKey: keys.graph });
     void client.invalidateQueries({ queryKey: keys.overview });
     void client.invalidateQueries({ queryKey: keys.files });
