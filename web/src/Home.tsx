@@ -2,8 +2,10 @@
  * The start page: where to pick up, what happened today, how the vault is doing.
  *
  * It replaces the overview and keeps everything that stood there — the finding
- * counts now live in the health card, "recently edited" in Continue, "since
- * yesterday", open tasks and tags in tiles of their own.
+ * counts now live in the health card, "recently edited" in Continue (kept to
+ * the same fortnight the brain and the map call warm, so a quiet vault does
+ * not surface months-old notes as if they were fresh), "since yesterday",
+ * open tasks and tags in tiles of their own.
  *
  * Only what actually happened is shown. "Today" is counted by the server from
  * the edit and access logs of the caller's own vault; a count that the data
@@ -30,6 +32,8 @@ import { displayPath } from './Tree';
 
 /** How many days the trace covers, today included. */
 export const TRACE_DAYS = 14;
+
+const DAY_MS = 86_400_000;
 
 /**
  * Local midnights: `days` days ending with today, as `days + 1` boundaries.
@@ -315,12 +319,18 @@ function Continue({
   onOpen,
 }: {
   recents: NoteRow[];
+  /** Every recently edited note the server sent, newest first — trimmed to the trace window below. */
   edited: NoteRow[];
   self: string;
   hidePrefixes: boolean;
   now: number;
   onOpen: (owner: string, path: string) => void;
 }): React.JSX.Element {
+  // Kept to the same fortnight the brain, the map and their legend call warm —
+  // an old vault otherwise fills this column with months-old notes while
+  // everything else in the app calls them cold.
+  const editedRecently = edited.filter((note) => now - note.mtimeMs <= TRACE_DAYS * DAY_MS);
+
   return (
     <section className="tile home-continue" aria-labelledby="home-continue-title">
       <p className="cap" id="home-continue-title">{copy.home.continue}</p>
@@ -346,11 +356,11 @@ function Continue({
         </div>
         <div>
           <p className="home-sub">{copy.home.edited}</p>
-          {edited.length === 0 ? (
-            <p className="empty">{copy.home.noEdited}</p>
+          {editedRecently.length === 0 ? (
+            <p className="empty">{copy.home.noEdited(TRACE_DAYS)}</p>
           ) : (
             <div className="home-notes">
-              {edited.slice(0, 8).map((note) => (
+              {editedRecently.slice(0, 8).map((note) => (
                 <NoteLink
                   key={refKey(note.owner, note.path)}
                   note={note}
