@@ -472,6 +472,27 @@ export class ShareService {
     return from;
   }
 
+  /**
+   * Whether `caller` holds a note share on exactly this path.
+   *
+   * Asked before a read confirms a binding, because confirming costs a lock, a
+   * `stat` and a hash of the file while an unshared path costs one query — and
+   * a difference in cost is a difference anybody can measure. Only a caller who
+   * holds a note share has anything to gain from the confirmation, and for her
+   * the cost says nothing she does not already know.
+   */
+  hasNoteShare(caller: string, owner: string, notePath: string): boolean {
+    return this.noteSharePaths(caller, owner).includes(normalizeVaultPath(notePath));
+  }
+
+  /** The paths of the note shares `caller` holds in `owner`'s vault. */
+  noteSharePaths(caller: string, owner: string): string[] {
+    if (caller === owner) return [];
+    return this.toGrantee(caller)
+      .filter((share) => share.owner === owner && share.kind === 'note')
+      .map((share) => share.prefix);
+  }
+
   /** Non-throwing form, for filtering lists rather than gating one access. */
   allows(caller: string, owner: string, notePath: string, need: Need = 'read'): boolean {
     try {

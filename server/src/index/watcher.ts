@@ -52,8 +52,14 @@ export interface WatcherOptions {
    * Called before the note is reindexed.
    */
   onNoteChanged?: (owner: string, notePath: string) => Promise<void>;
-  /** After a reconcile has synced one vault — for what the events missed. */
-  afterSync?: (owner: string) => Promise<void>;
+  /**
+   * Before a reconcile syncs one vault — for what the events missed.
+   *
+   * Before and not after, for the same reason `onNoteChanged` runs before the
+   * note is reindexed: a note share that no longer names its file has to go
+   * before that file's words are indexed under it.
+   */
+  beforeSync?: (owner: string) => Promise<void>;
 }
 
 interface PendingChange {
@@ -77,7 +83,7 @@ export class VaultWatcher {
   readonly #onError: ((error: unknown) => void) | undefined;
   readonly #onNoteRemoved: ((owner: string, notePath: string) => void) | undefined;
   readonly #onNoteChanged: ((owner: string, notePath: string) => Promise<void>) | undefined;
-  readonly #afterSync: ((owner: string) => Promise<void>) | undefined;
+  readonly #beforeSync: ((owner: string) => Promise<void>) | undefined;
 
   readonly #reconcileIntervalMs: number;
 
@@ -96,7 +102,7 @@ export class VaultWatcher {
     this.#onError = options.onError;
     this.#onNoteRemoved = options.onNoteRemoved;
     this.#onNoteChanged = options.onNoteChanged;
-    this.#afterSync = options.afterSync;
+    this.#beforeSync = options.beforeSync;
   }
 
   async start(): Promise<void> {
@@ -184,8 +190,11 @@ export class VaultWatcher {
   async reconcile(): Promise<void> {
     for (const owner of await this.#owners()) {
       try {
+        // The shares first: a note replaced or removed without an event has
+        // to stop being shared before its replacement's words reach the
+        // index, or the reconcile is itself the leak it exists to repair.
+        await this.#beforeSync?.(owner);
         await this.#indexer.sync(owner);
-        await this.#afterSync?.(owner);
       } catch (error) {
         this.#onError?.(error);
       }

@@ -120,8 +120,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * A note share names one file. If that file was replaced behind ndBrain's
    * back and the watcher has not said so yet, the share is withdrawn here,
    * before the check — so the grantee is never shown the replacement, not even
-   * in the moment before the watcher catches up. Costs nothing for a path no
-   * note share names.
+   * in the moment before the watcher catches up.
+   *
+   * Only for a caller who holds a note share on exactly this path. Done for
+   * every signed-in caller it was a clock anybody could read: a shared path
+   * cost a lock, a `stat` and a hash of the file, an unshared one a single
+   * query, and the difference told a stranger which of the owner's paths are
+   * shared with somebody. For the grantee herself the confirmation costs what
+   * it costs and reveals only what she already holds.
    */
   async function readTarget(request: FastifyRequest): Promise<{ owner: string; path: string }> {
     const caller = requireUser(request).id;
@@ -134,7 +140,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       } catch {
         // A malformed path is `target`'s to refuse, with its usual answer.
       }
-      if (canonical !== null && isNotePath(canonical)) await app.noteChanged(owner, canonical);
+      if (canonical !== null && isNotePath(canonical) && shares.hasNoteShare(caller, owner, canonical)) {
+        await app.noteChanged(owner, canonical);
+      }
     }
     return target(request, 'read');
   }
@@ -697,7 +705,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // grantee of `Homelab/` sees the files below it and nothing beside it. No
     // share on that vault reads exactly like a vault that does not exist.
     if (owner !== caller) {
-      const listed = await app.listFilesIn(shares.view(caller), owner);
+      const listed = await app.listFilesIn(caller, owner);
       if (listed === null) throw new NoteNotFoundError('note does not exist');
       return { ...listed, files: listed.files.map((file) => ({ ...file, owner })) };
     }

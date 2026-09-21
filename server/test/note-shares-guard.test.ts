@@ -23,6 +23,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RESCUE_MIN_BYTES, substantial } from '../src/auth/noteBindings.js';
+import { createWatcher, syncAllVaults } from '../src/runtime.js';
 import { startHarness, type Harness } from './support/harness.js';
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -429,5 +430,114 @@ describe('a shell replacing the file in one command', () => {
     execFileSync('sh', ['-c', 'rm "$1" && printf "# fremd\\n" > "$1"', 'sh', onDisk('Projekt/Plan.md')]);
     await h.runtime.app.dropDanglingShares('julian');
     expect(noteShares()).toEqual([]);
+  });
+});
+
+/**
+ * What the confirmation costs, and who pays it.
+ *
+ * Confirming a binding takes the note's lock, a `stat` and a hash of the file;
+ * a path no note share names takes one query. Run for every signed-in caller,
+ * that difference is a clock anybody can read: it says which of the owner's
+ * paths are shared with somebody.
+ */
+describe('a read confirms only for somebody who holds a note share on that path', () => {
+  it('does not look at the file for a caller the path is not shared with', async () => {
+    await share('ramona', 'note', 'Projekt/Plan.md', false);
+    await h.runtime.users.create('anna', 'ihr gutes passwort');
+    await h.login('anna', 'ihr gutes passwort');
+    await share('anna', 'folder', 'Projekt', false);
+
+    const confirm = vi.spyOn(h.runtime.app, 'noteChanged');
+
+    expect(await reads('anna', 'Projekt/Plan.md')).toBe(200);
+    expect(await reads('anna', 'Projekt/Geheim.md')).toBe(200);
+    expect(confirm).not.toHaveBeenCalled();
+
+    // The grantee of the note herself pays it, and learns nothing from it that
+    // she does not already hold.
+    expect(await reads('ramona', 'Projekt/Plan.md')).toBe(200);
+    expect(confirm).toHaveBeenCalledWith('julian', 'Projekt/Plan.md');
+  });
+
+  it('still keeps the replacement from the grantee', async () => {
+    await share('ramona', 'note', 'Projekt/Plan.md', false);
+    await replaceBehindTheBack('Projekt/Plan.md', FOREIGN);
+
+    expect(await reads('ramona', 'Projekt/Plan.md')).toBe(404);
+    expect(noteShares()).toEqual([]);
+  });
+
+  it('writes no binding back when it already says what it would say', async () => {
+    await share('ramona', 'note', 'Projekt/Plan.md', false);
+    const bind = vi.spyOn(h.runtime.shares, 'bindNote');
+
+    expect(await reads('ramona', 'Projekt/Plan.md')).toBe(200);
+    expect(await reads('ramona', 'Projekt/Plan.md')).toBe(200);
+    expect(bind).not.toHaveBeenCalled();
+
+    // An edit made in place is a change of content, and that one is written.
+    await fs.appendFile(onDisk('Projekt/Plan.md'), 'ein Absatz von julian\n');
+    expect(await reads('ramona', 'Projekt/Plan.md')).toBe(200);
+    expect(bind).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the file listing of a shared vault', () => {
+  it('describes no note whose file was replaced behind ndBrain’s back', async () => {
+    await share('ramona', 'note', 'Projekt/Plan.md', false);
+    const before = await h.as('ramona', { url: '/api/v1/files?owner=julian' });
+    expect(before.body.files.map((file: { path: string }) => file.path)).toEqual(['Projekt/Plan.md']);
+
+    await replaceBehindTheBack('Projekt/Plan.md', FOREIGN);
+
+    // Not its size, not its modification time, not its name: the listing is a
+    // read of the file like any other.
+    const after = await h.as('ramona', { url: '/api/v1/files?owner=julian' });
+    expect(after.status).toBe(404);
+    expect(noteShares()).toEqual([]);
+  });
+
+  it('says so when the walk stopped short of the whole vault', async () => {
+    await share('ramona', 'folder', 'Projekt', false);
+    vi.spyOn(h.runtime.app.notes.vault, 'listAll').mockResolvedValue({
+      files: [{ path: 'Projekt/Plan.md', size: 10, mtimeMs: 1, isNote: true }],
+      dirs: ['Projekt'],
+      truncated: true,
+    });
+
+    const listed = await h.runtime.app.listFilesIn('ramona', 'julian');
+    expect(listed?.truncated).toBe(true);
+  });
+});
+
+/**
+ * Reconciliation is the repair for events the watcher never received — so the
+ * file it finds replaced has been shared under the wrong name for as long as
+ * five minutes. Indexing it first would put the stranger's words into the
+ * grantee's search, tasks and tags for the length of one sync.
+ */
+describe('the reconcile and the start confirm before they index', () => {
+  it('has withdrawn the share by the time the vault is indexed', async () => {
+    await share('ramona', 'note', 'Projekt/Plan.md', false);
+    await replaceBehindTheBack('Projekt/Plan.md', FOREIGN);
+
+    const indexer = h.runtime.indexer;
+    const realSync = indexer.sync.bind(indexer);
+    const sharesWhenIndexed: string[][] = [];
+    vi.spyOn(indexer, 'sync').mockImplementation(async (owner: string) => {
+      if (owner === 'julian') sharesWhenIndexed.push(noteShares());
+      return realSync(owner);
+    });
+
+    await createWatcher(h.runtime).reconcile();
+    expect(sharesWhenIndexed).toEqual([[]]);
+
+    // And the same on start-up, for whatever changed while the process was down.
+    await share('ramona', 'note', 'Projekt/Alt.md', false);
+    await replaceBehindTheBack('Projekt/Alt.md', FOREIGN);
+    sharesWhenIndexed.length = 0;
+    await syncAllVaults(h.runtime);
+    expect(sharesWhenIndexed).toEqual([[]]);
   });
 });
