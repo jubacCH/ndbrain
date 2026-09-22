@@ -1,10 +1,15 @@
 /**
- * The tidy-up view's conflict-copy section.
+ * The tidy-up view's two sections that do not fit the shared findings table.
  *
  * A conflict copy is a fifth finding, and it has to behave like one: it counts
  * toward the total, it can be selected, and selecting one alone still shows the
  * delete bar — a vault that has nothing but conflict copies must not look like
  * it has no findings at all just because the shared `rows` table is empty.
+ *
+ * "Asked for, never written" is the opposite case and is checked for the
+ * opposite thing. It is the broken links regrouped, so it must *not* count
+ * again, must not be selectable, and above all must not appear at all on a
+ * vault whose data does not carry it.
  */
 
 import { useState } from 'react';
@@ -13,7 +18,8 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TidyView } from '../src/Views';
-import type { ConflictRow, Tidy } from '../src/api';
+import type { ConflictRow, LinkRow, Tidy } from '../src/api';
+import { copy } from '../src/copy';
 
 function conflict(overrides: Partial<ConflictRow> = {}): ConflictRow {
   return {
@@ -37,8 +43,9 @@ function tidy(overrides: Partial<Tidy> = {}): Tidy {
     deadLinks: [],
     stale: [],
     conflicts: [],
+    missing: [],
     truncated: false,
-    totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0 },
+    totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0 },
     ...overrides,
   };
 }
@@ -74,7 +81,7 @@ describe('narrowing to one finding', () => {
         data={tidy({
           orphans: [note('Allein.md'), note('Einsam.md')],
           deadLinks: [{ owner: 'julian', source: 'Kaputt.md', targetRaw: 'Nirgends', targetPath: null, heading: null, alias: null, offset: 0 }],
-          totals: { orphans: 2, untagged: 0, deadLinks: 1, stale: 0, conflicts: 0 },
+          totals: { orphans: 2, untagged: 0, deadLinks: 1, stale: 0, conflicts: 0, missing: 0 },
         })}
         selected={selected}
         busy={false}
@@ -189,7 +196,7 @@ describe('"select all"', () => {
           { owner: 'julian', path: 'Verirrt.md', title: 'Verirrt', size: 1, mtimeMs: 1 },
         ],
         conflicts: [conflict()],
-        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 1 },
+        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 1, missing: 0 },
       }),
     });
 
@@ -210,7 +217,7 @@ describe('"select all"', () => {
       data: tidy({
         orphans: [{ owner: 'julian', path: 'Verirrt.md', title: 'Verirrt', size: 1, mtimeMs: 1 }],
         conflicts: [conflict()],
-        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 1 },
+        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 1, missing: 0 },
       }),
       selected: new Set(['Verirrt.md', 'Projekt/Plan (Konflikt 2026-09-11 10.58).md']),
     });
@@ -227,10 +234,102 @@ describe('a truncated answer', () => {
       data: tidy({
         conflicts: [conflict()],
         truncated: true,
-        totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 5 },
+        totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 5, missing: 0 },
       }),
     });
 
     expect(screen.getByRole('status')).toHaveTextContent(/1 of 5 conflict copies/i);
+  });
+});
+
+/**
+ * "Asked for, never written" — the answer to the briefing's "What's missing?"
+ * that the index can actually give.
+ *
+ * The section states two things and no third: a name, and the notes that link
+ * to it. Everything below is about the line it must not cross — it never says a
+ * subject is neglected, it never appears on a vault whose data does not carry
+ * it, and it does not turn into a sixth finding, because the broken links it is
+ * made of are counted once already.
+ */
+describe('asked for, never written', () => {
+  const link = (source: string, targetRaw: string): LinkRow => ({
+    owner: 'julian',
+    source,
+    targetRaw,
+    targetPath: null,
+    heading: null,
+    alias: null,
+    offset: 0,
+  });
+
+  const pricing = tidy({
+    deadLinks: [link('Services.md', 'Pricing'), link('Offer.md', 'Pricing')],
+    missing: [{ owner: 'julian', name: 'Pricing', asked: ['Offer.md', 'Services.md'] }],
+    totals: { orphans: 0, untagged: 0, deadLinks: 2, stale: 0, conflicts: 0, missing: 1 },
+  });
+
+  it('names the gap, counts the notes that ask, and lists every one of them', () => {
+    renderTidy({ data: pricing });
+
+    const section = screen.getByRole('region', { name: copy.tidy.missing.title });
+    expect(within(section).getByText('Pricing')).toBeInTheDocument();
+    expect(within(section).getByText('2 notes link to this name')).toBeInTheDocument();
+    // The sources, per briefing point 28: the claim is checkable where it came from.
+    expect(within(section).getByRole('button', { name: 'Open Offer.md' })).toBeInTheDocument();
+    expect(within(section).getByRole('button', { name: 'Open Services.md' })).toBeInTheDocument();
+  });
+
+  it('opens the note that asks', async () => {
+    const user = userEvent.setup();
+    const { onOpen } = renderTidy({ data: pricing });
+
+    await user.click(screen.getByRole('button', { name: 'Open Services.md' }));
+    expect(onOpen).toHaveBeenCalledWith('Services.md');
+  });
+
+  /**
+   * The promise of this whole strand: a number the data does not carry is left
+   * out, not softened. A vault with broken links but no name asked for twice
+   * gets no section at all — not an empty one saying the vault is complete,
+   * which would be a claim about knowledge nobody counted.
+   */
+  it('is absent altogether when nothing was asked for twice', () => {
+    renderTidy({
+      data: tidy({
+        deadLinks: [link('Services.md', 'Pricing')],
+        totals: { orphans: 0, untagged: 0, deadLinks: 1, stale: 0, conflicts: 0, missing: 0 },
+      }),
+    });
+
+    expect(screen.queryByRole('region', { name: copy.tidy.missing.title })).toBeNull();
+    // The broken link itself is still a finding, and still says so.
+    expect(screen.getByText('broken link')).toBeInTheDocument();
+  });
+
+  it('does not become a sixth finding: the links behind it are counted once', () => {
+    renderTidy({ data: pricing });
+
+    expect(screen.getByText(/^2 findings/)).toBeInTheDocument();
+  });
+
+  it('stays out of sight while another finding is being worked through', async () => {
+    const user = userEvent.setup();
+    renderTidy({
+      data: tidy({
+        ...pricing,
+        orphans: [{ owner: 'julian', path: 'Verirrt.md', title: 'Verirrt', size: 1, mtimeMs: 1 }],
+        totals: { ...pricing.totals, orphans: 1 },
+      }),
+      health: { notes: 10, tagsInUse: false },
+    });
+
+    // It belongs to the broken links, so narrowing to those keeps it…
+    await user.click(screen.getByRole('button', { name: /^Show the 2 broken/ }));
+    expect(screen.getByRole('region', { name: copy.tidy.missing.title })).toBeInTheDocument();
+
+    // …and narrowing to anything else takes it away with them.
+    await user.click(screen.getByRole('button', { name: /^Show the 1 orphaned/ }));
+    expect(screen.queryByRole('region', { name: copy.tidy.missing.title })).toBeNull();
   });
 });
