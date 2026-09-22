@@ -268,6 +268,14 @@ export interface Scene {
   parallaxY: number;
   /** The note under the pointer, or -1. Drawn live, so hovering costs no repaint. */
   hovered: number;
+  /**
+   * The region whose name is drawn as picked, or -1.
+   *
+   * Only the name changes, and names are painted live over the cached layers
+   * in screen space — so this never touches the stamp. The picked *link*,
+   * which does change the cached picture, goes through `build`'s `chosen`.
+   */
+  pickedRegion: number;
   /** Changes when the cached depth layers have to be repainted. */
   stamp: number;
 }
@@ -370,6 +378,16 @@ const TWIG_SHARE = 0.6;
  */
 export const FOCUS_NODE_DIM = 0.25;
 export const FOCUS_EDGE_DIM = 0.3;
+
+/**
+ * How much wider the one picked link is drawn than a merely focused one.
+ *
+ * A click on a link opens a panel about that link and no other. Among the
+ * dozen links of a hub, all of them lit by the focus, the one being talked
+ * about has to be the one you can point at — so it is widened again on top of
+ * `FOCUS_WIDEN`, and it is the only link that is.
+ */
+export const PICKED_LINK_WIDEN = 1.6;
 /** How much of its fibres a ray of the centre keeps once zoomed in past the tissue. */
 const RADIANT_NEAR = 0.35;
 /** A note worked on within this many days carries the warm accent. */
@@ -622,6 +640,7 @@ export class SceneBuilder {
       parallaxX: 0,
       parallaxY: 0,
       hovered: -1,
+      pickedRegion: -1,
       stamp: 0,
     };
     this.#lit = new Float64Array(graph.edges.length);
@@ -637,6 +656,17 @@ export class SceneBuilder {
    * rather than a flag, so that a note does not change colour overnight on a
    * boundary nobody watching can see.
    */
+  /**
+   * The links as this builder draws them.
+   *
+   * One array for the life of the builder, written in place every time the
+   * notes move — which is what lets the link hit test measure against the very
+   * curve that is on the canvas instead of tracing its own (`edgehit.ts`).
+   */
+  get edges(): readonly SceneEdge[] {
+    return this.#scene.edges;
+  }
+
   recent(heat: Float64Array): void {
     if (heat.length !== this.#recent.length) return;
     this.#recent = heat;
@@ -789,6 +819,15 @@ export class SceneBuilder {
     height: number,
     pointer: { x: number; y: number; over: number } = { x: 0, y: 0, over: -1 },
     blocked: readonly Rect[] = [],
+    /**
+     * What is picked besides a note: one link, one region, or neither.
+     *
+     * Separate from `picked` because the three cannot be picked at once and
+     * because they cost different things. A picked note re-frames the camera
+     * and dims everything else; a picked link only changes how that one link
+     * is drawn; a picked region only changes how its name is written.
+     */
+    chosen: { link?: number; region?: number } = {},
   ): Scene {
     const scene = this.#scene;
     const { nodes, edges } = this.#graph;
@@ -799,6 +838,8 @@ export class SceneBuilder {
     scene.parallaxY = pointer.y;
     scene.hovered = pointer.over;
     scene.blocked = blocked;
+    const chosenLink = chosen.link ?? -1;
+    scene.pickedRegion = chosen.region ?? -1;
 
     const { plan, routes, view } = this.#planFor(layout);
     const focus = this.#brain && picked >= 0 && picked < nodes.length;
@@ -909,9 +950,17 @@ export class SceneBuilder {
       const leaf = routes.leafEnd[i]!;
       out.pts = this.#curves[i]!;
       out.n = this.#curveLength[i]!;
-      const focused = picked >= 0 && (edges[i]!.a === picked || edges[i]!.b === picked);
-      out.w0 = tractBase(layout.r[thick]!, grow, focused);
+      // The one link a relationship panel is open about, and the links of the
+      // picked note. Both are drawn lit; only the first is drawn wider again,
+      // so it can be told from the rest of a hub's star.
+      const chose = i === chosenLink;
+      const focused = chose || (picked >= 0 && (edges[i]!.a === picked || edges[i]!.b === picked));
+      const wasW0 = out.w0;
+      out.w0 = tractBase(layout.r[thick]!, grow, focused) * (chose ? PICKED_LINK_WIDEN : 1);
       out.w1 = Math.max(mid, out.w0 * 0.22);
+      // Width is painted into the cached layer just as opacity is, so it counts
+      // as a change for the same reason (see `restChanged` below).
+      if (out.w0 !== wasW0) restChanged = true;
       const ax = layout.x[thick]!;
       const ay = layout.y[thick]!;
       const bx = layout.x[leaf]!;
@@ -1045,6 +1094,11 @@ export class SceneBuilder {
     scene.depthInside = view.depthInside;
     scene.brainWidth = view.bounds.maxX - view.bounds.minX;
 
+    // Picking a link is not listed here, on purpose: what it changes is a
+    // link's resting opacity and its width, and both of those are compared
+    // above. A selection that is only a *state* would need a line of its own —
+    // the picked region does not, since a name is drawn live in screen space
+    // and never reaches a cached layer.
     if (restChanged || picked !== this.#lastPicked || Math.abs(zoom - this.#lastZoom) > 0.004) {
       this.#lastPicked = picked;
       this.#lastZoom = zoom;

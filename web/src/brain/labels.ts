@@ -106,6 +106,41 @@ export interface NoteDisc {
   r: number;
 }
 
+/**
+ * How far outside a name a click still counts, in CSS pixels.
+ *
+ * A name is thirteen-pixel text with no padding of its own; without a little
+ * slack the top and bottom pixel rows of a word would be dead.
+ */
+export const NAME_GRAB = 4;
+
+/**
+ * The region whose name is under a screen point, or -1.
+ *
+ * The name is the handle for a whole knowledge area — the briefing's region
+ * inspector — and it is the only part of a region that is drawn as itself: the
+ * cells are not outlined and the notes are the notes. Picking by the name also
+ * leaves "click the dark to deselect" alone, which picking by the cell would
+ * have taken away.
+ *
+ * Names never overlap — the placement drops one rather than write it over
+ * another — so the first box that contains the point is the answer.
+ */
+export function labelAt(names: readonly PlacedLabel[], x: number, y: number): number {
+  for (const label of names) {
+    const { box } = label;
+    if (
+      x >= box.x - NAME_GRAB &&
+      x <= box.x + box.w + NAME_GRAB &&
+      y >= box.y - NAME_GRAB &&
+      y <= box.y + box.h + NAME_GRAB
+    ) {
+      return label.region;
+    }
+  }
+  return -1;
+}
+
 export interface Placement {
   width: number;
   height: number;

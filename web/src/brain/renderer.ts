@@ -37,7 +37,7 @@
 import { CachedLayer, Sprites } from './bloom';
 import type { Decoration } from './deco';
 import type { PlacedLabel } from './labels';
-import { LINE_HEIGHT, placeRegionNames } from './labels';
+import { LINE_HEIGHT, labelAt, placeRegionNames } from './labels';
 import { DENDRITE_ALPHA, DENDRITE_TIP_ALPHA, DENDRITE_TIP_WIDTH, DENDRITE_WIDTH, TISSUE_LEVEL } from './deco';
 import type { Depth, Rgb, Scene, SceneEdge, SceneNode } from './scene';
 import { FOCUSED, WARM_HUE, amber, oklch } from './scene';
@@ -46,6 +46,20 @@ export interface BrainRenderer {
   /** CSS pixels; the backing store is sized from this and the display's ratio. */
   resize(width: number, height: number): void;
   draw(scene: Scene): void;
+  /**
+   * The region whose name is under a screen point, or -1.
+   *
+   * Here and not in a hit index because where a name ended up is a question
+   * only this file can answer: the placement needs `measureText`, it depends on
+   * the font the page happens to use, and a name that found no room is not
+   * drawn at all. Asking the renderer is the same bargain the node hit test
+   * makes with `bodyRadius` — the thing you can click is the thing that was
+   * drawn, because there is only one answer to where it is.
+   *
+   * Reports only names the *last* frame actually put on the canvas, so a name
+   * faded out by the semantic zoom is not a target.
+   */
+  nameAt(x: number, y: number): number;
   dispose(): void;
 }
 
@@ -166,6 +180,14 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
     depthInside: Scene['depthInside'];
     names: PlacedLabel[];
   } | null = null;
+  /**
+   * The names the last frame really drew, for `nameAt`.
+   *
+   * Not `placement.names`: that is a memo and survives frames where the
+   * semantic zoom has faded the names away, and a name nobody can see must not
+   * be clickable.
+   */
+  let shown: readonly PlacedLabel[] = [];
 
   const resize = (width: number, height: number): void => {
     // Capped at 2. A phone claiming 3 or 4 asks for nine to sixteen times the
@@ -676,9 +698,15 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
       // Where each name goes is decided in `labels.ts`: next to its own region,
       // on the canvas, off the tissue, clear of the controls and of each other —
       // or not at all.
-      for (const label of regionNames(scene, measure)) {
-        g.strokeStyle = `rgba(190,228,235,${0.38 * scene.regionAlpha})`;
-        g.lineWidth = 0.8;
+      shown = regionNames(scene, measure);
+      for (const label of shown) {
+        // The picked region: its name is the thing that was clicked, so it is
+        // the thing that answers. Written brighter, on a plaque of its own and
+        // with a firmer leader — never in another weight, because the box it
+        // has to fit in was measured at this one.
+        const on = label.region === scene.pickedRegion;
+        g.strokeStyle = `rgba(190,228,235,${(on ? 0.85 : 0.38) * scene.regionAlpha})`;
+        g.lineWidth = on ? 1.4 : 0.8;
         g.beginPath();
         g.moveTo(label.fromX, label.fromY);
         g.quadraticCurveTo(label.cx, label.cy, label.toX, label.toY);
@@ -687,15 +715,19 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
         const { box } = label;
         // A name that reaches into the tissue sits on a dark plaque: the grain
         // and the folds behind it must not cost it its legibility.
-        if (label.plaque) {
-          g.fillStyle = `rgba(4,12,17,${0.78 * scene.regionAlpha})`;
+        if (label.plaque || on) {
+          g.fillStyle = `rgba(4,12,17,${(on ? 0.9 : 0.78) * scene.regionAlpha})`;
           plaque(g, box.x - PLAQUE_PAD, box.y - PLAQUE_PAD / 2, box.w + PLAQUE_PAD * 2, box.h + PLAQUE_PAD, 4);
         }
         g.textAlign = label.align;
         const tx = label.align === 'center' ? box.x + box.w / 2 : label.align === 'left' ? box.x : box.x + box.w;
-        g.fillStyle = `rgba(212,230,234,${0.92 * scene.regionAlpha})`;
+        g.fillStyle = on
+          ? `rgba(255,255,255,${0.98 * scene.regionAlpha})`
+          : `rgba(212,230,234,${0.92 * scene.regionAlpha})`;
         label.lines.forEach((line, k) => g.fillText(line, tx, box.y + LINE_HEIGHT * (k + 0.5)));
       }
+    } else {
+      shown = [];
     }
 
     // Titles, most connected first; one that would overlap a title already
@@ -726,6 +758,7 @@ export function createCanvasRenderer(canvas: HTMLCanvasElement): BrainRenderer {
   return {
     resize,
     draw,
+    nameAt: (x, y) => labelAt(shown, x, y),
     dispose: () => {
       for (const plane of planes) plane.dispose();
       tissue.dispose();
