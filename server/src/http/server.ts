@@ -323,8 +323,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   fastify.post('/api/v1/auth/login', async (request, reply) => {
     const { user: id, password } = body(request, S.LoginRequest);
 
-    const key = `${request.ip}|${id}`;
-    const wait = throttle.retryAfter(key);
+    const wait = throttle.retryAfter(request.ip, id);
     if (wait > 0) {
       return reply
         .code(429)
@@ -334,13 +333,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     const user = await users.authenticate(id, password);
     if (user === null) {
-      throttle.recordFailure(key);
+      throttle.recordFailure(request.ip, id);
       // One message for a wrong name and a wrong password: telling them apart
       // turns the login form into an account-name oracle.
       return reply.code(401).send({ code: 'invalid_credentials', message: 'wrong name or password' });
     }
 
-    throttle.recordSuccess(key);
+    throttle.recordSuccess(request.ip, id);
     const { token, expiresAt } = sessions.create(user.id);
 
     return reply
@@ -923,8 +922,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const user = requireUser(request);
     const { currentPassword, newPassword } = body(request, S.ChangePasswordRequest);
 
-    const key = `${request.ip}|${user.id}`;
-    const wait = throttle.retryAfter(key);
+    const wait = throttle.retryAfter(request.ip, user.id);
     if (wait > 0) {
       return reply
         .code(429)
@@ -934,10 +932,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     const confirmed = await users.authenticate(user.id, currentPassword);
     if (confirmed === null) {
-      throttle.recordFailure(key);
+      throttle.recordFailure(request.ip, user.id);
       return reply.code(403).send({ code: 'wrong_password', message: 'the current password is wrong' });
     }
-    throttle.recordSuccess(key);
+    throttle.recordSuccess(request.ip, user.id);
 
     await users.setPassword(user.id, newPassword);
 
