@@ -18,7 +18,7 @@
  * cannot be undone by changing it back.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { ApiError, api } from './api';
 import { copy } from './copy';
@@ -46,6 +46,67 @@ const MEASURES: Array<{ value: Measure; label: string; hint: string }> = [
   { value: 'medium', label: 'Medium', hint: 'About 92 characters' },
   { value: 'wide', label: 'Wide', hint: 'The full width of the pane' },
 ];
+
+/**
+ * A radio group that behaves like one.
+ *
+ * `role="radiogroup"` with `role="radio"` and `aria-checked` promises a screen
+ * reader two things, which it passes straight on: the group is one tab stop,
+ * and the arrow keys move inside it. Both were declared here and neither was
+ * true — every option was its own tab stop, the arrows did nothing — which is
+ * worse than declaring nothing, because the promise is what somebody acts on.
+ *
+ * The same pattern as the network switcher in `NetworkFrame.tsx`, which had it
+ * right forty lines away: the choice follows the focus, since everything on
+ * this page applies at once and there is nothing to confirm afterwards.
+ */
+function Segmented<T extends string>({
+  label,
+  options,
+  value,
+  onPick,
+}: {
+  label: string;
+  options: ReadonlyArray<{ value: T; label: string; hint: string }>;
+  value: T;
+  onPick: (value: T) => void;
+}): React.JSX.Element {
+  const box = useRef<HTMLDivElement>(null);
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const step =
+      event.key === 'ArrowRight' || event.key === 'ArrowDown'
+        ? 1
+        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+          ? -1
+          : 0;
+    if (step === 0) return;
+    event.preventDefault();
+    const index = options.findIndex((option) => option.value === value);
+    const next = options[(index + step + options.length) % options.length]!;
+    onPick(next.value);
+    box.current?.querySelector<HTMLButtonElement>(`[data-value="${next.value}"]`)?.focus();
+  };
+
+  return (
+    <div className="segmented" role="radiogroup" aria-label={label} ref={box} onKeyDown={onKeyDown}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          data-value={option.value}
+          aria-checked={value === option.value}
+          tabIndex={value === option.value ? 0 : -1}
+          title={option.hint}
+          onClick={() => onPick(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 const START_VIEWS: Array<{ value: StartView; label: string }> = [
   { value: 'overview', label: 'Overview' },
@@ -80,20 +141,12 @@ export function SettingsView({
             <span>{copy.settings.theme}</span>
             <small>{copy.settings.themeHint}</small>
           </div>
-          <div className="segmented" role="radiogroup" aria-label={copy.settings.theme}>
-            {THEMES.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={prefs.theme === option.value}
-                title={option.hint}
-                onClick={() => set('theme', option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            label={copy.settings.theme}
+            options={THEMES}
+            value={prefs.theme}
+            onPick={(theme) => set('theme', theme)}
+          />
         </div>
 
         <div className="setrow">
@@ -120,20 +173,12 @@ export function SettingsView({
             <span>{copy.settings.measure}</span>
             <small>{copy.settings.measureHint}</small>
           </div>
-          <div className="segmented" role="radiogroup" aria-label={copy.settings.measure}>
-            {MEASURES.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={prefs.measure === option.value}
-                title={option.hint}
-                onClick={() => set('measure', option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            label={copy.settings.measure}
+            options={MEASURES}
+            value={prefs.measure}
+            onPick={(measure) => set('measure', measure)}
+          />
         </div>
       </section>
 
@@ -452,11 +497,12 @@ function AccountSection({
             {copy.settings.signOutEverywhere}
           </button>
         </div>
-        {note !== null && (
-          <p className={note.kind === 'ok' ? 'setok' : 'setbad'} role="status">
-            {note.text}
-          </p>
-        )}
+        {/* The region, not the line. Mounted together with its message it has
+            nothing to change and nothing is announced — and the message is the
+            whole answer to "did that work?". */}
+        <div role="status">
+          {note !== null && <p className={note.kind === 'ok' ? 'setok' : 'setbad'}>{note.text}</p>}
+        </div>
       </form>
     </section>
   );
