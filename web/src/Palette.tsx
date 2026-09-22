@@ -41,6 +41,9 @@ const TEXT_HITS_SHOWN = 8;
  * Few and listed above the notes, filtered by the same words the person types:
  * a command is found by its label or its keywords, so "today" reaches today's
  * note before the notes that happen to have the word in their title.
+ *
+ * Which ones are few, and why, is decided where they are built — see
+ * `paletteCommands` in `App.tsx`.
  */
 export interface PaletteCommand {
   key: string;
@@ -190,6 +193,24 @@ export function Palette({
     else onSearchAll?.(row.query);
   };
 
+  /**
+   * The arrow keys, and Ctrl-N / Ctrl-P beside them.
+   *
+   * The aliases stay, and the footer goes on naming only the arrows, because
+   * they are not a shortcut this application offers — they are one macOS
+   * already has. Ctrl-N and Ctrl-P move the caret in every Cocoa text field, so
+   * honouring them here is matching the platform rather than inventing a
+   * binding, and somebody who does not know them loses nothing.
+   *
+   * On Windows and Linux Ctrl-N is the browser's "new window" and never reaches
+   * a page, whatever we call preventDefault on. That is the right failure: the
+   * alias quietly does nothing there instead of doing something else. Ctrl-P we
+   * do take over from "print", but only while this dialog is open, and Escape
+   * closes it.
+   *
+   * Advertising either in the footer would promise a key that works on one
+   * platform and prints on another, so the footer names the arrows and stops.
+   */
   const onKeyDown = (event: React.KeyboardEvent): void => {
     if (event.key === 'ArrowDown' || (event.key === 'n' && event.ctrlKey)) {
       event.preventDefault();
