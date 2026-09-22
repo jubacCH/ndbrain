@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { loadConfig } from '../src/config.js';
 import { buildServer } from '../src/http/server.js';
+import { DeletedNotes } from '../src/notes/deleted.js';
 import { TOOLS } from '../src/mcp/tools.js';
 import { createRuntime, type Runtime } from '../src/runtime.js';
 
@@ -94,9 +95,10 @@ describe('protocol', () => {
     expect(names).toContain('search_notes');
     expect(names).toContain('get_note');
     expect(names).toContain('create_note');
-    // Deleting is deliberately not exposed: an agent should not be able to lose
-    // a note in a single call.
-    expect(names).not.toContain('delete_note');
+    // The tidying half of the surface. An agent that can only ever add makes
+    // work nobody else asked for and cannot take part in clearing it up.
+    expect(names).toContain('delete_note');
+    expect(names).toContain('rename_note');
 
     for (const tool of body.result.tools) {
       expect(tool.inputSchema.type).toBe('object');
@@ -127,18 +129,21 @@ describe('protocol', () => {
     }
   });
 
-  it('marks only edit_note as destructive, since it is the one tool that can remove content in a single call', async () => {
+  it('marks exactly the tools that can remove content as destructive, not every writing tool', async () => {
     // The incident this guards against: `edit_note` deleted a span of a note
     // (frontmatter included) three times over, and a blanket `destructiveHint:
     // false` on all eight tools meant no MCP client had reason to ask first.
     // create_note refuses to touch an existing note and append_note is purely
-    // additive, so neither belongs in this list.
+    // additive, so neither belongs in this list. `rename_note` does: the note
+    // survives, but every `[[…]]` naming the old path is rewritten, in notes
+    // the call never named.
     const { body } = await rpc(fullKey, 'tools/list');
     const destructive = body.result.tools
       .filter((tool: { annotations: { destructiveHint: boolean } }) => tool.annotations.destructiveHint)
-      .map((tool: { name: string }) => tool.name);
+      .map((tool: { name: string }) => tool.name)
+      .sort();
 
-    expect(destructive).toEqual(['edit_note']);
+    expect(destructive).toEqual(['delete_note', 'edit_note', 'rename_note']);
   });
 
   it('answers ping and rejects unknown methods', async () => {
@@ -323,6 +328,8 @@ describe('read-only keys', () => {
     ['create_note', { path: 'Homelab/Neu.md', content: 'x' }],
     ['append_note', { path: 'Homelab/Proxmox.md', content: 'x' }],
     ['edit_note', { path: 'Homelab/Proxmox.md', find: 'Qdevice', replace: 'x' }],
+    ['delete_note', { path: 'Homelab/Proxmox.md' }],
+    ['rename_note', { from: 'Homelab/Proxmox.md', to: 'Homelab/Proxmox 2.md' }],
   ])('refuses %s', async (tool, args) => {
     const result = await call(readOnlyKey, tool, args);
     expect(result.isError).toBe(true);
@@ -337,6 +344,14 @@ describe('read-only keys', () => {
     await call(readOnlyKey, 'append_note', { path: 'Homelab/Proxmox.md', content: 'angehängt' });
     const note = await runtime.notes.getNote('julian', 'Homelab/Proxmox.md');
     expect(note.content).not.toContain('angehängt');
+  });
+
+  it('leaves the note where it is', async () => {
+    await call(readOnlyKey, 'delete_note', { path: 'Homelab/Proxmox.md' });
+    await call(readOnlyKey, 'rename_note', { from: 'Homelab/Proxmox.md', to: 'Homelab/Weg.md' });
+
+    expect((await runtime.notes.getNote('julian', 'Homelab/Proxmox.md')).content).toContain('Qdevice');
+    await expect(runtime.notes.getNote('julian', 'Homelab/Weg.md')).rejects.toThrow();
   });
 });
 
@@ -627,5 +642,353 @@ describe('error messages do not leak internals', () => {
       expect(result.text).not.toContain('vaults');
       expect(result.text).not.toMatch(/at [A-Za-z]+ \(/);
     }
+  });
+});
+
+/* ---- tidying up -----------------------------------------------------------
+ *
+ * The surface could write notes and never remove one, so everything an agent
+ * filed in the wrong place became handwork in the browser. These two close the
+ * asymmetry, and each of them is a write that has to obey the scope on both the
+ * path it names and the answer it gives back.
+ */
+
+describe('delete_note', () => {
+  /** The same list the browser shows under "Recently deleted". */
+  const recentlyDeleted = (): DeletedNotes =>
+    new DeletedNotes(runtime.app, runtime.shares, runtime.history);
+
+  it('deletes a note inside the scope', async () => {
+    const result = await call(scopedKey, 'delete_note', { path: 'Homelab/UniFi.md' });
+
+    expect(result.isError).toBe(false);
+    await expect(runtime.notes.getNote('julian', 'Homelab/UniFi.md')).rejects.toThrow();
+  });
+
+  it('records the key as the actor, not the account', async () => {
+    await call(fullKey, 'delete_note', { path: 'Homelab/UniFi.md' });
+
+    const entry = runtime.app.queries
+      .activity('julian', 0)
+      .find((row) => row.path === 'Homelab/UniFi.md');
+    expect(entry?.actor).toBe('agent-voll');
+    expect(entry?.action).toBe('delete');
+  });
+
+  it('leaves the note in "Recently deleted" like every other delete', async () => {
+    // The point of the whole tool: an agent that can delete but whose deletes
+    // do not land in the 30-day list would close the way back for precisely the
+    // cases where somebody reaches for it.
+    await call(fullKey, 'delete_note', { path: 'Homelab/UniFi.md' });
+
+    const listed = await recentlyDeleted().list('julian');
+    const row = listed.find((note) => note.path === 'Homelab/UniFi.md');
+    expect(row).toBeDefined();
+    expect(row?.actor).toBe('agent-voll');
+  });
+
+  it('says whether the note can be brought back, rather than implying it can', async () => {
+    // No history is kept in a test vault, which is also the state of a fresh
+    // install — and a delete that promises a way back it does not have is worse
+    // than one that says so.
+    const result = await call(fullKey, 'delete_note', { path: 'Homelab/UniFi.md' });
+    expect(result.text).toContain('cannot be brought back');
+  });
+
+  it('deletes a note the key never wrote', async () => {
+    // Deliberate; see the tool's comment. `edits` cannot answer "who made this"
+    // for a note that arrived as a file — the watcher and the startup sync
+    // index without writing to it — so authorship is not a right anybody could
+    // hold, and an authorship rule would refuse exactly the notes an agent is
+    // asked to tidy.
+    const result = await call(scopedKey, 'delete_note', { path: 'Homelab/Proxmox.md' });
+
+    expect(result.isError).toBe(false);
+    await expect(runtime.notes.getNote('julian', 'Homelab/Proxmox.md')).rejects.toThrow();
+  });
+
+  it('gives the same answer whether or not the note outside the scope is there', async () => {
+    const whileItExists = await call(scopedKey, 'delete_note', { path: 'Privat/Gedanken.md' });
+    // Removed by its owner, so nothing about the key's own state changed.
+    await runtime.app.deleteNote('julian', 'Privat/Gedanken.md');
+    const onceItIsGone = await call(scopedKey, 'delete_note', { path: 'Privat/Gedanken.md' });
+
+    expect(whileItExists.isError).toBe(true);
+    expect(whileItExists.text).toBe(onceItIsGone.text);
+  });
+
+  it('does not delete outside the scope', async () => {
+    await call(scopedKey, 'delete_note', { path: 'Privat/Gedanken.md' });
+    expect((await runtime.notes.getNote('julian', 'Privat/Gedanken.md')).content).toContain(
+      'persönlich',
+    );
+  });
+
+  it('cannot reach another vault', async () => {
+    await call(fullKey, 'delete_note', { path: '../ramona/Ihres.md' });
+    expect(runtime.app.queries.countNotes('ramona')).toBe(1);
+  });
+
+  it('records the refusal in the access log', async () => {
+    await call(scopedKey, 'delete_note', { path: 'Privat/Gedanken.md' });
+    const entries = runtime.keys.recentAccess('julian');
+    expect(entries.some((entry) => entry.tool === 'delete_note' && !entry.allowed)).toBe(true);
+  });
+});
+
+describe('rename_note', () => {
+  it('renames inside the scope and carries the links with it', async () => {
+    await runtime.app.createNote('julian', 'Homelab/Netzplan.md', 'Siehe [[Homelab/UniFi]].\n');
+
+    const result = await call(scopedKey, 'rename_note', {
+      from: 'Homelab/UniFi.md',
+      to: 'Homelab/Netzwerk.md',
+    });
+
+    expect(result.isError).toBe(false);
+    expect((await runtime.notes.getNote('julian', 'Homelab/Netzwerk.md')).content).toContain('Zonen');
+    expect((await runtime.notes.getNote('julian', 'Homelab/Netzplan.md')).content).toContain(
+      '[[Homelab/Netzwerk]]',
+    );
+    expect(result.text).toContain('Homelab/Netzplan.md');
+  });
+
+  it('records the key as the actor, not the account', async () => {
+    await call(fullKey, 'rename_note', { from: 'Homelab/UniFi.md', to: 'Homelab/Netzwerk.md' });
+
+    const entry = runtime.app.queries
+      .activity('julian', 0)
+      .find((row) => row.path === 'Homelab/Netzwerk.md');
+    expect(entry?.actor).toBe('agent-voll');
+    expect(entry?.action).toBe('rename');
+  });
+
+  it('rewrites a link outside the scope without naming the note it rewrote', async () => {
+    // Both halves of one decision. The rewrite has to reach the whole vault or
+    // the owner is left with a dead link in a note nobody touched — see the
+    // tool's comment for why that is allowed. What the key is *told* obeys the
+    // scope, exactly as every other list here does.
+    await runtime.app.createNote('julian', 'Privat/Merkzettel.md', 'Siehe [[Homelab/UniFi]].\n');
+
+    const result = await call(scopedKey, 'rename_note', {
+      from: 'Homelab/UniFi.md',
+      to: 'Homelab/Netzwerk.md',
+    });
+
+    expect(result.isError).toBe(false);
+    expect((await runtime.notes.getNote('julian', 'Privat/Merkzettel.md')).content).toContain(
+      '[[Homelab/Netzwerk]]',
+    );
+    expect(result.text).not.toContain('Privat');
+    expect(result.text).not.toContain('Merkzettel');
+  });
+
+  it('names the rewritten notes to a key that may read them', async () => {
+    // The other side of the same filter: bounded by the view, not switched off
+    // and not thrown away.
+    await runtime.app.createNote('julian', 'Privat/Merkzettel.md', 'Siehe [[Homelab/UniFi]].\n');
+
+    const result = await call(fullKey, 'rename_note', {
+      from: 'Homelab/UniFi.md',
+      to: 'Homelab/Netzwerk.md',
+    });
+
+    expect(result.text).toContain('Privat/Merkzettel.md');
+  });
+
+  it('will not walk a note out of the scope', async () => {
+    const result = await call(scopedKey, 'rename_note', {
+      from: 'Homelab/UniFi.md',
+      to: 'Privat/UniFi.md',
+    });
+
+    expect(result.isError).toBe(true);
+    await expect(runtime.notes.getNote('julian', 'Privat/UniFi.md')).rejects.toThrow();
+    expect((await runtime.notes.getNote('julian', 'Homelab/UniFi.md')).content).toContain('Zonen');
+  });
+
+  it('will not walk a note into the scope from outside it', async () => {
+    const result = await call(scopedKey, 'rename_note', {
+      from: 'Privat/Gedanken.md',
+      to: 'Homelab/Gedanken.md',
+    });
+
+    expect(result.isError).toBe(true);
+    await expect(runtime.notes.getNote('julian', 'Homelab/Gedanken.md')).rejects.toThrow();
+    expect((await runtime.notes.getNote('julian', 'Privat/Gedanken.md')).content).toContain(
+      'persönlich',
+    );
+  });
+
+  it('gives the same answer whether or not the note outside the scope is there', async () => {
+    const whileItExists = await call(scopedKey, 'rename_note', {
+      from: 'Privat/Gedanken.md',
+      to: 'Homelab/Gedanken.md',
+    });
+    await runtime.app.deleteNote('julian', 'Privat/Gedanken.md');
+    const onceItIsGone = await call(scopedKey, 'rename_note', {
+      from: 'Privat/Gedanken.md',
+      to: 'Homelab/Gedanken.md',
+    });
+
+    expect(whileItExists.isError).toBe(true);
+    expect(whileItExists.text).toBe(onceItIsGone.text);
+  });
+
+  it('refuses a name inside the scope that is already taken', async () => {
+    // A name already taken is a refusal this key may hear, because it is a name
+    // the key could have listed for itself.
+    const taken = await call(scopedKey, 'rename_note', {
+      from: 'Homelab/UniFi.md',
+      to: 'Homelab/Proxmox.md',
+    });
+
+    expect(taken.isError).toBe(true);
+    expect((await runtime.notes.getNote('julian', 'Homelab/UniFi.md')).content).toContain('Zonen');
+  });
+
+  it('cannot reach another vault', async () => {
+    await call(fullKey, 'rename_note', { from: '../ramona/Ihres.md', to: 'Geklaut.md' });
+    expect(runtime.app.queries.countNotes('ramona')).toBe(1);
+    await expect(runtime.notes.getNote('julian', 'Geklaut.md')).rejects.toThrow();
+  });
+});
+
+/* ---- a limit belongs after the scope, never before it ---------------------
+ *
+ * `vault_map` asked for the owner's whole vault, `ORDER BY path LIMIT 5000`,
+ * and dropped the out-of-scope rows afterwards. A key scoped to a folder that
+ * sorts late therefore got "No notes." on any vault past five thousand — and by
+ * this file's own rule it could not tell that from a folder that is empty.
+ * `search_notes` had the same shape, milder: it asked for three times the
+ * limit, capped at 200, and filtered after.
+ */
+describe('the query cap is applied to what the key may see', () => {
+  /**
+   * Index rows without files behind them.
+   *
+   * Both tools read the index, never the vault, so this reproduces a large
+   * vault at the only layer that matters — and does it in one transaction
+   * rather than five thousand file writes.
+   */
+  function fillIndex(owner: string, prefix: string, count: number, mtimeMs: number): void {
+    runtime.db.transaction(() => {
+      for (let i = 0; i < count; i += 1) {
+        const notePath = `${prefix}${String(i).padStart(5, '0')}.md`;
+        runtime.db.run(
+          `INSERT INTO notes (owner, path, title, path_key, title_key, size, mtime_ms, hash, indexed_at)
+           VALUES (?, ?, ?, ?, ?, 0, ?, '', 0)`,
+          owner,
+          notePath,
+          'Füller',
+          notePath.toLowerCase(),
+          'füller',
+          mtimeMs,
+        );
+      }
+    });
+  }
+
+  let lateKey: string;
+
+  beforeEach(async () => {
+    await runtime.app.createNote('julian', 'Zzz/Spaet.md', '# Spät\n\nSpaetzuendung.\n');
+    lateKey = runtime.keys.create('julian', 'agent-spaet', { scope: 'Zzz' }).secret;
+  });
+
+  it('maps a folder that sorts after five thousand other notes', async () => {
+    fillIndex('julian', 'Aaa/', 5000, 1);
+
+    const { text } = await call(lateKey, 'vault_map');
+
+    expect(text).toContain('Zzz/Spaet.md');
+    expect(text).not.toContain('Aaa/');
+  });
+
+  it('searches a folder that sorts after the rows the query asked for', async () => {
+    // Newer than the note in the scope, so recency puts every filler row first.
+    fillIndex('julian', 'Aaa/', 500, Date.now() + 60_000);
+
+    const { text } = await call(lateKey, 'search_notes', { query: '' });
+
+    expect(text).toContain('Zzz/Spaet.md');
+    expect(text).not.toContain('Aaa/');
+  });
+
+  it('answers an empty folder and a forbidden one identically', async () => {
+    fillIndex('julian', 'Aaa/', 10, 1);
+
+    const empty = await call(lateKey, 'vault_map', { folder: 'Zzz/Leer' });
+    const forbidden = await call(lateKey, 'vault_map', { folder: 'Privat' });
+
+    expect(empty.text).toBe('No notes.');
+    expect(forbidden.text).toBe(empty.text);
+  });
+});
+
+/* ---- the open points -----------------------------------------------------
+ *
+ * `- [ ]` is indexed and the browser has a view of it, but an agent could not
+ * see a single open point — it would have had to read whole notes and parse
+ * them back out, which is the expensive thing `vault_map` exists to avoid.
+ */
+describe('list_tasks', () => {
+  beforeEach(async () => {
+    await runtime.app.createNote(
+      'julian',
+      'Homelab/Offen.md',
+      '# Offen\n\n- [ ] Firmware aktualisieren\n- [x] Backup geprüft\n',
+    );
+    await runtime.app.createNote('julian', 'Privat/Vorhaben.md', '- [ ] Geheimes Vorhaben\n');
+  });
+
+  it('lists the open points with the note and the line they stand in', async () => {
+    const { text, isError } = await call(fullKey, 'list_tasks');
+
+    expect(isError).toBe(false);
+    expect(text).toContain('Firmware aktualisieren');
+    expect(text).toContain('Homelab/Offen.md:3');
+  });
+
+  it('leaves finished items out unless they are asked for', async () => {
+    expect((await call(fullKey, 'list_tasks')).text).not.toContain('Backup geprüft');
+    expect((await call(fullKey, 'list_tasks', { include_done: true })).text).toContain(
+      'Backup geprüft',
+    );
+  });
+
+  it('shows only what the scope covers', async () => {
+    const { text } = await call(scopedKey, 'list_tasks');
+
+    expect(text).toContain('Firmware aktualisieren');
+    expect(text).not.toContain('Geheimes Vorhaben');
+    expect(text).not.toContain('Privat/');
+  });
+
+  it('answers for a folder outside the scope exactly as for an empty one', async () => {
+    const forbidden = await call(scopedKey, 'list_tasks', { folder: 'Privat' });
+    const empty = await call(scopedKey, 'list_tasks', { folder: 'Homelab/Leer' });
+
+    expect(forbidden.text).toBe('No open tasks.');
+    expect(forbidden.text).toBe(empty.text);
+  });
+
+  it('says how many it left out rather than letting a cap look like the end', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => `- [ ] Punkt ${i}`).join('\n');
+    await runtime.app.createNote('julian', 'Homelab/Viele.md', `${many}\n`);
+
+    const { text } = await call(scopedKey, 'list_tasks', { limit: 3 });
+
+    expect(text.split('\n')).toHaveLength(4);
+    expect(text).toContain('more');
+  });
+
+  it('is open to a read-only key', async () => {
+    // Named, not just "no error": an unknown tool answers as a protocol error
+    // rather than a tool result, so `isError` alone would pass before the tool
+    // existed at all.
+    const { text, isError } = await call(readOnlyKey, 'list_tasks');
+    expect(isError).toBe(false);
+    expect(text).toContain('Firmware aktualisieren');
   });
 });

@@ -131,10 +131,23 @@ export interface ActivityDay {
   agentWrites: number;
 }
 
-/** The MCP tools that only look — the same list `pulse` filters on. */
-const AGENT_READ_TOOLS = ['get_note', 'search_notes', 'list_notes', 'get_links', 'vault_map'] as const;
+/** The MCP tools that only look — the same list `pulse` filters on, from here. */
+const AGENT_READ_TOOLS = [
+  'get_note',
+  'search_notes',
+  'list_notes',
+  'get_links',
+  'vault_map',
+  'list_tasks',
+] as const;
 /** The MCP tools that change a note. */
-const AGENT_WRITE_TOOLS = ['create_note', 'append_note', 'edit_note'] as const;
+const AGENT_WRITE_TOOLS = [
+  'create_note',
+  'append_note',
+  'edit_note',
+  'delete_note',
+  'rename_note',
+] as const;
 
 /**
  * The per-day edit counts, for `days` buckets; parameters are the buckets as
@@ -1055,13 +1068,17 @@ export class Queries {
          FROM access_log a
          JOIN api_keys k ON k.id = a.key_id
         WHERE a.owner = ? AND a.at > ? AND a.allowed = 1
-          AND a.tool IN ('get_note', 'search_notes', 'list_notes', 'get_links', 'vault_map')
+          AND a.tool IN (${AGENT_READ_TOOLS.map(() => '?').join(', ')})
         ORDER BY at DESC
         LIMIT ?`,
       owner,
       Math.trunc(sinceMs),
       owner,
       Math.trunc(sinceMs),
+      // From the list above rather than spelled out again here: the two had
+      // already drifted once — a tool added to one was missing from the other,
+      // and the pulse then silently stopped reporting that kind of read.
+      ...AGENT_READ_TOOLS,
       Math.trunc(limit),
     );
 
