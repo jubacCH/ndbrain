@@ -27,6 +27,7 @@
 import { randomBytes } from 'node:crypto';
 
 import type { Database, SqlValue } from '../db/database.js';
+import { prefixSql } from '../db/prefix.js';
 import { NdbrainError, NoteNotFoundError } from '../errors.js';
 import { isNotePath, normalizeVaultPath } from '../vault/paths.js';
 
@@ -129,9 +130,11 @@ export function inScope(region: Region, notePath: string): boolean {
  * `inScope` as a SQL condition on `column`, or `null` when it covers every path.
  *
  * Kept beside `inScope` so the two cannot drift: the same three cases, in the
- * same order. `substr` rather than `LIKE`, because `LIKE` folds ASCII case in
- * SQLite and paths here are case-sensitive. An exact region compares with `=`,
- * which is case-sensitive too.
+ * same order, and `test/region-sql.test.ts` asks both about the same paths so
+ * that a drift is a failing test rather than a quiet difference. `substr`
+ * rather than `LIKE`, because `LIKE` folds ASCII case in SQLite and paths here
+ * are case-sensitive. An exact region compares with `=`, which is
+ * case-sensitive too.
  */
 export function regionSql(
   column: string,
@@ -139,6 +142,10 @@ export function regionSql(
   timeColumn?: string,
 ): { sql: string | null; params: SqlValue[] } {
   if (region.exact) {
+    // Same guard as `inScope`: an exact region with no prefix covers nothing.
+    // Without it the fragment reads as `column = ''`, which is a path nothing
+    // in the vault has but every table would happily be asked about.
+    if (region.prefix === '') return { sql: '1 = 0', params: [] };
     // A time-stamped row (an edit) of this path counts only from the moment the
     // region came to name it; see `Region.since`.
     if (timeColumn !== undefined && region.since !== undefined) {
@@ -147,7 +154,12 @@ export function regionSql(
     return { sql: `${column} = ?`, params: [region.prefix] };
   }
   if (region.prefix === '') return { sql: null, params: [] };
-  return { sql: `substr(${column}, 1, ?) = ?`, params: [region.prefix.length, region.prefix] };
+  // Counted in code points, not in `String.length`: SQLite's `substr` counts
+  // characters, JavaScript counts UTF-16 code units, and the two disagree by
+  // one for every character outside the basic plane. A folder named with an
+  // emoji would otherwise ask for more characters than its prefix has and
+  // match nothing at all, so the share would silently show an empty folder.
+  return prefixSql(column, region.prefix);
 }
 
 /** The region a share row covers. */
@@ -607,11 +619,15 @@ export class ShareService {
     if (source === '' || target === '' || source === target) return;
 
     this.#db.transaction(() => {
+      // `prefixSql` for the query, but `source.length` for the rewrite below:
+      // SQLite counts characters and `slice` counts code units, so each side
+      // needs its own arithmetic. Passing one count to both is the bug this
+      // pair of counts exists to avoid.
+      const match = prefixSql('prefix', source);
       const moving = this.#db.all(
-        "SELECT id, prefix, grantee FROM shares WHERE owner = ? AND kind = 'folder' AND substr(prefix, 1, ?) = ?",
+        `SELECT id, prefix, grantee FROM shares WHERE owner = ? AND kind = 'folder' AND ${match.sql}`,
         owner,
-        source.length,
-        source,
+        ...match.params,
       );
       for (const row of moving) {
         const next = `${target}${String(row['prefix']).slice(source.length)}`;
@@ -634,11 +650,11 @@ export class ShareService {
   dropFolder(owner: string, dir: string): void {
     const prefix = normalizePrefix(dir);
     if (prefix === '') return;
+    const match = prefixSql('prefix', prefix);
     this.#db.run(
-      "DELETE FROM shares WHERE owner = ? AND kind = 'folder' AND substr(prefix, 1, ?) = ?",
+      `DELETE FROM shares WHERE owner = ? AND kind = 'folder' AND ${match.sql}`,
       owner,
-      prefix.length,
-      prefix,
+      ...match.params,
     );
   }
 }

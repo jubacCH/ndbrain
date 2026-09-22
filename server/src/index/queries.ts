@@ -17,6 +17,7 @@
  */
 
 import type { Database, SqlValue } from '../db/database.js';
+import { prefixSql } from '../db/prefix.js';
 import { regionSql, type View } from '../auth/shares.js';
 import { caseKey } from '../vault/paths.js';
 import { DEFAULT_SETTINGS } from '../auth/settings.js';
@@ -303,8 +304,8 @@ function taskFilterSql(filter: TaskFilter): { sql: string; params: SqlValue[] } 
     // Prefix match on the folder, `substr` rather than `LIKE` — see the
     // identical comment on `search`'s `dir` option, which this mirrors.
     const prefix = filter.dir.endsWith('/') ? filter.dir : `${filter.dir}/`;
-    conditions.push('substr(t.path, 1, ?) = ?');
-    params.push(prefix.length, prefix);
+    conditions.push(prefixSql('t.path', prefix).sql);
+    params.push(...prefixSql('t.path', prefix).params);
   }
 
   return { sql: conditions.length === 0 ? '' : ` AND ${conditions.join(' AND ')}`, params };
@@ -468,8 +469,8 @@ export class Queries {
       // Prefix match on the folder. `substr` rather than LIKE because LIKE folds
       // case in SQLite for ASCII, and folder names are case-sensitive here.
       const prefix = options.dir.endsWith('/') ? options.dir : `${options.dir}/`;
-      conditions.push('substr(n.path, 1, ?) = ?');
-      params.push(prefix.length, prefix);
+      conditions.push(prefixSql('n.path', prefix).sql);
+      params.push(...prefixSql('n.path', prefix).params);
     }
 
     if (options.sinceMs !== undefined) {
@@ -1390,14 +1391,14 @@ export class Queries {
       // A restore under another name: a create, after the delete, of a path
       // that names this one as its original.
       const base = `${path.replace(/\.md$/i, '')} (${RESTORED_WORD} `;
+      const startsWithBase = prefixSql('path', base);
       const restoredElsewhere = this.#db
         .all(
           `SELECT path FROM edits
-            WHERE owner = ? AND action = 'create' AND at >= ? AND substr(path, 1, ?) = ?`,
+            WHERE owner = ? AND action = 'create' AND at >= ? AND ${startsWithBase.sql}`,
           owner,
           at,
-          base.length,
-          base,
+          ...startsWithBase.params,
         )
         .some((copy) => restoredOriginal(String(copy['path'])) === path);
       if (restoredElsewhere) continue;

@@ -298,7 +298,7 @@ export function TidyView({
  *
  * Grouped by note rather than shown as a flat list, on the same reasoning the
  * search hits and the tidy findings already follow — a task read on its own is
- * routinely meaningless ("Schritt 3 ausführen"), and the note it sits in is
+ * routinely meaningless ("Run step 3"), and the note it sits in is
  * the cheapest context that fixes that. The list arrives from the server
  * already ordered by owner, then path, then line, so grouping is one pass over
  * it rather than a second request per note.
@@ -581,17 +581,16 @@ export function SearchView({
     filters.days !== undefined ||
     filters.prop !== undefined;
 
-  const describe = (): string => {
-    const parts: string[] = [];
-    if (query.trim() !== '') parts.push(`„${query.trim()}"`);
-    if (filters.tag !== undefined) parts.push(`#${filters.tag}`);
-    if (filters.dir !== undefined) parts.push(`in ${filters.dir}`);
-    if (filters.days !== undefined) parts.push(copy.search.fromLastDays(filters.days));
-    if (filters.prop !== undefined) {
-      parts.push(filters.propValue === undefined ? `mit ${filters.prop}` : `${filters.prop}: ${filters.propValue}`);
-    }
-    return parts.join(' · ');
-  };
+  // The line itself is written in `copy.search.describeFilters`; this only says
+  // which filters are in force.
+  const described = copy.search.describeFilters({
+    query: query.trim(),
+    tag: filters.tag,
+    folder: filters.dir,
+    days: filters.days,
+    prop: filters.prop,
+    propValue: filters.propValue,
+  });
 
   return (
     <div className="pane padded">
@@ -601,14 +600,14 @@ export function SearchView({
           type="search"
           value={query}
           onChange={(event) => onQuery(event.target.value)}
-          placeholder="Volltext durchsuchen…"
-          aria-label="Volltext durchsuchen"
+          placeholder={copy.search.placeholder}
+          aria-label={copy.search.label}
           autoFocus
         />
       </div>
       <p className="h-sub">
         {hits.length === 0 ? copy.search.nothingFound : copy.search.results(hits.length)}
-        {describe() !== '' && ` — ${describe()}`}
+        {described !== '' && ` — ${described}`}
       </p>
 
       <div className="filters">
@@ -641,7 +640,7 @@ export function SearchView({
         {/*
           The vault's own vocabulary, read out of the frontmatter rather than
           prescribed. Picking a key shows its values, so the second click is
-          "status: aktiv" instead of a text field somebody has to guess into.
+          "status: active" instead of a text field somebody has to guess into.
         */}
         {props.length > 0 && <span className="filter-label">{copy.search.property}</span>}
         {props.slice(0, 8).map((p) => (
@@ -656,7 +655,9 @@ export function SearchView({
           </button>
         ))}
 
-        {propValues.length > 0 && <span className="filter-label">{filters.prop} ist</span>}
+        {propValues.length > 0 && filters.prop !== undefined && (
+          <span className="filter-label">{copy.search.propertyIs(filters.prop)}</span>
+        )}
         {propValues.slice(0, 10).map((v) => (
           <button
             type="button"
@@ -763,11 +764,11 @@ export function SharesView({
         <h3 className="cap">{copy.shares.newShare}</h3>
         <form className="share-form" onSubmit={submit}>
           <label>
-            <span>Konto</span>
+            <span>{copy.shares.account}</span>
             <input
               value={grantee}
               onChange={(event) => setGrantee(event.target.value)}
-              placeholder="benutzername"
+              placeholder={copy.shares.accountPlaceholder}
               aria-label={copy.shares.accountLabel}
               autoComplete="off"
             />
@@ -778,7 +779,7 @@ export function SharesView({
             <input
               value={prefix}
               onChange={(event) => setPrefix(event.target.value)}
-              placeholder="leer = ganzer Vault"
+              placeholder={copy.shares.folderPlaceholder}
               aria-label={copy.shares.folderLabel}
               list="share-dirs"
               autoComplete="off"
@@ -796,7 +797,7 @@ export function SharesView({
           </label>
 
           <button type="submit" className="btn btn-solid" disabled={grantee.trim() === '' || busy}>
-            Freigeben
+            {copy.shares.grant}
           </button>
         </form>
 
@@ -808,12 +809,12 @@ export function SharesView({
         <p className="share-note">
           {prefix.trim() === ''
             ? copy.shares.wholeVaultWarning
-            : `Freigegeben wird „${prefix.trim()}" mit allen Unterordnern.`}
+            : copy.shares.folderWarning(prefix.trim())}
         </p>
       </section>
 
       <section className="shares-block">
-        <h3 className="cap">Von dir freigegeben · {granted.length}</h3>
+        <h3 className="cap">{copy.shares.byYou(granted.length)}</h3>
         {granted.length === 0 ? (
           <p className="empty">{copy.shares.nobodySeesYours}</p>
         ) : (
@@ -822,7 +823,7 @@ export function SharesView({
       </section>
 
       <section className="shares-block">
-        <h3 className="cap">Mit dir geteilt · {received.length}</h3>
+        <h3 className="cap">{copy.shares.withYou(received.length)}</h3>
         {received.length === 0 ? (
           <p className="empty">{copy.shares.nobodySharesWithYou}</p>
         ) : (
@@ -865,7 +866,7 @@ function ShareTable({
             <tr>
               <th>{column}</th>
               <th>{copy.shares.what}</th>
-              <th>Recht</th>
+              <th>{copy.shares.right}</th>
               <th className="n" />
             </tr>
           </thead>
