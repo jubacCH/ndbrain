@@ -329,7 +329,13 @@ export class SessionService {
     this.#db.run('DELETE FROM sessions WHERE user_id = ?', userId);
   }
 
-  /** Drops expired rows. Called on start and periodically. */
+  /**
+   * Drops expired rows.
+   *
+   * Called on start and then daily, from the sweep in `runtime.ts`. The "and
+   * periodically" in this line used to be aspirational: only the start ever
+   * happened, and this service runs for months between starts.
+   */
   purgeExpired(now = Date.now()): number {
     const before = this.#db.get<{ n: number }>('SELECT COUNT(*) AS n FROM sessions');
     this.#db.run('DELETE FROM sessions WHERE expires_at <= ?', now);
