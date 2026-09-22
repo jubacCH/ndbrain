@@ -170,3 +170,76 @@ export function removeTag(source: string, rawTag: string): string {
 
   return source;
 }
+
+/** An ATX heading line: the hashes, then the text, with `\r` and padding off. */
+const HEADING = /^(#{1,6})[ \t]+(.*?)[ \t]*\r?$/;
+
+/**
+ * `source` with `addition` added — at the end of the note, or at the end of one
+ * of its sections.
+ *
+ * The separator rule is the one thing every writer that adds to a note has to
+ * agree on, which is why it lives here and not twice: the MCP tool and the
+ * append endpoint both call this, and a second hand-written version of "one
+ * blank line, unless there already is one" would drift within a release.
+ *
+ * `section` names a heading by its text. A thought thrown at a daily note
+ * belongs under that note's "Notizen", not after its "Links", where a line of
+ * prose reads as a link somebody forgot to finish — and where the start page's
+ * own preview of the day, which reads exactly that section, would never show
+ * it. The section ends at the next heading of the same or a higher level, so a
+ * sub-heading inside it stays inside it.
+ *
+ * A section that is not there is not an error: the addition goes to the end of
+ * the note instead. Whoever renamed the heading gets their text in a slightly
+ * odd place; refusing the write would lose it, and that is the one outcome a
+ * capture field may never have.
+ */
+export function appended(source: string, addition: string, section?: string): string {
+  const eol = newline(source);
+  const text = addition.replace(/[ \t\r\n]+$/, '');
+  if (text === '') return source;
+
+  if (section !== undefined) {
+    const placed = intoSection(source, text, section, eol);
+    if (placed !== null) return placed;
+  }
+
+  const gap =
+    source === '' ? '' : source.endsWith(eol + eol) ? '' : source.endsWith(eol) ? eol : eol + eol;
+  return source + gap + text;
+}
+
+/** `appended`'s section case; `null` when the note has no such heading. */
+function intoSection(source: string, text: string, section: string, eol: string): string | null {
+  const lines = source.split(eol);
+  const wanted = section.trim().toLowerCase();
+
+  let head = -1;
+  let level = 0;
+  for (let i = 0; i < lines.length && head === -1; i += 1) {
+    const match = HEADING.exec(lines[i]!);
+    if (match !== null && match[2]!.toLowerCase() === wanted) {
+      head = i;
+      level = match[1]!.length;
+    }
+  }
+  if (head === -1) return null;
+
+  // Where the section stops: the next heading that is not below it.
+  let end = lines.length;
+  for (let i = head + 1; i < end; i += 1) {
+    const match = HEADING.exec(lines[i]!);
+    if (match !== null && match[1]!.length <= level) end = i;
+  }
+
+  // After the section's last written line, so repeated captures stay in order
+  // and the blank line before the next heading is kept.
+  let at = head;
+  for (let i = head + 1; i < end; i += 1) {
+    if (lines[i]!.trim() !== '') at = i;
+  }
+
+  lines.splice(at + 1, 0, '', ...text.split(/\r?\n/));
+  return lines.join(eol);
+}
