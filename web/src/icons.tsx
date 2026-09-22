@@ -301,6 +301,16 @@ export function MenuIcon(props: IconProps): React.JSX.Element {
   );
 }
 
+/** A pencil over a line: renaming or moving a note. */
+export function PencilIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M13.3 3.6a1.7 1.7 0 0 1 2.4 2.4L7.4 14.3l-3.2.8.8-3.2 8.3-8.3Z" />
+      <path d="M12.1 4.8l2.4 2.4M4 17.2h12" />
+    </Svg>
+  );
+}
+
 /** A bin: deleting a note. */
 export function TrashIcon(props: IconProps): React.JSX.Element {
   return (

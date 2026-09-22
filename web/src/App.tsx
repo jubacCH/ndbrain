@@ -41,7 +41,7 @@ import { copy } from './copy';
 import { discardLegacy, dropRecent, forgetAccount, loadRecents, pushRecent, type Recent } from './accountStorage';
 import { SESSION_SIGNAL_KEY, announceSessionChange, closeSession, openSession } from './session';
 import { applyPrefs, loadPrefs, savePrefs, type Prefs, type Theme } from './prefs';
-import { FileIcon, GearIcon, MoreIcon, ShareIcon, ShieldIcon, SignOutIcon, TrashIcon } from './icons';
+import { FileIcon, GearIcon, MoreIcon, PencilIcon, ShareIcon, ShieldIcon, SignOutIcon, TrashIcon } from './icons';
 import { NetworkFrame, type FullscreenFrame } from './NetworkFrame';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
@@ -49,6 +49,7 @@ import { MenuButton, type MenuItem } from './Menu';
 import { mayChange, mayChangeFolder, mayShare } from './rights';
 import { OwnersContext, ownerDirectory, ownerKind, ownerLabel } from './owners';
 import { ShareDialog, type ShareTarget } from './ShareDialog';
+import { RenameDialog, vaultFolders, type RenameTarget } from './RenameDialog';
 import { SettingsView } from './Settings';
 import { AdminView } from './Admin';
 import { TopicsPanel } from './Topics';
@@ -320,6 +321,8 @@ function Shell({
   const [shareBusy, setShareBusy] = useState(false);
   /** The note the share dialog is open for, or null. */
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
+  /** The note the rename dialog is open for, or null. */
+  const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
   const [props, setProps] = useState<Array<{ key: string; count: number }>>([]);
   const [propValues, setPropValues] = useState<Array<{ value: string; count: number }>>([]);
   const [pulse, setPulse] = useState<PulseEvent[]>([]);
@@ -1043,6 +1046,56 @@ function Shell({
   };
 
   /**
+   * Renames or moves one note.
+   *
+   * One operation, because the server has one: `POST /api/v1/rename` takes a
+   * whole path, and a path whose folder differs is a move. The dialog collects
+   * it; this runs it and repairs what the old path is remembered by.
+   *
+   * Refusals are left to throw. The dialog is still on screen and is where a
+   * taken name can be corrected — sending the person back to the note to start
+   * again would be the prompt's behaviour, not a dialog's.
+   */
+  const renameNote = useCallback(
+    async (owner: string, from: string, to: string): Promise<void> => {
+      // Unsaved text belongs to the note at the path it was typed at. Written
+      // first, and waited for: a save that overtook the rename would land at
+      // the old path and create the note there again. The same guard
+      // `openNote` has — and that `renameFolder`, `runBulk` and `removeFile`
+      // still lack.
+      await settle();
+
+      const result = await api.rename(owner, from, to);
+      const at = result.note.path;
+
+      // The open note follows rather than pointing at a path that is gone.
+      // Before the caches are cleared, so nothing re-reads the old path in
+      // between and shows the note as missing for a frame.
+      if (openNow.current?.owner === owner && openNow.current.path === from) {
+        await openNote(owner, at);
+      }
+
+      // What the old path was remembered by goes with it: its version, its
+      // place in the recents, and everything that listed it. The same clean-up
+      // a delete does, for the same reason — nothing lives at that path now.
+      versions.current.delete(refKey(owner, from));
+      dropRecent(user.id, owner, from);
+      setRecents(loadRecents(user.id));
+      invalidate.afterDelete(client, owner, from);
+
+      // Said last: `openNote` clears the message on its way through, and this
+      // is the sentence worth keeping. The link count is the whole point of
+      // renaming here rather than in a file manager.
+      setError(copy.renameNote.done(at, result.updatedLinks.length));
+    },
+    [settle, openNote, client, user.id],
+  );
+
+  const openRename = useCallback((owner: string, path: string, title: string): void => {
+    setRenameTarget({ owner, path, title });
+  }, []);
+
+  /**
    * Creates the note a dead link points at, next to the note that links to it.
    *
    * Putting it in the same folder is the guess that is right most of the time and
@@ -1564,6 +1617,25 @@ function Shell({
     };
   }, [graph, open]);
 
+  /**
+   * Where the rename dialog may move the note to: the folders of the vault it
+   * lives in, plus that vault's root, narrowed to the ones the caller may
+   * write in.
+   *
+   * Only a list of choices. The server checks both ends of every move again —
+   * offering a folder a share does not reach would only be a way of finding
+   * that out after the fact.
+   */
+  const renameFolders = useMemo(
+    () =>
+      renameTarget === null
+        ? []
+        : ['', ...vaultFolders(notes, treeQuery.data?.dirs ?? [], renameTarget.owner)].filter((dir) =>
+            mayChangeFolder(user.id, received, renameTarget.owner, dir),
+          ),
+    [renameTarget, notes, treeQuery.data, received, user.id],
+  );
+
   // Only your own folders can be shared out, so the suggestions on that form
   // come from your own notes rather than from everything you can see.
   const ownDirs = useMemo(
@@ -1923,6 +1995,7 @@ function Shell({
             }}
             onRenameFolder={(path) => void renameFolder(path)}
             onDeleteNote={(owner, path, title) => void deleteNote(owner, path, title)}
+            onRenameNote={openRename}
             onShareNote={openShare}
             mayShareNote={mayShareNote}
             onCreateIn={(owner) => void createInSpace(owner)}
@@ -1980,15 +2053,29 @@ function Shell({
                   </span>
                 )}
                 <SaveIndicator state={saveState} />
-                {/* Share where the caller may hand the note on (their own, or a
-                    space's as administrator); delete only where the server said
-                    this note may be written. A note read through a read-only
-                    share has nothing to offer here. */}
+                {/* Rename and move, and delete, where the server said this note
+                    may be written; share where the caller may hand it on (their
+                    own, or a space's as administrator). A note read through a
+                    read-only share has nothing to offer here.
+
+                    Ordered by how often it is wanted and how hard it is to
+                    undo: renaming is the everyday one and the destructive one
+                    is last, where a slip cannot land on it. */}
                 {open !== null && (open.canWrite || mayShareNote(open.owner)) && (
                   <MenuButton
                     label={copy.note.actions}
                     icon={<MoreIcon />}
                     items={[
+                      ...(open.canWrite
+                        ? [
+                            {
+                              key: 'rename',
+                              label: copy.renameNote.menu,
+                              icon: <PencilIcon size={16} />,
+                              onSelect: () => openRename(open.owner, open.note.path, open.note.title),
+                            },
+                          ]
+                        : []),
                       ...(mayShareNote(open.owner)
                         ? [
                             {
@@ -2384,6 +2471,17 @@ function Shell({
           granted={granted}
           people={people}
           onClose={() => setShareTarget(null)}
+        />
+      )}
+
+      {/* Only where this screen believes the note may be changed. The server
+          checks both ends of the move again, on every request. */}
+      {renameTarget !== null && mayChange(user.id, received, renameTarget.owner, renameTarget.path) && (
+        <RenameDialog
+          note={renameTarget}
+          folders={renameFolders}
+          onRename={(to) => renameNote(renameTarget.owner, renameTarget.path, to)}
+          onClose={() => setRenameTarget(null)}
         />
       )}
     </div>
