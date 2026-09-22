@@ -14,7 +14,26 @@ import { createRuntime, createWatcher, syncAllVaults } from './runtime.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const runtime = await createRuntime(config);
+
+  /**
+   * Where a skipped note is reported.
+   *
+   * The runtime is built before the server that owns the logger, and the first
+   * sync runs right after — so this starts on the console and is swapped for
+   * Fastify's logger as soon as there is one, rather than making the runtime
+   * depend on the HTTP layer for a warning.
+   */
+  let warn = (message: string): void => console.warn(message);
+
+  const runtime = await createRuntime(config, {
+    onSkipped: (owner, notePath, error) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      warn(
+        `skipping ${owner}:${notePath} — ${reason}. ` +
+          'It stays on disk and out of search until it is renamed.',
+      );
+    },
+  });
 
   const server = await buildServer({
     app: runtime.app,
@@ -27,6 +46,8 @@ async function main(): Promise<void> {
     config,
   });
 
+  warn = (message: string): void => server.log.warn(message);
+
   if (runtime.users.count() === 0) {
     server.log.warn(
       'no accounts exist yet — create one with: ndbrain-user create <name>. ' +
@@ -34,7 +55,15 @@ async function main(): Promise<void> {
     );
   }
 
-  await syncAllVaults(runtime);
+  // A vault that cannot be synced is reported and left behind rather than
+  // allowed to stop the start; see `syncAllVaults`.
+  for (const failure of (await syncAllVaults(runtime)).failed) {
+    server.log.error(
+      { err: failure.error },
+      `could not index one vault at start-up — its search results will be stale ` +
+        `until "ndbrain-user reindex ${failure.owner}" succeeds`,
+    );
+  }
 
   const watcher = createWatcher(runtime);
   await watcher.start();
