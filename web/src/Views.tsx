@@ -169,15 +169,22 @@ export function TidyView({
           there, inlined here at some point, and then grew a third count that
           the key never got — which is exactly the drift the catalogue exists
           to prevent. */}
-      {data.truncated && (
-        <p className="warnline" role="status">
-          {copy.tidy.capped(
-            [data.orphans.length, data.totals.orphans],
-            [data.untagged.length, data.totals.untagged],
-            [data.conflicts.length, data.totals.conflicts],
-          )}
-        </p>
-      )}
+      {/* The region is the wrapper, not the line, and it is here whether there
+          is a cap to report or not. A `role="status"` that is mounted together
+          with its one and only text has nothing to change, so nothing is ever
+          announced — see the save indicator in `App.tsx`, which is the one
+          place in this application that always had this right. */}
+      <div role="status">
+        {data.truncated && (
+          <p className="warnline">
+            {copy.tidy.capped(
+              [data.orphans.length, data.totals.orphans],
+              [data.untagged.length, data.totals.untagged],
+              [data.conflicts.length, data.totals.conflicts],
+            )}
+          </p>
+        )}
+      </div>
       <p className="h-sub">
         {total === 0
           ? copy.tidy.clean
@@ -230,11 +237,15 @@ export function TidyView({
       )}
 
       <div ref={findingsRef} className="tidy-findings">
-      {focus !== null && (
-        <p className="tidy-focus" role="status">
-          {copy.health.showing(focus === 'stale' ? copy.tidy.findingUntouched : healthLabel(focus, 2))}
-        </p>
-      )}
+      {/* Narrowing to one finding changes the whole list below without moving
+          the focus, so the line saying which one is the only notice there is. */}
+      <div role="status">
+        {focus !== null && (
+          <p className="tidy-focus">
+            {copy.health.showing(focus === 'stale' ? copy.tidy.findingUntouched : healthLabel(focus, 2))}
+          </p>
+        )}
+      </div>
 
       {shownRows.length > 0 && (
         <div className="tablewrap">
@@ -386,11 +397,10 @@ export function TasksView({
         {copy.tasks.title}
       </h2>
 
-      {data.truncated && (
-        <p className="warnline" role="status">
-          {copy.tasks.truncated(data.tasks.length, data.total)}
-        </p>
-      )}
+      {/* Here whether there is a cap or not; see the tidy view above. */}
+      <div role="status">
+        {data.truncated && <p className="warnline">{copy.tasks.truncated(data.tasks.length, data.total)}</p>}
+      </div>
 
       <p className="h-sub">
         {data.tasks.length === 0
@@ -719,7 +729,11 @@ export function SearchView({
           autoFocus
         />
       </div>
-      <p className="h-sub">
+      {/* The count is on screen at all times and only ever changes its words,
+          which is what makes it announceable: typing and picking a filter both
+          rewrite the list below without moving the focus, and this line is the
+          only thing that says what happened. */}
+      <p className="h-sub" role="status">
         {hits.length === 0 ? copy.search.nothingFound : copy.search.results(hits.length)}
         {described !== '' && ` — ${described}`}
       </p>

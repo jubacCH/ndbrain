@@ -64,11 +64,11 @@ export function AdminView(props: AdminProps): React.JSX.Element {
       <h2 className="h-big">{copy.admin.title}</h2>
       <p className="h-sub">{copy.admin.subtitle}</p>
 
-      {note !== null && (
-        <p className={note.kind === 'ok' ? 'setok' : 'setbad'} role="status">
-          {note.text}
-        </p>
-      )}
+      {/* The region, not the line: a `role="status"` mounted together with its
+          one message has nothing to change and is never announced. */}
+      <div role="status">
+        {note !== null && <p className={note.kind === 'ok' ? 'setok' : 'setbad'}>{note.text}</p>}
+      </div>
 
       <section className="setgroup">
         <h3 className="cap">{copy.admin.accounts}</h3>

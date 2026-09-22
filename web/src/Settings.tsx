@@ -497,11 +497,12 @@ function AccountSection({
             {copy.settings.signOutEverywhere}
           </button>
         </div>
-        {note !== null && (
-          <p className={note.kind === 'ok' ? 'setok' : 'setbad'} role="status">
-            {note.text}
-          </p>
-        )}
+        {/* The region, not the line. Mounted together with its message it has
+            nothing to change and nothing is announced — and the message is the
+            whole answer to "did that work?". */}
+        <div role="status">
+          {note !== null && <p className={note.kind === 'ok' ? 'setok' : 'setbad'}>{note.text}</p>}
+        </div>
       </form>
     </section>
   );
