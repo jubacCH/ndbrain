@@ -8,6 +8,7 @@
 
 import { randomBytes } from 'node:crypto';
 
+import { REINDEX_USAGE, runReindexCommand } from './cliReindex.js';
 import { loadConfig } from './config.js';
 import { SPACE_USAGE, runSpaceCommand } from './cliSpaces.js';
 import { createRuntime } from './runtime.js';
@@ -26,6 +27,7 @@ const USAGE = `ndbrain-user — manage ndBrain accounts
   key revoke <key-id>         revoke a key immediately
   key log <user>              recent agent tool calls
 
+${REINDEX_USAGE}
 ${SPACE_USAGE}
 The password is read from stdin when it is not a terminal, otherwise generated:
 
@@ -184,6 +186,15 @@ async function main(): Promise<void> {
 
         throw new Error('usage: key create|list|revoke|log ...');
       }
+
+      case 'reindex':
+        // `name` is the optional account; absent means every one of them.
+        await runReindexCommand(
+          runtime,
+          name === undefined ? rest : [name, ...rest],
+          (text) => process.stdout.write(text),
+        );
+        break;
 
       case 'space':
         await runSpaceCommand(runtime, [name ?? '', ...rest], (text) => process.stdout.write(text));

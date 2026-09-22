@@ -402,9 +402,18 @@ export function migrate(db: Database, upTo: number = MIGRATIONS.length): void {
   const current = db.userVersion;
 
   if (current > MIGRATIONS.length) {
+    // Deliberately does not advise deleting the file, which is what it used to
+    // say. `ndbrain.db` is not only the index: it holds the accounts, the
+    // sessions, the agent keys, the shares, the settings and the edit log, and
+    // none of those can be derived from the vault. Deleting it to get past a
+    // version mismatch costs every login and every grant on the box — and the
+    // mismatch itself is a downgrade, which has a cheaper answer.
     throw new Error(
       `index schema is version ${current}, newer than this build understands ` +
-        `(${MIGRATIONS.length}). Delete the index file and let it rebuild.`,
+        `(${MIGRATIONS.length}). A newer ndbrain wrote this database, so run that ` +
+        'version again — or restore the index file from a backup taken before the ' +
+        'upgrade. Do not delete it: it holds the accounts, agent keys and shares ' +
+        'as well as the index, and only the index could be rebuilt from the vault.',
     );
   }
 
