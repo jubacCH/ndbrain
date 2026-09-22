@@ -10,8 +10,9 @@
 #
 # Zwei Dinge sind erlaubt:
 #
-#   vaults        die Notizen samt .git, also einschliesslich aller Versionen
-#   db-snapshot   den jüngsten konsistenten Stand der Datenbank
+#   vaults           die Notizen samt .git, also einschliesslich aller Versionen
+#   db-snapshot      den jüngsten konsistenten Stand der Datenbank
+#   login-refusals   wie oft die Login-Bremse zuletzt jemanden abgewiesen hat
 #
 # Beides schreibt nur nach stdout. Es gibt hier keinen Fall, der etwas anlegt,
 # ändert oder löscht.
@@ -35,6 +36,26 @@ case "${1:-}" in
       exit 1
     fi
     exec gzip -c "$newest"
+    ;;
+
+  login-refusals)
+    # Wie oft die Login-Bremse in der letzten Stunde jemanden abgewiesen hat.
+    #
+    # Die Bremse kann den Besitzer aussperren: das Konto-Budget verbraucht
+    # jeder, der den Namen kennt, und die Antwort kommt vor der Passwortprüfung,
+    # kann den Richtigen also nicht vom Ratenden unterscheiden. Die Antwort
+    # selbst sagt bewusst nur „später". Die Zeile im Log ist damit der einzige
+    # Ort, an dem das sichtbar wird — deshalb wird sie hier gezählt.
+    #
+    # Gezählt statt gelesen: der Zähler geht ans Backup-Ziel, und Kontonamen
+    # gehören nicht dorthin. Wer wissen will, wer betroffen ist, liest das Log
+    # auf diesem Container.
+    cd /opt/ndbrain 2>/dev/null || { echo 0; exit 0; }
+    # `grep -c` schreibt bei null Treffern eine 0 und endet trotzdem mit 1.
+    # Ein `|| echo 0` dahinter gäbe deshalb zwei Zeilen, und der Checkmk-Check
+    # auf der anderen Seite erwartet genau eine.
+    treffer=$(docker compose logs --since 1h 2>/dev/null | grep -c 'login refused' || true)
+    printf '%s\n' "${treffer:-0}"
     ;;
 
   db-name)

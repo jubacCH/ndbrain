@@ -118,6 +118,15 @@ else
   printf 'unerreichbar\n' > "$DEST/historie-timer"
 fi
 
+# Wie oft die Login-Bremse zuletzt abgewiesen hat. Gleicher Grund wie beim
+# Zeitgeber darüber: einmal je Lauf geholt statt bei jeder Abfrage, und der
+# Check liest nur noch die Datei.
+if zahl=$(remote login-refusals 2>/dev/null); then
+  printf '%s\n' "${zahl:-0}" > "$DEST/login-abweisungen"
+else
+  printf 'unbekannt\n' > "$DEST/login-abweisungen"
+fi
+
 # Ein Zeitstempel, den eine Überwachung lesen kann, ohne das Verzeichnis zu
 # durchsuchen: steht er still, läuft das Backup nicht mehr. Als letztes
 # geschrieben, damit er nur einen Lauf datiert, der auch durchkam.

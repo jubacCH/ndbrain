@@ -80,6 +80,15 @@ export interface ServerDeps {
   history: History;
   config: Config;
   throttle?: LoginThrottle;
+  /**
+   * Where the log goes. Left out, it goes where Fastify sends it.
+   *
+   * Only a test passes one, and only because some of what this server says is
+   * said to nobody else: a refused login writes a warning and answers with a
+   * deliberately empty "later", so the line in the log is the whole of the
+   * evidence. A test that cannot read it cannot check it exists.
+   */
+  logStream?: NodeJS.WritableStream;
   /** The watcher, so the health check can ask when it last reconciled. */
   watcher?: { reconcileState(now?: number): ReconcileState };
 }
@@ -158,7 +167,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   }
 
   const fastify = Fastify({
-    logger: { level: config.logLevel },
+    logger: deps.logStream === undefined
+      ? { level: config.logLevel }
+      : { level: 'warn', stream: deps.logStream },
     routerOptions: {
       // Vault paths may nest arbitrarily and carry spaces and unicode; the
       // default 100-character limit would reject legitimate note paths.
@@ -333,6 +344,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     const wait = throttle.retryAfter(request.ip, id);
     if (wait > 0) {
+      // Said out loud, because the brake can shut out the very person it
+      // protects: the account budget is spent by anybody who knows the name,
+      // and the answer comes before the password is checked, so it cannot tell
+      // the owner from the guesser. Somebody has to be able to see that this
+      // is happening, and the reply itself deliberately says nothing beyond
+      // "later". The marker is fixed so an operator can grep for it.
+      request.log.warn({ account: id, seconds: wait }, 'login refused: too many attempts');
       return reply
         .code(429)
         .header('Retry-After', String(wait))
