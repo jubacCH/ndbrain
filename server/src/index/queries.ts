@@ -131,17 +131,27 @@ export interface ActivityDay {
   agentWrites: number;
 }
 
-/** The MCP tools that only look — the same list `pulse` filters on, from here. */
-const AGENT_READ_TOOLS = [
+/**
+ * The MCP tools that only look — the same list `pulse` filters on, from here.
+ *
+ * Written out rather than read off `TOOLS`, because the index layer must not
+ * depend on the MCP layer for a list of strings. Exported so the drift that
+ * costs is caught where importing both is fine: `mcp.test.ts` holds these two
+ * against `TOOLS` and its `readOnly` flag. A tool missing here is not an error
+ * anywhere, it simply never appears in "agent reads today" — which reads as an
+ * agent that did nothing.
+ */
+export const AGENT_READ_TOOLS = [
   'get_note',
   'search_notes',
   'list_notes',
   'get_links',
   'vault_map',
   'list_tasks',
+  'list_findings',
 ] as const;
-/** The MCP tools that change a note. */
-const AGENT_WRITE_TOOLS = [
+/** The MCP tools that change a note. Kept honest by the same test. */
+export const AGENT_WRITE_TOOLS = [
   'create_note',
   'append_note',
   'edit_note',
