@@ -1,0 +1,12 @@
+[Unit]
+Description=ndBrain: Backup alle 15 Minuten
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=1min
+# Einen verpassten Lauf nachholen, etwa nach einem Neustart des Nodes.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
