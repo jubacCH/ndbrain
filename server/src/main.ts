@@ -35,8 +35,14 @@ async function main(): Promise<void> {
     },
   });
 
+  // Built before the server and started after it: the health endpoint has to be
+  // able to say when the last reconcile ran, and a watcher that only existed
+  // after `buildServer` would leave it answering "nothing is watching".
+  const watcher = createWatcher(runtime);
+
   const server = await buildServer({
     app: runtime.app,
+    db: runtime.db,
     users: runtime.users,
     sessions: runtime.sessions,
     keys: runtime.keys,
@@ -44,6 +50,7 @@ async function main(): Promise<void> {
     settings: runtime.settings,
     history: runtime.history,
     config,
+    watcher,
   });
 
   warn = (message: string): void => server.log.warn(message);
@@ -65,7 +72,6 @@ async function main(): Promise<void> {
     );
   }
 
-  const watcher = createWatcher(runtime);
   await watcher.start();
 
   await server.listen({ host: config.host, port: config.port });
