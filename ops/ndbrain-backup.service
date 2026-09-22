@@ -1,0 +1,11 @@
+[Unit]
+Description=ndBrain: Stand von CT 132 auf den NAS ziehen
+Documentation=file:/opt/ndbrain/ndbrain-pull.sh
+# Ohne den NAS-Mount waere das Ziel die lokale Platte dieses Nodes, also genau
+# nicht die zweite Ausfalldomaene, um die es geht. Das Skript prueft es
+# zusaetzlich selbst, weil ein Mount auch nach dem Start wegbrechen kann.
+RequiresMountsFor=/mnt/pve/nfs-backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ndbrain/ndbrain-pull.sh

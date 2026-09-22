@@ -1,0 +1,10 @@
+[Unit]
+Description=ndBrain: Vault-Historie festhalten
+Documentation=file:/opt/ndbrain/vault-history.sh
+
+[Service]
+Type=oneshot
+# systemd gibt Diensten kein HOME mit; ohne das bricht git ab. Das Skript setzt
+# es zusaetzlich selbst, damit es auch von Hand und aus cron heraus laeuft.
+Environment=HOME=/root
+ExecStart=/opt/ndbrain/vault-history.sh

@@ -69,6 +69,7 @@ beforeEach(async () => {
 
   server = await buildServer({
     app: runtime.app,
+    db: runtime.db,
     users: runtime.users,
     sessions: runtime.sessions,
     keys: runtime.keys,

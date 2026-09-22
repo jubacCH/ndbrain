@@ -31,6 +31,9 @@ import { DeletedNotes } from '../notes/deleted.js';
 import { SessionService, UnknownUserError, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
+import type { Database } from '../db/database.js';
+import type { ReconcileState } from '../index/watcher.js';
+import { HealthProbe } from './health.js';
 import { toProblem } from './errors.js';
 import { NoteNotFoundError } from '../errors.js';
 import { isNotePath, normalizeVaultPath } from '../vault/paths.js';
@@ -66,6 +69,8 @@ declare module 'fastify' {
 
 export interface ServerDeps {
   app: App;
+  /** For the health check's cheap read; no route touches it directly. */
+  db: Database;
   users: UserService;
   sessions: SessionService;
   keys: ApiKeyService;
@@ -74,6 +79,8 @@ export interface ServerDeps {
   history: History;
   config: Config;
   throttle?: LoginThrottle;
+  /** The watcher, so the health check can ask when it last reconciled. */
+  watcher?: { reconcileState(now?: number): ReconcileState };
 }
 
 /** Routes reachable without a session. Everything else is closed by default. */
@@ -282,7 +289,26 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     schema.parse(request.body ?? {});
 
   // ---- health -------------------------------------------------------------
-  fastify.get('/api/v1/health', async () => ({ status: 'ok' }));
+  //
+  // Public, so it says whether the server works and roughly what is wrong, and
+  // nothing else; see `health.ts` for the whole of what it may reveal. Sent as
+  // formatted JSON because the first reader is usually a person who opened the
+  // URL in a browser after something went quiet.
+  const probe = new HealthProbe({
+    db: deps.db,
+    users,
+    history,
+    config,
+    ...(deps.watcher === undefined ? {} : { watcher: deps.watcher }),
+  });
+
+  fastify.get('/api/v1/health', async (_request, reply) => {
+    const report = await probe.check();
+    return reply
+      .code(report.status === 'failing' ? 503 : 200)
+      .type('application/json')
+      .send(`${JSON.stringify(report, null, 2)}\n`);
+  });
 
   // ---- MCP ----------------------------------------------------------------
   //
