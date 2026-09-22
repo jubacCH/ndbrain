@@ -5713,6 +5713,9 @@ th.pick input,
   padding: var(--s-4) var(--s-4) var(--s-3);
 }
 
+/* Before the day it writes into, on a phone as on a desk: what was just
+   captured shows up in the card immediately below. */
+.home-capture { order: -1; }
 .home-continue { order: 1; }
 .health-card { order: 2; }
 .home-today { order: 3; }
@@ -6189,6 +6192,66 @@ th.pick input,
   .nav-today-kbd {
     display: none;
   }
+}
+
+/* ---- Capture ---------------------------------------------------------------
+ *
+ * The one field on the start page. Plain on purpose: a box, a label, a hint and
+ * a button. Anything more decorated would suggest the thought has to be worth
+ * something before it is written down. */
+
+.home-capture-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.home-capture-label {
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+
+.home-capture-text {
+  width: 100%;
+  resize: vertical;
+  min-height: 4.5rem;
+  font: inherit;
+  font-size: var(--t-md);
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--field);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-md);
+  padding: var(--s-2) var(--s-3);
+}
+
+.home-capture-text::placeholder {
+  color: var(--text-3);
+}
+
+.home-capture-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.home-capture-foot .home-note-small {
+  margin: 0;
+}
+
+/* Always in the document, so the line that reports the last thought is
+   announced rather than appearing under the next one. */
+.home-capture-said {
+  margin: var(--s-2) 0 0;
+  min-height: 1.25em;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+
+.home-capture-said[data-state='failed'] {
+  color: var(--crit);
 }
 
 .home-daily { order: 0; }
