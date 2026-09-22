@@ -17,6 +17,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { App } from '../app.js';
 import type { ApiKeyService } from '../auth/keys.js';
 import { toProblem } from '../http/errors.js';
+import type { DeletedNotes } from '../notes/deleted.js';
 import { checkArguments, TOOLS, ToolRefusal, type ToolContext } from './tools.js';
 
 /** The protocol version this server implements. */
@@ -39,7 +40,7 @@ function error(id: string | number | null | undefined, code: number, message: st
 
 export function registerMcpEndpoint(
   fastify: FastifyInstance,
-  deps: { app: App; keys: ApiKeyService },
+  deps: { app: App; keys: ApiKeyService; deleted: DeletedNotes },
 ): void {
   fastify.post('/mcp', async (request: FastifyRequest, reply: FastifyReply) => {
     const header = request.headers.authorization ?? '';
@@ -62,7 +63,12 @@ export function registerMcpEndpoint(
       return reply.code(400).send(error(null, -32600, 'expected a single JSON-RPC request'));
     }
 
-    const context: ToolContext = { app: deps.app, keys: deps.keys, key };
+    const context: ToolContext = {
+      app: deps.app,
+      keys: deps.keys,
+      key,
+      deleted: deps.deleted,
+    };
 
     switch (body.method) {
       case 'initialize':
@@ -73,7 +79,9 @@ export function registerMcpEndpoint(
             serverInfo: { name: 'ndbrain', version: '0.1.0' },
             instructions:
               'Notes are Markdown files. Search before reading, and prefer append_note or ' +
-              'edit_note over rewriting a note in full.',
+              'edit_note over rewriting a note in full. Tidy up what you file wrongly: ' +
+              'rename_note moves a note and keeps the links pointing at it working, which ' +
+              'writing it again somewhere else does not.',
           }),
         );
 
@@ -94,14 +102,12 @@ export function registerMcpEndpoint(
               inputSchema: tool.inputSchema,
               annotations: {
                 readOnlyHint: tool.readOnly,
-                // Per tool, not blanket: delete is deliberately not exposed over
-                // MCP, but that alone does not make every writing tool safe.
-                // `edit_note` can still remove arbitrary content from a note in
-                // a single call — see its `destructive` comment — while
-                // `create_note` refuses an existing target and `append_note`
-                // only ever adds. A flat `false` here hid exactly that
-                // difference and, with it, the prompt an MCP client would
-                // otherwise have shown before an `edit_note` call.
+                // Per tool, not blanket. `delete_note` and `edit_note` remove
+                // content outright and `rename_note` rewrites links in notes
+                // the call never named, while `create_note` refuses an existing
+                // target and `append_note` only ever adds. A flat `false` here
+                // hid exactly that difference and, with it, the prompt an MCP
+                // client would otherwise have shown before an `edit_note` call.
                 destructiveHint: tool.destructive,
               },
             })),
