@@ -16,6 +16,7 @@ Betreiber, nicht der Compiler, und der Bestand war schon so.
 | `db-snapshot.sh` | CT 132 | täglich 20:30 | `sqlite3 .backup` der Datenbank nach `/srv/ndbrain/backup`, 14 Stände. |
 | `backup-source.sh` | CT 132 | — | Die Leseseite für das Backup. Kennt drei Befehle und schreibt nie. |
 | `ndbrain-pull.sh` | prxmx01 | alle 15 min | Zieht Vaults und Datenbank nach `/mnt/pve/nfs-backup/ndbrain`. |
+| `checkmk-ndbrain-backup.sh` | prxmx01 | jede Abfrage | Checkmk-Check, liegt dort als `/usr/lib/check_mk_agent/local/ndbrain-backup`. |
 
 Die Units heissen wie die Skripte (`ndbrain-history`, `ndbrain-db-snapshot` auf
 CT 132, `ndbrain-backup` auf prxmx01).
@@ -74,16 +75,28 @@ dem Host verweigert ein Repository, das ihm nicht gehört, als "dubious
 ownership" — die Historie wäre dann lautlos weg, ohne Fehlermeldung in der
 Anwendung.
 
-## Wonach man schauen muss
+## Überwachung
 
-`/mnt/pve/nfs-backup/ndbrain/zuletzt-gezogen` trägt den Zeitpunkt des letzten
-erfolgreichen Laufs. Steht er still, läuft das Backup nicht mehr. Das ist heute
-der einzige Anhaltspunkt; eine Überwachung, die daran zieht, gibt es noch nicht.
+Drei Checkmk-Services auf `prxmx01.b8n.ch`, seit 22.09.2026:
 
-Zweitens: ob der jüngste Commit in jedem Vault-Repository jünger als zehn
-Minuten ist. `history.ts` übersetzt jeden git-Fehler in "keine Versionen", ein
-ausgefallenes Sidecar sieht in der Anwendung also aus wie eine Notiz ohne
-Geschichte.
+| Service | WARN | CRIT |
+|---|---|---|
+| `ndBrain_Backup` | 45 min ohne Lauf (zwei ausgefallen) | 2 h |
+| `ndBrain_Backup_DB` | 36 h ohne neuen Stand | 72 h |
+| `ndBrain_Historie` | Container unerreichbar | Zeitgeber gestoppt |
+
+Der Check liest nur Dateien. Alles, was eine Leitung braucht — ob der
+History-Zeitgeber auf CT 132 noch läuft —, fragt `ndbrain-pull.sh` alle
+fünfzehn Minuten ab und legt es unter `historie-timer` ab. Checkmk ruft einen
+lokalen Check jede Minute auf, und eine SSH-Verbindung pro Minute wäre ein
+hoher Preis für eine Antwort, die sich so selten ändert.
+
+Warum der dritte Service überhaupt nötig ist: `history.ts` übersetzt jeden
+git-Fehler in "keine Versionen". Ein ausgefallenes Sidecar sieht in der
+Anwendung deshalb aus wie eine Notiz ohne Geschichte, nicht wie ein Ausfall.
+
+Die Meldungstexte kommen ohne Umlaute aus, mit Begründung im Skript: beim
+ersten Ausrollen kam "läuft" als "lÃ¤uft" in Checkmk an.
 
 ## Geübt
 
