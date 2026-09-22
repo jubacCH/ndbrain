@@ -579,6 +579,38 @@ export const copy = {
     failed: 'Could not rename that note.',
   },
 
+  renameFolder: {
+    /**
+     * Said afterwards, by the shell, with what the server really did.
+     *
+     * Attachments are counted separately from notes because they move for a
+     * different reason: one sits beside its note so that the note's `![[embed]]`
+     * resolves without a lookup. Somebody who moved a folder of screenshots and
+     * reads only "12 notes moved" is left to guess whether the pictures came.
+     */
+    done: (from: string, to: string, notes: number, files: number, links: number): string => {
+      const parts = [`${notes} ${notes === 1 ? 'note' : 'notes'} moved`];
+      if (files > 0) parts.push(`${files} ${files === 1 ? 'attachment' : 'attachments'}`);
+      if (links > 0) parts.push(`links updated in ${links} ${links === 1 ? 'note' : 'notes'}`);
+      return `“${from}” → “${to}”: ${parts.join(', ')}.`;
+    },
+    /**
+     * What the move could not take, at the path it really has now.
+     *
+     * A folder move carries on past a collision rather than rolling back, so
+     * this sentence is the only place the leftovers are named — and naming the
+     * path matters, because a case change that cannot finish leaves them under
+     * an interim folder name nobody typed. As many as fit, then a count.
+     */
+    leftBehind: (failed: readonly { path: string; reason: string }[]): string => {
+      const named = failed.slice(0, 3).map((entry) => entry.path).join(', ');
+      const more = failed.length > 3 ? ` and ${failed.length - 3} more` : '';
+      const why = failed[0]?.reason.trim() ?? '';
+      const because = why === '' ? '' : ` — ${clip(why, 140)}`;
+      return ` ${failed.length} could not be moved and ${failed.length === 1 ? 'is' : 'are'} still at: ${named}${more}${because}`;
+    },
+  },
+
   tree: {
     /** The tree landmark itself, for a screen reader's list of regions. */
     label: 'Notes',

@@ -126,7 +126,19 @@ vi.mock('../src/api', async (original) => {
       server.log.push(`folder-start ${from} -> ${to}`);
       server.renamedFolders.push([from, to]);
       server.log.push(`folder-end ${from} -> ${to}`);
-      return { movedNotes: 1, updatedLinks: 0 };
+      // The shape the server really answers with. It used to be a pair of
+      // counts, which the shell never looked at closely enough to notice —
+      // until it started reporting the attachments and the leftovers too, and
+      // read a `length` off a number.
+      return {
+        folder: to,
+        movedNotes: server.notes
+          .filter((n) => n.path.startsWith(`${from}/`))
+          .map((n) => `${to}${n.path.slice(from.length)}`),
+        movedFiles: [],
+        updatedLinks: [],
+        failed: [],
+      };
     },
     rename: async (owner: string, from: string, to: string) => {
       server.log.push(`rename-start ${from} -> ${to}`);
