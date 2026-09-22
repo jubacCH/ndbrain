@@ -1,26 +1,27 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider, onlineManager } from '@tanstack/react-query';
 
 import { App } from './App';
 import { Boundary } from './Boundary';
+import { createQueryClient } from './queries';
 import './styles.css';
 
 /**
- * The cache the whole application reads the server through.
+ * What the cache believes about the connection before anything has happened.
  *
- * `retry: false` because this server is one hop away on a LAN: a failure here is
- * almost always a real answer — signed out, gone, refused — and retrying it three
- * times only delays telling somebody. `refetchOnWindowFocus` is off for the same
- * reason it would be tempting to leave on: coming back to a tab must not pull the
- * text out from under a half-written note.
+ * The online manager starts out assuming it is online and only learns otherwise
+ * from the browser's `offline` event — which never fires for the page that was
+ * *opened* offline. Without this line, a tab reloaded on a dead connection sends
+ * requests it cannot send and shows them as loading, which is the exact failure
+ * this is meant to end. `navigator.onLine` is a weak signal (it says "there is a
+ * network", not "the server is reachable"), and it is only ever consulted here,
+ * where a false "online" costs nothing but a failed request.
  */
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { retry: false, refetchOnWindowFocus: false },
-  },
-});
+onlineManager.setOnline(navigator.onLine);
+
+const queryClient = createQueryClient();
 
 const host = document.getElementById('root');
 if (host === null) throw new Error('#root is missing from index.html');
