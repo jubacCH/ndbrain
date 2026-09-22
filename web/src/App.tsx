@@ -1731,13 +1731,74 @@ function Shell({
 
   const heading = headingOf();
 
+  /**
+   * What ⌘K can do besides opening a note.
+   *
+   * Two kinds only, and the line between them is what keeps the list short.
+   * Things you *do* that have no keyboard route at all — start today's note,
+   * start any note, flip the theme — and the views that are not in the sidebar
+   * because they sit behind the account menu. Overview, Journal, Network, Tidy
+   * up and Search stay out: they are one click away in the sidebar, and a
+   * palette that lists them as well is a second navigation bar that has to be
+   * kept in step with the first.
+   *
+   * Signing out is deliberately absent. Enter in a fuzzy list is the most
+   * accidental key in this application, and sign out is the one thing here that
+   * pressing it again does not undo.
+   */
   const paletteCommands: PaletteCommand[] = [
     {
       key: 'today',
       label: copy.palette.openToday,
-      keywords: copy.palette.openTodayKeywords,
+      keywords: copy.palette.keywords.today,
       shortcut: copy.journal.shortcut,
       run: () => void openToday(),
+    },
+    {
+      key: 'new-note',
+      label: copy.nav.newNote,
+      keywords: copy.palette.keywords.newNote,
+      // The same prompt the sidebar's "+" opens: the palette shortens the
+      // reach for it, it does not become a second way of naming a note.
+      run: () => void createNote(),
+    },
+    {
+      key: 'files',
+      label: copy.nav.files,
+      keywords: copy.palette.keywords.files,
+      run: () => void showView('files'),
+    },
+    {
+      key: 'shares',
+      label: copy.nav.sharing,
+      keywords: copy.palette.keywords.sharing,
+      run: () => void showView('shares'),
+    },
+    {
+      key: 'settings',
+      label: copy.nav.settings,
+      keywords: copy.palette.keywords.settings,
+      run: () => void showView('settings'),
+    },
+    // Hidden for everybody else, as in the account menu: a command that is not
+    // in the list is not a permission, and the server refuses it regardless.
+    ...(user.role === 'admin'
+      ? [
+          {
+            key: 'admin',
+            label: copy.nav.admin,
+            keywords: copy.palette.keywords.admin,
+            run: () => void showView('admin'),
+          },
+        ]
+      : []),
+    {
+      // Named for what it will do, like the header button it duplicates, so the
+      // row cannot be read as a statement about which theme is on.
+      key: 'theme',
+      label: dark ? copy.shell.lightTheme : copy.shell.darkTheme,
+      keywords: copy.palette.keywords.theme,
+      run: () => setPrefs((current) => ({ ...current, theme: dark ? 'light' : 'dark' })),
     },
   ];
 

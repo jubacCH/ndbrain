@@ -570,8 +570,27 @@ export const copy = {
     /** Beside a command row, where a note row names its folder. */
     command: 'command',
     openToday: "Open today's note",
-    /** Extra words a command is also found by. */
-    openTodayKeywords: 'today daily journal heute',
+    /**
+     * The extra words each command is found by, besides its own label.
+     *
+     * Never shown, so this is the one part of the catalogue that is not copy at
+     * all — it is a guess at the word somebody will reach for. It belongs here
+     * anyway: guessing that "upload" means Files is the same kind of judgement
+     * as deciding what the Files view is called, and a second language would
+     * have to make it again from scratch.
+     *
+     * `heute` is not an oversight. The notes in the vault are German, and the
+     * word somebody types while writing them is the word they are writing in.
+     */
+    keywords: {
+      today: 'today daily journal heute',
+      newNote: 'create add write page',
+      files: 'upload download attachments images disk',
+      sharing: 'shares shared access permissions who',
+      settings: 'preferences options appearance password account',
+      admin: 'administration accounts keys agents',
+      theme: 'dark light appearance contrast night day',
+    },
     label: 'Find a note',
     placeholder: 'Open a note or search inside notes…',
     titleLabel: 'Note title or words in a note',
