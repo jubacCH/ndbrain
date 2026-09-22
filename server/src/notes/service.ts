@@ -121,17 +121,25 @@ export interface PutResult {
  * which of two files to keep. Seconds would be noise, and UTC would make the
  * timestamp disagree with the one shown everywhere else in the UI.
  *
+ * `ordinal` is which copy of that minute this is, and it is why the minute can
+ * stay: two conflicts inside one minute — and the autumn hour, which hands the
+ * same minute out a second time — otherwise want the same name, and the second
+ * copy would replace the first. The first of a minute carries no suffix, so
+ * every name written before this existed is still exactly what this produces
+ * and still reads back; see `parseConflictPath`.
+ *
  * Exported so `parseConflictPath` below, and the tidy-up finding that uses it,
  * can be checked against exactly what this writes rather than a second,
  * hand-copied pattern that could drift from it.
  */
-export function conflictPath(notePath: string, when: Date): string {
+export function conflictPath(notePath: string, when: Date, ordinal = 1): string {
   const pad = (value: number): string => String(value).padStart(2, '0');
   const stamp =
     `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ` +
     `${pad(when.getHours())}.${pad(when.getMinutes())}`;
+  const nth = ordinal > 1 ? `-${ordinal}` : '';
 
-  return `${notePath.replace(/\.md$/i, '')} (Konflikt ${stamp})${NOTE_EXTENSION}`;
+  return `${notePath.replace(/\.md$/i, '')} (Konflikt ${stamp}${nth})${NOTE_EXTENSION}`;
 }
 
 /** What a conflict copy's name says about the version it displaced. */
@@ -140,6 +148,8 @@ export interface ConflictInfo {
   originalPath: string;
   /** The moment named in the copy's filename, read as local time — see `conflictPath`. */
   at: number;
+  /** Which copy of that minute this is. 1 for a name that carries no count. */
+  ordinal: number;
 }
 
 /**
@@ -153,7 +163,9 @@ export interface ConflictInfo {
  * note whose name merely contains the word.
  */
 export function parseConflictPath(notePath: string): ConflictInfo | null {
-  const match = /^(.+) \(Konflikt (\d{4})-(\d{2})-(\d{2}) (\d{2})\.(\d{2})\)\.md$/.exec(notePath);
+  const match = /^(.+) \(Konflikt (\d{4})-(\d{2})-(\d{2}) (\d{2})\.(\d{2})(?:-(\d+))?\)\.md$/.exec(
+    notePath,
+  );
   if (match === null) return null;
 
   const base = match[1] ?? '';
@@ -162,6 +174,11 @@ export function parseConflictPath(notePath: string): ConflictInfo | null {
   const day = Number(match[4] ?? '');
   const hour = Number(match[5] ?? '');
   const minute = Number(match[6] ?? '');
+  // Optional, because that is what a name written before the count existed
+  // looks like — and every copy already lying in a vault is one of those. A
+  // name that stopped parsing would drop out of the tidy-up view, which is the
+  // one place these files are ever reported.
+  const ordinal = match[7] === undefined ? 1 : Number(match[7]);
 
   const at = new Date(year, month - 1, day, hour, minute);
   if (Number.isNaN(at.getTime())) return null;
@@ -172,10 +189,12 @@ export function parseConflictPath(notePath: string): ConflictInfo | null {
   // "2026-13-45 99.99" quietly becomes some date the following year rather than
   // NaN. Regenerating the name from what was just parsed and comparing it back
   // to the input catches that: a rolled-over `at` renders a different stamp, so
-  // the two will not match, and this is not a conflict copy after all.
-  if (conflictPath(originalPath, at) !== notePath) return null;
+  // the two will not match, and this is not a conflict copy after all. The same
+  // round trip rules out a count this would never write — `-1`, `-0`, `-02` —
+  // without a second rule for it.
+  if (conflictPath(originalPath, at, ordinal) !== notePath) return null;
 
-  return { originalPath, at: at.getTime() };
+  return { originalPath, at: at.getTime(), ordinal };
 }
 
 /** For a service nobody listens to — the unit tests that build one bare. */
@@ -553,12 +572,45 @@ export class NoteService {
         : current.mtimeMs !== options.baseMtimeMs;
     if (!displaced) return null;
 
-    const copyPath = conflictPath(canonical, new Date());
+    const copyPath = await this.#freeConflictPath(owner, canonical, new Date());
     await this.#vault.writeNote(owner, copyPath, current.content);
     // A new note like any other: whatever was once shared under that name is
     // not this copy's to inherit.
     this.#lifecycle.created(owner, copyPath);
     return copyPath;
+  }
+
+  /**
+   * The name for a copy: the first one of that minute nothing has taken.
+   *
+   * `conflictPath` names by the minute because a person reads that name, so two
+   * conflicts of the same note inside one minute ask for the same one — and
+   * `writeNote` replaces what is there. That would be a conflict copy lost to a
+   * conflict copy: the one file in the vault that nothing else holds a version
+   * of, overwritten by the mechanism built to stop exactly that. The hour that
+   * repeats itself when the clocks go back in autumn produces the same
+   * collision a good deal more slowly.
+   *
+   * Whoever took the name does not matter — an earlier copy, a restore, a file
+   * written by hand — only whether it is free. One directory listing answers it
+   * for every candidate, compared case-insensitively because a name differing
+   * from an existing file only in case is not free either: that pair cannot
+   * survive on Windows or macOS, which is why `#assertTargetFree` refuses it
+   * everywhere. The loop ends because every round rules out one more of the
+   * finitely many names in that directory.
+   *
+   * Called inside the note's lock, like everything else about the copy: two
+   * writes to one note are serialised, so between looking and writing nothing
+   * of ndBrain's can take the name that was just found free.
+   */
+  async #freeConflictPath(owner: string, notePath: string, when: Date): Promise<string> {
+    const siblings = await this.#vault.siblingCaseKeys(owner, notePath);
+
+    for (let ordinal = 1; ; ordinal += 1) {
+      const candidate = conflictPath(notePath, when, ordinal);
+      const name = candidate.slice(candidate.lastIndexOf('/') + 1);
+      if (!siblings.has(caseKey(name))) return candidate;
+    }
   }
 
   async deleteNote(owner: string, notePath: string, options: Authorized = {}): Promise<void> {
