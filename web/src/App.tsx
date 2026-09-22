@@ -89,6 +89,7 @@ import {
   useTagRegistry,
   useTags,
   useTasks,
+  useSaveNote,
   useTidy,
   useToggleTask,
   useTree,
@@ -439,6 +440,17 @@ function Shell({
   // Tasks sit beside the calendar, so they are wanted exactly while the journal is.
   const tasksQuery = useTasks(taskFilter, view === 'journal');
   const toggleTaskMutation = useToggleTask();
+  const saveNoteMutation = useSaveNote();
+  /**
+   * The write itself, reachable from a callback that must not be rebuilt.
+   *
+   * `write` is at the bottom of the chain that ends in the editor's change
+   * handler and in the listeners registered once for `pagehide`; taking the
+   * mutation object as a dependency would tear all of that down and build it
+   * again on every render.
+   */
+  const saveNote = useRef(saveNoteMutation.mutateAsync);
+  saveNote.current = saveNoteMutation.mutateAsync;
 
   const notes = treeQuery.data?.notes ?? [];
   /** Which vaults are spaces, and what they are called; from the tree reply. */
@@ -519,12 +531,20 @@ function Shell({
         if (previous !== null) await previous;
         if (isOpen()) setSaveState('saving');
         try {
-          const result = await api.putNote(
-            outstanding.owner,
-            outstanding.path,
-            outstanding.content,
-            versions.current.get(key),
-          );
+          const base = versions.current.get(key);
+          // Through the mutation rather than `api.putNote` straight: what a
+          // write does to the cache — this note's entry updated in place, and
+          // exactly the queries an edit can have changed marked stale — belongs
+          // with the other server state, not spelled out again in the shell.
+          // Spread rather than `baseMtimeMs: base`, because a note being saved
+          // for the first time has no version and `exactOptionalPropertyTypes`
+          // separates "absent" from "present but undefined".
+          const result = await saveNote.current({
+            owner: outstanding.owner,
+            path: outstanding.path,
+            content: outstanding.content,
+            ...(base === undefined ? {} : { baseMtimeMs: base }),
+          });
           // This write is now the version to compare this note's next one against.
           versions.current.set(key, result.note.mtimeMs);
           // Cleared only when nothing was typed while the write was in flight —
@@ -538,17 +558,6 @@ function Shell({
           if (result.conflictCopy !== undefined) {
             setError(copy.errors.conflict(result.conflictCopy));
           }
-
-          // An edit can move links, so the panel, the findings and the graph are
-          // marked stale. Note what is *not* here: the note list. Notes appear and
-          // disappear on create, delete and rename — not when their text changes —
-          // and re-reading the whole tree plus a four-scan tidy pass on every pause
-          // in typing was pure waste. Marking is also not fetching: a stale query
-          // nobody is rendering costs nothing until something asks for it.
-          invalidate.afterEdit(client, outstanding.owner, outstanding.path);
-          // A newly created note *is* a structural change: the conflict copy above
-          // is a new file, and so is a first save of a note typed into the palette.
-          if (result.created || result.conflictCopy !== undefined) invalidate.afterStructure(client);
         } catch (caught) {
           if (isOpen()) setSaveState('failed');
           if (caught instanceof ApiError && caught.status === 404) {
@@ -655,13 +664,15 @@ function Shell({
         // were looking at. Now a late answer updates its own entry and changes
         // nothing on screen.
         //
-        // Always read afresh. The entry outlives the editor by the cache's
-        // garbage-collection time, and saves never write back into it, so with
-        // `staleTime: Infinity` a note reopened within those minutes came back
-        // as the text it had when it was *first* opened — without what was
-        // typed since — and the next keystroke saved that old text over the
-        // newer file, which the server then had to keep as a conflict copy.
-        // Pending text is flushed above, so what the server has is the latest.
+        // Always read afresh, even though a save now writes its result back
+        // into this entry. The write-back only covers what *this* tab wrote:
+        // the file can also have moved on under another tab, an agent through
+        // MCP or an editor on the disk, and with `staleTime: Infinity` a note
+        // reopened within the cache's garbage-collection time would come back
+        // as the text it had when it was first opened — the next keystroke then
+        // saving that old text over the newer file, which the server has to
+        // keep as a conflict copy. Pending text is flushed above, so nothing of
+        // this tab's is lost by reading the server's version.
         const opened = await client.fetchQuery({
           queryKey: keys.note(owner, path),
           queryFn: () => api.getNote(owner, path),
@@ -877,14 +888,15 @@ function Shell({
       const title = path.split('/').pop()?.replace(/\.md$/i, '') ?? '';
 
       try {
-        await api.putNote(owner, path, `# ${title}\n\n`);
-        await refreshTree();
+        // The same mutation the editor saves through: a create is a write like
+        // any other, and it is the mutation that says what a write invalidates.
+        await saveNote.current({ owner, path, content: `# ${title}\n\n` });
         await openNote(owner, path);
       } catch (caught) {
         setError(caught instanceof ApiError ? caught.message : copy.errors.createFailed);
       }
     },
-    [openNote, refreshTree],
+    [openNote],
   );
 
   // Always in your own vault. Creating into somebody else's shared folder is
