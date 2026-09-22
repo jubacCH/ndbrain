@@ -465,6 +465,19 @@ export class App {
   }
 
   /**
+   * Where a file really is on disk, for a caller that means to stream it.
+   *
+   * `readFile` is how you get a file's bytes; this is how you get at them
+   * without holding them, and the export route is the reason it exists — an
+   * archive of a whole vault must not be the size of the vault in memory.
+   * Containment is checked exactly as a read checks it, so a symlink pointing
+   * out of the vault is refused here too.
+   */
+  async fileOnDisk(owner: string, filePath: string): Promise<string> {
+    return this.notes.vault.resolve(owner, filePath);
+  }
+
+  /**
    * Writes any file, and indexes it when it is a note.
    *
    * `assertLinkableName` is applied to notes only, and only here where the name
