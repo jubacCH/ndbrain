@@ -1,0 +1,11 @@
+[Unit]
+Description=ndBrain: Tagesstand der Datenbank, naechtlich
+
+[Timer]
+# Vor dem vzdump-Job um 21:00, damit der Stand des Tages mitgeht.
+OnCalendar=*-*-* 20:30:00
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target
