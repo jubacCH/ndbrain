@@ -1381,7 +1381,7 @@ function Shell({
    * as a list.
    */
   useEffect(() => {
-    // Auch beim Schreiben: rechts unten leuchtet die Nachbarschaft mit.
+    // While writing too: the neighbourhood in the right column lights up with it.
     if (view !== 'brain' && view !== 'note') return;
 
     let alive = true;
@@ -1546,20 +1546,20 @@ function Shell({
     if (graph === null || open === null) return null;
 
     const me = `${open.owner} ${open.note.path}`;
-    const nachbarn = new Set<string>([me]);
+    const neighbours = new Set<string>([me]);
     for (const e of graph.edges) {
       const from = `${e.owner} ${e.from}`;
       const to = `${e.owner} ${e.to}`;
-      if (from === me) nachbarn.add(to);
-      if (to === me) nachbarn.add(from);
+      if (from === me) neighbours.add(to);
+      if (to === me) neighbours.add(from);
     }
 
     return {
-      nodes: graph.nodes.filter((n) => nachbarn.has(`${n.owner} ${n.path}`)),
-      // Auch Kanten *zwischen* den Nachbarn: sie zeigen, ob die Umgebung ein
-      // Geflecht ist oder nur ein Stern um diese eine Notiz.
+      nodes: graph.nodes.filter((n) => neighbours.has(`${n.owner} ${n.path}`)),
+      // Edges *between* the neighbours too: they say whether the surroundings
+      // are a web or only a star around this one note.
       edges: graph.edges.filter(
-        (e) => nachbarn.has(`${e.owner} ${e.from}`) && nachbarn.has(`${e.owner} ${e.to}`),
+        (e) => neighbours.has(`${e.owner} ${e.from}`) && neighbours.has(`${e.owner} ${e.to}`),
       ),
     };
   }, [graph, open]);
@@ -1633,11 +1633,12 @@ function Shell({
       if (result.failed.length === 0) {
         setError(null);
       } else {
-        const names = result.failed.slice(0, 3).map((entry) => entry.path).join(', ');
-        const more = result.failed.length > 3 ? ` und ${result.failed.length - 3} weitere` : '';
         setError(
-          `${result.ok.length} erledigt, ${result.failed.length} nicht: ${names}${more} — ` +
-            `${result.failed[0]?.reason ?? ''}`,
+          copy.errors.bulkPartly(
+            result.ok.length,
+            result.failed.map((entry) => entry.path),
+            result.failed[0]?.reason ?? '',
+          ),
         );
       }
     } catch (caught) {
@@ -1687,10 +1688,10 @@ function Shell({
 
   const revokeShare = async (share: Share): Promise<void> => {
     const own = share.owner === user.id;
-    const what = share.prefix === '' ? 'the whole vault' : `“${share.prefix}”`;
+    const what = copy.ask.shareExtent(share.prefix);
     const question = own
-      ? `${share.grantee} den Zugriff auf ${what} entziehen?`
-      : `Zugriff auf ${what} von ${share.owner} aufgeben?`;
+      ? copy.ask.withdrawShare(share.grantee, what)
+      : copy.ask.giveUpShare(share.owner, what);
     if (!window.confirm(question)) return;
 
     setShareBusy(true);

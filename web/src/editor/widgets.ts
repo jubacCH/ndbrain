@@ -17,6 +17,8 @@
 
 import { EditorView, WidgetType } from '@codemirror/view';
 
+import { copy } from '../copy';
+
 /**
  * A task checkbox standing in for `[ ]` / `[x]`.
  *
@@ -44,7 +46,7 @@ export class CheckboxWidget extends WidgetType {
     box.type = 'checkbox';
     box.checked = this.checked;
     box.className = 'cm-task';
-    box.setAttribute('aria-label', this.checked ? 'erledigt' : 'offen');
+    box.setAttribute('aria-label', this.checked ? copy.editor.taskDone : copy.editor.taskOpen);
 
     // mousedown rather than change: the default would move the selection into
     // the replaced range first, which reveals the raw `[ ]` under the cursor
