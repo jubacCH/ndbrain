@@ -208,6 +208,10 @@ describe('B2: a write before the watcher has spoken carries no share to a strang
       () => h.as('julian', { method: 'PUT', url: '/api/v1/notes/Projekt/Plan.md', payload: { content: `${FOREIGN}gespeichert\n` } }),
     ],
     [
+      'an append by the owner',
+      () => h.as('julian', { method: 'POST', url: '/api/v1/append/Projekt/Plan.md', payload: { content: 'angehängt' } }),
+    ],
+    [
       'a link rewrite from renaming the note it links to',
       () => h.as('julian', { method: 'POST', url: '/api/v1/rename', payload: { from: 'Projekt/Alt.md', to: 'Projekt/Alt 2.md' } }),
     ],

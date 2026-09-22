@@ -74,6 +74,11 @@ export interface HomeProps {
   journalDays: ReadonlySet<string>;
   /** Opens a day's note, creating it if it is not there. */
   onOpenDay: (date: JournalDate) => void;
+  /**
+   * Adds a thought to today's note. Rejects when it did not arrive — the field
+   * keeps the text on a rejection, so this must not swallow its own failure.
+   */
+  onCapture: (text: string) => Promise<void>;
 }
 
 export function HomeView(props: HomeProps): React.JSX.Element {
@@ -108,6 +113,10 @@ export function HomeView(props: HomeProps): React.JSX.Element {
           the stacks dissolve and `order` in the stylesheet interleaves them. */}
       <div className="home-grid">
         <div className="home-stack home-main">
+        {/* First, and above the day it writes into, so what was just captured
+            appears in the card directly below it. */}
+        <Capture onCapture={props.onCapture} />
+
         <DailyCard self={self} days={props.journalDays} now={now} onOpenDay={props.onOpenDay} />
 
         <Continue
@@ -161,6 +170,100 @@ export function HomeView(props: HomeProps): React.JSX.Element {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * One field, one destination: a thought goes into today's note and the page
+ * stays where it is.
+ *
+ * The briefing this is built from asks for somewhere to put a thought without
+ * first deciding where it belongs, and every decision here follows from that.
+ *
+ * **A box, not a line.** A thought of two sentences is ordinary, so Enter makes
+ * a new line and never sends. ⌘↵ sends, which is what every other multi-line
+ * box on a computer does, and the button next to it is there for everybody who
+ * does not know that.
+ *
+ * **The field empties only once the server has the text.** Clearing it
+ * optimistically would be a guess, and the one guess this field may not make.
+ * On a failure the words stay exactly where they were typed, the reason is
+ * said, and pressing send again is the whole of the recovery.
+ *
+ * **What happens afterwards is a sentence, not a journey.** Opening the note
+ * to prove the text arrived would turn the quick way into a change of place,
+ * which is the friction being removed. Saying nothing would leave somebody
+ * wondering. So: a line that says it landed — and the day's card immediately
+ * below, which previews exactly the section this writes to, shows it there.
+ */
+function Capture({ onCapture }: { onCapture: (text: string) => Promise<void> }): React.JSX.Element {
+  const [text, setText] = useState('');
+  const [state, setState] = useState<'idle' | 'sending' | 'saved' | 'failed'>('idle');
+
+  const send = async (): Promise<void> => {
+    const thought = text.trim();
+    if (thought === '' || state === 'sending') return;
+
+    setState('sending');
+    try {
+      await onCapture(thought);
+      setText('');
+      setState('saved');
+    } catch {
+      // The text stays in the box. Everything else about this component is in
+      // service of this line.
+      setState('failed');
+    }
+  };
+
+  return (
+    <section className="tile home-capture" aria-labelledby="home-capture-title">
+      <h3 className="cap" id="home-capture-title">{copy.capture.title}</h3>
+      <form
+        className="home-capture-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send();
+        }}
+      >
+        <label className="home-capture-label" htmlFor="home-capture-text">
+          {copy.capture.label}
+        </label>
+        <textarea
+          id="home-capture-text"
+          className="home-capture-text"
+          rows={3}
+          value={text}
+          placeholder={copy.capture.placeholder}
+          onChange={(event) => {
+            setText(event.target.value);
+            // A message about the last thought must not stand over the next one.
+            if (state !== 'sending') setState('idle');
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              void send();
+            }
+          }}
+        />
+        <div className="home-capture-foot">
+          <p className="home-note-small">{copy.capture.hint}</p>
+          <button
+            type="submit"
+            className="btn btn-solid"
+            disabled={state === 'sending' || text.trim() === ''}
+          >
+            {state === 'sending' ? copy.capture.saving : copy.capture.save}
+          </button>
+        </div>
+      </form>
+      {/* Polite and always present, so the message is announced rather than the
+          region appearing and being missed. */}
+      <p className="home-capture-said" role="status" data-state={state}>
+        {state === 'saved' ? copy.capture.saved : state === 'failed' ? copy.capture.failed : ''}
+      </p>
+    </section>
   );
 }
 

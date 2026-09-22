@@ -27,6 +27,7 @@ import type { App } from '../app.js';
 import { withinScope, type ApiKey, type ApiKeyService } from '../auth/keys.js';
 import { normalizePrefix, type View } from '../auth/shares.js';
 import { NoteNotFoundError } from '../errors.js';
+import { appended } from '../markdown/edit.js';
 import type { DeletedNotes } from '../notes/deleted.js';
 import { normalizeVaultPath } from '../vault/paths.js';
 
@@ -657,10 +658,10 @@ export const TOOLS: ToolDefinition[] = [
       assertWritable(context, 'append_note', notePath);
 
       const note = await context.app.notes.getNote(context.key.owner, notePath);
-      const addition = input['content'] as string;
-      // Guarantee a blank line between what was there and what is added, without
-      // adding one to a note that already ends in one.
-      const separator = note.content.endsWith('\n\n') ? '' : note.content.endsWith('\n') ? '\n' : '\n\n';
+      // The same rule the append endpoint writes by — one blank line between
+      // what was there and what is added, and none added to a note that ends in
+      // one already. Shared rather than repeated: two copies of it would drift.
+      const content = appended(note.content, input['content'] as string);
 
       // The version this append was computed from. Between the read above and
       // the write below, a person may have saved the same note in the browser —
@@ -669,7 +670,7 @@ export const TOOLS: ToolDefinition[] = [
       const result = await context.app.updateNote(
         context.key.owner,
         notePath,
-        note.content + separator + addition,
+        content,
         context.key.name,
         { baseMtimeMs: note.mtimeMs },
       );
