@@ -816,14 +816,20 @@ function Shell({
       const result = await api.renameFolder(from, to.trim());
       await refreshTree();
       setError(
-        `“${from}” → “${result.folder}”: ${result.movedNotes.length} notes moved` +
-          (result.updatedLinks.length > 0
-            ? `, links updated in ${result.updatedLinks.length} notes.`
-            : '.'),
+        copy.renameFolder.done(
+          from,
+          result.folder,
+          result.movedNotes.length,
+          result.movedFiles.length,
+          result.updatedLinks.length,
+        ) + (result.failed.length > 0 ? copy.renameFolder.leftBehind(result.failed) : ''),
       );
-      // The open note may have moved with the folder.
+      // The open note may have moved with the folder — but only if it really
+      // did. A folder move carries on past what it cannot take, and following
+      // it to a path nothing arrived at would answer with a missing note.
       if (open !== null && open.owner === user.id && open.note.path.startsWith(`${from}/`)) {
-        await openNote(user.id, `${result.folder}${open.note.path.slice(from.length)}`);
+        const moved = `${result.folder}${open.note.path.slice(from.length)}`;
+        if (result.movedNotes.includes(moved)) await openNote(user.id, moved);
       }
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : copy.errors.renameFailed);
