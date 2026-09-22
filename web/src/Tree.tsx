@@ -522,7 +522,7 @@ export function Tree({
   const seatOf = (): number => (seat++ === 0 ? 0 : -1);
 
   return (
-    <div className="treebox" ref={box} onKeyDown={onKeyDown} role="tree" aria-label="Notes">
+    <div className="treebox" ref={box} onKeyDown={onKeyDown} role="tree" aria-label={copy.tree.label}>
       {vaults.map(({ owner, rows, space, label }) => {
         const isOwn = owner === self;
         const writable = received.some((share) => share.owner === owner && share.canWrite && share.kind !== 'note');
