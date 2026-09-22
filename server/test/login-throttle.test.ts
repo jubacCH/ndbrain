@@ -23,6 +23,8 @@
  * meet a person who mistypes a password, narrow enough that guessing stops.
  */
 
+import { Writable } from 'node:stream';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { LoginThrottle } from '../src/http/throttle.js';
@@ -111,6 +113,47 @@ describe('guessing from a new address every time', () => {
     }
 
     expect(seen).toContain(429);
+  }, SLOW);
+
+  it('leaves a line in the log, because nobody else would see it', async () => {
+    // The reply says "later" and nothing more, on purpose. That leaves nobody
+    // able to tell a locked-out account from a forgotten password — unless the
+    // server says so on its own, which is what this checks.
+    const said: string[] = [];
+    const sink = new Writable({
+      write(chunk, _encoding, done) {
+        said.push(String(chunk));
+        done();
+      },
+    });
+
+    const own = await startHarness('throttle-log', {}, {
+      throttle: new LoginThrottle(SMALL),
+      logStream: sink,
+    });
+    try {
+      await own.runtime.users.create('julian', 'ein gutes passwort');
+      const from = '203.0.113.9';
+      const tryOnce = () =>
+        own.server.inject({
+          method: 'POST',
+          url: '/api/v1/auth/login',
+          headers: { 'x-forwarded-for': from },
+          payload: { user: 'julian', password: 'falsch' },
+        });
+
+      for (let i = 0; i < SMALL.limit; i += 1) await tryOnce();
+      expect((await tryOnce()).statusCode).toBe(429);
+
+      const refusal = said.find((line) => line.includes('login refused'));
+      expect(refusal).toBeDefined();
+      // The account is named, so an operator knows who is shut out. The
+      // password is not, and must never be.
+      expect(refusal).toContain('"account":"julian"');
+      expect(said.join('')).not.toContain('falsch');
+    } finally {
+      await own.close();
+    }
   }, SLOW);
 
   it('shuts the owner out too, and says for how long', async () => {
