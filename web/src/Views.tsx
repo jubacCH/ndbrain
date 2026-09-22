@@ -15,7 +15,7 @@ import { HealthHeader, healthLabel } from './Health';
 import type { HealthKey } from './healthScore';
 
 import { ShareKindIcon } from './ShareDialog';
-import { refKey, type ConflictRow, type LinkRow, type NoteRow, type SearchHit, type Share, type TaskRow, type Tasks, type Tidy } from './api';
+import { refKey, type ConflictRow, type LinkRow, type MissingNote, type NoteRow, type SearchHit, type Share, type TaskRow, type Tasks, type Tidy } from './api';
 
 const RELATIVE = new Intl.RelativeTimeFormat(copy.locale, { numeric: 'auto' });
 
@@ -144,6 +144,10 @@ export function TidyView({
   const total = rows.length + data.conflicts.length;
   const shownRows = focus === null ? rows : rows.filter((r) => r.key === focus);
   const shownConflicts = focus === null || focus === 'conflicts' ? data.conflicts : [];
+  // The missing names are the broken links regrouped, so they follow the broken
+  // links when the view is narrowed. Narrowed to the orphans, they would be a
+  // second subject on a screen that is meant to hold one.
+  const shownMissing = focus === null || focus === 'broken' ? data.missing : [];
   const allPaths = [...new Set([...shownRows.map((r) => r.path), ...shownConflicts.map((c) => c.path)])];
   const allSelected = allPaths.length > 0 && selected.size === allPaths.length;
   const selectAll = (): void => onToggleAll(allPaths);
@@ -286,6 +290,8 @@ export function TidyView({
           onOpen={onOpen}
         />
       )}
+
+      {shownMissing.length > 0 && <MissingSection missing={shownMissing} onOpen={onOpen} />}
       </div>
       {after}
     </div>
@@ -530,6 +536,81 @@ function ConflictSection({
           </table>
         </div>
       </div>
+    </section>
+  );
+}
+
+/**
+ * "Asked for, never written" — the briefing's "What's missing?" (point 21),
+ * answered from the index and from nothing else.
+ *
+ * The briefing wants to be told where the knowledge gaps are, and its example
+ * of an answer — "you have extensive information about technical services, but
+ * comparatively little about pricing" — is a judgement about subject matter
+ * that nothing here could make. What the data does carry is narrower and, for
+ * once, harder: a name somebody wrote inside a wikilink, more than once, from
+ * more than one note, with no note of that name at the other end. That is the
+ * vault stating a gap itself, in its own words, rather than an opinion about
+ * what it ought to contain.
+ *
+ * So the wording stays at what was counted. "4 notes link to this name" is the
+ * claim; "you know too little about pricing" is not, and there is no phrasing
+ * of it this section is allowed to reach for — see the rule at the head of
+ * `Home.tsx`.
+ *
+ * Every line leads back to its sources (briefing point 28): the notes that ask
+ * are listed, and each opens.
+ *
+ * **Why here and not in a view of its own.** The finding is the dead links this
+ * view already lists, grouped — the same rows, counted by name instead of one
+ * by one. It belongs beside them, on the one screen that already states what
+ * the vault's own structure says about itself. The three signals that were
+ * *not* built would have needed a home too: a region with few notes (the brain's
+ * layout merges anything under eight into its neighbour, so "the smallest
+ * region" reports the layout, not the vault), a region without an entry note
+ * (map-of-content notes live in their own folder and so in their own region,
+ * which would flag nearly every other one), and a region that has been quiet
+ * (a note nobody has edited in a year may be finished — the same reasoning that
+ * keeps "untouched" out of the health score).
+ *
+ * Nothing here is selectable and nothing is bulk-acted on. The notes that ask
+ * are ordinary notes and there is nothing wrong with them; the thing that is
+ * missing has no path to tick.
+ */
+function MissingSection({
+  missing,
+  onOpen,
+}: {
+  missing: MissingNote[];
+  onOpen: (path: string) => void;
+}): React.JSX.Element {
+  return (
+    <section className="missing" aria-label={copy.tidy.missing.title}>
+      <h3 className="h-big" style={{ fontSize: 'var(--t-md)' }}>{copy.tidy.missing.title}</h3>
+      <p className="h-sub">{copy.tidy.missing.hint}</p>
+      <ul className="missing-list">
+        {missing.map((row) => (
+          <li key={`${row.owner}:${row.name}`} className="missing-row">
+            <p className="missing-name">{row.name}</p>
+            <p className="missing-asked">{copy.tidy.missing.asked(row.asked.length)}</p>
+            <p className="missing-from">{copy.tidy.missing.from}</p>
+            <ul className="missing-sources">
+              {row.asked.map((path) => (
+                <li key={path}>
+                  <button
+                    type="button"
+                    className="missing-source"
+                    aria-label={copy.tidy.missing.openNamed(path)}
+                    onClick={() => onOpen(path)}
+                  >
+                    {path}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

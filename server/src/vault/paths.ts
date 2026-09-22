@@ -213,3 +213,18 @@ export function resolveInVault(dataDir: string, userId: string, input: string): 
 export function caseKey(vaultPath: string): string {
   return vaultPath.normalize('NFC').toLowerCase();
 }
+
+/**
+ * The comparison key for a wikilink target.
+ *
+ * `[[Homelab/Proxmox]]` and `[[Homelab/Proxmox.md]]` name the same note, so the
+ * suffix comes off before the fold. It lives here, beside `caseKey`, because two
+ * parts of the system have to agree on it exactly: the indexer writes it into
+ * `links.target_key` and resolves against it, and `missingNotes` groups by it —
+ * so two spellings that would have found the same note are one missing name and
+ * not two. A second hand-written copy of the rule would drift, and the drift
+ * would show as a name counted twice.
+ */
+export function linkKey(target: string): string {
+  return caseKey(target.replace(/\.md$/i, ''));
+}

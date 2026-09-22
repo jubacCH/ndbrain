@@ -147,12 +147,27 @@ export const OverviewResponse = z.object({
   activity: z.array(ActivityRow),
 });
 
+/**
+ * A name several notes link to that no note answers.
+ *
+ * Not a finding about a note — there is no note. It is what the server's
+ * `missingNotes` makes of the dead links: the names the vault keeps asking for,
+ * each with the notes that ask, so the claim can be checked at its source.
+ */
+export const MissingNote = z.object({
+  owner: z.string(),
+  name: z.string(),
+  /** Paths of the notes that link to it, each listed once. */
+  asked: z.array(z.string()),
+});
+
 export const TidyResponse = z.object({
   orphans: z.array(NoteRow),
   untagged: z.array(NoteRow),
   deadLinks: z.array(LinkRow),
   stale: z.array(NoteRow),
   conflicts: z.array(ConflictRow),
+  missing: z.array(MissingNote),
   /** True when any list was capped. Shown, never swallowed. */
   truncated: z.boolean(),
   /** The real counts, so a capped list still reports what it stands for. */
@@ -162,6 +177,7 @@ export const TidyResponse = z.object({
     deadLinks: z.number(),
     stale: z.number(),
     conflicts: z.number(),
+    missing: z.number(),
   }),
 });
 
@@ -665,6 +681,7 @@ export type OpenNote = z.infer<typeof OpenNote>;
 export type SearchHit = z.infer<typeof SearchHit>;
 export type LinkRow = z.infer<typeof LinkRow>;
 export type ConflictRow = z.infer<typeof ConflictRow>;
+export type MissingNote = z.infer<typeof MissingNote>;
 export type TaskRow = z.infer<typeof TaskRow>;
 export type ActivityRow = z.infer<typeof ActivityRow>;
 export type Overview = z.infer<typeof OverviewResponse>;
