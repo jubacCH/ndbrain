@@ -102,6 +102,39 @@ else
   fi
 fi
 
+# --- Wird jemand vom Login ausgesperrt? -----------------------------------
+# Die Bremse trifft den Besitzer genauso wie den Ratenden — sie antwortet vor
+# der Passwortprüfung und kann die beiden nicht unterscheiden. Wer den
+# Kontonamen kennt, kann damit jemanden aussperren, solange er es durchhält.
+# Das ist bewusst so, aber es muss sichtbar sein, sonst sucht der Betroffene
+# den Fehler bei seinem Passwort.
+if [ -f "$DEST/login-abweisungen" ]; then
+  # Erste Zeile, und nur wenn sie eine Zahl ist: eine Datei, die etwas anderes
+  # enthält, darf den Check nicht in eine ungültige Ausgabe kippen — Checkmk
+  # liest zeilenweise, und eine zweite Zeile wäre ein zweiter, kaputter Service.
+  n=$(head -1 "$DEST/login-abweisungen" 2>/dev/null | tr -cd '0-9a-z')
+  case "$n" in
+    unbekannt)
+      echo "1 ndBrain_Login - Zustand unbekannt, der Container war beim letzten Lauf nicht erreichbar"
+      ;;
+    0)
+      echo "0 ndBrain_Login abweisungen=0;1;20 Niemand wurde ausgebremst"
+      ;;
+    ''|*[!0-9]*)
+      echo "3 ndBrain_Login - Der Zaehler ist unlesbar: \"$n\""
+      ;;
+    *)
+      # Eine einzelne Abweisung ist ein vertipptes Passwort. Zwanzig in einer
+      # Stunde sind niemand, der sich erinnern will.
+      if [ "$n" -ge 20 ] 2>/dev/null; then
+        echo "2 ndBrain_Login abweisungen=$n;1;20 $n Abweisungen in der letzten Stunde - jemand raet, und der Besitzer kommt derweil auch nicht rein"
+      else
+        echo "1 ndBrain_Login abweisungen=$n;1;20 $n Abweisung(en) in der letzten Stunde"
+      fi
+      ;;
+  esac
+fi
+
 # --- Läuft die Historie drüben noch? --------------------------------------
 # Vom Puller abgefragt und hier nur gelesen. Das ist der Zustand, den die
 # Anwendung selbst nicht zeigen kann: `history.ts` macht aus jedem git-Fehler
