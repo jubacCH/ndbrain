@@ -13,7 +13,7 @@ import type { Database } from '../db/database.js';
 import { clearIndex } from '../db/schema.js';
 import { parseNote } from '../markdown/parse.js';
 import type { NoteService } from '../notes/service.js';
-import { caseKey, noteTitle } from '../vault/paths.js';
+import { caseKey, linkKey, noteTitle } from '../vault/paths.js';
 
 export interface IndexStats {
   added: number;
@@ -47,15 +47,6 @@ function emptyStats(): IndexStats {
 
 function hashOf(content: string): string {
   return createHash('sha1').update(content, 'utf8').digest('hex');
-}
-
-/**
- * Strips the `.md` suffix from a wikilink target if the author wrote one, so that
- * `[[Homelab/Proxmox]]` and `[[Homelab/Proxmox.md]]` resolve to the same note.
- */
-function linkKey(target: string): string {
-  const trimmed = target.replace(/\.md$/i, '');
-  return caseKey(trimmed);
 }
 
 export class Indexer {

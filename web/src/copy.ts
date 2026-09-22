@@ -338,6 +338,25 @@ export const copy = {
     conflictCopy: 'Copy',
     conflictOriginal: 'Original',
     conflictNoOriginal: 'Original is gone',
+
+    /**
+     * "What's missing", as far as the index can honestly say it.
+     *
+     * Every line here states what was counted and nothing beyond it. "4 notes
+     * link to this name" is a fact; "you know too little about this" would be a
+     * verdict on knowledge nobody measured, and there is no wording of it this
+     * app is allowed to use.
+     */
+    missing: {
+      title: 'Asked for, never written',
+      hint:
+        'Names that more than one note links to and that no note answers. ' +
+        'Counted from those links alone — it says what the vault asks for, not what it ought to contain.',
+      asked: (n: number) => `${n} ${n === 1 ? 'note links' : 'notes link'} to this name`,
+      /** The heading over the notes behind one name: the sources for the count. */
+      from: 'Asked for in',
+      openNamed: (title: string) => `Open ${title}`,
+    },
   },
 
   /** Recently deleted, the last section of Tidy up. */

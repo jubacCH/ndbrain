@@ -542,3 +542,38 @@ describe('one user never sees another', () => {
     }
   });
 });
+
+/**
+ * The names the vault asks for, on the reply the tidy view actually reads.
+ *
+ * The lists in that reply are capped, and this one number must not be. "Three
+ * notes ask for this name" counted off the first page of dead links would be a
+ * smaller number handed over as though it were the whole answer — which is the
+ * one thing this feature promises not to do.
+ */
+describe('asked for, never written', () => {
+  it('counts every note that asks, even when the dead-link list was capped', async () => {
+    for (const note of ['A', 'B', 'C']) {
+      await runtime.app.createNote('julian', `${note}.md`, `# ${note}\n\nSiehe [[Pricing]].\n`);
+    }
+
+    const reply = await server.inject({ url: '/api/v1/tidy?limit=1', headers: as(julianCookie) });
+    const body = reply.json();
+
+    expect(body.deadLinks).toHaveLength(1);
+    expect(body.totals.deadLinks).toBe(3);
+    expect(body.missing).toEqual([
+      { owner: 'julian', name: 'Pricing', asked: ['A.md', 'B.md', 'C.md'] },
+    ]);
+    expect(body.totals.missing).toBe(1);
+  });
+
+  it('is empty, not absent, where nothing was asked for twice', async () => {
+    await runtime.app.createNote('julian', 'A.md', '# A\n\nSiehe [[Pricing]].\n');
+
+    const body = (await server.inject({ url: '/api/v1/tidy', headers: as(julianCookie) })).json();
+    expect(body.totals.deadLinks).toBe(1);
+    expect(body.missing).toEqual([]);
+    expect(body.totals.missing).toBe(0);
+  });
+});
