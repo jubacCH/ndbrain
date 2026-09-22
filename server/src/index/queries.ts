@@ -681,6 +681,21 @@ export class Queries {
    * note lower the health score for doing exactly what it is meant to. The rule
    * is `isPendingDayLink` in `shared/journal.ts`, applied here so the tidy list,
    * the overview count, the attention total and the tree markers all get it.
+   *
+   * **Only ever called with a whole vault, and it has to stay that way.** The
+   * indexer resolves links against every note the owner has, not against the
+   * caller's region, so `target_path IS NULL` means "nowhere in this vault" —
+   * not "nowhere you can see". Handed a narrowed region, this turns into an
+   * existence oracle: write `[[Candidate]]` into a note inside the region, ask
+   * again, and whether the link comes back as dead tells you whether a note of
+   * that name exists in the half you were never shown.
+   *
+   * `outgoingLinks` above answers the same question safely and is the pattern
+   * to copy: it selects the target through `CASE WHEN <target in view>` and
+   * reports an out-of-region target as unresolved, which is what a caller
+   * outside the region would see anyway. A region-aware version of this query
+   * needs the same treatment — and the tidy view above it needs to be taught
+   * what the new nulls mean — before anything hands it a scoped view.
    */
   deadLinks(view: Viewable): LinkRow[] {
     const scope = scopeSql('l', 'source', view);
