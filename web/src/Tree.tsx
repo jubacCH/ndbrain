@@ -37,7 +37,7 @@
  *   resolving against the real name.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { copy } from './copy';
 
 import { refKey, type NoteRow, type Share } from './api';
@@ -235,6 +235,9 @@ function useTreeKeys(
     const all = rows();
     const index = all.indexOf(from as HTMLButtonElement);
     const next = all[Math.min(all.length - 1, Math.max(0, index + delta))];
+    // The tab stop follows the focus rather than being moved separately: the
+    // container's focus handler seats whichever row ends up with it, so there
+    // is one place where that happens and not two that can disagree.
     next?.focus();
   };
 
@@ -266,15 +269,14 @@ function useTreeKeys(
           target.click();
           break;
         }
-        // Otherwise walk up to the nearest row that is a shallower list level —
-        // the parent folder, whatever the nesting depth happens to be.
+        // Otherwise walk up to the nearest shallower row — the parent folder,
+        // whatever the nesting depth happens to be. Read off `aria-level`,
+        // which every row now carries for the same reason a screen reader
+        // needs it: counting ancestor `<ul>`s was the same number computed a
+        // second way, and only one of the two was ever announced.
         const all = rows();
         const index = all.indexOf(target as HTMLButtonElement);
-        const depth = (el: HTMLElement): number => {
-          let n = 0;
-          for (let p = el.parentElement; p; p = p.parentElement) if (p.tagName === 'UL') n += 1;
-          return n;
-        };
+        const depth = (el: HTMLElement): number => Number(el.getAttribute('aria-level') ?? '1');
         const mine = depth(target);
         for (let i = index - 1; i >= 0; i -= 1) {
           if (depth(all[i]!) < mine) {
@@ -294,10 +296,17 @@ function useTreeKeys(
         all[all.length - 1]?.focus();
         break;
       }
-      // F2, as in every file manager. Same rule as the delete below: only a
-      // note row the caller may change carries the attribute.
+      // F2, as in every file manager. Same rule as the delete below: only a row
+      // the caller may change carries an attribute — `data-renamable` on a note,
+      // `data-folder` on a folder of your own — and the key does nothing on the
+      // rest.
       case 'F2':
-        if (onRename === undefined || !target.hasAttribute('data-renamable')) break;
+        if (
+          onRename === undefined ||
+          !(target.hasAttribute('data-renamable') || target.hasAttribute('data-folder'))
+        ) {
+          break;
+        }
         event.preventDefault();
         onRename(target);
         break;
@@ -352,13 +361,50 @@ export function Tree({
           const note = noteOf(row);
           if (note !== undefined) onDeleteNote(note.owner, note.path, note.title);
         },
-    onRenameNote === undefined
-      ? undefined
-      : (row) => {
-          const note = noteOf(row);
-          if (note !== undefined) onRenameNote(note.owner, note.path, note.title);
-        },
+    // F2 on a folder row and F2 on a note row are the same key doing the same
+    // thing to different rows; the row says which it is. Always offered,
+    // because renaming a folder always is — a vault with no rename for its
+    // notes still has one for its folders.
+    (row) => {
+      const folder = row.getAttribute('data-folder');
+      if (folder !== null) {
+        onRenameFolder(folder);
+        return;
+      }
+      const note = noteOf(row);
+      if (note !== undefined) onRenameNote?.(note.owner, note.path, note.title);
+    },
   );
+
+  /**
+   * The row that holds the tree's single tab stop.
+   *
+   * Every row was reachable by Tab before, which is the canonical hobby-tool
+   * failure: sixty presses to get past the sidebar. Only one row is in the tab
+   * order; the arrow keys do the rest.
+   *
+   * The seat moves with the focus. Without that, `move()` focused a row and
+   * left the tab stop on row one, so Tab out of the tree and back in threw away
+   * wherever you had got to — the exact state a roving tabindex exists to
+   * prevent, and the one nobody notices until they try it.
+   *
+   * Read off the DOM, like the keys above and for the same reason: the rows
+   * that exist at any moment are the product of folder state, the filter and
+   * the shares, and a second model of that is a second thing that can be wrong.
+   */
+  const seated = useRef<HTMLButtonElement | null>(null);
+  const seat = (row: HTMLButtonElement | null): void => {
+    const all = [...(box.current?.querySelectorAll<HTMLButtonElement>('button.node') ?? [])];
+    // A row that has been filtered or folded away cannot hold the seat; the
+    // first row takes it back, so the tree is never unreachable by Tab.
+    const chosen = row !== null && all.includes(row) ? row : (all[0] ?? null);
+    seated.current = chosen;
+    for (const one of all) one.tabIndex = one === chosen ? 0 : -1;
+  };
+  // Every render, because every render can add and remove rows.
+  useLayoutEffect(() => {
+    seat(seated.current);
+  });
 
   const vaults = useMemo(() => {
     const byOwner = new Map<string, NoteRow[]>();
@@ -451,7 +497,7 @@ export function Tree({
     });
   };
 
-  const noteRow = (note: NoteRow, showPath: boolean): React.JSX.Element => {
+  const noteRow = (note: NoteRow, showPath: boolean, level: number): React.JSX.Element => {
     const key = refKey(note.owner, note.path);
     const finding = findings.get(key);
     const where = displayPath(note.path, hidePrefixes);
@@ -461,13 +507,17 @@ export function Tree({
     const shareable = onShareNote !== undefined && mayShareNote !== undefined && mayShareNote(note.owner);
     const isRevealed = revealed !== null && revealed.owner === note.owner && revealed.path === note.path;
     return (
-      <li key={`f:${key}`}>
-        <div className="node-row">
+      <li key={`f:${key}`} role="none">
+        <div className="node-row" role="none">
           <button
             type="button"
             className={showPath ? 'node node-hit' : 'node'}
-            tabIndex={seatOf()}
-            aria-current={selected !== null && selected.owner === note.owner && selected.path === note.path}
+            role="treeitem"
+            aria-level={level}
+            // Seated by the layout effect above, never by the render: which row
+            // holds the tab stop depends on where the focus has been.
+            tabIndex={-1}
+            aria-selected={selected !== null && selected.owner === note.owner && selected.path === note.path}
             data-owner={note.owner}
             data-path={note.path}
             data-deletable={deletable ? '' : undefined}
@@ -536,18 +586,25 @@ export function Tree({
     );
   };
 
-  const renderFolder = (owner: string, folder: Folder): React.JSX.Element[] => [
+  const renderFolder = (owner: string, folder: Folder, level: number): React.JSX.Element[] => [
     ...folder.folders.map((child) => {
       const key = refKey(owner, child.path);
       const isOpen = open.has(key);
       const count = countNotes(child);
+      // A folder move relocates everything under it, so it is offered on your
+      // own vault only — the same rule for the pencil and for the key.
+      const renamable = owner === self;
       return (
-        <li key={`d:${key}`}>
-          <div className="node-row">
+        <li key={`d:${key}`} role="none">
+          <div className="node-row" role="none">
             <button
               type="button"
               className="node"
-              tabIndex={seatOf()}
+              role="treeitem"
+              aria-level={level}
+              tabIndex={-1}
+              data-folder={renamable ? child.path : undefined}
+              aria-keyshortcuts={renamable ? 'F2' : undefined}
               onClick={() => toggle(key)}
               aria-expanded={isOpen}
             >
@@ -559,11 +616,16 @@ export function Tree({
               {/* Shown only while shut: once it is open you can see them. */}
               {!isOpen && <span className="cnt">{count}</span>}
             </button>
-            {owner === self && (
+            {renamable && (
               <span className="node-acts">
+                {/* Out of the tab order like every other row action: it was the
+                    last one left in it, so Tab still walked the whole tree one
+                    folder at a time. The keyboard reaches it as F2 on the row,
+                    which the title names. */}
                 <button
                   type="button"
                   className="node-act"
+                  tabIndex={-1}
                   title={copy.tree.renameFolder(displayName(child.name, hidePrefixes))}
                   aria-label={copy.tree.renameFolderLabel(displayName(child.name, hidePrefixes))}
                   onClick={() => onRenameFolder(child.path)}
@@ -573,25 +635,26 @@ export function Tree({
               </span>
             )}
           </div>
-          {isOpen && <ul>{renderFolder(owner, child)}</ul>}
+          {isOpen && <ul role="group">{renderFolder(owner, child, level + 1)}</ul>}
         </li>
       );
     }),
-    ...folder.notes.map((note) => noteRow(note, false)),
+    ...folder.notes.map((note) => noteRow(note, false, level)),
   ];
 
-  /**
-   * One tab stop for the whole tree.
-   *
-   * Every row was reachable by Tab before, which is the canonical hobby-tool
-   * failure: sixty presses to get past the sidebar. Only the first row is in the
-   * tab order now; the arrow keys do the rest.
-   */
-  let seat = 0;
-  const seatOf = (): number => (seat++ === 0 ? 0 : -1);
-
   return (
-    <div className="treebox" ref={box} onKeyDown={onKeyDown} role="tree" aria-label={copy.tree.label}>
+    <div
+      className="treebox"
+      ref={box}
+      onKeyDown={onKeyDown}
+      // Focus bubbles here from whichever row took it — a key, a click, Tab.
+      onFocus={(event) => {
+        const target = event.target as HTMLElement;
+        if (target.classList.contains('node')) seat(target as HTMLButtonElement);
+      }}
+      role="tree"
+      aria-label={copy.tree.label}
+    >
       {vaults.map(({ owner, rows, space, label }) => {
         const isOwn = owner === self;
         const writable = received.some((share) => share.owner === owner && share.canWrite && share.kind !== 'note');
@@ -653,10 +716,14 @@ export function Tree({
               hits.length === 0 ? (
                 isOwn ? <p className="empty">{copy.tree.noMatch}</p> : null
               ) : (
-                <ul className="tree tree-hits">{hits.map((note) => noteRow(note, true))}</ul>
+                <ul className="tree tree-hits" role="none">
+                  {hits.map((note) => noteRow(note, true, 1))}
+                </ul>
               )
             ) : (
-              <ul className="tree">{renderFolder(owner, buildTree(rows))}</ul>
+              <ul className="tree" role="none">
+                {renderFolder(owner, buildTree(rows), 1)}
+              </ul>
             )}
           </section>
         );

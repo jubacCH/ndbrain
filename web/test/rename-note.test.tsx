@@ -374,7 +374,7 @@ describe('renaming from the note header', () => {
     vi.stubGlobal('prompt', () => 'Projects/Flach');
     const tree = screen.getByRole('tree');
     // `Deep` sits under `Projects`, which the tree opens on demand.
-    await user.click(within(tree).getByRole('button', { name: 'Projects' }));
+    await user.click(within(tree).getByRole('treeitem', { name: 'Projects' }));
     const pencil = await within(tree).findByRole('button', {
       name: copy.tree.renameFolderLabel('Deep'),
     });
@@ -423,9 +423,9 @@ describe('renaming from the tree', () => {
     mount();
     await screen.findByRole('button', { name: copy.shell.account });
 
-    // The row itself, not the pencil beside it: an exact name, since the
-    // pencil's label ("Rename Loose") names the same note.
-    const rowButton = await screen.findByRole('button', { name: 'Loose' });
+    // The row itself, not the pencil beside it: the row is the tree's item and
+    // the pencil is an ordinary button, so the role tells them apart.
+    const rowButton = await screen.findByRole('treeitem', { name: 'Loose' });
     rowButton.focus();
     await user.keyboard('{F2}');
 
