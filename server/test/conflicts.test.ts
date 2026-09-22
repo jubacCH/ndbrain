@@ -17,7 +17,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance, InjectOptions } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadConfig } from '../src/config.js';
 import { SESSION_COOKIE, buildServer } from '../src/http/server.js';
@@ -65,6 +65,37 @@ describe('conflictPath and parseConflictPath', () => {
     expect(backupInfo).not.toBeNull();
     expect(backupInfo?.originalPath).toBe('20_Areas/21_Homelab/Backup.md');
     expect(backupInfo?.at).toBe(new Date(2026, 8, 11, 10, 58).getTime());
+  });
+
+  it('counts a second copy of the same minute up, and reads the count back', () => {
+    const when = new Date(2026, 8, 22, 14, 7);
+    expect(conflictPath('Projekt/Plan.md', when, 2)).toBe(
+      'Projekt/Plan (Konflikt 2026-09-22 14.07-2).md',
+    );
+
+    const info = parseConflictPath(conflictPath('Projekt/Plan.md', when, 3));
+    expect(info?.originalPath).toBe('Projekt/Plan.md');
+    expect(info?.at).toBe(when.getTime());
+    expect(info?.ordinal).toBe(3);
+  });
+
+  it('reads a name written before the count existed as the first of its minute', () => {
+    // Every copy already lying in a vault has this shape. A name that stopped
+    // parsing would disappear from the tidy-up view, and a conflict copy
+    // nothing reports is the file somebody finds months later and cannot
+    // explain — which is what the finding was built for in the first place.
+    const info = parseConflictPath('20_Areas/21_Homelab/Backup (Konflikt 2026-09-11 10.58).md');
+    expect(info?.originalPath).toBe('20_Areas/21_Homelab/Backup.md');
+    expect(info?.ordinal).toBe(1);
+  });
+
+  it('refuses a count no name of its own would ever carry', () => {
+    // The first copy of a minute has no suffix at all, so `-1` is not a name
+    // this writes; neither is a padded or a zero one. Caught by the same round
+    // trip that catches an impossible date: regenerate and compare.
+    expect(parseConflictPath('Plan (Konflikt 2026-09-11 10.58-1).md')).toBeNull();
+    expect(parseConflictPath('Plan (Konflikt 2026-09-11 10.58-0).md')).toBeNull();
+    expect(parseConflictPath('Plan (Konflikt 2026-09-11 10.58-02).md')).toBeNull();
   });
 
   it('does not mistake an ordinary note for a conflict copy', () => {
@@ -228,6 +259,91 @@ describe('the conflict-copy finding', () => {
     await plantConflict('julian', 'Verirrt.md', new Date(2026, 8, 11, 10, 58));
 
     expect(runtime.app.queries.attentionCount('julian')).toBe(1);
+  });
+});
+
+/**
+ * Two conflicts, one minute.
+ *
+ * The copy's name carries minutes and nothing finer on purpose: a person reads
+ * it to decide which of two files to keep, and seconds would be noise. So two
+ * conflicts of the same note inside one minute ask for the same name, and
+ * `writeNote` replaces what is there — a conflict copy lost to a conflict copy,
+ * which is the one file in the vault that nothing else holds a version of. The
+ * clock going back an hour in autumn hands the same minute out a second time
+ * for exactly the same reason.
+ *
+ * The clock is frozen here so the collision is certain rather than likely.
+ * Only `Date` is faked; the timers the vault and the index run on are real.
+ */
+describe('two conflict copies in the same minute', () => {
+  const MINUTE = new Date(2026, 8, 22, 14, 7, 30);
+
+  /** Somebody else writes, and a tab holding `base` saves over them. */
+  async function displace(base: string, byThem: string, byTheTab: string): Promise<string> {
+    await runtime.app.updateNote('julian', 'Projekt/Plan.md', byThem, 'julian');
+    const result = await runtime.app.updateNote('julian', 'Projekt/Plan.md', byTheTab, 'julian', {
+      baseHash: base,
+    });
+    expect(result.conflictCopy).toBeDefined();
+    return result.conflictCopy!;
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(MINUTE);
+    await runtime.app.createNote('julian', 'Projekt/Plan.md', 'Ursprung\n', 'julian');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps both, rather than the second overwriting the first', async () => {
+    const firstTab = (await runtime.notes.getNote('julian', 'Projekt/Plan.md')).hash;
+    const first = await displace(firstTab, 'Fassung von Anna\n', 'Erster Tab\n');
+
+    const secondTab = (await runtime.notes.getNote('julian', 'Projekt/Plan.md')).hash;
+    const second = await displace(secondTab, 'Fassung von Bruno\n', 'Zweiter Tab\n');
+
+    expect(first).toBe('Projekt/Plan (Konflikt 2026-09-22 14.07).md');
+    expect(second).toBe('Projekt/Plan (Konflikt 2026-09-22 14.07-2).md');
+    expect((await runtime.notes.getNote('julian', first)).content).toBe('Fassung von Anna\n');
+    expect((await runtime.notes.getNote('julian', second)).content).toBe('Fassung von Bruno\n');
+  });
+
+  it('steps past a name that is already taken, whatever put it there', async () => {
+    // The autumn hour, a copy restored from a backup, a file somebody wrote by
+    // hand: the question is only whether the name is free, not who took it.
+    await runtime.app.createNote(
+      'julian',
+      conflictPath('Projekt/Plan.md', MINUTE),
+      'Von vorhin\n',
+      'julian',
+    );
+
+    const tab = (await runtime.notes.getNote('julian', 'Projekt/Plan.md')).hash;
+    const copy = await displace(tab, 'Fassung von Anna\n', 'Erster Tab\n');
+
+    expect(copy).toBe('Projekt/Plan (Konflikt 2026-09-22 14.07-2).md');
+    expect(
+      (await runtime.notes.getNote('julian', conflictPath('Projekt/Plan.md', MINUTE))).content,
+    ).toBe('Von vorhin\n');
+  });
+
+  it('shows both copies in the tidy view, each against the note it displaced', async () => {
+    const firstTab = (await runtime.notes.getNote('julian', 'Projekt/Plan.md')).hash;
+    const first = await displace(firstTab, 'Fassung von Anna\n', 'Erster Tab\n');
+    const secondTab = (await runtime.notes.getNote('julian', 'Projekt/Plan.md')).hash;
+    const second = await displace(secondTab, 'Fassung von Bruno\n', 'Zweiter Tab\n');
+
+    const conflicts = runtime.app.queries.conflictCopies('julian');
+    expect(conflicts.map((c) => c.path).sort()).toEqual([first, second].sort());
+    for (const row of conflicts) {
+      expect(row.originalPath).toBe('Projekt/Plan.md');
+      expect(row.originalExists).toBe(true);
+      expect(row.at).toBe(new Date(2026, 8, 22, 14, 7).getTime());
+    }
   });
 });
 

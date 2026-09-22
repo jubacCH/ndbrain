@@ -358,13 +358,19 @@ export const api = {
   /**
    * Writes a note.
    *
-   * `baseMtimeMs` is the version the editor started from. The server needs it to
-   * tell "you are the only writer" from "somebody else changed this since you
-   * opened it" — without it a shared note silently loses the other person's
-   * paragraph, since the rule is last-writer-wins either way.
+   * `baseHash` is the version the editor started from — the `hash` the read that
+   * filled it handed out. The server needs it to tell "you are the only writer"
+   * from "somebody else changed this since you opened it" — without it a shared
+   * note silently loses the other person's paragraph, since the rule is
+   * last-writer-wins either way.
+   *
+   * A version and not a moment: the server also accepts the `mtimeMs` this used
+   * to send, and only for tabs still open from before that change. A restore or
+   * an rsync leaves changed text behind an older stamp, which is a version this
+   * editor never saw and a timestamp cannot say so.
    */
-  putNote: (owner: string, path: string, content: string, baseMtimeMs?: number) => {
-    const body = JSON.stringify({ content, owner, baseMtimeMs });
+  putNote: (owner: string, path: string, content: string, baseHash?: string) => {
+    const body = JSON.stringify({ content, owner, baseHash });
     return request(`/api/v1/notes/${encodePath(path)}`, S.PutNoteResponse, {
       method: 'PUT',
       body,

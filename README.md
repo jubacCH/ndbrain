@@ -121,7 +121,11 @@ ones, so the tidying can be asked for rather than discovered by reading the whol
   per platform. Two notes whose names differ only in case are refused, because that pair cannot
   survive being copied onto either of those systems.
 - **Change detection compares content hashes, not timestamps.** A restore, a `git checkout` or an
-  rsync can leave a changed file with an older mtime.
+  rsync can leave a changed file with an older mtime. This holds for the index *and* for the
+  conflict guard: a read hands out the note's `hash`, a write names it as `baseHash`, and the
+  version being displaced is kept as a copy whenever the file no longer holds that text. A write
+  that sends only the `baseMtimeMs` the protocol used to carry is a browser tab from before this
+  changed, and is answered as well as a clock allows.
 - **The file watcher is for latency, not correctness.** Watchers lose events — inotify limits,
   network shares, and write-settling that withholds a file created and deleted inside its window.
   A periodic reconciliation pass is what actually guarantees the index matches the vault.

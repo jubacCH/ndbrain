@@ -127,7 +127,7 @@ describe('the inspector', () => {
     vi.spyOn(api, 'getNote').mockResolvedValue({
       owner: 'familie',
       canWrite: false,
-      note: { path: 'Ferien/Plan.md', title: 'Plan', content: '', size: 0, mtimeMs: 0 },
+      note: { path: 'Ferien/Plan.md', title: 'Plan', content: '', size: 0, mtimeMs: 0, hash: 'h1' },
     });
     vi.spyOn(api, 'history').mockResolvedValue({ available: false, versions: [] });
   });

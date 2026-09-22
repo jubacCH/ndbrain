@@ -530,8 +530,8 @@ export const invalidate = {
 export function useSaveNote() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { owner: string; path: string; content: string; baseMtimeMs?: number }) =>
-      api.putNote(vars.owner, vars.path, vars.content, vars.baseMtimeMs),
+    mutationFn: (vars: { owner: string; path: string; content: string; baseHash?: string }) =>
+      api.putNote(vars.owner, vars.path, vars.content, vars.baseHash),
     onSuccess: (result, vars) => {
       // The cache entry for this note is updated in place rather than re-fetched:
       // we already know what was written, and re-reading it would race the next
