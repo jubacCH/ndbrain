@@ -73,6 +73,7 @@ import { Tree, displayPath, type Finding } from './Tree';
 import { lineOfHit } from './snippet';
 import { SearchView, SharesView, TasksView, TidyView } from './Views';
 import { RecentlyDeleted } from './RecentlyDeleted';
+import { OfflineBar, Trouble } from './Trouble';
 import { HomeView } from './Home';
 import type { HealthKey } from './healthScore';
 import {
@@ -95,6 +96,8 @@ import {
   useTidy,
   useToggleTask,
   useTree,
+  troubleOf,
+  useOnline,
 } from './queries';
 import { useNoteBuffer, type SaveState } from './useNoteBuffer';
 
@@ -160,6 +163,15 @@ function isDark(theme: Theme, systemDark: boolean): boolean {
 export function App(): React.JSX.Element {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
+  /**
+   * Whether the sign-in form on screen is there because a session ended.
+   *
+   * The shell is gone by the time the form renders, so the form is the only
+   * place left that can say what happened — and without it, an expired cookie
+   * is indistinguishable from a first visit. Kept out of `user`, which answers
+   * a different question and is `null` in both cases.
+   */
+  const [expired, setExpired] = useState(false);
   const client = useQueryClient();
   /** The signed-in account as of now, for listeners registered once. */
   const userRef = useRef<User | null>(null);
@@ -168,6 +180,7 @@ export function App(): React.JSX.Element {
     openSession(next.id);
     userRef.current = next;
     setUser(next);
+    setExpired(false);
   }, []);
 
   /**
@@ -181,10 +194,13 @@ export function App(): React.JSX.Element {
    * did, let the brain's unmount write its positions straight back.
    */
   const end = useCallback(
-    (announce: boolean): void => {
+    (announce: boolean, why: 'asked' | 'expired' = 'asked'): void => {
       const previous = userRef.current;
       if (previous === null) return;
       userRef.current = null;
+      // Before the shell is torn down, so the form that replaces it renders
+      // with the reason already in hand rather than a frame later.
+      setExpired(why === 'expired');
       flushSync(() => setUser(null));
       closeSession();
       forgetAccount(previous.id);
@@ -205,7 +221,7 @@ export function App(): React.JSX.Element {
 
   // A 401 while signed in means the session is gone. Before sign-in it is the
   // login page's own `/auth/me`, and `end` does nothing without a user.
-  useEffect(() => onUnauthenticated(() => end(false)), [end]);
+  useEffect(() => onUnauthenticated(() => end(false, 'expired')), [end]);
 
   // Another tab signed out or in. Cookies are shared, so this tab's session is
   // whatever the server says now: nobody, somebody else, or still the same.
@@ -233,6 +249,7 @@ export function App(): React.JSX.Element {
   if (user === null)
     return (
       <Login
+        expired={expired}
         onSignedIn={(next) => {
           begin(next);
           announceSessionChange();
@@ -418,6 +435,40 @@ function Shell({
   // Tasks sit beside the calendar, so they are wanted exactly while the journal is.
   const tasksQuery = useTasks(taskFilter, view === 'journal');
   const toggleTaskMutation = useToggleTask();
+
+  /**
+   * Whether the browser can reach the server at all.
+   *
+   * Subscribed to here, at the top of the shell, because every `troubleOf`
+   * below depends on it: without the subscription the connection could come
+   * back and nothing on screen would notice until something else re-rendered.
+   */
+  const online = useOnline();
+
+  /**
+   * Why each view has nothing to show, when the reason is not "nothing to show".
+   *
+   * This is the whole point of the exercise. `treeQuery.data?.notes ?? []`
+   * turns a failed request into an empty vault, and every one of these lines
+   * used to do that: an empty list, an empty pane, a header counting zero. The
+   * `??` stays — a view still needs something to map over — but nothing draws
+   * an empty state without asking here first.
+   */
+  const treeTrouble = troubleOf(treeQuery, online);
+  const tidyTrouble = troubleOf(tidyQuery, online);
+  const overviewTrouble = troubleOf(overviewQuery, online);
+  const graphTrouble = troubleOf(graphQuery, online);
+  const filesTrouble = troubleOf(filesQuery, online);
+  const sharesTrouble = troubleOf(sharesQuery, online);
+  const tasksTrouble = troubleOf(tasksQuery, online);
+
+  /** Asks one query again, from the message that said it had failed. */
+  const askAgain = useCallback(
+    (key: readonly unknown[]): void => {
+      void client.refetchQueries({ queryKey: key });
+    },
+    [client],
+  );
 
   const notes = treeQuery.data?.notes ?? [];
   /** Which vaults are spaces, and what they are called; from the tree reply. */
@@ -1663,6 +1714,16 @@ function Shell({
   /** The title and the line of numbers under it, for whatever view is on screen. */
   function headingOf(): { title: string; subtitle: string } {
     const sub = copy.shell.sub;
+    /**
+     * What the line of numbers says when there are no numbers.
+     *
+     * `0 notes · 0 folders` and `0 orphaned · 0 broken links` are not neutral
+     * placeholders: they are assertions about the vault, and under a failed
+     * request they are false ones. `Loading…` is equally false once the request
+     * has given up, and it is the one that sat there for ever.
+     */
+    const instead = (trouble: ReturnType<typeof troubleOf>): string | null =>
+      trouble === null ? null : trouble === 'offline' ? sub.offline : sub.failed;
     switch (view) {
       case 'note':
         return open === null
@@ -1675,43 +1736,56 @@ function Shell({
         return {
           title: copy.nav.overview,
           subtitle:
+            instead(treeTrouble ?? overviewTrouble) ??
             sub.overview(notes.length, folderCount(notes)) +
-            (overview !== null && overview.counts.attention > 0
-              ? ` · ${sub.attention(overview.counts.attention)}`
-              : ''),
+              (overview !== null && overview.counts.attention > 0
+                ? ` · ${sub.attention(overview.counts.attention)}`
+                : ''),
         };
       case 'brain':
         return {
           title: copy.nav.network,
           subtitle:
-            graph === null
+            instead(graphTrouble) ??
+            (graph === null
               ? sub.loading
               : `${sub.network(graph.nodes.length, graph.edges.length)} · ${sub.loose(
                   graph.nodes.filter((n) => n.links === 0).length,
-                )}`,
+                )}`),
         };
       case 'tidy':
         return {
           title: copy.nav.tidy,
           subtitle:
-            tidy === null ? sub.loading : sub.tidy(tidy.totals.orphans, tidy.totals.deadLinks, tidy.totals.stale),
+            instead(tidyTrouble) ??
+            (tidy === null
+              ? sub.loading
+              : sub.tidy(tidy.totals.orphans, tidy.totals.deadLinks, tidy.totals.stale)),
         };
       case 'search':
         return {
           title: copy.nav.search,
-          subtitle: query.trim() === '' ? sub.search(notes.length) : sub.results(hits.length, query.trim()),
+          subtitle:
+            query.trim() !== ''
+              ? sub.results(hits.length, query.trim())
+              : // "Full text across 0 notes" reads as a vault with nothing in it.
+                (instead(treeTrouble) ?? sub.search(notes.length)),
         };
       case 'files':
         return {
           title: copy.nav.files,
-          subtitle: files === null ? sub.loading : sub.files(files.files.length, files.dirs.length),
+          subtitle:
+            instead(filesTrouble) ??
+            (files === null ? sub.loading : sub.files(files.files.length, files.dirs.length)),
         };
       case 'journal': {
         const today = localDate(new Date());
         const inMonth = [...journalDays].filter((day) => day.startsWith(isoDate(today).slice(0, 8))).length;
         return {
           title: copy.journal.title,
-          subtitle: sub.journal(journalDays.size, inMonth) + (tasks === null ? '' : ` · ${sub.tasks(tasks.total)}`),
+          subtitle:
+            instead(treeTrouble) ??
+            sub.journal(journalDays.size, inMonth) + (tasks === null ? '' : ` · ${sub.tasks(tasks.total)}`),
         };
       }
       case 'settings':
@@ -1719,7 +1793,10 @@ function Shell({
       case 'admin':
         return { title: copy.nav.admin, subtitle: sub.admin(adminUsersQuery.data?.users.length ?? 0) };
       case 'shares':
-        return { title: copy.nav.sharing, subtitle: sub.shares(granted.length, received.length) };
+        return {
+          title: copy.nav.sharing,
+          subtitle: instead(sharesTrouble) ?? sub.shares(granted.length, received.length),
+        };
       default:
         return { title: '', subtitle: '' };
     }
@@ -1777,6 +1854,8 @@ function Shell({
             onCreateIn={(owner) => void createInSpace(owner)}
             revealed={revealed}
             onCreateFirst={() => void createNote()}
+            trouble={treeTrouble}
+            onRetry={() => askAgain(keys.tree)}
           />
         }
         health={
@@ -1887,6 +1966,8 @@ function Shell({
           onToggleTheme={() => setPrefs((current) => ({ ...current, theme: dark ? 'light' : 'dark' }))}
         />
 
+        {!online && <OfflineBar />}
+
         <div className="stage">
           <main className="main">
             {/* In full screen only the network frame is visible, so a message
@@ -1918,7 +1999,17 @@ function Shell({
                   />
                 ))}
 
-              {view === 'overview' && overview === null && (
+              {view === 'overview' && overviewTrouble !== null && (
+                <div className="pane padded">
+                  <Trouble
+                    kind={overviewTrouble}
+                    what={copy.trouble.overview}
+                    onRetry={() => askAgain(keys.overview)}
+                  />
+                </div>
+              )}
+
+              {view === 'overview' && overview === null && overviewTrouble === null && (
                 /* Shaped like what is coming. A skeleton that does not match the
                    final layout adds to the jank instead of covering it. */
                 <div className="pane padded" aria-busy="true" aria-label={copy.overview.title}>
@@ -1958,7 +2049,16 @@ function Shell({
                   days={journalDays}
                   onOpenDay={(date) => void openDay(date)}
                   aside={
-                    tasks === null ? (
+                    tasksTrouble !== null ? (
+                      <section className="journal-tasks" aria-label={copy.tasks.title}>
+                        <h2 className="h-big">{copy.tasks.title}</h2>
+                        <Trouble
+                          kind={tasksTrouble}
+                          what={copy.trouble.tasks}
+                          onRetry={() => askAgain(['tasks'])}
+                        />
+                      </section>
+                    ) : tasks === null ? (
                       <section className="journal-tasks" aria-busy="true" aria-label={copy.tasks.title}>
                         <h2 className="h-big">{copy.tasks.title}</h2>
                         <p className="h-sub">{copy.shell.sub.loading}</p>
@@ -1983,7 +2083,15 @@ function Shell({
               )}
 
               {view === 'brain' &&
-                (graph === null ? (
+                (graphTrouble !== null ? (
+                  <div className="pane padded">
+                    <Trouble
+                      kind={graphTrouble}
+                      what={copy.trouble.network}
+                      onRetry={() => askAgain(keys.graph)}
+                    />
+                  </div>
+                ) : graph === null ? (
                   <p className="empty" style={{ padding: '2rem' }}>{copy.overview.loadingGraph}</p>
                 ) : (
                   <NetworkFrame
@@ -2003,7 +2111,18 @@ function Shell({
                   />
                 ))}
 
-              {view === 'tidy' && (
+              {view === 'tidy' && tidyTrouble !== null && (
+                <div className="pane padded">
+                  <h2 className="h-big">{copy.tidy.title}</h2>
+                  <Trouble
+                    kind={tidyTrouble}
+                    what={copy.trouble.findings}
+                    onRetry={() => askAgain(keys.tidy)}
+                  />
+                </div>
+              )}
+
+              {view === 'tidy' && tidyTrouble === null && (
                 <>
                   {topicsDone !== null && (
                     <p className="warnline" role="status">{copy.topics.done(topicsDone)}</p>
@@ -2069,7 +2188,15 @@ function Shell({
               )}
 
               {view === 'files' &&
-                (files === null ? (
+                (filesTrouble !== null ? (
+                  <div className="pane padded">
+                    <Trouble
+                      kind={filesTrouble}
+                      what={copy.trouble.files}
+                      onRetry={() => askAgain(keys.files)}
+                    />
+                  </div>
+                ) : files === null ? (
                   <p className="empty" style={{ padding: '2rem' }}>{copy.files.reading}</p>
                 ) : (
                   <FilesView
@@ -2158,7 +2285,20 @@ function Shell({
                 />
               )}
 
-              {view === 'shares' && (
+              {view === 'shares' && sharesTrouble !== null && (
+                <div className="pane padded">
+                  <h2 className="h-big">{copy.shares.title}</h2>
+                  {/* "Nobody can see into your vault" would be a statement about
+                      the shares, and nothing is known about them right now. */}
+                  <Trouble
+                    kind={sharesTrouble}
+                    what={copy.trouble.shares}
+                    onRetry={() => askAgain(keys.shares)}
+                  />
+                </div>
+              )}
+
+              {view === 'shares' && sharesTrouble === null && (
                 <SharesView
                   granted={granted}
                   received={received}

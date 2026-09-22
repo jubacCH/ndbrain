@@ -1008,6 +1008,44 @@ td.n {
   font-size: var(--t-md);
 }
 
+/* Text the editor was holding when the session ended, offered back on the only
+   screen left standing. Monospace and generous, because the job here is to
+   select all of it and copy it somewhere safe. */
+.login-pending {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  background: var(--warn-bg);
+  border-radius: var(--r-md);
+}
+
+.login-pending p {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+
+.login-pending-path {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.login-pending textarea {
+  width: 100%;
+  min-height: 9rem;
+  font-family: ui-monospace, monospace;
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  padding: var(--s-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+
 .empty {
   color: var(--text-3);
   font-size: var(--t-md);
@@ -4447,6 +4485,42 @@ kbd,
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+/* ---- the connection, and the answers that never came --------------------
+ *
+ * Both of these sit where the eye already is — the bar under the header, the
+ * message where the missing content would have been — rather than as a toast
+ * in a corner. Something that is not there is not a notification. */
+
+.offlinebar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: baseline;
+  margin: 0 var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  font-size: var(--t-sm);
+  background: var(--warn-bg);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  color: var(--ink);
+}
+
+.offlinebar span {
+  color: var(--text-2);
+}
+
+.trouble {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.trouble-said {
+  min-width: 0;
 }
 
 .topbar {

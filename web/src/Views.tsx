@@ -165,12 +165,17 @@ export function TidyView({
   return (
     <div className="pane padded">
       <h2 className="h-big">{copy.tidy.title}</h2>
+      {/* Through `copy.ts` like every other sentence. This one was written
+          there, inlined here at some point, and then grew a third count that
+          the key never got — which is exactly the drift the catalogue exists
+          to prevent. */}
       {data.truncated && (
         <p className="warnline" role="status">
-          More findings than fit in one answer — showing the first {data.orphans.length} of{' '}
-          {data.totals.orphans} orphaned, {data.untagged.length} of {data.totals.untagged} untagged,{' '}
-          {data.conflicts.length} of {data.totals.conflicts} conflict copies. Work through these and
-          the rest will appear.
+          {copy.tidy.capped(
+            [data.orphans.length, data.totals.orphans],
+            [data.untagged.length, data.totals.untagged],
+            [data.conflicts.length, data.totals.conflicts],
+          )}
         </p>
       )}
       <p className="h-sub">

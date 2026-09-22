@@ -44,7 +44,9 @@ import { refKey, type NoteRow, type Share } from './api';
 import { loadOpenFolders, saveOpenFolders } from './accountStorage';
 import { ChevronIcon, FileIcon, FolderIcon, NewNoteIcon, PencilIcon, ShareIcon, SpaceIcon, TrashIcon } from './icons';
 import { ownerKind, ownerLabel, useOwners } from './owners';
+import type { Trouble as TroubleKind } from './queries';
 import { mayChange } from './rights';
+import { Trouble } from './Trouble';
 
 export type Finding = 'crit' | 'warn';
 
@@ -114,6 +116,17 @@ export interface TreeProps {
   revealed?: { owner: string; path: string; seq: number } | null;
   /** Offered on the first-run empty state only. */
   onCreateFirst?: () => void;
+  /**
+   * Why the note list is empty, when the reason is not that it is empty.
+   *
+   * Without this the tree cannot tell a new vault from a request that failed —
+   * both arrive here as `notes: []` — and it showed the first-run invitation to
+   * both. Somebody whose vault had not loaded was told to start their first
+   * note, which is the single most alarming thing this interface could say.
+   */
+  trouble?: TroubleKind | null;
+  /** Asks the server again, from the message `trouble` puts on screen. */
+  onRetry?: () => void;
   /**
    * Opens the share dialog for a note. Offered on exactly the notes
    * `mayShareNote` allows: your own, or, for an administrator, a space's.
@@ -317,6 +330,8 @@ export function Tree({
   onRenameNote,
   revealed = null,
   onCreateFirst,
+  trouble = null,
+  onRetry,
   onShareNote,
   mayShareNote,
   onCreateIn,
@@ -613,7 +628,11 @@ export function Tree({
               </h3>
             )}
 
-            {rows.length === 0 ? (
+            {rows.length === 0 && trouble !== null && onRetry !== undefined ? (
+              /* Not the empty state. Nothing is known about this vault right
+                 now, and "you have no notes" is a claim about it. */
+              isOwn ? <Trouble kind={trouble} what={copy.trouble.notes} onRetry={onRetry} /> : null
+            ) : rows.length === 0 ? (
               isOwn ? (
                 /* The one screen a new person sees. It names the action, says
                    what it gets them, and offers the control — rather than
