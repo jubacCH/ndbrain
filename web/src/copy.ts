@@ -92,6 +92,15 @@ export const copy = {
     darkTheme: 'Switch to dark theme',
     account: 'Account',
     signedInAs: (name: string) => `Signed in as ${name}`,
+    /**
+     * The first tab stop on the page.
+     *
+     * Everything before the content is navigation — the sidebar alone is around
+     * twenty stops — and without this the only way past it is to walk it.
+     */
+    skipToContent: 'Skip to content',
+    /** The content landmark the skip link jumps to. */
+    contentLabel: 'Content',
     /** The line under each view's title — real numbers, never a slogan. */
     sub: {
       overview: (notes: number, folders: number) =>
@@ -717,6 +726,16 @@ export const copy = {
     searchView: 'search',
     recentAppearHere: 'Recently edited notes appear here.',
     nothingFound: 'Nothing found.',
+    /**
+     * Read out as the list changes, never shown.
+     *
+     * The list is below a field that keeps the focus, so nothing on screen says
+     * what typing did. Sighted use has the list itself for that.
+     *
+     * Counts rather than borrowing `nothingFound`: the same words in a hidden
+     * region and in the visible list would be one sentence appearing twice.
+     */
+    found: (n: number) => `${n} ${n === 1 ? 'result' : 'results'}`,
     choose: 'choose',
     open: 'open',
     close: 'close',

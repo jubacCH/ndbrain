@@ -283,7 +283,11 @@ describe('renaming from the note header', () => {
     await waitFor(() => expect(screen.getByTestId('editor')).toHaveTextContent('Projects/Deep/Planning.md'));
     // The dialog is done with, and the shell reports what the server really did.
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Rename/ })).toBeNull());
-    expect(await screen.findByText(copy.renameNote.done('Projects/Deep/Planning.md', 2))).toBeInTheDocument();
+    expect(
+      await screen.findByText(copy.renameNote.done('Projects/Deep/Planning.md', 2), {
+        selector: '.floaterror span',
+      }),
+    ).toBeInTheDocument();
     // The old path is out of the recents; the new one is in.
     const recents = window.localStorage.getItem(recentsKey('julian')) ?? '';
     expect(recents).not.toContain(PLAN);
@@ -374,7 +378,7 @@ describe('renaming from the note header', () => {
     vi.stubGlobal('prompt', () => 'Projects/Flach');
     const tree = screen.getByRole('tree');
     // `Deep` sits under `Projects`, which the tree opens on demand.
-    await user.click(within(tree).getByRole('button', { name: 'Projects' }));
+    await user.click(within(tree).getByRole('treeitem', { name: 'Projects' }));
     const pencil = await within(tree).findByRole('button', {
       name: copy.tree.renameFolderLabel('Deep'),
     });
@@ -423,9 +427,9 @@ describe('renaming from the tree', () => {
     mount();
     await screen.findByRole('button', { name: copy.shell.account });
 
-    // The row itself, not the pencil beside it: an exact name, since the
-    // pencil's label ("Rename Loose") names the same note.
-    const rowButton = await screen.findByRole('button', { name: 'Loose' });
+    // The row itself, not the pencil beside it: the row is the tree's item and
+    // the pencil is an ordinary button, so the role tells them apart.
+    const rowButton = await screen.findByRole('treeitem', { name: 'Loose' });
     rowButton.focus();
     await user.keyboard('{F2}');
 

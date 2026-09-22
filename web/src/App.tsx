@@ -1701,9 +1701,13 @@ function Shell({
     },
   ];
 
+  // The box itself carries no live role. It is drawn in one of two places —
+  // here, or portalled into the full-screen host — so it comes and goes as a
+  // whole, and a region that appears with its message is never announced. The
+  // announcing is done by a region that stays put; see `<main>` below.
   const errorBox =
     error === null ? null : (
-      <div className="floaterror" role="status">
+      <div className="floaterror">
         <span>{error}</span>
         <button type="button" onClick={() => setError(null)} aria-label={copy.errors.closeMessage}>
           ✕
@@ -1816,6 +1820,30 @@ function Shell({
       data-view={view}
       data-busy={arriving !== null}
     >
+      {/*
+        The first tab stop on the page, and the only control that has to be
+        reachable while it is invisible. Everything before the content is
+        navigation — around twenty stops in the sidebar alone — and without this
+        the only way past it is to walk it.
+
+        Hidden by position rather than by `display: none`, which would take it
+        out of the tab order as well and leave a skip link that is present in
+        the markup and absent in use.
+      */}
+      <a
+        className="skiplink"
+        href="#main"
+        onClick={(event) => {
+          // The fragment alone moves the document position and leaves the focus
+          // behind in several browsers, which is the failure that makes a skip
+          // link look right and do nothing. Moved here, deliberately.
+          event.preventDefault();
+          document.getElementById('main')?.focus();
+        }}
+      >
+        {copy.shell.skipToContent}
+      </a>
+
       <Sidebar
         name={user.displayName}
         view={view}
@@ -1969,7 +1997,16 @@ function Shell({
         {!online && <OfflineBar />}
 
         <div className="stage">
-          <main className="main">
+          {/* `tabIndex={-1}` so the skip link can actually land here: without
+              it the browser moves the document position and leaves the focus
+              where it was, and the next Tab carries on in the sidebar. */}
+          <main className="main" id="main" tabIndex={-1} aria-label={copy.shell.contentLabel}>
+            {/* The message, said rather than drawn. Always here, wherever the
+                box itself ends up, so what changes is its words. */}
+            <p className="sr-live" role="status">
+              {error ?? ''}
+            </p>
+
             {/* In full screen only the network frame is visible, so a message
                 raised there — a note that could not be opened — is drawn in it. */}
             {error !== null &&
@@ -2124,9 +2161,13 @@ function Shell({
 
               {view === 'tidy' && tidyTrouble === null && (
                 <>
-                  {topicsDone !== null && (
-                    <p className="warnline" role="status">{copy.topics.done(topicsDone)}</p>
-                  )}
+                  {/* The region, not the line: a `role="status"` mounted with
+                      its one message has nothing to change and is never read. */}
+                  <div role="status">
+                    {topicsDone !== null && (
+                      <p className="warnline">{copy.topics.done(topicsDone)}</p>
+                    )}
+                  </div>
                   <TopicsPanel
                     proposals={topicsQuery.data?.proposals ?? []}
                     busy={bulkBusy}

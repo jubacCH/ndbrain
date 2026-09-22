@@ -520,6 +520,29 @@ describe('the shell, signed in', () => {
       .map((b) => b.textContent ?? '');
   }
 
+  /**
+   * Measured on the built shell: around twenty tab stops sit in the sidebar
+   * before the first one inside the content. A skip link is the one control
+   * that makes that survivable, and it has to be the very first stop —
+   * anywhere later and it is behind the thing it skips.
+   */
+  it('offers a skip link as the first tab stop, and it moves the focus into the content', async () => {
+    mount({ id: 'julian', displayName: 'Julian', role: 'user' });
+    await screen.findByRole('button', { name: copy.shell.account });
+
+    document.body.focus();
+    await userEvent.tab();
+
+    const skip = screen.getByRole('link', { name: copy.shell.skipToContent });
+    expect(document.activeElement).toBe(skip);
+
+    // The focus lands on the content landmark itself, not merely the document
+    // position: a skip link that scrolls and leaves the focus in the sidebar is
+    // the failure this is here to catch, and it looks identical on a screenshot.
+    await userEvent.keyboard('{Enter}');
+    expect(document.activeElement).toBe(screen.getByRole('main'));
+  });
+
   it("keeps one account's recents from the next account on the same browser", async () => {
     // What an earlier build left behind, shared by every account.
     window.localStorage.setItem('ndbrain.recents', JSON.stringify([{ owner: 'anna', path: 'Anna only.md' }]));
@@ -744,7 +767,9 @@ describe('the shell, signed in', () => {
     await act(async () => {
       fireEvent.click(cell);
     });
-    const message = await screen.findByText(copy.errors.noteGone);
+    // The drawn one: the same words also sit in the live region that stays in
+    // the main column, which is how they get announced at all.
+    const message = await screen.findByText(copy.errors.noteGone, { selector: '.floaterror span' });
     expect(frame).toContainElement(message);
   });
 

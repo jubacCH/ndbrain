@@ -445,7 +445,12 @@ describe("deleting from the note's header", () => {
       await askToDelete();
       await waitFor(() => expect(confirm).toHaveBeenCalled());
       await typeInEditor();
-      await waitFor(() => expect(screen.getByText('disk full')).toBeInTheDocument(), { timeout: 3000 });
+      // The drawn message; the same words also sit in the live region that lets
+      // them be announced.
+      await waitFor(
+        () => expect(screen.getByText('disk full', { selector: '.floaterror span' })).toBeInTheDocument(),
+        { timeout: 3000 },
+      );
       await waitFor(() => expect(server.written).toEqual([['julian', PLAN]]), { timeout: 2000 });
       expect(screen.getByTestId('editor')).toHaveAttribute('data-locked', 'false');
     });
@@ -665,7 +670,7 @@ describe('show in tree', () => {
 
     const row = (await within(tree).findByText('Plan')).closest('button')!;
     expect(row).toHaveAttribute('data-revealed', 'true');
-    expect(row).toHaveAttribute('aria-current', 'false');
+    expect(row).toHaveAttribute('aria-selected', 'false');
     expect(screen.queryByTestId('editor')).toBeNull();
     expect(screen.getByTestId('brain')).toBeInTheDocument();
     expect(server.calls.links).toBe(0);
@@ -896,7 +901,9 @@ describe('a save of a note that was renamed meanwhile', () => {
     await user.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
     await waitFor(() => expect(server.writes).toHaveLength(1));
 
-    expect(await screen.findByText(copy.errors.noteMovedWhileSaving)).toBeInTheDocument();
+    expect(
+      await screen.findByText(copy.errors.noteMovedWhileSaving, { selector: '.floaterror span' }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('note does not exist')).toBeNull();
     expect(screen.getByText(copy.save.failed)).toBeInTheDocument();
     // Still open, and the text is where the crash box would find it.
