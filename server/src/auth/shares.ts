@@ -27,6 +27,7 @@
 import { randomBytes } from 'node:crypto';
 
 import type { Database, SqlValue } from '../db/database.js';
+import { prefixSql } from '../db/prefix.js';
 import { NdbrainError, NoteNotFoundError } from '../errors.js';
 import { isNotePath, normalizeVaultPath } from '../vault/paths.js';
 
@@ -158,10 +159,7 @@ export function regionSql(
   // one for every character outside the basic plane. A folder named with an
   // emoji would otherwise ask for more characters than its prefix has and
   // match nothing at all, so the share would silently show an empty folder.
-  return {
-    sql: `substr(${column}, 1, ?) = ?`,
-    params: [[...region.prefix].length, region.prefix],
-  };
+  return prefixSql(column, region.prefix);
 }
 
 /** The region a share row covers. */
@@ -621,11 +619,15 @@ export class ShareService {
     if (source === '' || target === '' || source === target) return;
 
     this.#db.transaction(() => {
+      // `prefixSql` for the query, but `source.length` for the rewrite below:
+      // SQLite counts characters and `slice` counts code units, so each side
+      // needs its own arithmetic. Passing one count to both is the bug this
+      // pair of counts exists to avoid.
+      const match = prefixSql('prefix', source);
       const moving = this.#db.all(
-        "SELECT id, prefix, grantee FROM shares WHERE owner = ? AND kind = 'folder' AND substr(prefix, 1, ?) = ?",
+        `SELECT id, prefix, grantee FROM shares WHERE owner = ? AND kind = 'folder' AND ${match.sql}`,
         owner,
-        source.length,
-        source,
+        ...match.params,
       );
       for (const row of moving) {
         const next = `${target}${String(row['prefix']).slice(source.length)}`;
@@ -648,11 +650,11 @@ export class ShareService {
   dropFolder(owner: string, dir: string): void {
     const prefix = normalizePrefix(dir);
     if (prefix === '') return;
+    const match = prefixSql('prefix', prefix);
     this.#db.run(
-      "DELETE FROM shares WHERE owner = ? AND kind = 'folder' AND substr(prefix, 1, ?) = ?",
+      `DELETE FROM shares WHERE owner = ? AND kind = 'folder' AND ${match.sql}`,
       owner,
-      prefix.length,
-      prefix,
+      ...match.params,
     );
   }
 }
