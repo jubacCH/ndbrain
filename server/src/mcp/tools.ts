@@ -27,7 +27,6 @@ import type { App } from '../app.js';
 import { withinScope, type ApiKey, type ApiKeyService } from '../auth/keys.js';
 import { normalizePrefix, type View } from '../auth/shares.js';
 import { NoteNotFoundError } from '../errors.js';
-import { appended } from '../markdown/edit.js';
 import type { DeletedNotes } from '../notes/deleted.js';
 import { normalizeVaultPath } from '../vault/paths.js';
 
@@ -641,7 +640,9 @@ export const TOOLS: ToolDefinition[] = [
     title: 'Append to a note',
     description:
       'Add text to the end of an existing note. This is the safe way to add something without ' +
-      'risking the rest of the note — prefer it over rewriting.',
+      'risking the rest of the note — prefer it over rewriting. Safe as well while somebody is ' +
+      'editing the same note: the text is added to whatever the note holds at the moment it ' +
+      'lands, so nothing anybody wrote is overwritten and there is nothing to reconcile after.',
     readOnly: false,
     // Purely additive: it only ever grows the note, so nothing existing can
     // be lost through it.
@@ -657,28 +658,26 @@ export const TOOLS: ToolDefinition[] = [
       const notePath = assertInScope(context, 'append_note', input['path'] as string);
       assertWritable(context, 'append_note', notePath);
 
-      const note = await context.app.notes.getNote(context.key.owner, notePath);
-      // The same rule the append endpoint writes by — one blank line between
-      // what was there and what is added, and none added to a note that ends in
-      // one already. Shared rather than repeated: two copies of it would drift.
-      const content = appended(note.content, input['content'] as string);
-
-      // The version this append was computed from. Between the read above and
-      // the write below, a person may have saved the same note in the browser —
-      // that window is real and invisible to the agent, so the base version goes
-      // along and a displaced version is kept rather than overwritten.
-      const result = await context.app.updateNote(
+      // The same call `POST /api/v1/append/*` makes, for the same reason: read
+      // and write happen inside one hold of the note's lock, so there is no
+      // moment between them for anybody else's save to land in. See
+      // `NoteService.appendNote`.
+      //
+      // This used to be a read-modify-write here — `getNote`, `appended`,
+      // `updateNote` with `baseMtimeMs` — and it carried the base version so
+      // that a save landing in the gap was kept as a conflict copy rather than
+      // overwritten. The gap is gone, so the copy is too: a save now lands
+      // before the append or after it, and either way both texts are in the one
+      // note. Handing the person two files to reconcile was the consolation
+      // prize for a race, never the goal.
+      const result = await context.app.appendNote(
         context.key.owner,
         notePath,
-        content,
+        input['content'] as string,
         context.key.name,
-        { baseMtimeMs: note.mtimeMs },
       );
       context.keys.log(context.key, 'append_note', notePath, true);
-      return result.conflictCopy === undefined
-        ? `Appended to ${notePath}`
-        : `Appended to ${notePath}. Somebody else had changed the note since it was read; ` +
-          `their version was kept as ${result.conflictCopy}.`;
+      return `Appended to ${result.note.path}`;
     },
   },
 
