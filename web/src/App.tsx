@@ -1027,6 +1027,11 @@ function Shell({
     const to = window.prompt(copy.ask.renameFolder, from);
     if (to === null || to.trim() === '' || to.trim() === from) return;
 
+    // Same guard as `renameNote`, for the operation that moves many notes at
+    // once: a save still in flight belongs to the path it was typed at, and one
+    // that overtakes the move lands there and creates the note again.
+    await settle();
+
     try {
       const result = await api.renameFolder(from, to.trim());
       await refreshTree();
@@ -1060,9 +1065,9 @@ function Shell({
     async (owner: string, from: string, to: string): Promise<void> => {
       // Unsaved text belongs to the note at the path it was typed at. Written
       // first, and waited for: a save that overtook the rename would land at
-      // the old path and create the note there again. The same guard
-      // `openNote` has — and that `renameFolder`, `runBulk` and `removeFile`
-      // still lack.
+      // the old path and create the note there again. Every operation that
+      // moves or removes a note under the editor does this — `openNote`,
+      // `showView`, `signOut`, `renameFolder`, `runBulk`, `removeFile`.
       await settle();
 
       const result = await api.rename(owner, from, to);
@@ -1529,6 +1534,10 @@ function Shell({
       const name = file.path.slice(file.path.lastIndexOf('/') + 1);
       if (!window.confirm(copy.ask.deleteFile(name))) return;
 
+      // A file list holds notes too, and the one being removed can be the one
+      // open in the editor. Saving first means the delete is the last word.
+      await settle();
+
       setFilesBusy(true);
       try {
         await api.deleteFile(filesOwner, file.path);
@@ -1692,6 +1701,11 @@ function Shell({
       const afterwards = copy.ask.afterDelete(preview);
       if (!window.confirm(copy.ask.deleteNotes(paths.length) + (afterwards !== '' ? ` ${afterwards}` : ''))) return;
     }
+
+    // Written first, like every other operation that moves or removes a note
+    // under the editor: a save in flight belongs to the path it was typed at,
+    // and one that lands after a move re-creates the note there.
+    await settle();
 
     setBulkBusy(true);
     try {
