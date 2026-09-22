@@ -9,6 +9,32 @@ function tagsOf(source: string): string[] {
 }
 
 describe('addTag', () => {
+  it('finds the frontmatter even when it is empty', () => {
+    // `indexOf` on an empty block answers 0, which puts the split before the
+    // opening `---` and writes the tag into the space above the document. The
+    // file that comes back is no longer a note: the frontmatter is broken, the
+    // tag is nowhere, and the index goes on reading it as if nothing happened.
+    const source = '---\n\n---\n# Titel\n\nText.\n';
+    const result = addTag(source, 'homelab');
+
+    expect(result.startsWith('---')).toBe(true);
+    expect(tagsOf(result)).toEqual(['homelab']);
+    expect(result).toContain('# Titel');
+    expect(result).toContain('Text.');
+  });
+
+  it('treats a dollar in a tag as a character, not an instruction', () => {
+    // `String.replace` reads `$&`, `$\'` and `$1` in the replacement and
+    // expands them. A tag is user input — from the bulk dialog, from an
+    // import — so a name carrying a dollar would paste part of the file back
+    // into itself.
+    const source = '---\ntags: [homelab]\n---\n# T\n';
+
+    expect(tagsOf(addTag(source, '$&'))).toEqual(['homelab', '$&']);
+    expect(tagsOf(addTag(source, "$'"))).toEqual(['homelab', "$'"]);
+    expect(tagsOf(addTag(source, '$1'))).toEqual(['homelab', '$1']);
+  });
+
   it('extends a flow list', () => {
     const source = '---\ntags: [homelab, proxmox]\ntitel: Test\n---\n# Inhalt\n';
     const result = addTag(source, 'wartung');
@@ -101,6 +127,15 @@ describe('addTag', () => {
 });
 
 describe('removeTag', () => {
+  it('leaves an empty frontmatter alone instead of taking it apart', () => {
+    // The same split as in `addTag`, and the same trap: there is no tag to
+    // remove here, so the only way this can fail is by damaging the file it
+    // was asked to leave alone.
+    const source = '---\n\n---\n# Titel\n\nText.\n';
+
+    expect(removeTag(source, 'homelab')).toBe(source);
+  });
+
   it('removes from a flow list', () => {
     const result = removeTag('---\ntags: [homelab, proxmox]\n---\nText\n', 'proxmox');
     expect(tagsOf(result)).toEqual(['homelab']);
