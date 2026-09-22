@@ -414,6 +414,34 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return reply.code(result.created ? 201 : 200).send(result);
   });
 
+  /**
+   * Adds text to a note, creating it when the caller says what it starts with.
+   *
+   * The route is `append` followed by the path, rather than the note's own
+   * route followed by `append`, which is the spelling this wanted to be:
+   * find-my-way refuses a wildcard that is not the last character of a route,
+   * and a vault path is a wildcard. So the operation takes the shape the other
+   * per-path routes here already have — `props`, `backlinks`, `history`, each
+   * followed by the path — and `target()` reads the path exactly as it does
+   * for them, which is the point: there is no second permission check.
+   *
+   * It exists because the alternative is a read-modify-write from the browser,
+   * and the note being added to is very often the one open in the editor with
+   * text that has not been saved yet. See `NoteService.appendNote`.
+   */
+  fastify.post('/api/v1/append/*', async (request, reply) => {
+    const { owner, path } = target(request, 'write');
+    const caller = requireUser(request).id;
+    const { content, section, ifAbsent } = body(request, S.AppendNoteRequest);
+
+    const result = await app.appendNote(owner, path, content, caller, {
+      ...(section === undefined ? {} : { section }),
+      ...(ifAbsent === undefined ? {} : { ifAbsent }),
+      authorize: recheck(caller, owner, path, 'write'),
+    });
+    return reply.code(result.created ? 201 : 200).send(result);
+  });
+
   fastify.delete('/api/v1/notes/*', async (request, reply) => {
     const { owner, path } = target(request, 'write');
     const caller = requireUser(request).id;

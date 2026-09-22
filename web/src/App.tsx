@@ -63,6 +63,7 @@ import {
   journalDays as journalDaysOf,
   journalPath,
   localDate,
+  NOTES_SECTION,
   parseJournalLinkTarget,
   parseJournalPath,
   sameDate,
@@ -846,6 +847,47 @@ function Shell({
 
   /** Today by the device's clock, read at the moment of asking — never cached across midnight. */
   const openToday = useCallback((): Promise<void> => openDay(localDate(new Date())), [openDay]);
+
+  /**
+   * Adds a thought to today's note without opening it.
+   *
+   * One request, and the whole read-modify-write happens on the server inside
+   * the note's write lock — see `NoteService.appendNote`. Doing it here as
+   * "read the note, splice, write it back" would be the mistake this endpoint
+   * exists to avoid: the note it writes to is the one most likely to be open
+   * elsewhere, and two thoughts captured quickly would cost one of them.
+   *
+   * Everything outstanding is written first. A capture does not leave the start
+   * page, so the editor is not mounted, but this tab may still owe the server
+   * text typed into today's note before coming here; flushing it now means the
+   * append lands after it rather than racing an autosave into a conflict copy.
+   *
+   * The date is read at the moment of asking, like `openToday`: a tab left open
+   * over midnight must capture into the new day, not the one it was loaded on.
+   *
+   * Nothing is caught here. The field is what keeps the text when this fails,
+   * and it can only do that if the failure reaches it.
+   */
+  const captureToday = useCallback(
+    async (thought: string): Promise<void> => {
+      await settle();
+
+      const date = localDate(new Date());
+      const path = journalPath(date);
+      const result = await api.append(user.id, path, thought, {
+        section: NOTES_SECTION,
+        ifAbsent: dailyNoteTemplate(date),
+      });
+
+      if (result.created) invalidate.afterStructure(client);
+      else invalidate.afterEdit(client, user.id, path);
+      // The note's text on the server has changed. Marked stale rather than
+      // re-read: nothing is rendering it from here, and the next open fetches
+      // it fresh instead of showing a version without what was just captured.
+      void client.invalidateQueries({ queryKey: keys.note(user.id, path) });
+    },
+    [settle, user.id, client],
+  );
 
   /**
    * Reopens the last note, when that is what the preferences ask for.
@@ -2187,6 +2229,7 @@ function Shell({
                   onNetwork={() => void showView('brain')}
                   journalDays={journalDays}
                   onOpenDay={(date) => void openDay(date)}
+                  onCapture={captureToday}
                 />
               )}
 

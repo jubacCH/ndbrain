@@ -14,6 +14,18 @@
 /** The folder every daily note lives under. */
 export const JOURNAL_ROOT = '50_Journal';
 
+/**
+ * The heading a day's prose goes under.
+ *
+ * German, like everything else a daily note is written with: this is text in
+ * the vault, not a label on a screen — see `dayHeading`. Named here rather than
+ * spelled out at each of the three places that care, because they have to agree
+ * exactly. The template writes it, the start page's preview reads it, and the
+ * capture field appends under it; a typo in any one of them would silently make
+ * that one look at an empty section.
+ */
+export const NOTES_SECTION = 'Notizen';
+
 /** A calendar day, without a time or a time zone. `month` is 1–12. */
 export interface JournalDate {
   year: number;
@@ -211,7 +223,7 @@ export function dailyNoteTemplate(date: JournalDate): string {
     '',
     `← ${dayLink(addDays(date, -1))} · ${dayLink(addDays(date, 1))} →`,
     '',
-    '## Notizen',
+    `## ${NOTES_SECTION}`,
     '',
     '## Aufgaben',
     '- [ ]',
