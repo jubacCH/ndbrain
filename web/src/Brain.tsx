@@ -46,6 +46,7 @@ import type { Camera, Inset } from './brain/camera';
 import { between, ease, fit, limitsFor, panBy, toWorld, zoomAt } from './brain/camera';
 import { blockedAround } from './brain/blocked';
 import { focusCamera } from './brain/focus';
+import { EdgeHitIndex } from './brain/edgehit';
 import { HitIndex } from './brain/hit';
 import { noteKind } from './brain/kind';
 import type { Arrangement } from './brain/layout';
@@ -58,6 +59,8 @@ import type { RegionView } from './brain/regions';
 import { regionView } from './brain/regions';
 import { createCanvasRenderer } from './brain/renderer';
 import { RECENT_DAYS, SceneBuilder } from './brain/scene';
+import type { Selection } from './brain/walk';
+import { NOTHING, step } from './brain/walk';
 
 export interface BrainProps {
   data: GraphData;
@@ -115,10 +118,37 @@ export interface BrainProps {
    * small for a camera flight to help anybody.
    */
   focus?: {
-    /** The selected note's key (`nodeKey`), or null. */
-    picked: string | null;
-    onPick: (key: string | null) => void;
+    /** What is selected, or null. */
+    picked: Picked | null;
+    onPick: (picked: Picked | null) => void;
   };
+}
+
+/**
+ * What the brain has picked, in the caller's terms.
+ *
+ * Node, edge and region indices belong to one layout of one reply and mean
+ * nothing outside the canvas, so what leaves it is named the way the rest of
+ * the app names things: notes by key. A region is named by its hub's key —
+ * the region's own id is a position in an array that a refetch may renumber,
+ * and a note key survives one.
+ *
+ * `name` and `members` come along because only the canvas knows them: which
+ * notes share a cell of the silhouette is the layout's answer, not the graph
+ * reply's. They are re-sent whenever the layout is rebuilt.
+ */
+export type Picked =
+  | { kind: 'note'; key: string }
+  /** One link, in the direction it is written: `from` links to `to`. */
+  | { kind: 'link'; from: string; to: string }
+  | { kind: 'region'; hub: string; name: string; members: readonly string[] };
+
+/** A tag that changes exactly when the selection does, for an effect to watch. */
+function tagOf(picked: Picked | null): string {
+  if (picked === null) return '';
+  if (picked.kind === 'note') return `n\u0000${picked.key}`;
+  if (picked.kind === 'link') return `l\u0000${picked.from}\u0000${picked.to}`;
+  return `r\u0000${picked.hub}`;
 }
 
 /** Space between a reserving element and the framed notes, in screen pixels. */
@@ -272,6 +302,71 @@ function tagsByKey(data: GraphData): Map<string, readonly string[]> {
   return tags;
 }
 
+/** The selection in the caller's terms, or null. Region names come from the layout. */
+function pickedOf(e: Engine): Picked | null {
+  const { sel } = e;
+  if (sel.kind === 'note') {
+    const node = e.graph.nodes[sel.node];
+    return node === undefined ? null : { kind: 'note', key: node.key };
+  }
+  if (sel.kind === 'link') {
+    const edge = e.graph.edges[sel.edge];
+    const from = edge === undefined ? undefined : e.graph.nodes[edge.a];
+    const to = edge === undefined ? undefined : e.graph.nodes[edge.b];
+    return from === undefined || to === undefined ? null : { kind: 'link', from: from.key, to: to.key };
+  }
+  if (sel.kind === 'region') {
+    const region = e.regions.regions[sel.region];
+    const hub = region === undefined ? undefined : e.graph.nodes[region.hub];
+    if (region === undefined || hub === undefined) return null;
+    return {
+      kind: 'region',
+      hub: hub.key,
+      name: region.name,
+      members: region.members.map((i) => e.graph.nodes[i]!.key),
+    };
+  }
+  return null;
+}
+
+/** The caller's selection read back into this layout's indices. */
+function selectionOf(e: Engine, picked: Picked | null): Selection {
+  if (picked === null) return NOTHING;
+  if (picked.kind === 'note') {
+    const node = e.graph.index.get(picked.key);
+    return node === undefined ? NOTHING : { kind: 'note', node };
+  }
+  if (picked.kind === 'link') {
+    const a = e.graph.index.get(picked.from);
+    const b = e.graph.index.get(picked.to);
+    if (a === undefined || b === undefined) return NOTHING;
+    for (const i of e.graph.touching[a]!) {
+      const edge = e.graph.edges[i]!;
+      if (edge.a === a && edge.b === b) return { kind: 'link', edge: i, from: a };
+    }
+    // Written the other way round in this reply, which is the same relation.
+    for (const i of e.graph.touching[a]!) {
+      const edge = e.graph.edges[i]!;
+      if (edge.a === b && edge.b === a) return { kind: 'link', edge: i, from: a };
+    }
+    return NOTHING;
+  }
+  // A region by its hub's key: whichever region that note is in now.
+  const hub = e.graph.index.get(picked.hub);
+  if (hub === undefined) return NOTHING;
+  const region = e.regions.regionOf[hub] ?? -1;
+  return region < 0 || region >= e.regions.regions.length ? NOTHING : { kind: 'region', region };
+}
+
+/** Whether two selections are the same one. */
+function sameSel(a: Selection, b: Selection): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'note' && b.kind === 'note') return a.node === b.node;
+  if (a.kind === 'link' && b.kind === 'link') return a.edge === b.edge && a.from === b.from;
+  if (a.kind === 'region' && b.kind === 'region') return a.region === b.region;
+  return true;
+}
+
 interface Engine {
   graph: BrainGraph;
   layout: BrainLayout;
@@ -293,8 +388,13 @@ interface Engine {
    * panel appearing or the window changing mid-move is followed.
    */
   glide: { from: Camera; at: number; to: 'home' | 'focus' } | null;
-  /** The node whose name is shown because it was clicked, or -1. */
-  picked: number;
+  /**
+   * What is picked: a note, one of its links, a region, or nothing.
+   *
+   * One field rather than three, because the three are alternatives and three
+   * numbers kept in step would eventually not be (`brain/walk.ts`).
+   */
+  sel: Selection;
   /** The node being dragged, or -1. */
   drag: number;
   /** A press on a node that has not yet moved far enough to be a drag. */
@@ -311,6 +411,8 @@ interface Engine {
   pan: { x: number; y: number; fromX: number; fromY: number } | null;
   /** Which node is under a point. Rebuilt on demand, not per frame. */
   hits: HitIndex;
+  /** Which link is under a point, over the very curves the scene drew. */
+  edgeHits: EdgeHitIndex;
   /** The regions and the outline, read off the layout once (see `brain/regions.ts`). */
   regions: RegionView;
   /**
@@ -334,8 +436,8 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
   const owners = useOwners();
   /** Set by the frame effect, called by the reset control. */
   const home = useRef<() => void>(() => {});
-  /** Set by the frame effect: selects a node and, in focus mode, glides to it. */
-  const focusOn = useRef<(node: number) => void>(() => {});
+  /** Set by the frame effect: takes a selection and, in focus mode, glides to a note. */
+  const focusOn = useRef<(sel: Selection) => void>(() => {});
   /**
    * The focus-mode props, in a ref for the same reason as `onOpen`: the frame
    * effect runs once, and the caller's `onPick` is an inline function.
@@ -396,19 +498,16 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
    * the inspector closed. A selection made on the canvas comes back through
    * here too, and is then already what the engine holds.
    */
-  const wantedKey = focus?.picked ?? null;
+  const wantedTag = tagOf(focus?.picked ?? null);
   useEffect(() => {
     const e = engine.current;
     if (e === null || follow.current === undefined) return;
-    const node = wantedKey === null ? -1 : (e.graph.index.get(wantedKey) ?? -1);
-    if (node === e.picked) return;
-    if (node < 0) {
-      e.picked = -1;
-      wake.current();
-      return;
-    }
-    focusOn.current(node);
-  }, [wantedKey]);
+    const wanted = selectionOf(e, follow.current.picked);
+    // A selection made on the canvas comes back through here, and is then
+    // already what the engine holds: nothing to do, and no camera to move.
+    if (sameSel(wanted, e.sel)) return;
+    focusOn.current(wanted);
+  }, [wantedTag]);
 
   // Rebuilt only when the graph really changes — not on every pulse.
   useEffect(() => {
@@ -442,29 +541,13 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (layout.rememberedShare < 0.5 || reduce) layout.settle();
 
-    // The camera and the selection survive a refetch of the same view. Yanking
-    // the view back to the overview mid-read would punish the user for somebody
-    // else's edit. Another view starts at home.
-    // In focus mode the caller holds the selection, so that is what survives;
-    // a note that has gone from the graph ends the focus.
-    const wanted = follow.current?.picked ?? null;
-    const picked =
-      follow.current !== undefined
-        ? wanted === null
-          ? -1
-          : (graph.index.get(wanted) ?? -1)
-        : same === null || same.picked < 0
-          ? -1
-          : (graph.index.get(same.graph.nodes[same.picked]!.key) ?? -1);
-    if (wanted !== null && picked < 0) follow.current?.onPick(null);
-
     const builder = new SceneBuilder(graph);
     builder.recent(warmth(data));
     // The tissue and the region anchors are grown from positions and regions;
     // a refetch that changed neither keeps them instead of growing them again.
     if (same !== null) builder.inherit(same.builder);
 
-    engine.current = {
+    const next: Engine = {
       graph,
       layout,
       activity: new Activity(graph),
@@ -472,13 +555,16 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       camera: same?.camera ?? fit(layout.bounds, rect.width, rect.height, margin.current),
       homed: same?.homed ?? true,
       glide: null,
-      picked,
+      sel: NOTHING,
       drag: -1,
       press: null,
       // Nothing to write if every note came from storage and none has to move.
       dirty: !(same === null && layout.rememberedShare === 1 && layout.settled),
       pan: null,
       hits: new HitIndex(layout),
+      // Over the builder's own link buffers: the curves the scene draws, not a
+      // second tracing of them (see `brain/edgehit.ts`).
+      edgeHits: new EdgeHitIndex(builder.edges),
       regions: regionView(layout),
       pointer: { x: 0, y: 0, over: -1 },
       width: rect.width,
@@ -487,6 +573,27 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       store,
       view,
     };
+
+    // The camera and the selection survive a refetch of the same view. Yanking
+    // the view back to the overview mid-read would punish the user for somebody
+    // else's edit. Another view starts at home.
+    //
+    // In focus mode the caller holds the selection, so that is what survives, and
+    // whatever of it this layout cannot resolve — a note that has gone, a link
+    // that was removed — ends it. A region is re-sent even when it is the same
+    // region: its name and its members are the *layout's* answer, and this is a
+    // new layout, so they may no longer be the notes the caller was told about.
+    if (follow.current !== undefined) {
+      const wanted = follow.current.picked;
+      next.sel = selectionOf(next, wanted);
+      const now = pickedOf(next);
+      if (wanted !== null && (tagOf(now) !== tagOf(wanted) || now?.kind === 'region')) follow.current.onPick(now);
+    } else if (same !== null && same.sel.kind === 'note') {
+      const node = graph.index.get(same.graph.nodes[same.sel.node]!.key);
+      if (node !== undefined) next.sel = { kind: 'note', node };
+    }
+    engine.current = next;
+
     setCard(null);
     wake.current();
   // `remember` is an object from the caller; its contents are what matter.
@@ -616,6 +723,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         // because pulses still fire.
         if (e.layout.step()) {
           e.hits.invalidate();
+          e.edgeHits.invalidate();
           e.builder.moved();
           e.dirty = true;
           moving = true;
@@ -628,11 +736,15 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         e.layout,
         e.activity,
         e.camera,
-        e.picked,
+        e.sel.kind === 'note' ? e.sel.node : -1,
         e.width,
         e.height,
         e.pointer,
         blockedAround(surface),
+        {
+          link: e.sel.kind === 'link' ? e.sel.edge : -1,
+          region: e.sel.kind === 'region' ? e.sel.region : -1,
+        },
       );
       paint.draw(scene);
 
@@ -700,11 +812,12 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
 
     /** The picked node and its direct neighbours, framed clear of the reserved room. */
     function focusTarget(e: Engine): Camera {
-      if (e.picked < 0) return e.camera;
-      const members = [e.picked];
-      for (const edge of e.graph.touching[e.picked]!) {
+      if (e.sel.kind !== 'note') return e.camera;
+      const picked = e.sel.node;
+      const members = [picked];
+      for (const edge of e.graph.touching[picked]!) {
         const link = e.graph.edges[edge]!;
-        members.push(link.a === e.picked ? link.b : link.a);
+        members.push(link.a === picked ? link.b : link.a);
       }
       return focusCamera({
         x: e.layout.x,
@@ -720,14 +833,19 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     }
 
     /**
-     * Selects a node and, in focus mode, glides to it. Only the camera moves:
-     * the layout is not touched, so a focus can never shift a note.
+     * Takes a selection and, in focus mode, glides onto a picked *note*.
+     *
+     * Only a note moves the camera. A link is picked by pointing at the curve
+     * that is already on screen, and a region by its name: flying somewhere
+     * else would take away the very thing that was just clicked. Only the
+     * camera ever moves; the layout is not touched, so no selection can shift
+     * a note.
      */
-    const select = (node: number): void => {
+    const select = (sel: Selection): void => {
       const e = engine.current;
-      if (e === null || node < 0 || node >= e.graph.nodes.length) return;
-      e.picked = node;
-      if (follow.current !== undefined) {
+      if (e === null) return;
+      e.sel = sel;
+      if (follow.current !== undefined && sel.kind === 'note') {
         e.homed = false;
         e.glide = { from: e.camera, at: performance.now(), to: 'focus' };
       }
@@ -739,8 +857,8 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     const report = (e: Engine): void => {
       const f = follow.current;
       if (f === undefined) return;
-      const key = e.picked < 0 ? null : e.graph.nodes[e.picked]!.key;
-      if (key !== f.picked) f.onPick(key);
+      const now = pickedOf(e);
+      if (tagOf(now) !== tagOf(f.picked)) f.onPick(now);
     };
 
     /**
@@ -756,11 +874,15 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       const at = toWorld(e.camera, x, y);
       const over = e.hits.at(at.x, at.y, e.camera.scale);
       e.pointer.over = over;
-      canvas.style.cursor = over >= 0 ? 'pointer' : '';
       if (over < 0) {
+        // Nothing to say about a link or a region name that the panel does not
+        // say better, so no card — but the cursor still promises the click.
+        canvas.style.cursor =
+          paint.nameAt(x, y) >= 0 || e.edgeHits.at(at.x, at.y, e.camera.scale) >= 0 ? 'pointer' : '';
         setCard((held) => (held === null ? held : null));
         return;
       }
+      canvas.style.cursor = 'pointer';
       const node = e.graph.nodes[over]!;
       const row = rows.current[over];
       const left = x + canvas.offsetLeft;
@@ -842,7 +964,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       canvas.setPointerCapture(event.pointerId);
       if (hit >= 0) {
         e.press = { node: hit, x: event.clientX, y: event.clientY };
-        e.picked = hit;
+        e.sel = { kind: 'note', node: hit };
       } else {
         e.pan = { x: event.clientX, y: event.clientY, fromX: event.clientX, fromY: event.clientY };
       }
@@ -869,6 +991,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         const at = toWorld(e.camera, event.clientX - rect.left, event.clientY - rect.top);
         e.layout.place(e.drag, at.x, at.y);
         e.hits.invalidate();
+        e.edgeHits.invalidate();
         e.builder.moved();
         e.dirty = true;
         ask();
@@ -889,16 +1012,36 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
     const onUp = (event: PointerEvent): void => {
       const e = engine.current;
       if (e === null) return;
-      // A click on the dark lets go of the selected note. Only a click: a pan
-      // that happens to start and end on the dark keeps it.
+      // A press that started on no note and never travelled is a click on
+      // whatever else is there. Three things can be, in this order:
+      //
+      //  1. a region's name — the handle for a whole knowledge area, and the
+      //     only part of a region that is drawn as itself;
+      //  2. a link — the briefing's "why is this connected?", which it calls
+      //     extremely important and asks for on the edge itself;
+      //  3. nothing, which lets go of the selection, as it always did.
+      //
+      // Only a click: a pan that happens to start and end on the dark keeps
+      // the selection, as it always did.
       if (e.pan !== null && Math.hypot(event.clientX - e.pan.fromX, event.clientY - e.pan.fromY) <= DRAG_SLOP) {
-        e.picked = -1;
+        const rect = canvas.getBoundingClientRect();
+        const sx = event.clientX - rect.left;
+        const sy = event.clientY - rect.top;
+        const named = paint.nameAt(sx, sy);
+        const at = toWorld(e.camera, sx, sy);
+        const link = named >= 0 ? -1 : e.edgeHits.at(at.x, at.y, e.camera.scale);
+        e.sel =
+          named >= 0
+            ? { kind: 'region', region: named }
+            : link >= 0
+              ? { kind: 'link', edge: link, from: e.graph.edges[link]!.a }
+              : NOTHING;
         report(e);
       }
       // A press on a note that never became a drag is a click: it focuses the
       // note. A drag keeps the selection its press made, and the camera.
       if (e.press !== null && e.drag < 0) {
-        select(e.press.node);
+        select({ kind: 'note', node: e.press.node });
         lastClick = { node: e.press.node, x: e.press.x, y: e.press.y, at: performance.now() };
       } else {
         lastClick = null;
@@ -911,6 +1054,7 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
         if (reduce) {
           e.layout.settle();
           e.hits.invalidate();
+          e.edgeHits.invalidate();
         }
       }
       if (e.drag >= 0) e.builder.moved();
@@ -936,17 +1080,53 @@ export function Brain({ data, events, onOpen, remember, view, arrangement, inset
       ask();
     };
 
+    /**
+     * The keyboard.
+     *
+     * Escape lets go, `0` goes home, and the arrows walk the picture — which
+     * is the only way to reach a link or a region without a mouse, and a link
+     * is a one-pixel curve, the hardest target in the app to point at. What
+     * the arrows walk is `brain/walk.ts`: the regions while nothing is picked,
+     * and a picked note's own links once one is.
+     *
+     * The camera is deliberately left alone by all of it. Walking is for
+     * reading the panel beside the canvas; flying somewhere on every press
+     * would make a list of a hub's forty links unusable.
+     */
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && engine.current !== null) {
-        engine.current.picked = -1;
+      const e = engine.current;
+      if (e === null) return;
+      if (event.key === 'Escape') {
+        // From a link, back to the note it was walked from — that is where
+        // Escape came from and where carrying on makes sense.
+        e.sel = e.sel.kind === 'link' ? { kind: 'note', node: e.sel.from } : NOTHING;
         setCard(null);
-        report(engine.current);
+        report(e);
         // In focus mode Escape ends the focus and nothing else: the camera
         // stays on what was being looked at. Without it, Escape also goes home.
-        if (follow.current === undefined) goHome();
+        if (e.sel.kind === 'none' && follow.current === undefined) goHome();
+        ask();
+        return;
       }
+      if (event.key === '0') {
+        goHome();
+        ask();
+        return;
+      }
+      const dir =
+        event.key === 'ArrowDown' || event.key === 'ArrowRight'
+          ? 1
+          : event.key === 'ArrowUp' || event.key === 'ArrowLeft'
+            ? -1
+            : 0;
+      if (dir === 0) return;
+      // The canvas has the keyboard, so the arrows are ours and must not also
+      // scroll the page out from under it.
+      event.preventDefault();
+      e.sel = step(e.sel, dir, e.graph, e.regions.regions.length);
+      setCard(null);
+      report(e);
       ask();
-      if (event.key === '0') goHome();
     };
 
     const onLeaving = (): void => {

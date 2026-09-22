@@ -16,8 +16,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { GraphData, PulseEvent } from './api';
+import type { Picked } from './Brain';
 import { Brain } from './Brain';
-import { Inspector } from './Inspector';
+import { Inspector, LinkInspector, RegionInspector } from './Inspector';
 import { indexGraph } from './inspect';
 import { RECENT_DAYS } from './brain/scene';
 import { copy } from './copy';
@@ -97,24 +98,31 @@ export function NetworkFrame({
   const frame = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(false);
   /**
-   * The focused note in the brain, by key, or null.
+   * What is picked in the brain — a note, a link, a region — or null.
    *
    * Held here rather than in the canvas because two things show it: the brain,
-   * which frames it, and the inspector, which describes it and can move the
-   * focus on to a neighbour.
+   * which frames and highlights it, and the panel, which describes it and can
+   * move the selection on to another note.
    */
-  const [picked, setPicked] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Picked | null>(null);
   const index = useMemo(() => indexGraph(graph), [graph]);
-  const pickedNode = picked === null ? undefined : index.nodes.get(picked);
+  const pickedKey = picked?.kind === 'note' ? picked.key : null;
+  const pickedNode = pickedKey === null ? undefined : index.nodes.get(pickedKey);
 
   // Another view has no canvas to hold the focus; coming back starts without one.
   useEffect(() => {
     if (view !== 'graph') setPicked(null);
   }, [view]);
 
-  /** Ends the focus from the inspector, and hands the keyboard back to the canvas. */
+  /**
+   * A note picked from inside a panel, or the panel closed.
+   *
+   * Every panel offers only notes — a neighbour, a member of an area, one end
+   * of a link — so this takes a key and wraps it. Closing hands the keyboard
+   * back to the canvas, where the arrows carry on walking the picture.
+   */
   const pick = useCallback((key: string | null): void => {
-    setPicked(key);
+    setPicked(key === null ? null : { kind: 'note', key });
     if (key === null) frame.current?.querySelector<HTMLCanvasElement>('canvas.brain')?.focus();
   }, []);
 
@@ -230,24 +238,19 @@ export function NetworkFrame({
           {/* Right after the canvas, so Tab from a focused note reaches the
               inspector before the controls. A sibling of the canvas, so the
               region names keep clear of it (`brain/blocked.ts`). */}
-          {picked !== null && index.nodes.has(picked) && (
+          {pickedKey !== null && pickedNode !== undefined && (
             <Inspector
               index={index}
-              picked={picked}
+              picked={pickedKey}
               onPick={pick}
               onOpen={onOpen}
               onReveal={onReveal}
               self={account}
               onShare={
-                onShare !== undefined && pickedNode !== undefined && mayShare !== undefined && mayShare(pickedNode.owner)
-                  ? onShare
-                  : undefined
+                onShare !== undefined && mayShare !== undefined && mayShare(pickedNode.owner) ? onShare : undefined
               }
               onDelete={
-                onDelete !== undefined &&
-                pickedNode !== undefined &&
-                mayDelete !== undefined &&
-                mayDelete(pickedNode.owner, pickedNode.path)
+                onDelete !== undefined && mayDelete !== undefined && mayDelete(pickedNode.owner, pickedNode.path)
                   ? (owner, path, title) =>
                       void onDelete(owner, path, title).then((done) => {
                         // The note is gone; so is anything to focus on.
@@ -256,6 +259,18 @@ export function NetworkFrame({
                   : undefined
               }
             />
+          )}
+          {picked?.kind === 'region' && (
+            <RegionInspector
+              index={index}
+              name={picked.name}
+              members={picked.members}
+              onPick={pick}
+              onOpen={onOpen}
+            />
+          )}
+          {picked?.kind === 'link' && (
+            <LinkInspector index={index} from={picked.from} to={picked.to} onPick={pick} onOpen={onOpen} />
           )}
           {controls}
           {/* The legend, where the reference has its motto: along the bottom,

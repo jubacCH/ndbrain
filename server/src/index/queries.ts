@@ -131,17 +131,27 @@ export interface ActivityDay {
   agentWrites: number;
 }
 
-/** The MCP tools that only look — the same list `pulse` filters on, from here. */
-const AGENT_READ_TOOLS = [
+/**
+ * The MCP tools that only look — the same list `pulse` filters on, from here.
+ *
+ * Written out rather than read off `TOOLS`, because the index layer must not
+ * depend on the MCP layer for a list of strings. Exported so the drift that
+ * costs is caught where importing both is fine: `mcp.test.ts` holds these two
+ * against `TOOLS` and its `readOnly` flag. A tool missing here is not an error
+ * anywhere, it simply never appears in "agent reads today" — which reads as an
+ * agent that did nothing.
+ */
+export const AGENT_READ_TOOLS = [
   'get_note',
   'search_notes',
   'list_notes',
   'get_links',
   'vault_map',
   'list_tasks',
+  'list_findings',
 ] as const;
-/** The MCP tools that change a note. */
-const AGENT_WRITE_TOOLS = [
+/** The MCP tools that change a note. Kept honest by the same test. */
+export const AGENT_WRITE_TOOLS = [
   'create_note',
   'append_note',
   'edit_note',
@@ -673,7 +683,7 @@ export class Queries {
   }
 
   /**
-   * Links whose target does not exist — a finding, not an error.
+   * Links the caller cannot follow — a finding, not an error.
    *
    * Except a daily note's link to a day nobody has written yet. The template
    * links yesterday and tomorrow before either exists, and the link fills in by
@@ -682,29 +692,54 @@ export class Queries {
    * is `isPendingDayLink` in `shared/journal.ts`, applied here so the tidy list,
    * the overview count, the attention total and the tree markers all get it.
    *
-   * **Only ever called with a whole vault, and it has to stay that way.** The
-   * indexer resolves links against every note the owner has, not against the
-   * caller's region, so `target_path IS NULL` means "nowhere in this vault" —
-   * not "nowhere you can see". Handed a narrowed region, this turns into an
-   * existence oracle: write `[[Candidate]]` into a note inside the region, ask
-   * again, and whether the link comes back as dead tells you whether a note of
-   * that name exists in the half you were never shown.
+   * **What counts as broken depends on who is asking, and it has to.** The
+   * indexer resolves a link against every note the owner has, not against the
+   * caller's region, so `target_path IS NULL` alone means "nowhere in this
+   * vault" — not "nowhere you can see". Filtering on it and then narrowing the
+   * region is an existence oracle: write `[[Candidate]]` into a note inside the
+   * region, ask again, and whether the row comes back tells you whether a note
+   * of that name exists in the half you were never shown. That is the leak
+   * `outgoingLinks` above was rebuilt to close, and this is the same rebuild.
    *
-   * `outgoingLinks` above answers the same question safely and is the pattern
-   * to copy: it selects the target through `CASE WHEN <target in view>` and
-   * reports an out-of-region target as unresolved, which is what a caller
-   * outside the region would see anyway. A region-aware version of this query
-   * needs the same treatment — and the tidy view above it needs to be taught
-   * what the new nulls mean — before anything hands it a scoped view.
+   * So the answer to "what is a broken link for somebody who sees a slice of
+   * the vault": **a link whose target that caller cannot resolve.** The target
+   * is projected the way `outgoingLinks` projects it — `CASE WHEN <target in
+   * view>`, so a target outside the region reads as unresolved — and the filter
+   * is then that very projection being null, rather than a second condition
+   * written beside it that could drift from it. A target the caller may not see
+   * and a target that was never written are one record, at the only place the
+   * difference could have escaped.
+   *
+   * The reported set therefore **grows as the region shrinks**: a caller
+   * holding one folder is told about links leaving it, because from where they
+   * stand those links lead nowhere, which is exactly what `get_links` already
+   * tells them note by note. Two callers disagreeing about the same link is not
+   * an inconsistency to fix — it is the honest report of two different vaults,
+   * and the price of the disagreement is the oracle staying shut.
+   *
+   * Nothing moves for the owner of a vault: their region is all of it, the
+   * `CASE` is then constantly true for every resolved target, and the tidy
+   * list, the overview count, the attention total and the tree markers keep
+   * the answer they had. `index.test.ts` pins that down.
+   *
+   * The raw link text is safe to echo — it stands in a note the caller may read.
    */
   deadLinks(view: Viewable): LinkRow[] {
     const scope = scopeSql('l', 'source', view);
+    const targetScope = scopeSql('l', 'target_path', view);
     return this.#db
       .all(
-        `SELECT l.owner, l.source, l.target_raw, l.target_path, l.heading, l.alias, l.offset
-           FROM links l
-          WHERE l.target_path IS NULL AND ${scope.sql}
-          ORDER BY l.source, l.offset`,
+        `SELECT owner, source, target_raw, target_path, heading, alias, "offset"
+           FROM (
+                SELECT l.owner, l.source, l.target_raw,
+                       CASE WHEN ${targetScope.sql} THEN l.target_path END AS target_path,
+                       l.heading, l.alias, l.offset
+                  FROM links l
+                 WHERE ${scope.sql}
+                )
+          WHERE target_path IS NULL
+          ORDER BY source, "offset"`,
+        ...targetScope.params,
         ...scope.params,
       )
       .map(toLinkRow)

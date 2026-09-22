@@ -8,6 +8,7 @@ import { migrate } from '../src/db/schema.js';
 import { Indexer } from '../src/index/indexer.js';
 import { Queries, toMatchQuery } from '../src/index/queries.js';
 import { NoteService } from '../src/notes/service.js';
+import type { View } from '../src/auth/shares.js';
 import { Vault } from '../src/vault/fs.js';
 
 let dataDir: string;
@@ -374,5 +375,83 @@ describe('search input is never trusted', () => {
     await indexer.rebuild('julian');
     q.search('julian', "'; DROP TABLE notes; --");
     expect(q.countNotes('julian')).toBe(3);
+  });
+});
+
+/* ---- dead links seen from inside a region --------------------------------
+ *
+ * `deadLinks` used to be documented as "only ever called with a whole vault",
+ * because the indexer resolves a link against every note the owner has rather
+ * than against the caller's region. `WHERE target_path IS NULL` therefore
+ * answered "nowhere in this vault", and handing that query a narrowed region
+ * turned it into an existence oracle over the half the caller may not see.
+ *
+ * These cases pin down the answer it gives instead.
+ */
+describe('dead links in a region', () => {
+  /** A key or share that reaches `Homelab/` and nothing else. */
+  const homelab: View = [{ owner: 'julian', prefix: 'Homelab/', exact: false, canWrite: false }];
+
+  it('calls a link into the invisible half broken, exactly like one that points nowhere', async () => {
+    await notes.createNote('julian', 'Privat/Gedanken.md', 'sehr persönlich\n');
+    await notes.createNote('julian', 'Homelab/Drin.md', 'da\n');
+    await notes.createNote(
+      'julian',
+      'Homelab/Frage.md',
+      'Siehe [[Privat/Gedanken]], [[Homelab/Drin]] und [[Phantom]].\n',
+    );
+    await indexer.rebuild('julian');
+
+    const raw = q.deadLinks(homelab).map((l) => l.targetRaw);
+
+    // Resolvable inside the region, so not a finding.
+    expect(raw).not.toContain('Homelab/Drin');
+    // Both of the others are unresolved *for this caller*, and neither is
+    // distinguishable from the other.
+    expect(raw).toEqual(['Privat/Gedanken', 'Phantom']);
+    expect(q.deadLinks(homelab).every((l) => l.targetPath === null)).toBe(true);
+  });
+
+  it('answers the same whether the guessed name exists outside the region or not', async () => {
+    await notes.createNote('julian', 'Homelab/Frage.md', 'Siehe [[Privat/Phantom]].\n');
+    await indexer.rebuild('julian');
+
+    const before = q.deadLinks(homelab);
+
+    await notes.createNote('julian', 'Privat/Phantom.md', 'jetzt gibt es mich\n');
+    await indexer.sync('julian');
+
+    expect(q.deadLinks(homelab)).toEqual(before);
+  });
+
+  it('never reports a source the region does not cover', async () => {
+    await notes.createNote('julian', 'Privat/Gedanken.md', 'Siehe [[Nirgendwo]].\n');
+    await indexer.rebuild('julian');
+
+    expect(q.deadLinks(homelab)).toEqual([]);
+  });
+
+  /**
+   * The owner of a vault sees all of it, so their region is the whole vault and
+   * nothing about the tidy list, the overview count, the attention total or the
+   * tree markers may move. Every caller in `http/server.ts` passes a bare owner.
+   */
+  it('leaves the owner\'s own vault exactly as it was', async () => {
+    await notes.createNote('julian', 'Privat/Gedanken.md', 'sehr persönlich\n');
+    await notes.createNote('julian', 'Homelab/Drin.md', 'da\n');
+    await notes.createNote(
+      'julian',
+      'Homelab/Frage.md',
+      'Siehe [[Privat/Gedanken]], [[Homelab/Drin]] und [[Phantom]].\n',
+    );
+    await indexer.rebuild('julian');
+
+    // Only the one that resolves nowhere in the vault — a link across folders
+    // is an ordinary link to its owner, not a finding.
+    expect(q.deadLinks('julian').map((l) => l.targetRaw)).toEqual(['Phantom']);
+    // The shorthand and the spelled-out whole-vault view are one answer.
+    expect(q.deadLinks([{ owner: 'julian', prefix: '', exact: false, canWrite: true }])).toEqual(
+      q.deadLinks('julian'),
+    );
   });
 });

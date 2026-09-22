@@ -12,6 +12,7 @@ import {
   addDays,
   daysInMonth,
   isoDate,
+  NOTES_SECTION,
   parseJournalPath,
   weekdayIndex,
   type JournalDate,
@@ -23,6 +24,7 @@ export {
   isoDate,
   journalPath,
   localDate,
+  NOTES_SECTION,
   parseIsoDate,
   parseJournalLinkTarget,
   parseJournalPath,
@@ -98,7 +100,10 @@ export function shiftMonth(date: JournalDate, offset: number): JournalDate {
  */
 export function notesPreview(content: string, maxLines = 3): string[] {
   const lines = content.replace(/\r\n?/g, '\n').split('\n');
-  const start = lines.findIndex((line) => /^##\s+Notizen\s*$/.test(line.trim()));
+  // The very section the capture field appends to; both read the name from
+  // `shared/journal.ts` so neither can drift into looking at the wrong heading.
+  const heading = new RegExp(`^##\\s+${NOTES_SECTION}\\s*$`);
+  const start = lines.findIndex((line) => heading.test(line.trim()));
   if (start === -1) return [];
 
   const out: string[] = [];

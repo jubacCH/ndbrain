@@ -23,7 +23,15 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { NoteRow, Overview, User } from '../src/api';
 import { App } from '../src/App';
 import { copy } from '../src/copy';
-import { journalDays, localDate, monthGrid, notesPreview, shiftMonth, dailyNoteTemplate } from '../src/daily';
+import {
+  journalDays,
+  localDate,
+  monthGrid,
+  notesPreview,
+  shiftMonth,
+  dailyNoteTemplate,
+  NOTES_SECTION,
+} from '../src/daily';
 import { HomeView } from '../src/Home';
 import { JournalView } from '../src/Journal';
 import { matchCommands } from '../src/Palette';
@@ -60,6 +68,16 @@ const server = vi.hoisted(() => ({
   ensureCalls: [] as Array<{ owner: string; path: string; content: string }>,
   /** Plain writes, which a followed link must not fall back to either. */
   putCalls: [] as Array<{ owner: string; path: string }>,
+  /** What the capture field on the start page sent. */
+  appendCalls: [] as Array<{
+    owner: string;
+    path: string;
+    content: string;
+    section?: string;
+    ifAbsent?: string;
+  }>,
+  /** Set to make the next append fail, as a server that is not reachable does. */
+  appendFails: false,
   /** Held open until released, so a test can press twice while the first is in flight. */
   gate: null as Promise<void> | null,
 }));
@@ -97,6 +115,35 @@ vi.mock('../src/api', async (original) => {
     putNote: async (owner: string, path: string) => {
       server.putCalls.push({ owner, path });
       return { note: { path, title: '', content: '', size: 0, mtimeMs: 2 }, created: true };
+    },
+    overview: async () => ({
+      counts: { notes: 0, orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, attention: 0, tagsInUse: false },
+      recent: [],
+      tasks: [],
+      tags: [],
+      activity: [],
+    }),
+    activityDays: async () => ({ days: [] }),
+    append: async (
+      owner: string,
+      path: string,
+      content: string,
+      options: { section?: string; ifAbsent?: string } = {},
+    ) => {
+      server.appendCalls.push({ owner, path, content, ...options });
+      if (server.appendFails) throw new real.ApiError(503, 'unavailable', 'nope');
+      const existing = server.contents.get(key(owner, path));
+      const created = existing === undefined;
+      const before = existing ?? options.ifAbsent ?? '';
+      const text = `${before}\n${content}`;
+      server.contents.set(key(owner, path), text);
+      if (created) {
+        server.notes = [...server.notes, { owner, path, title: path.split('/').pop()!.replace(/\.md$/, ''), size: 1, mtimeMs: 1 }];
+      }
+      return {
+        created,
+        note: { path, title: path.split('/').pop()!.replace(/\.md$/, ''), content: text, size: text.length, mtimeMs: 2 },
+      };
     },
     ensureNote: async (owner: string, path: string, content: string) => {
       server.ensureCalls.push({ owner, path, content });
@@ -138,6 +185,8 @@ beforeEach(() => {
   server.contents = new Map();
   server.ensureCalls = [];
   server.putCalls = [];
+  server.appendCalls = [];
+  server.appendFails = false;
   server.gate = null;
 });
 
@@ -523,6 +572,7 @@ describe('the home card', () => {
           onNetwork={vi.fn()}
           journalDays={new Set(days)}
           onOpenDay={onOpenDay}
+          onCapture={vi.fn(async () => {})}
         />
       </QueryClientProvider>,
     );
@@ -562,5 +612,126 @@ describe('the home card', () => {
 
     await userEvent.click(within(card).getByRole('button', { name: copy.journal.backToToday }));
     expect(within(card).getByRole('button', { name: copy.journal.start })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The one field on the start page.
+ *
+ * The point of it is that a thought costs nothing to write down: no dialog, no
+ * path, no view change. What is pinned here is the whole of that promise —
+ * where the text goes, that it goes without being read back first, that the
+ * field empties only when the server has it, and that a failure leaves the
+ * words on screen rather than in a lost request.
+ */
+describe('capturing a thought on the start page', () => {
+  async function renderApp(): Promise<void> {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <App />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('button', { name: copy.nav.todayHint });
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.overview }));
+  }
+
+  const field = (): HTMLTextAreaElement =>
+    screen.getByLabelText(copy.capture.label) as HTMLTextAreaElement;
+
+  it("appends to today's note, under Notizen, without reading it first", async () => {
+    at('2026-09-17T10:00:00Z');
+    await renderApp();
+
+    await userEvent.type(await screen.findByLabelText(copy.capture.label), 'Ein Gedanke.');
+    await userEvent.click(screen.getByRole('button', { name: copy.capture.save }));
+
+    await waitFor(() => expect(server.appendCalls).toHaveLength(1));
+    expect(server.appendCalls[0]).toEqual({
+      owner: 'julian',
+      path: '50_Journal/2026/09/2026-09-17.md',
+      content: 'Ein Gedanke.',
+      section: NOTES_SECTION,
+      ifAbsent: dailyNoteTemplate({ year: 2026, month: 9, day: 17 }),
+    });
+    // Nothing was written whole and nothing was opened: the note stays closed.
+    expect(server.putCalls).toEqual([]);
+    expect(server.ensureCalls).toEqual([]);
+    expect(screen.queryByTestId('editor')).toBeNull();
+  });
+
+  it('empties the field and says the thought arrived', async () => {
+    at('2026-09-17T10:00:00Z');
+    await renderApp();
+
+    await userEvent.type(await screen.findByLabelText(copy.capture.label), 'Ein Gedanke.');
+    await userEvent.click(screen.getByRole('button', { name: copy.capture.save }));
+
+    await waitFor(() => expect(field()).toHaveValue(''));
+    expect(await screen.findByText(copy.capture.saved)).toBeInTheDocument();
+  });
+
+  /**
+   * The rule this project measures every input by. A capture field that
+   * swallows the words on a failed request is worse than no field at all.
+   */
+  it('keeps the text when the write fails', async () => {
+    at('2026-09-17T10:00:00Z');
+    server.appendFails = true;
+    await renderApp();
+
+    await userEvent.type(await screen.findByLabelText(copy.capture.label), 'Zu wertvoll zum Verlieren.');
+    await userEvent.click(screen.getByRole('button', { name: copy.capture.save }));
+
+    expect(await screen.findByText(copy.capture.failed)).toBeInTheDocument();
+    expect(field()).toHaveValue('Zu wertvoll zum Verlieren.');
+
+    // And it can simply be sent again once the server is back.
+    server.appendFails = false;
+    await userEvent.click(screen.getByRole('button', { name: copy.capture.save }));
+    await waitFor(() => expect(field()).toHaveValue(''));
+    expect(server.appendCalls.map((call) => call.content)).toEqual([
+      'Zu wertvoll zum Verlieren.',
+      'Zu wertvoll zum Verlieren.',
+    ]);
+  });
+
+  it('takes a thought of several lines, and sends it on the modifier, not on Enter alone', async () => {
+    at('2026-09-17T10:00:00Z');
+    await renderApp();
+
+    const box = await screen.findByLabelText(copy.capture.label);
+    await userEvent.type(box, 'Erste Zeile{Enter}Zweite Zeile');
+    expect(server.appendCalls).toEqual([]);
+    expect(field()).toHaveValue('Erste Zeile\nZweite Zeile');
+
+    await userEvent.keyboard('{Meta>}{Enter}{/Meta}');
+    await waitFor(() => expect(server.appendCalls).toHaveLength(1));
+    expect(server.appendCalls[0]!.content).toBe('Erste Zeile\nZweite Zeile');
+  });
+
+  it('sends nothing for a field holding only spaces', async () => {
+    at('2026-09-17T10:00:00Z');
+    await renderApp();
+
+    await userEvent.type(await screen.findByLabelText(copy.capture.label), '   ');
+    await userEvent.click(screen.getByRole('button', { name: copy.capture.save }));
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(server.appendCalls).toEqual([]);
+  });
+
+  /**
+   * The cards around this one label themselves with a paragraph, and the page
+   * already says "Overview" twice. The new field does not add to that: its card
+   * is a heading and its box has a label of its own.
+   */
+  it('names itself with a heading and labels its box', async () => {
+    at('2026-09-17T10:00:00Z');
+    await renderApp();
+
+    const card = await screen.findByRole('region', { name: copy.capture.title });
+    expect(within(card).getByRole('heading', { name: copy.capture.title })).toBeInTheDocument();
+    expect(within(card).getByLabelText(copy.capture.label)).toBe(field());
   });
 });

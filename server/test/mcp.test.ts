@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { buildServer } from '../src/http/server.js';
 import { DeletedNotes } from '../src/notes/deleted.js';
+import { AGENT_READ_TOOLS, AGENT_WRITE_TOOLS } from '../src/index/queries.js';
 import { TOOLS } from '../src/mcp/tools.js';
 import { createRuntime, type Runtime } from '../src/runtime.js';
 
@@ -128,6 +129,24 @@ describe('protocol', () => {
       expect(annotations['destructiveHint'], `${tool.name}.destructiveHint`).toBe(tool.destructive);
     }
   });
+
+/**
+ * The pulse counts agent calls by naming the tools, in a list `queries.ts`
+ * keeps by hand — it cannot import `TOOLS` without the index layer depending on
+ * the MCP layer. A hand-kept copy of a list is a list that drifts, and the
+ * drift is silent: a tool missing from it simply never shows up in "agent
+ * reads today", which looks like an agent that did nothing. So the two halves
+ * are checked against `TOOLS` itself here, where importing both is fine.
+ */
+it('counts every tool in the pulse, on the side the tool declares', () => {
+  for (const tool of TOOLS) {
+    const reads = (AGENT_READ_TOOLS as readonly string[]).includes(tool.name);
+    const writes = (AGENT_WRITE_TOOLS as readonly string[]).includes(tool.name);
+
+    expect(reads, `${tool.name} in AGENT_READ_TOOLS`).toBe(tool.readOnly);
+    expect(writes, `${tool.name} in AGENT_WRITE_TOOLS`).toBe(!tool.readOnly);
+  }
+});
 
   it('marks exactly the tools that can remove content as destructive, not every writing tool', async () => {
     // The incident this guards against: `edit_note` deleted a span of a note
@@ -990,5 +1009,121 @@ describe('list_tasks', () => {
     const { text, isError } = await call(readOnlyKey, 'list_tasks');
     expect(isError).toBe(false);
     expect(text).toContain('Firmware aktualisieren');
+  });
+});
+
+/* ---- the findings --------------------------------------------------------
+ *
+ * An agent could search, read, write, rename and delete, and see open points —
+ * but not a single *finding*. So it could not be asked to clear up the broken
+ * links, although it already held every tool for the job; it would have had to
+ * read the whole vault back and work them out itself.
+ *
+ * Three kinds, and the choice is the point. A dead link, a note nothing points
+ * at and a note without a tag are each fixable with one edit an agent can
+ * actually make. Staleness is not: "untouched for 90 days" is a number for a
+ * person to judge, and an agent "refreshing" old notes is the one thing it
+ * must not do unasked. Conflict copies are not either — picking which of two
+ * versions of somebody's own writing survives is a decision, not tidying.
+ */
+describe('list_findings', () => {
+  beforeEach(async () => {
+    // One tagged note, so being untagged is a convention here and therefore a
+    // finding at all — see `untaggedFindings`.
+    await runtime.app.createNote(
+      'julian',
+      'Homelab/Netz.md',
+      '---\ntags: [homelab]\n---\n# Netz\n\nSiehe [[Homelab/UniFi]] und [[Nirgendwo]].\n',
+    );
+    await runtime.app.createNote('julian', 'Privat/Notiz.md', 'Siehe [[Privat/Phantom]].\n');
+  });
+
+  it('names the note to open for each kind of finding', async () => {
+    const { text, isError } = await call(fullKey, 'list_findings');
+
+    expect(isError).toBe(false);
+    // The source note, not just the fact that something is broken: the agent
+    // has to know which note to edit.
+    expect(text).toContain('Homelab/Netz.md');
+    expect(text).toContain('Nirgendwo');
+    expect(text).toContain('Homelab/Proxmox.md');
+    expect(text).toContain('dns01');
+  });
+
+  it('answers for one kind when asked for one', async () => {
+    const { text } = await call(fullKey, 'list_findings', { kind: 'dead_links' });
+
+    expect(text).toContain('Nirgendwo');
+    expect(text).not.toContain('nothing links to');
+    expect(text).not.toContain('without a tag');
+  });
+
+  it('refuses a kind it does not know, and says which it has', async () => {
+    const { text, isError } = await call(fullKey, 'list_findings', { kind: 'stale' });
+
+    expect(isError).toBe(true);
+    expect(text).toContain('dead_links');
+    expect(text).toContain('orphans');
+    expect(text).toContain('untagged');
+  });
+
+  it('shows only what the scope covers', async () => {
+    const { text } = await call(scopedKey, 'list_findings');
+
+    expect(text).toContain('Homelab/Netz.md');
+    expect(text).not.toContain('Privat/');
+  });
+
+  it('answers for a folder outside the scope exactly as for an empty one', async () => {
+    const forbidden = await call(scopedKey, 'list_findings', { folder: 'Privat' });
+    const empty = await call(scopedKey, 'list_findings', { folder: 'Homelab/Leer' });
+
+    expect(forbidden.text).toBe('Nothing to tidy.');
+    expect(forbidden.text).toBe(empty.text);
+  });
+
+  it('says how many it left out rather than letting a cap look like the end', async () => {
+    for (let i = 0; i < 8; i += 1) {
+      await runtime.app.createNote('julian', `Homelab/Kaputt ${i}.md`, `Siehe [[Fehlt ${i}]].\n`);
+    }
+
+    const { text } = await call(scopedKey, 'list_findings', { kind: 'dead_links', limit: 3 });
+
+    expect(text).toContain('more');
+    expect(text).not.toContain('Fehlt 7');
+  });
+
+  it('is open to a read-only key', async () => {
+    const { text, isError } = await call(readOnlyKey, 'list_findings');
+    expect(isError).toBe(false);
+    expect(text).toContain('Nirgendwo');
+  });
+
+  /**
+   * The oracle, shut.
+   *
+   * The indexer resolves a link against the owner's whole vault, so "this link
+   * is broken" used to mean "nothing anywhere in the vault is called that". A
+   * scoped key that may write could then ask about any name it liked: put
+   * `[[Privat/Phantom]]` into a note of its own, call this, and read the answer
+   * off whether the link came back. The same call, once while the guessed note
+   * exists outside the scope and once while it does not, has to produce the
+   * very same bytes — anything else is that oracle.
+   */
+  it('answers byte for byte the same whether the guessed name exists outside the scope or not', async () => {
+    await runtime.app.createNote('julian', 'Homelab/Koeder.md', 'Siehe [[Privat/Phantom]].\n');
+
+    const before = await call(scopedKey, 'list_findings');
+
+    await runtime.app.createNote('julian', 'Privat/Phantom.md', 'jetzt gibt es mich\n');
+
+    const after = await call(scopedKey, 'list_findings');
+
+    expect(after.text).toBe(before.text);
+    // Not "answers nothing at all": the link text is the key's own question,
+    // written in a note it may read, so echoing it back is no leak — and the
+    // resolved path, which would be one, never appears.
+    expect(before.text).toContain('Privat/Phantom');
+    expect(before.text).not.toContain('Privat/Phantom.md');
   });
 });

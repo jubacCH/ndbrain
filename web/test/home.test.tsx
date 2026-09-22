@@ -69,7 +69,14 @@ function fourteen(today: Partial<ActivityDay> = {}, earlier: Partial<ActivityDay
 
 function renderHome(props: Partial<Parameters<typeof HomeView>[0]> = {}, days: ActivityDay[] = fourteen()) {
   const spy = vi.spyOn(api, 'activityDays').mockResolvedValue({ days });
-  const handlers = { onOpen: vi.fn(), onTasks: vi.fn(), onTidy: vi.fn(), onNetwork: vi.fn(), onOpenDay: vi.fn() };
+  const handlers = {
+    onOpen: vi.fn(),
+    onTasks: vi.fn(),
+    onTidy: vi.fn(),
+    onNetwork: vi.fn(),
+    onOpenDay: vi.fn(),
+    onCapture: vi.fn(async () => {}),
+  };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -183,7 +190,7 @@ describe('your brain today', () => {
       <QueryClientProvider client={client}>
         <HomeView overview={overview()} self="julian" ownNotes={118} recents={[]} hidePrefixes now={NOW}
           onOpen={vi.fn()} onTasks={vi.fn()} onTidy={vi.fn()} onNetwork={vi.fn()}
-          journalDays={new Set<string>()} onOpenDay={vi.fn()} />
+          journalDays={new Set<string>()} onOpenDay={vi.fn()} onCapture={vi.fn(async () => {})} />
       </QueryClientProvider>,
     );
     await new Promise((r) => setTimeout(r, 20));

@@ -582,6 +582,32 @@ export const PutNoteRequest = z
   })
   .strict();
 
+/**
+ * Add text to a note without rewriting it.
+ *
+ * Deliberately not a `PutNoteRequest` with a flag: an append carries no
+ * `baseMtimeMs`, because it displaces no version, and a request that could
+ * carry one would invite a caller to send the whole note with it.
+ */
+export const AppendNoteRequest = z
+  .object({
+    content: z.string().min(1),
+    /** Which vault. Also accepted in the query string; the route reads both. */
+    owner: UserId.optional(),
+    /**
+     * The heading the text goes under, by its own words — `Notizen` for the
+     * daily note. Left out, the text goes at the end of the note; a heading the
+     * note does not have falls back to the same place rather than refusing.
+     */
+    section: z.string().min(1).max(200).optional(),
+    /**
+     * What the note is created with when it is not there yet. Without it an
+     * absent note is answered like any other missing note.
+     */
+    ifAbsent: z.string().optional(),
+  })
+  .strict();
+
 export const RenameNoteRequest = z
   .object({ owner: UserId.optional(), from: VaultPath, to: VaultPath })
   .strict();

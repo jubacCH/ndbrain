@@ -16,6 +16,7 @@ import { act, fireEvent, render } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { Picked } from '../src/Brain';
 import { Brain } from '../src/Brain';
 import type { Camera } from '../src/brain/camera';
 import { toScreen } from '../src/brain/camera';
@@ -104,14 +105,14 @@ async function mountFocused(): Promise<{
   canvas: HTMLCanvasElement;
   onPick: ReturnType<typeof vi.fn>;
   onOpen: ReturnType<typeof vi.fn>;
-  setPicked: (key: string | null) => void;
+  setPicked: (picked: Picked | null) => void;
   unmount: () => void;
 }> {
   const onPick = vi.fn();
   const onOpen = vi.fn();
-  const handle: { set: (key: string | null) => void } = { set: () => {} };
+  const handle: { set: (picked: Picked | null) => void } = { set: () => {} };
   function Focused(): React.JSX.Element {
-    const [picked, setPicked] = useState<string | null>(null);
+    const [picked, setPicked] = useState<Picked | null>(null);
     handle.set = setPicked;
     return (
       <Brain
@@ -124,9 +125,9 @@ async function mountFocused(): Promise<{
         inset={INSET}
         focus={{
           picked,
-          onPick: (key) => {
-            onPick(key);
-            setPicked(key);
+          onPick: (next) => {
+            onPick(next);
+            setPicked(next);
           },
         }}
       />
@@ -138,7 +139,7 @@ async function mountFocused(): Promise<{
     canvas: view.container.querySelector('canvas')!,
     onPick,
     onOpen,
-    setPicked: (key) => act(() => handle.set(key)),
+    setPicked: (next) => act(() => handle.set(next)),
     unmount: view.unmount,
   };
 }
@@ -157,7 +158,7 @@ describe('focus mode', () => {
     const home = lastFrame(build).camera;
 
     click(canvas, onScreen(build, key));
-    expect(onPick).toHaveBeenLastCalledWith(key);
+    expect(onPick).toHaveBeenLastCalledWith({ kind: 'note', key });
 
     // Partway: moving, not there yet.
     await run(120);
@@ -196,7 +197,7 @@ describe('focus mode', () => {
     for (const key of targets) {
       click(canvas, onScreen(build, key));
       await run(600);
-      expect(onPick).toHaveBeenLastCalledWith(key);
+      expect(onPick).toHaveBeenLastCalledWith({ kind: 'note', key });
     }
     const p = onScreen(build, targets[0]!);
     click(canvas, p);
@@ -266,7 +267,7 @@ describe('focus mode', () => {
     const home = lastFrame(build).camera;
     const key = targets[4]!;
 
-    setPicked(key);
+    setPicked({ kind: 'note', key });
     await run(600);
     expect(lastFrame(build).picked).toBe(graph.index.get(key));
     const focused = lastFrame(build).camera;

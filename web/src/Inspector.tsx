@@ -1,5 +1,12 @@
 /**
- * The card beside a focused note in the brain.
+ * The panel beside the brain, in its three forms.
+ *
+ * One slot, and what is picked decides what stands in it: a note
+ * (`Inspector`), a whole knowledge area (`RegionInspector`), or one link
+ * (`LinkInspector`). They share this file because they share the slot, the
+ * head with its close button, the Escape that gives the keyboard back to the
+ * canvas and every rule below about where the panel sits — splitting them
+ * would be three copies of all of that.
  *
  * What a note is, what it says in its first paragraph, what it is connected to
  * and why, and what happened to it lately — each read off something that exists:
@@ -23,16 +30,17 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { api } from './api';
 import { noteKind } from './brain/kind';
 import { copy } from './copy';
-import { CloseIcon, FileIcon, ShareIcon, SpaceIcon, TrashIcon } from './icons';
+import { BrainIcon, CloseIcon, FileIcon, NetworkIcon, ShareIcon, SpaceIcon, TrashIcon } from './icons';
 import { ownerKind, ownerLabel, useOwners } from './owners';
-import type { GraphIndex, Neighbour } from './inspect';
-import { neighbourhood, summarize, whyConnected } from './inspect';
+import type { GraphIndex, Neighbour, RegionMember } from './inspect';
+import { neighbourhood, regionFacts, summarize, whyConnected } from './inspect';
 import { absoluteTime, relativeTime } from './network/relativeTime';
+import { refKey } from './refkey';
 
 /** Rows shown per direction before "show all". */
 const FIRST_ROWS = 6;
@@ -293,6 +301,275 @@ export function Inspector({
           </button>
         )}
       </footer>
+    </section>
+  );
+}
+
+/* ===================== a whole knowledge area ===================== */
+
+/** Notes shown under "most connected" before "show all". */
+const STRONG_ROWS = 6;
+/** Tags shown under a region's topics. */
+const TOPIC_ROWS = 8;
+
+export interface RegionInspectorProps {
+  index: GraphIndex;
+  /** The region's display name, as the layout calls it. */
+  name: string;
+  /** Its notes, by key. Which notes share a cell is the layout's answer. */
+  members: readonly string[];
+  /** Focuses one of its notes, or ends the selection with null. */
+  onPick: (key: string | null) => void;
+  onOpen: (owner: string, path: string) => void;
+}
+
+/**
+ * The panel beside a picked region: what this knowledge area holds.
+ *
+ * The briefing's point 19 — "Orbit8 · 124 Notes · 18 Resources · 8 MOCs ·
+ * 6 Projects · Last active: Today" — minus the three tabs that need an AI to
+ * write them. What is left is countable, and `regionFacts` counts it: how many
+ * notes and of which kind, the tags they share, when one of them was last
+ * written, and which of them are the most connected — the briefing's "strong
+ * connections" (point 29) for this area.
+ *
+ * Nothing is estimated. A region whose notes carry no tags says so.
+ */
+export function RegionInspector({ index, name, members, onPick, onOpen }: RegionInspectorProps): React.JSX.Element {
+  const facts = useMemo(() => regionFacts(index, members), [index, members]);
+  const [all, setAll] = useState(false);
+  const id = useId();
+  const shown = all ? facts.strongest : facts.strongest.slice(0, STRONG_ROWS);
+
+  const onKey = (event: React.KeyboardEvent): void => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    onPick(null);
+  };
+
+  return (
+    <section
+      className="inspector"
+      aria-label={copy.inspector.region.label(name)}
+      data-brain-reserve=""
+      onKeyDown={onKey}
+    >
+      <header className="inspector-head">
+        <BrainIcon size={18} />
+        <h2 className="inspector-title" tabIndex={-1}>
+          {name}
+        </h2>
+        <button
+          type="button"
+          className="inspector-close"
+          aria-label={copy.inspector.close}
+          title={copy.inspector.close}
+          onClick={() => onPick(null)}
+        >
+          <CloseIcon size={16} />
+        </button>
+      </header>
+
+      <div className="inspector-body">
+        <dl className="inspector-facts">
+          <dt>{copy.inspector.type}</dt>
+          <dd>{copy.inspector.region.area}</dd>
+          <dt>{copy.inspector.region.notes}</dt>
+          <dd>{facts.notes}</dd>
+          {/* Left out rather than guessed at where the region holds no note the
+              reply carries: there is no date to show. */}
+          {facts.lastActive !== null && (
+            <>
+              <dt>{copy.inspector.region.lastActive}</dt>
+              <dd>
+                <time dateTime={new Date(facts.lastActive).toISOString()} title={absoluteTime(facts.lastActive)}>
+                  {relativeTime(facts.lastActive)}
+                </time>
+              </dd>
+            </>
+          )}
+          <dt>{copy.inspector.region.topics}</dt>
+          <dd>
+            {facts.tags.length === 0 ? (
+              <span className="inspector-quiet">{copy.inspector.region.noTopics}</span>
+            ) : (
+              facts.tags.slice(0, TOPIC_ROWS).map((t) => (
+                <span className="inspector-tag" key={t.tag}>
+                  #{t.tag}
+                </span>
+              ))
+            )}
+          </dd>
+        </dl>
+
+        {facts.notes === 0 ? (
+          <p className="inspector-quiet">{copy.inspector.region.empty}</p>
+        ) : (
+          <div className="inspector-section">
+            <h3>{copy.inspector.region.contents}</h3>
+            <dl className="inspector-facts">
+              {facts.kinds.map((k) => (
+                <Fragment key={`${k.kind}\u0000${k.label}`}>
+                  <dt>{k.kind === 'folder' ? k.label : copy.network.card.kind[k.kind]}</dt>
+                  <dd>{k.count}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          </div>
+        )}
+
+        <div className="inspector-section">
+          <h3 id={id}>
+            {copy.inspector.region.strongest}
+            {facts.strongest.length > 0 && <span className="inspector-count">{facts.strongest.length}</span>}
+          </h3>
+          {facts.strongest.length === 0 ? (
+            <p className="inspector-quiet">{copy.inspector.region.noStrongest}</p>
+          ) : (
+            <>
+              <ul className="inspector-links" aria-labelledby={id}>
+                {shown.map((row) => (
+                  <li key={row.key}>
+                    <Strong row={row} onPick={onPick} onOpen={onOpen} />
+                  </li>
+                ))}
+              </ul>
+              {facts.strongest.length > STRONG_ROWS && (
+                <button type="button" className="inspector-more" onClick={() => setAll((v) => !v)}>
+                  {all ? copy.inspector.showFewer : copy.inspector.showAll(facts.strongest.length)}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        <p className="inspector-hint">{copy.inspector.region.hint}</p>
+      </div>
+    </section>
+  );
+}
+
+/** One of a region's most connected notes: focus it, or open it. */
+function Strong({
+  row,
+  onPick,
+  onOpen,
+}: {
+  row: RegionMember;
+  onPick: (key: string) => void;
+  onOpen: (owner: string, path: string) => void;
+}): React.JSX.Element {
+  return (
+    <div className="inspector-row">
+      <button
+        type="button"
+        className="inspector-neighbour"
+        aria-label={copy.inspector.focus(row.title)}
+        onClick={() => onPick(row.key)}
+        onDoubleClick={() => onOpen(row.owner, row.path)}
+      >
+        <span className="inspector-neighbour-title">{row.title}</span>
+        {row.folder !== '' && <span className="inspector-neighbour-folder">{row.folder}</span>}
+      </button>
+      <span className="inspector-degree">{copy.inspector.region.links(row.links)}</span>
+    </div>
+  );
+}
+
+/* ===================== one link ===================== */
+
+export interface LinkInspectorProps {
+  index: GraphIndex;
+  /** The two notes, in the direction the link is written. */
+  from: string;
+  to: string;
+  /** Focuses one of them, or ends the selection with null. */
+  onPick: (key: string | null) => void;
+  onOpen: (owner: string, path: string) => void;
+}
+
+/**
+ * The panel beside a picked link: why these two notes are connected.
+ *
+ * Briefing point 22, which calls this extremely important — an AI relationship
+ * must not be a black box. There is no AI here and so no box: the reason is a
+ * link, a folder, a tag or a neighbour the two share, read off the structure
+ * (`whyConnected`). The briefing's example ends with "semantic similarity 87 %
+ * · source: AI suggested"; a number like that is exactly what this view does
+ * not have, so it is not shown.
+ *
+ * Until now this reason existed only behind a "Why?" button on a row of a
+ * focused note's neighbour list — two clicks and a selection away from the
+ * link somebody was looking at.
+ */
+export function LinkInspector({ index, from, to, onPick, onOpen }: LinkInspectorProps): React.JSX.Element | null {
+  const a = index.nodes.get(from);
+  const b = index.nodes.get(to);
+  const id = useId();
+
+  const onKey = (event: React.KeyboardEvent): void => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    onPick(null);
+  };
+
+  if (a === undefined || b === undefined) return null;
+
+  return (
+    <section
+      className="inspector"
+      aria-label={copy.inspector.link.label(a.title, b.title)}
+      data-brain-reserve=""
+      onKeyDown={onKey}
+    >
+      <header className="inspector-head">
+        <NetworkIcon size={18} />
+        <h2 className="inspector-title" tabIndex={-1}>
+          {a.title} · {b.title}
+        </h2>
+        <button
+          type="button"
+          className="inspector-close"
+          aria-label={copy.inspector.close}
+          title={copy.inspector.close}
+          onClick={() => onPick(null)}
+        >
+          <CloseIcon size={16} />
+        </button>
+      </header>
+
+      <div className="inspector-body">
+        <div className="inspector-section">
+          <h3>{copy.inspector.link.heading}</h3>
+          <Reason id={id} index={index} from={from} to={to} />
+        </div>
+
+        <div className="inspector-section">
+          <h3>{copy.inspector.link.between}</h3>
+          <ul className="inspector-links">
+            {[a, b].map((node) => (
+              <li key={`${node.owner}\u0000${node.path}`}>
+                <div className="inspector-row">
+                  <button
+                    type="button"
+                    className="inspector-neighbour"
+                    aria-label={copy.inspector.focus(node.title)}
+                    onClick={() => onPick(refKey(node.owner, node.path))}
+                    onDoubleClick={() => onOpen(node.owner, node.path)}
+                  >
+                    <span className="inspector-neighbour-title">{node.title}</span>
+                    {node.folder !== '' && <span className="inspector-neighbour-folder">{node.folder}</span>}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <p className="inspector-hint">{copy.inspector.link.hint}</p>
+      </div>
     </section>
   );
 }
