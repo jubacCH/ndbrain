@@ -276,6 +276,33 @@ describe('a save that failed', () => {
     expect(screen.queryByText(copy.save.saved)).toBeNull();
   });
 
+  it('clears the warning once the debt is paid, even from behind another note', async () => {
+    server.putFails = { status: 500, code: 'internal' };
+    mount();
+    await openFromPalette('Plan');
+    await typeInEditor();
+    await advance(600);
+    await waitFor(() => expect(server.writes).toHaveLength(1));
+
+    await switchTo('Loose', LOOSE);
+    expect(screen.getByText(copy.save.failed)).toBeInTheDocument();
+
+    // The indicator is one for the whole window, so the debt owns it while it
+    // stands. Once the retry lands, the same reasoning says the warning has to
+    // go: a warning that stays after the text is on disk is read as a second
+    // paragraph lost, and the next one nobody believes.
+    server.putFails = null;
+    await advance(4000);
+    await waitFor(() => expect(server.content.get(PLAN)).toBe('first draft'), { timeout: 4000 });
+    expect(await screen.findByText(copy.save.saved)).toBeInTheDocument();
+    expect(screen.queryByText(copy.save.failed)).toBeNull();
+
+    // And nothing is owed any more, so leaving is no longer worth a question.
+    const asked = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(asked);
+    expect(asked.defaultPrevented).toBe(false);
+  });
+
   it('leaves the text where the crash box finds it when the session has ended', async () => {
     server.putFails = { status: 401, code: 'unauthenticated' };
     mount();
