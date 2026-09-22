@@ -40,7 +40,19 @@ export interface Runtime {
   close(): void;
 }
 
-export async function createRuntime(config: Config): Promise<Runtime> {
+/**
+ * What the caller wants to be told about, beyond what it can ask for.
+ *
+ * Only the reporting channels live here. Anything a service needs to *work*
+ * comes from `Config`, so that a runtime built by the CLI and one built by the
+ * server differ in where their warnings go and in nothing else.
+ */
+export interface RuntimeOptions {
+  /** A file in the vault that could not be indexed; see `IndexerOptions`. */
+  onSkipped?: (owner: string, notePath: string, error: unknown) => void;
+}
+
+export async function createRuntime(config: Config, options: RuntimeOptions = {}): Promise<Runtime> {
   await mkdir(path.join(config.dataDir, 'vaults'), { recursive: true });
   await mkdir(path.join(config.dataDir, 'index'), { recursive: true });
 
@@ -52,7 +64,7 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   // note moves or goes, so a note share follows its note and never outlives it.
   const shares = new ShareService(db);
   const notes = new NoteService(vault, noteLifecycle(shares, new NoteBindings(shares, vault)));
-  const indexer = new Indexer(db, notes);
+  const indexer = new Indexer(db, notes, options);
   const app = new App(db, notes, indexer, shares);
   const users = new UserService(db, vault);
   const sessions = new SessionService(db);
@@ -79,14 +91,28 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   };
 }
 
+/** Which vaults could not be brought in line, so the caller can say so. */
+export interface StartupSyncReport {
+  failed: Array<{ owner: string; error: unknown }>;
+}
+
 /**
  * Brings the index in line with the files before accepting requests.
  *
  * Notes may have changed while the process was not running — that is the normal
  * case for a folder people also edit over a share. Serving stale search results
  * for the first few minutes after a restart would be a confusing way to start.
+ *
+ * One vault that cannot be synced does not stop the others, and does not stop
+ * the start. This runs before `server.listen`, so anything thrown from here
+ * used to take the process down before the port opened — and under a container
+ * policy of `restart: unless-stopped` that is a crash loop with no health
+ * endpoint to ask what is wrong. A stale index for one account is a bad day;
+ * a server nobody can reach is a worse one for everybody else.
  */
-export async function syncAllVaults(runtime: Runtime): Promise<void> {
+export async function syncAllVaults(runtime: Runtime): Promise<StartupSyncReport> {
+  const report: StartupSyncReport = { failed: [] };
+
   for (const user of runtime.users.list()) {
     // Before the index, not after. Whatever was replaced or removed while the
     // process was down took its note shares with it, and indexing first would
@@ -94,9 +120,15 @@ export async function syncAllVaults(runtime: Runtime): Promise<void> {
     // everybody the old note was shared with — for the length of one sync,
     // which on a large vault is not a moment. The watcher confirms before it
     // indexes for exactly this reason; the start and the reconcile now do too.
-    await runtime.app.dropDanglingShares(user.id);
-    await runtime.indexer.sync(user.id);
+    try {
+      await runtime.app.dropDanglingShares(user.id);
+      await runtime.indexer.sync(user.id);
+    } catch (error) {
+      report.failed.push({ owner: user.id, error });
+    }
   }
+
+  return report;
 }
 
 export function createWatcher(runtime: Runtime): VaultWatcher {

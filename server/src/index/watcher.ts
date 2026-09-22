@@ -21,6 +21,24 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import type { Indexer } from './indexer.js';
 import { assertUserId, isNotePath } from '../vault/paths.js';
 
+/**
+ * How the reconcile sweep is doing, as the health check reports it.
+ *
+ * `pending` and `stale` are told apart by the clock, not by the outcome: the
+ * first sweep is a whole interval away from the start, so a server that came up
+ * a minute ago is not behind on anything yet.
+ */
+export type ReconcileState = 'disabled' | 'pending' | 'ok' | 'stale';
+
+/**
+ * How many intervals may go by before a missing sweep counts as a problem.
+ *
+ * One would be a false alarm on every slow sweep, and a sweep of a large vault
+ * is not instant. Three is late enough to mean something is actually wrong and
+ * early enough to notice before a whole day of search results has drifted.
+ */
+const RECONCILE_GRACE_INTERVALS = 3;
+
 export interface WatcherOptions {
   /**
    * How long to wait for a burst of events to settle. Editors write in several
@@ -88,6 +106,9 @@ export class VaultWatcher {
   readonly #reconcileIntervalMs: number;
 
   readonly #pending = new Map<string, PendingChange>();
+  /** When this watcher came into being — the clock `pending` is measured from. */
+  readonly #createdAt = Date.now();
+  #lastReconcileAt: number | null = null;
   #timer: NodeJS.Timeout | null = null;
   #reconcileTimer: NodeJS.Timeout | null = null;
   #flushing: Promise<void> = Promise.resolve();
@@ -199,6 +220,28 @@ export class VaultWatcher {
         this.#onError?.(error);
       }
     }
+
+    // Recorded even when a vault failed: the sweep ran, and the failure is the
+    // `onError` caller's to report. Skipping it here would make one unreadable
+    // vault look like a watcher that had stopped sweeping altogether.
+    this.#lastReconcileAt = Date.now();
+  }
+
+  /**
+   * Whether the index is still being kept honest, for the health endpoint.
+   *
+   * The watcher supplies latency and `reconcile` supplies correctness, so a
+   * sweep that has stopped happening is the failure that matters: search goes
+   * quietly and progressively wrong, which is the hardest kind of wrong to
+   * notice from the outside. `now` is a parameter so this can be asked about a
+   * future clock without waiting for one.
+   */
+  reconcileState(now: number = Date.now()): ReconcileState {
+    if (this.#reconcileIntervalMs <= 0) return 'disabled';
+
+    const since = this.#lastReconcileAt ?? this.#createdAt;
+    if (now - since > this.#reconcileIntervalMs * RECONCILE_GRACE_INTERVALS) return 'stale';
+    return this.#lastReconcileAt === null ? 'pending' : 'ok';
   }
 
   async #owners(): Promise<string[]> {
