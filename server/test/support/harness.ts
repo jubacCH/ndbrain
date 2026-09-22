@@ -57,6 +57,8 @@ export interface HarnessDeps {
    * a flake, not a finding. A test about the brake itself passes its own.
    */
   throttle?: LoginThrottle;
+  /** Somewhere to collect what the server writes to its log. */
+  logStream?: NodeJS.WritableStream;
 }
 
 export async function startHarness(
@@ -86,6 +88,7 @@ export async function startHarness(
     history: runtime.history,
     config,
     throttle: deps.throttle ?? new LoginThrottle({ limit: 1000 }),
+    ...(deps.logStream === undefined ? {} : { logStream: deps.logStream }),
   });
 
   const cookies: Record<string, string> = {};
