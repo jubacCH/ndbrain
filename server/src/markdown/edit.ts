@@ -66,7 +66,11 @@ export function addTag(source: string, rawTag: string): string {
   }
 
   const block = match[1] ?? '';
-  const blockStart = source.indexOf(block);
+  // The block begins right after the opening fence and its line break. Searching
+  // for it with `indexOf` works only while it has content: an empty block is the
+  // empty string, `indexOf` answers 0, and the split then lands before the fence
+  // — the tag is written above the document and the frontmatter is destroyed.
+  const blockStart = source.startsWith('---\r\n') ? 5 : 4;
   const rest = source.slice(blockStart + block.length);
   const head = source.slice(0, blockStart);
 
@@ -77,7 +81,13 @@ export function addTag(source: string, rawTag: string): string {
     if (hasTag(existing, tag)) return source;
 
     const joined = [...existing, tag].join(', ');
-    return head + block.replace(FLOW_TAGS, `$1[${joined}]`) + rest;
+    // A function, not a replacement string. `String.replace` reads `$&`, `$\'`
+    // and `$1` out of a replacement string and expands them, and a tag is
+    // something a person types — in the bulk dialog, or in a file that arrives
+    // from an import. A name carrying a dollar would paste a piece of the note
+    // back into itself. The function form hands the text through untouched.
+    // `mcp/tools.ts` avoids the same trap by splicing at an offset.
+    return head + block.replace(FLOW_TAGS, (_whole, key: string) => `${key}[${joined}]`) + rest;
   }
 
   const blockList = BLOCK_TAGS.exec(block);
@@ -90,7 +100,11 @@ export function addTag(source: string, rawTag: string): string {
 
     const indent = `${blockList[1] ?? ''}  `;
     const trailing = (blockList[3] ?? '').endsWith('\n') ? '' : eol;
-    const replaced = block.replace(BLOCK_TAGS, `$1tags:$2$3${trailing}${indent}- ${tag}${eol}`);
+    const replaced = block.replace(
+      BLOCK_TAGS,
+      (_whole, lead: string, br: string, items: string) =>
+        `${lead}tags:${br}${items}${trailing}${indent}- ${tag}${eol}`,
+    );
     return head + replaced.replace(/(\r?\n)+$/, eol === '\r\n' ? '' : '') + rest;
   }
 
@@ -98,7 +112,8 @@ export function addTag(source: string, rawTag: string): string {
   if (scalar !== null) {
     const existing = (scalar[2] ?? '').split(/[,\s]+/).filter((value) => value !== '');
     if (hasTag(existing, tag)) return source;
-    return head + block.replace(SCALAR_TAGS, `$1${[...existing, tag].join(', ')}`) + rest;
+    const joinedScalar = [...existing, tag].join(', ');
+    return head + block.replace(SCALAR_TAGS, (_whole, key: string) => `${key}${joinedScalar}`) + rest;
   }
 
   // Frontmatter without a tags key: add one as the last line of the block.
@@ -118,7 +133,11 @@ export function removeTag(source: string, rawTag: string): string {
   if (match === null) return source;
 
   const block = match[1] ?? '';
-  const blockStart = source.indexOf(block);
+  // The block begins right after the opening fence and its line break. Searching
+  // for it with `indexOf` works only while it has content: an empty block is the
+  // empty string, `indexOf` answers 0, and the split then lands before the fence
+  // — the tag is written above the document and the frontmatter is destroyed.
+  const blockStart = source.startsWith('---\r\n') ? 5 : 4;
   const head = source.slice(0, blockStart);
   const rest = source.slice(blockStart + block.length);
 
@@ -128,7 +147,8 @@ export function removeTag(source: string, rawTag: string): string {
       .split(',')
       .map((value) => value.trim())
       .filter((value) => value !== '' && tagKey(value) !== tag);
-    return head + block.replace(FLOW_TAGS, `$1[${kept.join(', ')}]`) + rest;
+    const keptList = kept.join(', ');
+    return head + block.replace(FLOW_TAGS, (_whole, key: string) => `${key}[${keptList}]`) + rest;
   }
 
   const blockList = BLOCK_TAGS.exec(block);
@@ -141,7 +161,11 @@ export function removeTag(source: string, rawTag: string): string {
       });
     const eol = newline(source);
     const rendered = kept.length === 0 ? '' : kept.join(eol) + eol;
-    return head + block.replace(BLOCK_TAGS, `$1tags:$2${rendered}`) + rest;
+    return (
+      head +
+      block.replace(BLOCK_TAGS, (_whole, lead: string, br: string) => `${lead}tags:${br}${rendered}`) +
+      rest
+    );
   }
 
   return source;
