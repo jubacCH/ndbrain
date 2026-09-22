@@ -129,9 +129,11 @@ export function inScope(region: Region, notePath: string): boolean {
  * `inScope` as a SQL condition on `column`, or `null` when it covers every path.
  *
  * Kept beside `inScope` so the two cannot drift: the same three cases, in the
- * same order. `substr` rather than `LIKE`, because `LIKE` folds ASCII case in
- * SQLite and paths here are case-sensitive. An exact region compares with `=`,
- * which is case-sensitive too.
+ * same order, and `test/region-sql.test.ts` asks both about the same paths so
+ * that a drift is a failing test rather than a quiet difference. `substr`
+ * rather than `LIKE`, because `LIKE` folds ASCII case in SQLite and paths here
+ * are case-sensitive. An exact region compares with `=`, which is
+ * case-sensitive too.
  */
 export function regionSql(
   column: string,
@@ -139,6 +141,10 @@ export function regionSql(
   timeColumn?: string,
 ): { sql: string | null; params: SqlValue[] } {
   if (region.exact) {
+    // Same guard as `inScope`: an exact region with no prefix covers nothing.
+    // Without it the fragment reads as `column = ''`, which is a path nothing
+    // in the vault has but every table would happily be asked about.
+    if (region.prefix === '') return { sql: '1 = 0', params: [] };
     // A time-stamped row (an edit) of this path counts only from the moment the
     // region came to name it; see `Region.since`.
     if (timeColumn !== undefined && region.since !== undefined) {
@@ -147,7 +153,15 @@ export function regionSql(
     return { sql: `${column} = ?`, params: [region.prefix] };
   }
   if (region.prefix === '') return { sql: null, params: [] };
-  return { sql: `substr(${column}, 1, ?) = ?`, params: [region.prefix.length, region.prefix] };
+  // Counted in code points, not in `String.length`: SQLite's `substr` counts
+  // characters, JavaScript counts UTF-16 code units, and the two disagree by
+  // one for every character outside the basic plane. A folder named with an
+  // emoji would otherwise ask for more characters than its prefix has and
+  // match nothing at all, so the share would silently show an empty folder.
+  return {
+    sql: `substr(${column}, 1, ?) = ?`,
+    params: [[...region.prefix].length, region.prefix],
+  };
 }
 
 /** The region a share row covers. */
