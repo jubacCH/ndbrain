@@ -14,6 +14,11 @@
  *  - the last row opens the Search view on the same words
  *  - an excerpt is text: markup in a note is shown, never run
  *  - the line a hit sits on is found from its excerpt, for the editor to jump to
+ *
+ * And the commands above the notes: every one of them is run through the
+ * palette and checked by what it did, not by being in the list. A command that
+ * renders and does nothing is the failure this half is prone to — the list is
+ * built in one file and the action lives in another.
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -48,6 +53,8 @@ const server = vi.hoisted(() => ({
   /** Every full-text request, answered only when a test says so. */
   searches: [] as Pending[],
   contents: new Map<string, string>(),
+  /** Every note written, so a command that creates one can be checked by it. */
+  written: [] as Array<{ owner: string; path: string; content: string }>,
 }));
 
 vi.mock('../src/api', async (original) => {
@@ -67,6 +74,16 @@ vi.mock('../src/api', async (original) => {
     getNote: async (owner: string, path: string) => {
       const content = server.contents.get(path) ?? '';
       return { owner, canWrite: true, note: { path, title: path, content, size: content.length, mtimeMs: 1 } };
+    },
+    putNote: async (owner: string, path: string, content: string) => {
+      server.written.push({ owner, path, content });
+      server.contents.set(path, content);
+      return { note: { path, title: path, content, size: content.length, mtimeMs: 2 }, created: true };
+    },
+    ensureNote: async (owner: string, path: string, content: string) => {
+      server.written.push({ owner, path, content });
+      server.contents.set(path, content);
+      return { note: { path, title: path, content, size: content.length, mtimeMs: 2 }, created: true };
     },
   };
   const api = new Proxy(fake, { get: (target, name: string) => target[name] ?? (() => new Promise(() => {})) });
@@ -95,6 +112,8 @@ beforeEach(() => {
   server.byTitle = [];
   server.searches = [];
   server.contents = new Map();
+  server.written = [];
+  document.documentElement.removeAttribute('data-theme');
 });
 
 afterEach(() => {
@@ -297,22 +316,31 @@ describe('the excerpt', () => {
   });
 });
 
+function mount(): void {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <App />
+    </QueryClientProvider>,
+  );
+}
+
+async function openPalette(): Promise<void> {
+  await screen.findByRole('button', { name: copy.shell.account });
+  await userEvent.keyboard('{Control>}k{/Control}');
+  await screen.findByRole('dialog', { name: copy.palette.label });
+}
+
+/** Opens the palette, types the words, and runs the one command they find. */
+async function runCommand(words: string, label: string): Promise<void> {
+  await openPalette();
+  fireEvent.change(box(), { target: { value: words } });
+  const dialog = screen.getByRole('dialog', { name: copy.palette.label });
+  const row = await within(dialog).findByRole('button', { name: new RegExp(`^${label}`) });
+  await userEvent.click(row);
+}
+
 describe('in the shell', () => {
-  function mount(): void {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={client}>
-        <App />
-      </QueryClientProvider>,
-    );
-  }
-
-  async function openPalette(): Promise<void> {
-    await screen.findByRole('button', { name: copy.shell.account });
-    await userEvent.keyboard('{Control>}k{/Control}');
-    await screen.findByRole('dialog', { name: copy.palette.label });
-  }
-
   it('opens a full-text hit at the line it was found on', async () => {
     server.notes = [note('Homelab/Cluster.md')];
     server.contents.set('Homelab/Cluster.md', 'Quorum ist wichtig.\n\nDrei Knoten für das Quorum.');
@@ -332,5 +360,88 @@ describe('in the shell', () => {
     await userEvent.click(await screen.findByRole('button', { name: new RegExp(copy.palette.searchAll('azure')) }));
     expect(await screen.findByRole('heading', { level: 1, name: copy.nav.search })).toBeInTheDocument();
     await waitFor(() => expect(server.searches.some((s) => s.q === 'azure')).toBe(true));
+  });
+});
+
+/**
+ * The commands above the notes.
+ *
+ * Each one is checked by what it did — the view that arrived, the note that was
+ * written, the theme on the document — rather than by the row being there. The
+ * list is built in `App.tsx` and every action it names lives somewhere else, so
+ * a row that renders and does nothing is exactly the way this breaks.
+ */
+describe('the commands', () => {
+  it.each([
+    ['files', 'upload', copy.nav.files],
+    ['sharing', 'shares', copy.nav.sharing],
+    ['settings', 'preferences', copy.nav.settings],
+  ])('reaches %s, which is otherwise behind the account menu', async (_what, typed, label) => {
+    mount();
+    // Found by a keyword rather than by its label: the words somebody reaches
+    // for are part of the command, and they are easy to wire up and never use.
+    await runCommand(typed, label);
+    expect(await screen.findByRole('heading', { level: 1, name: label })).toBeInTheDocument();
+  });
+
+  it('opens administration for an administrator', async () => {
+    server.signedIn = { id: 'julian', displayName: 'Julian', role: 'admin' };
+    mount();
+    await runCommand('accounts', copy.nav.admin);
+    expect(await screen.findByRole('heading', { level: 1, name: copy.nav.admin })).toBeInTheDocument();
+  });
+
+  it('offers administration to nobody else', async () => {
+    mount();
+    await openPalette();
+    fireEvent.change(box(), { target: { value: 'accounts' } });
+    const dialog = screen.getByRole('dialog', { name: copy.palette.label });
+    await within(dialog).findByText(copy.palette.nothingFound);
+    expect(within(dialog).queryByRole('button', { name: new RegExp(`^${copy.nav.admin}`) })).toBeNull();
+  });
+
+  it('starts a note, through the same prompt the sidebar opens', async () => {
+    vi.stubGlobal('prompt', vi.fn(() => 'Homelab/Backup plan'));
+    mount();
+    await runCommand('new note', copy.nav.newNote);
+    await waitFor(() => expect(server.written.map((w) => w.path)).toEqual(['Homelab/Backup plan.md']));
+    const editor = await screen.findByTestId('editor');
+    expect(editor).toHaveAttribute('data-path', 'Homelab/Backup plan.md');
+  });
+
+  it("opens today's note", async () => {
+    mount();
+    await runCommand('today', copy.palette.openToday);
+    // Whatever today is called, the note that opened is the one started for it —
+    // `shared/journal.ts` decides the path, and this is not a second opinion.
+    await waitFor(() => expect(server.written).toHaveLength(1));
+    const editor = await screen.findByTestId('editor');
+    expect(editor.getAttribute('data-path')).toBe(server.written[0]!.path);
+  });
+
+  it('flips the theme, and then names the way back', async () => {
+    mount();
+    await runCommand('dark', copy.shell.darkTheme);
+    await waitFor(() => expect(document.documentElement.getAttribute('data-theme')).toBe('dark'));
+
+    await runCommand('light', copy.shell.lightTheme);
+    await waitFor(() => expect(document.documentElement.getAttribute('data-theme')).toBe('light'));
+  });
+
+  /**
+   * The restraint, pinned.
+   *
+   * Everything the sidebar already offers is one click and one glance away, and
+   * a palette that repeats it is a second navigation bar to keep in step with
+   * the first. Sign out is left out for a different reason: Enter in a fuzzy
+   * list is the most accidental key here.
+   */
+  it('is not a second navigation bar', async () => {
+    mount();
+    await openPalette();
+    const dialog = screen.getByRole('dialog', { name: copy.palette.label });
+    for (const label of [copy.nav.overview, copy.nav.network, copy.nav.tidy, copy.nav.journal, copy.nav.signOut]) {
+      expect(within(dialog).queryByRole('button', { name: new RegExp(`^${label}`) })).toBeNull();
+    }
   });
 });

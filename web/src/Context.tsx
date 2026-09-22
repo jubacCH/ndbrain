@@ -68,7 +68,7 @@ export function ContextPanel({
   if (notePath === null) return <></>;
 
   return (
-    <section className="ctx" aria-label="Kontext">
+    <section className="ctx" aria-label={copy.context.label}>
       <>
             <section>
               <h4>{copy.context.linksHere} · {backlinks.length}</h4>
@@ -133,7 +133,7 @@ export function ContextPanel({
                     <span className="pill p-crit">{link.targetRaw}</span>
                     {canCreate && (
                       <button type="button" className="btn" onClick={() => onCreate(link.targetRaw)}>
-                        anlegen
+                        {copy.context.writeIt}
                       </button>
                     )}
                   </div>

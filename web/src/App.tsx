@@ -1381,7 +1381,7 @@ function Shell({
    * as a list.
    */
   useEffect(() => {
-    // Auch beim Schreiben: rechts unten leuchtet die Nachbarschaft mit.
+    // While writing too: the neighbourhood in the right column lights up with it.
     if (view !== 'brain' && view !== 'note') return;
 
     let alive = true;
@@ -1546,20 +1546,20 @@ function Shell({
     if (graph === null || open === null) return null;
 
     const me = `${open.owner} ${open.note.path}`;
-    const nachbarn = new Set<string>([me]);
+    const neighbours = new Set<string>([me]);
     for (const e of graph.edges) {
       const from = `${e.owner} ${e.from}`;
       const to = `${e.owner} ${e.to}`;
-      if (from === me) nachbarn.add(to);
-      if (to === me) nachbarn.add(from);
+      if (from === me) neighbours.add(to);
+      if (to === me) neighbours.add(from);
     }
 
     return {
-      nodes: graph.nodes.filter((n) => nachbarn.has(`${n.owner} ${n.path}`)),
-      // Auch Kanten *zwischen* den Nachbarn: sie zeigen, ob die Umgebung ein
-      // Geflecht ist oder nur ein Stern um diese eine Notiz.
+      nodes: graph.nodes.filter((n) => neighbours.has(`${n.owner} ${n.path}`)),
+      // Edges *between* the neighbours too: they say whether the surroundings
+      // are a web or only a star around this one note.
       edges: graph.edges.filter(
-        (e) => nachbarn.has(`${e.owner} ${e.from}`) && nachbarn.has(`${e.owner} ${e.to}`),
+        (e) => neighbours.has(`${e.owner} ${e.from}`) && neighbours.has(`${e.owner} ${e.to}`),
       ),
     };
   }, [graph, open]);
@@ -1633,11 +1633,12 @@ function Shell({
       if (result.failed.length === 0) {
         setError(null);
       } else {
-        const names = result.failed.slice(0, 3).map((entry) => entry.path).join(', ');
-        const more = result.failed.length > 3 ? ` und ${result.failed.length - 3} weitere` : '';
         setError(
-          `${result.ok.length} erledigt, ${result.failed.length} nicht: ${names}${more} — ` +
-            `${result.failed[0]?.reason ?? ''}`,
+          copy.errors.bulkPartly(
+            result.ok.length,
+            result.failed.map((entry) => entry.path),
+            result.failed[0]?.reason ?? '',
+          ),
         );
       }
     } catch (caught) {
@@ -1687,10 +1688,10 @@ function Shell({
 
   const revokeShare = async (share: Share): Promise<void> => {
     const own = share.owner === user.id;
-    const what = share.prefix === '' ? 'the whole vault' : `“${share.prefix}”`;
+    const what = copy.ask.shareExtent(share.prefix);
     const question = own
-      ? `${share.grantee} den Zugriff auf ${what} entziehen?`
-      : `Zugriff auf ${what} von ${share.owner} aufgeben?`;
+      ? copy.ask.withdrawShare(share.grantee, what)
+      : copy.ask.giveUpShare(share.owner, what);
     if (!window.confirm(question)) return;
 
     setShareBusy(true);
@@ -1730,13 +1731,74 @@ function Shell({
 
   const heading = headingOf();
 
+  /**
+   * What ⌘K can do besides opening a note.
+   *
+   * Two kinds only, and the line between them is what keeps the list short.
+   * Things you *do* that have no keyboard route at all — start today's note,
+   * start any note, flip the theme — and the views that are not in the sidebar
+   * because they sit behind the account menu. Overview, Journal, Network, Tidy
+   * up and Search stay out: they are one click away in the sidebar, and a
+   * palette that lists them as well is a second navigation bar that has to be
+   * kept in step with the first.
+   *
+   * Signing out is deliberately absent. Enter in a fuzzy list is the most
+   * accidental key in this application, and sign out is the one thing here that
+   * pressing it again does not undo.
+   */
   const paletteCommands: PaletteCommand[] = [
     {
       key: 'today',
       label: copy.palette.openToday,
-      keywords: copy.palette.openTodayKeywords,
+      keywords: copy.palette.keywords.today,
       shortcut: copy.journal.shortcut,
       run: () => void openToday(),
+    },
+    {
+      key: 'new-note',
+      label: copy.nav.newNote,
+      keywords: copy.palette.keywords.newNote,
+      // The same prompt the sidebar's "+" opens: the palette shortens the
+      // reach for it, it does not become a second way of naming a note.
+      run: () => void createNote(),
+    },
+    {
+      key: 'files',
+      label: copy.nav.files,
+      keywords: copy.palette.keywords.files,
+      run: () => void showView('files'),
+    },
+    {
+      key: 'shares',
+      label: copy.nav.sharing,
+      keywords: copy.palette.keywords.sharing,
+      run: () => void showView('shares'),
+    },
+    {
+      key: 'settings',
+      label: copy.nav.settings,
+      keywords: copy.palette.keywords.settings,
+      run: () => void showView('settings'),
+    },
+    // Hidden for everybody else, as in the account menu: a command that is not
+    // in the list is not a permission, and the server refuses it regardless.
+    ...(user.role === 'admin'
+      ? [
+          {
+            key: 'admin',
+            label: copy.nav.admin,
+            keywords: copy.palette.keywords.admin,
+            run: () => void showView('admin'),
+          },
+        ]
+      : []),
+    {
+      // Named for what it will do, like the header button it duplicates, so the
+      // row cannot be read as a statement about which theme is on.
+      key: 'theme',
+      label: dark ? copy.shell.lightTheme : copy.shell.darkTheme,
+      keywords: copy.palette.keywords.theme,
+      run: () => setPrefs((current) => ({ ...current, theme: dark ? 'light' : 'dark' })),
     },
   ];
 

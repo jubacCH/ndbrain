@@ -50,7 +50,7 @@ export function parseTagRegistry(source: string): string[] {
       continue;
     }
     // A heading that names no prefix ends the section rather than continuing
-    // it: the "Abgleich noch offen" box is a heading like any other, and what
+    // it: the "still to be agreed" box is a heading like any other, and what
     // it lists has not been approved.
     if (/^#{1,6}\s/.test(line)) {
       prefix = null;
