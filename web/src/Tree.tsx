@@ -42,7 +42,7 @@ import { copy } from './copy';
 
 import { refKey, type NoteRow, type Share } from './api';
 import { loadOpenFolders, saveOpenFolders } from './accountStorage';
-import { ChevronIcon, FileIcon, FolderIcon, NewNoteIcon, ShareIcon, SpaceIcon, TrashIcon } from './icons';
+import { ChevronIcon, FileIcon, FolderIcon, NewNoteIcon, PencilIcon, ShareIcon, SpaceIcon, TrashIcon } from './icons';
 import { ownerKind, ownerLabel, useOwners } from './owners';
 import { mayChange } from './rights';
 
@@ -99,6 +99,13 @@ export interface TreeProps {
    * Delete key on a focused row — and on no other.
    */
   onDeleteNote?: (owner: string, path: string, title: string) => void;
+  /**
+   * Renames or moves a note, through the shell's dialog. Offered on the same
+   * notes as the delete — every note the caller may change — as a pencil at the
+   * end of the row and as F2 on a focused row, which is what a file manager
+   * taught everybody that key does.
+   */
+  onRenameNote?: (owner: string, path: string, title: string) => void;
   /**
    * A note to show without opening it: the folders above it open, the row is
    * marked and scrolled into view. `seq` makes a second request for the same
@@ -206,6 +213,7 @@ function ancestors(owner: string, path: string): string[] {
 function useTreeKeys(
   container: React.RefObject<HTMLDivElement | null>,
   onDelete: ((row: HTMLElement) => void) | undefined,
+  onRename: ((row: HTMLElement) => void) | undefined,
 ) {
   const rows = (): HTMLButtonElement[] =>
     [...(container.current?.querySelectorAll<HTMLButtonElement>('button.node') ?? [])];
@@ -273,6 +281,13 @@ function useTreeKeys(
         all[all.length - 1]?.focus();
         break;
       }
+      // F2, as in every file manager. Same rule as the delete below: only a
+      // note row the caller may change carries the attribute.
+      case 'F2':
+        if (onRename === undefined || !target.hasAttribute('data-renamable')) break;
+        event.preventDefault();
+        onRename(target);
+        break;
       // Delete, or ⌘⌫ as in the Finder. Only on a note row the caller may
       // change: that row carries the attribute, a folder or a read-only note
       // does not, and the key does nothing there.
@@ -299,6 +314,7 @@ export function Tree({
   onSelect,
   onRenameFolder,
   onDeleteNote,
+  onRenameNote,
   revealed = null,
   onCreateFirst,
   onShareNote,
@@ -307,15 +323,25 @@ export function Tree({
 }: TreeProps): React.JSX.Element {
   const box = useRef<HTMLDivElement>(null);
   const owners = useOwners();
+  /** The note a focused row stands for, for the keys that act on one. */
+  const noteOf = (row: HTMLElement): NoteRow | undefined => {
+    const owner = row.getAttribute('data-owner');
+    const path = row.getAttribute('data-path');
+    return notes.find((n) => n.owner === owner && n.path === path);
+  };
   const onKeyDown = useTreeKeys(
     box,
     onDeleteNote === undefined
       ? undefined
       : (row) => {
-          const owner = row.getAttribute('data-owner');
-          const path = row.getAttribute('data-path');
-          const note = notes.find((n) => n.owner === owner && n.path === path);
+          const note = noteOf(row);
           if (note !== undefined) onDeleteNote(note.owner, note.path, note.title);
+        },
+    onRenameNote === undefined
+      ? undefined
+      : (row) => {
+          const note = noteOf(row);
+          if (note !== undefined) onRenameNote(note.owner, note.path, note.title);
         },
   );
 
@@ -414,7 +440,9 @@ export function Tree({
     const key = refKey(note.owner, note.path);
     const finding = findings.get(key);
     const where = displayPath(note.path, hidePrefixes);
-    const deletable = onDeleteNote !== undefined && mayChange(self, received, note.owner, note.path);
+    const changeable = mayChange(self, received, note.owner, note.path);
+    const deletable = onDeleteNote !== undefined && changeable;
+    const renamable = onRenameNote !== undefined && changeable;
     const shareable = onShareNote !== undefined && mayShareNote !== undefined && mayShareNote(note.owner);
     const isRevealed = revealed !== null && revealed.owner === note.owner && revealed.path === note.path;
     return (
@@ -428,8 +456,13 @@ export function Tree({
             data-owner={note.owner}
             data-path={note.path}
             data-deletable={deletable ? '' : undefined}
+            data-renamable={renamable ? '' : undefined}
             data-revealed={isRevealed ? 'true' : undefined}
-            aria-keyshortcuts={deletable ? 'Delete Meta+Backspace' : undefined}
+            aria-keyshortcuts={
+              [deletable ? 'Delete Meta+Backspace' : '', renamable ? 'F2' : '']
+                .filter((keys) => keys !== '')
+                .join(' ') || undefined
+            }
             onClick={() => onSelect(note.owner, note.path)}
           >
             {finding !== undefined && <span className={`st st-${finding}`} />}
@@ -439,7 +472,25 @@ export function Tree({
             {showPath && where !== '' && <span className="where">{where}</span>}
           </button>
           {/* Out of the tab order, like every row but one: the keyboard reaches
-              it as the Delete key on the row, which the title names. */}
+              them as F2 and Delete on the row, which their titles name.
+
+              In one box rather than three loose buttons. In the sidebar the row
+              actions are lifted out of the flow and laid over the end of the
+              row, and three absolutely positioned buttons would sit on top of
+              each other — which is what the share and the bin already did. */}
+          <span className="node-acts">
+          {renamable && (
+            <button
+              type="button"
+              className="node-act node-rename"
+              tabIndex={-1}
+              title={copy.tree.renameNote(note.title)}
+              aria-label={copy.tree.renameNoteLabel(note.title)}
+              onClick={() => onRenameNote?.(note.owner, note.path, note.title)}
+            >
+              <PencilIcon size={14} />
+            </button>
+          )}
           {shareable && (
             <button
               type="button"
@@ -464,6 +515,7 @@ export function Tree({
               <TrashIcon size={14} />
             </button>
           )}
+          </span>
         </div>
       </li>
     );
@@ -493,15 +545,17 @@ export function Tree({
               {!isOpen && <span className="cnt">{count}</span>}
             </button>
             {owner === self && (
-              <button
-                type="button"
-                className="node-act"
-                title={copy.tree.renameFolder(displayName(child.name, hidePrefixes))}
-                aria-label={copy.tree.renameFolderLabel(displayName(child.name, hidePrefixes))}
-                onClick={() => onRenameFolder(child.path)}
-              >
-                ✎
-              </button>
+              <span className="node-acts">
+                <button
+                  type="button"
+                  className="node-act"
+                  title={copy.tree.renameFolder(displayName(child.name, hidePrefixes))}
+                  aria-label={copy.tree.renameFolderLabel(displayName(child.name, hidePrefixes))}
+                  onClick={() => onRenameFolder(child.path)}
+                >
+                  <PencilIcon size={14} />
+                </button>
+              </span>
             )}
           </div>
           {isOpen && <ul>{renderFolder(owner, child)}</ul>}

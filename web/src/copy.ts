@@ -526,6 +526,40 @@ export const copy = {
     withdrawFailed: 'Could not withdraw that share.',
   },
 
+  /* The dialog behind "Rename or move…" on one note — see `web/src/RenameDialog.tsx`. */
+  renameNote: {
+    menu: 'Rename or move…',
+    title: (title: string) => `Rename “${title}”`,
+    close: 'Close',
+    /** Before the note's current path, which is shown as code. */
+    nowAt: 'Now at',
+    name: 'Name',
+    folder: 'Folder',
+    root: 'Top of the vault',
+    /** Before the path the note will have, which is shown as code. */
+    becomes: 'Becomes',
+    /** Stands in for the new path while the name field is empty. */
+    noName: 'needs a name',
+    submit: 'Rename',
+    /** Said before the rename: this is the reason to do it here and not on disk. */
+    linksFollow: (count: number) =>
+      count === 1
+        ? '1 note links here. Its link is rewritten and keeps pointing at this note.'
+        : `${count} notes link here. Their links are rewritten and keep pointing at this note.`,
+    noLinks: 'No note links here yet, so there is nothing to follow it.',
+    /** The backlinks could not be read. Better than a count that might be wrong. */
+    linksUnknown: 'Any note that links here has its link rewritten to follow this one.',
+    /** Said afterwards, by the shell, with what the server really did. */
+    done: (to: string, links: number) =>
+      links === 0
+        ? `Now at “${to}”.`
+        : links === 1
+          ? `Now at “${to}” — 1 note that links here was rewritten and still points at it.`
+          : `Now at “${to}” — ${links} notes that link here were rewritten and still point at it.`,
+    taken: (to: string) => `“${to}” is taken by another note. Pick another name or folder.`,
+    failed: 'Could not rename that note.',
+  },
+
   tree: {
     /** The tree landmark itself, for a screen reader's list of regions. */
     label: 'Notes',
@@ -541,6 +575,8 @@ export const copy = {
     renameFolderLabel: (name: string) => `Rename ${name}`,
     deleteNote: (name: string) => `Delete “${name}” (Delete key)`,
     deleteNoteLabel: (name: string) => `Delete ${name}`,
+    renameNote: (name: string) => `Rename or move “${name}” (F2)`,
+    renameNoteLabel: (name: string) => `Rename ${name}`,
     shareNote: (name: string) => `Share “${name}”…`,
     shareNoteLabel: (name: string) => `Share ${name}`,
     spaceEmpty: 'Nothing in this space yet.',
