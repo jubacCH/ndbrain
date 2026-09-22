@@ -54,6 +54,8 @@ const server = vi.hoisted(() => ({
   backlinks: new Map<string, Array<{ source: string }>>(),
   /** Every rename that reached the server, as [owner, from, to]. */
   renamed: [] as Array<[string, string, string]>,
+  /** Every folder rename that reached the server, as [from, to]. */
+  renamedFolders: [] as Array<[string, string]>,
   /** Which notes the server says it rewrote links in, for the next rename. */
   updatedLinks: [] as string[],
   /** Set to refuse the next rename with that code. */
@@ -118,6 +120,12 @@ vi.mock('../src/api', async (original) => {
       if (server.putDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, server.putDelayMs));
       server.log.push(`put-end ${path}`);
       return { note: { path, title: '', content: '', size: 0, mtimeMs: 2 }, created: false };
+    },
+    renameFolder: async (from: string, to: string) => {
+      server.log.push(`folder-start ${from} -> ${to}`);
+      server.renamedFolders.push([from, to]);
+      server.log.push(`folder-end ${from} -> ${to}`);
+      return { movedNotes: 1, updatedLinks: 0 };
     },
     rename: async (owner: string, from: string, to: string) => {
       server.log.push(`rename-start ${from} -> ${to}`);
@@ -335,6 +343,35 @@ describe('renaming from the note header', () => {
     expect(server.writes).toEqual([PLAN]);
     expect(server.log.indexOf(`put-end ${PLAN}`)).toBeLessThan(
       server.log.indexOf(`rename-start ${PLAN} -> Projects/Deep/Planning.md`),
+    );
+  });
+
+  it('writes unsaved text before a folder around it is renamed', async () => {
+    // Renaming the folder moves the note with it. A save that overtakes the
+    // rename lands at the old path and creates the note there again — the same
+    // failure the note rename guards against, on the operation that moves many
+    // notes at once instead of one.
+    server.putDelayMs = 20;
+    mount();
+    await openFromPalette('Plan');
+
+    await user.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
+    expect(server.writes).toEqual([]);
+
+    vi.stubGlobal('prompt', () => 'Projects/Flach');
+    const tree = screen.getByRole('tree');
+    // `Deep` sits under `Projects`, which the tree opens on demand.
+    await user.click(within(tree).getByRole('button', { name: 'Projects' }));
+    const pencil = await within(tree).findByRole('button', {
+      name: copy.tree.renameFolderLabel('Deep'),
+    });
+    await user.click(pencil);
+    await advance(100);
+
+    await waitFor(() => expect(server.renamedFolders).toEqual([['Projects/Deep', 'Projects/Flach']]));
+    expect(server.writes).toEqual([PLAN]);
+    expect(server.log.indexOf(`put-end ${PLAN}`)).toBeLessThan(
+      server.log.indexOf('folder-start Projects/Deep -> Projects/Flach'),
     );
   });
 
