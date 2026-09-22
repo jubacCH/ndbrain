@@ -33,6 +33,7 @@ export type {
   FileRow,
   GraphData,
   LinkRow,
+  MissingNote,
   Note,
   NoteRow,
   OpenNote,
