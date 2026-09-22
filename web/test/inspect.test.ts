@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { GraphData } from '../src/api';
-import { indexGraph, neighbourhood, summarize, whyConnected } from '../src/inspect';
+import { indexGraph, neighbourhood, regionFacts, summarize, whyConnected } from '../src/inspect';
 import { refKey } from '../src/refkey';
 
 const O = 'jb';
@@ -158,5 +158,84 @@ describe('summarize', () => {
     expect(out.length).toBeLessThanOrEqual(61);
     expect(out.endsWith('…')).toBe(true);
     expect(out.slice(0, -1).split(' ').every((w) => /^word\d+$/.test(w))).toBe(true);
+  });
+});
+
+/**
+ * What the inspector says about a whole region.
+ *
+ * The briefing's region panel ("Orbit8 · 124 Notes · 18 Resources · 8 MOCs")
+ * with the AI taken out of it. Everything here has to be countable off the
+ * graph reply the view already holds: a number the data cannot give is left
+ * out, never estimated.
+ */
+describe('regionFacts', () => {
+  // A region as the layout hands one over: its members' keys, nothing else.
+  const rich: GraphData = {
+    nodes: [
+      { ...node('20_Areas/21_Homelab/Proxmox.md', ['homelab', 'Backup']), links: 7, updatedAt: 500 },
+      { ...node('20_Areas/21_Homelab/Backup.md', ['backup', 'HOMELAB']), links: 3, updatedAt: 900 },
+      { ...node('30_Resources/Checkmk.md', ['homelab']), links: 1, updatedAt: 100 },
+      { ...node('10_Projects/ndBrain.md'), links: 5, updatedAt: 700 },
+      { ...node('40_MOCs/Services.md'), links: 9, updatedAt: 50 },
+    ],
+    edges: [],
+  };
+  const index = indexGraph(rich);
+  const members = rich.nodes.map((n) => refKey(O, n.path));
+
+  it('counts the notes it can account for, and no others', () => {
+    const facts = regionFacts(index, [...members, refKey(O, 'Gone.md')]);
+    // The stray key is a note the reply does not carry. It is left out rather
+    // than counted as a note nobody can show.
+    expect(facts.notes).toBe(5);
+    expect(facts.kinds.reduce((sum, k) => sum + k.count, 0)).toBe(5);
+  });
+
+  it('counts by kind, most first, and names only the kinds it has', () => {
+    const facts = regionFacts(index, members);
+    expect(facts.kinds).toEqual([
+      { kind: 'area', label: '', count: 2 },
+      { kind: 'map', label: '', count: 1 },
+      { kind: 'project', label: '', count: 1 },
+      { kind: 'resource', label: '', count: 1 },
+    ]);
+    expect(facts.kinds.some((k) => k.kind === 'client')).toBe(false);
+  });
+
+  it('counts tags without case, in the spelling the notes use first', () => {
+    const facts = regionFacts(index, members);
+    expect(facts.tags).toEqual([
+      { tag: 'homelab', count: 3 },
+      { tag: 'Backup', count: 2 },
+    ]);
+  });
+
+  it('reports the last edit in the region, and nothing when it holds no note', () => {
+    expect(regionFacts(index, members).lastActive).toBe(900);
+    expect(regionFacts(index, []).lastActive).toBeNull();
+    expect(regionFacts(index, []).notes).toBe(0);
+    expect(regionFacts(index, []).kinds).toEqual([]);
+  });
+
+  it('puts the most connected notes first, by the links the server counted', () => {
+    const facts = regionFacts(index, members);
+    expect(facts.strongest.map((n) => [n.title, n.links])).toEqual([
+      ['Services', 9],
+      ['Proxmox', 7],
+      ['ndBrain', 5],
+      ['Backup', 3],
+      ['Checkmk', 1],
+    ]);
+  });
+
+  it('leaves out a note with no links at all rather than calling it a connection', () => {
+    const quiet: GraphData = {
+      nodes: [{ ...node('20_Areas/Alone.md'), links: 0, updatedAt: 1 }],
+      edges: [],
+    };
+    const facts = regionFacts(indexGraph(quiet), [refKey(O, '20_Areas/Alone.md')]);
+    expect(facts.notes).toBe(1);
+    expect(facts.strongest).toEqual([]);
   });
 });

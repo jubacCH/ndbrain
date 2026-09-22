@@ -14,7 +14,7 @@ import { toScreen } from '../src/brain/camera';
 import { SceneBuilder } from '../src/brain/scene';
 import { copy } from '../src/copy';
 import { indexGraph } from '../src/inspect';
-import { Inspector } from '../src/Inspector';
+import { Inspector, LinkInspector, RegionInspector } from '../src/Inspector';
 import { NetworkFrame } from '../src/NetworkFrame';
 import { refKey } from '../src/refkey';
 
@@ -252,5 +252,106 @@ describe('the inspector in the network frame', () => {
     expect(screen.queryByRole('region', { name: copy.inspector.label('Backup to Azure') })).toBeNull();
     expect(canvas).toHaveFocus();
     vi.unstubAllGlobals();
+  });
+});
+
+/**
+ * The panel for a whole knowledge area.
+ *
+ * Briefing point 19 with the AI taken out of it, and briefing point 29's
+ * "strong connections" for this area. Everything on it is counted off the
+ * graph reply; a number the reply cannot give is left out (`Home.tsx`).
+ */
+describe('the region inspector', () => {
+  const members = graph.nodes.map((n) => refKey(O, n.path));
+
+  it('names the area, counts its notes by kind, and shows its topics', () => {
+    wrap(<RegionInspector index={index} name="Kunden" members={members} onPick={vi.fn()} onOpen={vi.fn()} />);
+    const panel = screen.getByRole('region', { name: copy.inspector.region.label('Kunden') });
+    expect(within(panel).getByRole('heading', { level: 2 })).toHaveTextContent('Kunden');
+
+    // Four notes: two client projects, one area, one map of content.
+    const facts = panel.querySelectorAll('.inspector-facts');
+    expect(facts[0]!).toHaveTextContent(`${copy.inspector.region.notes}4`);
+    expect(facts[1]!).toHaveTextContent(`${copy.network.card.kind.client}2`);
+    expect(facts[1]!).toHaveTextContent(`${copy.network.card.kind.area}1`);
+    expect(facts[1]!).toHaveTextContent(`${copy.network.card.kind.map}1`);
+    // And no kind it does not hold.
+    expect(facts[1]!).not.toHaveTextContent(copy.network.card.kind.resource);
+    expect(within(panel).getByText('#backup')).toBeInTheDocument();
+  });
+
+  it('lists the most connected notes first and focuses the one that is clicked', async () => {
+    const onPick = vi.fn();
+    wrap(<RegionInspector index={index} name="Kunden" members={members} onPick={onPick} onOpen={vi.fn()} />);
+    const panel = screen.getByRole('region', { name: copy.inspector.region.label('Kunden') });
+    const rows = within(panel).getAllByRole('button', { name: /^Focus / });
+    expect(rows.map((b) => b.textContent)).toEqual([
+      expect.stringContaining('Backup to Azure'),
+      expect.stringContaining('Storage'),
+      expect.stringContaining('Kunden'),
+      expect.stringContaining('Veeam'),
+    ]);
+    expect(within(panel).getByText(copy.inspector.region.links(3))).toBeInTheDocument();
+
+    await userEvent.click(rows[1]!);
+    expect(onPick).toHaveBeenCalledWith(refKey(O, '20_Areas/Storage.md'));
+  });
+
+  it('says so rather than guessing when the area holds nothing this view can show', () => {
+    wrap(<RegionInspector index={index} name="Empty" members={['nobody']} onPick={vi.fn()} onOpen={vi.fn()} />);
+    const panel = screen.getByRole('region', { name: copy.inspector.region.label('Empty') });
+    expect(within(panel).getByText(copy.inspector.region.empty)).toBeInTheDocument();
+    expect(within(panel).getByText(copy.inspector.region.noStrongest)).toBeInTheDocument();
+    // No date invented for an area with no note to date.
+    expect(within(panel).queryByText(copy.inspector.region.lastActive)).toBeNull();
+  });
+
+  it('is closed by Escape, like the note panel', async () => {
+    const onPick = vi.fn();
+    wrap(<RegionInspector index={index} name="Kunden" members={members} onPick={onPick} onOpen={vi.fn()} />);
+    const panel = screen.getByRole('region', { name: copy.inspector.region.label('Kunden') });
+    within(panel).getByRole('button', { name: copy.inspector.close }).focus();
+    await userEvent.keyboard('{Escape}');
+    expect(onPick).toHaveBeenCalledWith(null);
+  });
+});
+
+/**
+ * The panel for one link: briefing point 22, which calls it extremely
+ * important. The reason is structural and was already there; what was missing
+ * was a way to reach it without first focusing a note and finding the row.
+ */
+describe('the link inspector', () => {
+  it('says why the two notes are connected, from the structure alone', () => {
+    wrap(<LinkInspector index={index} from={AZURE} to={VEEAM} onPick={vi.fn()} onOpen={vi.fn()} />);
+    const panel = screen.getByRole('region', {
+      name: copy.inspector.link.label('Backup to Azure', 'Veeam'),
+    });
+    const reason = panel.querySelector('.inspector-reason')!;
+    expect(reason).toHaveTextContent(copy.inspector.reason.outgoing);
+    expect(reason).toHaveTextContent(copy.inspector.reason.sameFolder);
+    expect(reason).toHaveTextContent('13_Kunden');
+    expect(reason).toHaveTextContent(copy.inspector.reason.tags(1));
+    // No confidence percentage: the briefing's example ends with one, this
+    // view has no way to compute it, and an invented number is worse than none.
+    expect(panel.textContent).not.toMatch(/\d+\s?%/);
+  });
+
+  it('offers both ends, and focuses the one that is clicked', async () => {
+    const onPick = vi.fn();
+    wrap(<LinkInspector index={index} from={KUNDEN} to={AZURE} onPick={onPick} onOpen={vi.fn()} />);
+    const panel = screen.getByRole('region', {
+      name: copy.inspector.link.label('Kunden', 'Backup to Azure'),
+    });
+    const ends = within(panel).getAllByRole('button', { name: /^Focus / });
+    expect(ends).toHaveLength(2);
+    await userEvent.click(ends[1]!);
+    expect(onPick).toHaveBeenCalledWith(AZURE);
+  });
+
+  it('shows nothing at all for a link whose notes the reply no longer carries', () => {
+    const { container } = wrap(<LinkInspector index={index} from={AZURE} to="gone" onPick={vi.fn()} onOpen={vi.fn()} />);
+    expect(container.querySelector('.inspector')).toBeNull();
   });
 });
