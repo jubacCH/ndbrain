@@ -389,6 +389,29 @@ export const api = {
       body: JSON.stringify({ content, owner, ifAbsent: true }),
     }),
 
+  /**
+   * Adds text to a note without reading it first.
+   *
+   * The whole operation happens on the server, under the note's write lock, so
+   * it cannot lose what somebody else wrote in the meantime — see
+   * `NoteService.appendNote`. A read-modify-write from here would, and the note
+   * this is most often aimed at is today's, which is exactly the one that may
+   * be open in another tab with unsaved text.
+   *
+   * `ifAbsent` is what the note is created with if it is not there; without it
+   * an absent note is refused.
+   */
+  append: (
+    owner: string,
+    path: string,
+    content: string,
+    options: { section?: string; ifAbsent?: string } = {},
+  ) =>
+    request(`/api/v1/append/${encodePath(path)}`, S.PutNoteResponse, {
+      method: 'POST',
+      body: JSON.stringify({ content, owner, ...options }),
+    }),
+
   deleteNote: (owner: string, path: string) =>
     request(`/api/v1/notes/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, Empty, {
       method: 'DELETE',

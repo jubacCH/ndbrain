@@ -11,6 +11,7 @@
  */
 
 import { CaseCollisionError, NoteExistsError, NoteNotFoundError } from '../errors.js';
+import { appended } from '../markdown/edit.js';
 import { parseNote, type ParsedNote } from '../markdown/parse.js';
 import {
   assertLinkableName,
@@ -64,6 +65,20 @@ export interface PutOptions extends Authorized {
    * version about to be overwritten is kept as a conflict copy.
    */
   baseMtimeMs?: number;
+}
+
+export interface AppendOptions extends Authorized {
+  /**
+   * The heading the text goes under, by its own words. Without it the text goes
+   * at the end of the note; see `appended` for what a missing section does.
+   */
+  section?: string;
+  /**
+   * What the note is created with when it is not there — the text the addition
+   * is then appended to. Absent means an absent note is refused, which is what
+   * every caller that means "add to this note" wants.
+   */
+  ifAbsent?: string;
 }
 
 /** Both ends of a move are checked again in the lock; see `Authorized`. */
@@ -388,6 +403,74 @@ export class NoteService {
       };
       if (conflictCopy !== null) result.conflictCopy = conflictCopy;
       return result;
+    });
+  }
+
+  /**
+   * Adds text to a note, creating it from `ifAbsent` when it is not there.
+   *
+   * Read and write happen inside one hold of the note's lock, and that is the
+   * whole point of the method existing at all. The same operation done as a
+   * read-modify-write by a caller — GET the note, splice, PUT it back — has a
+   * window between the two calls in which anybody else's write is lost: the
+   * editor in another tab, an agent through MCP, a second capture typed
+   * quickly. Here there is no window. Of two appends racing, one waits and then
+   * reads what the other wrote, so the second addition lands after the first
+   * and neither is gone.
+   *
+   * That is also why there is no `baseMtimeMs` and no conflict copy. A conflict
+   * copy preserves a version a write is about to *displace*, and an append
+   * displaces nothing: it only ever grows the note. The editor's own save still
+   * carries its base version, so a tab that was holding this note from before
+   * the append and saves afterwards makes a copy as it always did — the
+   * appended text is protected by the mechanism that already existed, not by a
+   * second one here.
+   */
+  async appendNote(
+    owner: string,
+    notePath: string,
+    addition: string,
+    options: AppendOptions = {},
+  ): Promise<PutResult> {
+    const canonical = this.#assertNotePath(notePath);
+
+    return this.#locks.run(lockKey(owner, canonical), async () => {
+      const siblings = await this.#vault.siblingCaseKeys(owner, canonical);
+      const name = canonical.slice(canonical.lastIndexOf('/') + 1);
+      const existing = siblings.get(caseKey(name));
+
+      // The binding first, then the permission, then anything about what is on
+      // this path — the order `putNote` explains at length and for the same
+      // reason: the collision below names a file.
+      const confirmed = await this.#lifecycle.confirm(owner, canonical);
+      options.authorize?.();
+
+      if (existing !== undefined && existing !== name) {
+        throw new CaseCollisionError(
+          `"${existing}" already exists and differs only in letter case; ` +
+            'that pair cannot survive on Windows or macOS',
+        );
+      }
+
+      // "Add to this note" is not "create this note". A caller that means both
+      // says so by sending the text a new note starts with.
+      if (existing === undefined && options.ifAbsent === undefined) {
+        throw new NoteNotFoundError('note does not exist');
+      }
+
+      // Read through the vault rather than through `getNote`: this is the read
+      // half of the read-modify-write the lock exists to protect, and it should
+      // read as one.
+      const before =
+        existing === undefined ? options.ifAbsent! : await this.#vault.readNote(owner, canonical);
+      const content = appended(before, addition, options.section);
+
+      if (existing === undefined) assertLinkableName(canonical);
+      await this.#vault.writeNote(owner, canonical, content);
+      if (existing === undefined) this.#lifecycle.created(owner, canonical);
+      else await this.#lifecycle.rebind(owner, canonical, confirmed);
+
+      return { note: await this.getNote(owner, canonical), created: existing === undefined };
     });
   }
 

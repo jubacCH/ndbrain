@@ -27,6 +27,7 @@ import type { App } from '../app.js';
 import { withinScope, type ApiKey, type ApiKeyService } from '../auth/keys.js';
 import { normalizePrefix, type View } from '../auth/shares.js';
 import { NoteNotFoundError } from '../errors.js';
+import { appended } from '../markdown/edit.js';
 import type { DeletedNotes } from '../notes/deleted.js';
 import { normalizeVaultPath } from '../vault/paths.js';
 
@@ -487,6 +488,122 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
 
+  /**
+   * The tidying half of the librarian, for an agent rather than for the eye.
+   *
+   * **Which findings, and why these three.** The tidy view knows five. Three of
+   * them name a defect an agent can actually repair with the tools it already
+   * has: a dead link is fixed by correcting the `[[…]]` or writing the note it
+   * names, an orphan by linking it from wherever it belongs, an untagged note
+   * by adding the tag the rest of the vault uses. The other two are not work,
+   * they are judgement. "Untouched for 90 days" is a number a person reads
+   * against what the note is for — last spring's journal is not neglected — and
+   * an agent that goes off "refreshing" old notes is doing the one thing it
+   * must not do unasked. A conflict copy asks which of two versions of
+   * somebody's own writing survives; that is a decision to put in front of the
+   * person, not a chore to hand to a key. Offering either would have been a
+   * number in a list, and a number an agent feels obliged to act on is worse
+   * than no number.
+   *
+   * `untaggedFindings` rather than `untagged`, so a vault that has never used a
+   * tag is not reported as sixty defects — the same rule the overview and the
+   * tidy table share, from the same function.
+   *
+   * **Scope.** Every list is asked for as a `View`, never filtered afterwards:
+   * a cap applied before the scope cuts the wrong rows (see `keyView`). The
+   * heavy lifting for dead links is in `Queries.deadLinks` — read its comment
+   * for what "broken" means to a key that holds one folder, and for why that
+   * answer is what keeps this tool from being an existence oracle over the rest
+   * of the vault.
+   */
+  {
+    name: 'list_findings',
+    title: 'List what needs tidying',
+    description:
+      'What is untidy in the notes: links that point nowhere, notes nothing links to, and notes ' +
+      'carrying no tag. Use it before tidying up, or when asked to clean something up — it names ' +
+      'the note to open for each finding, so a following edit_note or create_note can be aimed ' +
+      'rather than guessed. Optionally limited to one folder or to one kind of finding.',
+    readOnly: true,
+    destructive: false,
+    inputSchema: schema(
+      {
+        kind: {
+          type: 'string',
+          description: 'One of dead_links, orphans, untagged. Omit for all three.',
+        },
+        folder: { type: 'string', description: 'Only findings in notes below this folder.' },
+        limit: { type: 'number', description: 'Maximum entries per kind (default 50).' },
+      },
+      [],
+    ),
+    handler: async (context, input) => {
+      // `checkArguments` holds the call to the published schema, but the schema
+      // only says "string" — the set of names is this tool's own contract, so
+      // it is refused here, by name, the way a wrong argument name is.
+      const kind = typeof input['kind'] === 'string' ? input['kind'] : '';
+      if (kind !== '' && !FINDING_KINDS.includes(kind)) {
+        context.keys.log(context.key, 'list_findings', null, false);
+        throw new ToolRefusal(
+          `list_findings has no finding called "${kind}" — it knows ${FINDING_KINDS.join(', ')}. ` +
+            'Omit it to get all three.',
+        );
+      }
+
+      const folder = typeof input['folder'] === 'string' ? input['folder'] : '';
+      const view = viewUnder(context.key, folder);
+      const limit = clampLimit(input['limit'], 50);
+      const wanted = (name: string): boolean => kind === '' || kind === name;
+
+      const sections: string[][] = [];
+      let found = 0;
+
+      if (wanted('dead_links')) {
+        const rows = context.app.queries.deadLinks(view);
+        found += rows.length;
+        sections.push(
+          findingSection(
+            'Links that point nowhere',
+            rows.length,
+            limit,
+            rows.slice(0, limit).map((link) => `  ${link.source} → [[${link.targetRaw}]]`),
+          ),
+        );
+      }
+
+      if (wanted('orphans')) {
+        const rows = context.app.queries.orphans(view);
+        found += rows.length;
+        sections.push(
+          findingSection(
+            'Notes nothing links to',
+            rows.length,
+            limit,
+            rows.slice(0, limit).map((note) => `  ${note.path}`),
+          ),
+        );
+      }
+
+      if (wanted('untagged')) {
+        const rows = context.app.queries.untaggedFindings(view);
+        found += rows.length;
+        sections.push(
+          findingSection(
+            'Notes without a tag',
+            rows.length,
+            limit,
+            rows.slice(0, limit).map((note) => `  ${note.path}`),
+          ),
+        );
+      }
+
+      context.keys.log(context.key, 'list_findings', folder || null, true);
+
+      if (found === 0) return 'Nothing to tidy.';
+      return sections.map((lines) => lines.join('\n')).join('\n\n');
+    },
+  },
+
   {
     name: 'create_note',
     title: 'Create a note',
@@ -541,10 +658,10 @@ export const TOOLS: ToolDefinition[] = [
       assertWritable(context, 'append_note', notePath);
 
       const note = await context.app.notes.getNote(context.key.owner, notePath);
-      const addition = input['content'] as string;
-      // Guarantee a blank line between what was there and what is added, without
-      // adding one to a note that already ends in one.
-      const separator = note.content.endsWith('\n\n') ? '' : note.content.endsWith('\n') ? '\n' : '\n\n';
+      // The same rule the append endpoint writes by — one blank line between
+      // what was there and what is added, and none added to a note that ends in
+      // one already. Shared rather than repeated: two copies of it would drift.
+      const content = appended(note.content, input['content'] as string);
 
       // The version this append was computed from. Between the read above and
       // the write below, a person may have saved the same note in the browser —
@@ -553,7 +670,7 @@ export const TOOLS: ToolDefinition[] = [
       const result = await context.app.updateNote(
         context.key.owner,
         notePath,
-        note.content + separator + addition,
+        content,
         context.key.name,
         { baseMtimeMs: note.mtimeMs },
       );
@@ -767,6 +884,28 @@ export const TOOLS: ToolDefinition[] = [
     },
   },
 ];
+
+/** What `list_findings` offers, and the list its refusal quotes back. */
+const FINDING_KINDS = ['dead_links', 'orphans', 'untagged'];
+
+/**
+ * One block of `list_findings`, honest about what it left out.
+ *
+ * A capped list that does not say it was capped reads as "that was all of
+ * them", and the tidying then looks finished when it is not — the same reason
+ * `list_tasks` reports its own total and the tidy view carries `truncated`.
+ * The count is the real one, so a section header stands for the whole finding
+ * even when only part of it is printed.
+ */
+function findingSection(title: string, total: number, limit: number, lines: string[]): string[] {
+  if (total === 0) return [`${title}: none.`];
+
+  const out = [`${title} (${total}):`, ...lines];
+  if (total > lines.length) {
+    out.push(`  … and ${total - lines.length} more; narrow it with a folder or raise the limit.`);
+  }
+  return out;
+}
 
 function clampLimit(value: unknown, fallback: number): number {
   const parsed = Number(value);

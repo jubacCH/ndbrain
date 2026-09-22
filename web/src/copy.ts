@@ -1017,6 +1017,29 @@ export const copy = {
     open: 'Open',
     reveal: 'Show in tree',
     delete: 'Delete…',
+    /** The panel for a whole knowledge area, reached by clicking its name. */
+    region: {
+      label: (name: string) => `About the ${name} area`,
+      area: 'Knowledge area',
+      notes: 'Notes',
+      contents: 'Contents',
+      topics: 'Topics',
+      noTopics: 'none',
+      lastActive: 'Last active',
+      strongest: 'Most connected',
+      noStrongest: 'None of these notes is linked to anything yet.',
+      links: (count: number) => `${count} ${count === 1 ? 'link' : 'links'}`,
+      empty: 'This area holds no note this view can show.',
+      hint: 'Arrow keys walk the areas.',
+    },
+    /** The panel for one link, reached by clicking the link itself. */
+    link: {
+      label: (from: string, to: string) => `Why ${from} and ${to} are connected`,
+      heading: 'Why are these connected?',
+      between: 'Between',
+      none: 'Nothing but the link itself.',
+      hint: 'Arrow keys walk a note’s links.',
+    },
   },
   /** The start page: where to pick up, what happened today, how the vault is doing. */
   home: {
@@ -1057,6 +1080,26 @@ export const copy = {
    * The note itself is written in the vault's language — see `dayHeading` in
    * `shared/journal.ts` — and none of its text is here.
    */
+  /**
+   * The one field on the start page.
+   *
+   * It never names a path. That is the whole idea: the thought goes somewhere
+   * sensible without anybody deciding where, and "today's note" is as much as
+   * the words need to say. What the field does promise it says plainly — the
+   * confirmation is a fact, not praise, and the failure says the text is still
+   * there, because that is the first thing somebody will want to know.
+   */
+  capture: {
+    title: 'Capture',
+    label: 'Something on your mind',
+    placeholder: 'Write it down and let go of it…',
+    hint: "Goes to today's note. ⌘↵ or Ctrl ↵ sends it.",
+    save: 'Add to today',
+    saving: 'Adding…',
+    saved: "Added to today's note.",
+    failed: 'That could not be sent. Your text is still here — try again.',
+  },
+
   journal: {
     title: 'Journal',
     calendarLabel: (month: string) => `Daily notes in ${month}`,
