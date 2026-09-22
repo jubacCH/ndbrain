@@ -49,7 +49,21 @@ function toReply(response: { statusCode: number; body: string }): Reply {
   return { status: response.statusCode, raw: response.body, body };
 }
 
-export async function startHarness(prefix: string, overrides: Partial<Config> = {}): Promise<Harness> {
+/** What a test can put in place of the harness's own pieces. */
+export interface HarnessDeps {
+  /**
+   * The login brake. Left out, the harness installs one with a limit no test
+   * will ever reach — a brake that closes halfway through an unrelated test is
+   * a flake, not a finding. A test about the brake itself passes its own.
+   */
+  throttle?: LoginThrottle;
+}
+
+export async function startHarness(
+  prefix: string,
+  overrides: Partial<Config> = {},
+  deps: HarnessDeps = {},
+): Promise<Harness> {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), `ndbrain-${prefix}-`));
   const config: Config = {
     ...loadConfig(),
@@ -71,7 +85,7 @@ export async function startHarness(prefix: string, overrides: Partial<Config> = 
     settings: runtime.settings,
     history: runtime.history,
     config,
-    throttle: new LoginThrottle({ limit: 1000 }),
+    throttle: deps.throttle ?? new LoginThrottle({ limit: 1000 }),
   });
 
   const cookies: Record<string, string> = {};
