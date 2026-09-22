@@ -60,7 +60,7 @@ const CONTENT = [
 
 function note(content: string) {
   return {
-    note: { path: '10_Projects/13_Kunden/Backup to Azure.md', title: 'Backup to Azure', content, size: content.length, mtimeMs: 0 },
+    note: { path: '10_Projects/13_Kunden/Backup to Azure.md', title: 'Backup to Azure', content, size: content.length, mtimeMs: 0, hash: 'h1' },
     owner: O,
     canWrite: true,
   };

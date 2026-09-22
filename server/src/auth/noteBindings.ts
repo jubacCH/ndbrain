@@ -24,7 +24,14 @@ import type { Vault } from '../vault/fs.js';
 import { caseKey } from '../vault/paths.js';
 import type { NoteLifecycle, ShareService } from './shares.js';
 
-/** The content hash a note share is confirmed against. */
+/**
+ * How ndBrain says "the same text".
+ *
+ * A note share is confirmed against it, and `NoteService.getNote` hands it out
+ * with every read so a writer can name the version it started from — one
+ * function rather than two, because the two questions are the same question and
+ * two answers to it would eventually disagree.
+ */
 export function contentHash(content: string | Buffer): string {
   return createHash('sha1').update(content).digest('hex');
 }
