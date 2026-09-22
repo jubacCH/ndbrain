@@ -1452,6 +1452,19 @@ tbody tr[data-selected='true']:hover td {
   background: var(--surface-3);
 }
 
+/* The keyboard's way into a row.
+ *
+ * A row that opens on a click needs one real control inside it, or the only
+ * action it offers is mouse-only. It is drawn as the text it replaced — the
+ * affordance is the whole row, and a second one inside it would say there are
+ * two things here — and shows itself when it takes the focus. */
+.rowopen {
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
 /* One task-list row per note it sits in, so a task never stands without the
    context that gives it meaning. `--surface-2` is the same neutral the table
    header already uses — structure, not a finding, so it carries no colour. */

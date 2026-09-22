@@ -333,3 +333,64 @@ describe('asked for, never written', () => {
     expect(screen.queryByRole('region', { name: copy.tidy.missing.title })).toBeNull();
   });
 });
+
+/**
+ * A finding is a row, and for a long time the row was the only way to open it:
+ * `onClick` on the `<tr>`, no role, no key handler. The keyboard reached the
+ * selection checkbox in front of it and stopped there, so the one thing this
+ * view exists for — go and look at the note — was mouse-only.
+ */
+describe('opening a finding without a mouse', () => {
+  const orphan = {
+    owner: 'julian',
+    path: 'Inbox/Lose Notiz.md',
+    title: 'Lose Notiz',
+    size: 1,
+    mtimeMs: 1_700_000_000_000,
+  };
+
+  function renderOneFinding() {
+    return renderTidy({
+      data: tidy({
+        orphans: [orphan],
+        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0 },
+      }),
+    });
+  }
+
+  it('lets Tab reach the finding and Enter open it', async () => {
+    const user = userEvent.setup();
+    const { onOpen } = renderOneFinding();
+
+    const open = screen.getByRole('button', { name: 'Lose Notiz' });
+
+    const reached: Element[] = [];
+    for (let step = 0; step < 12; step += 1) {
+      await user.tab();
+      reached.push(document.activeElement!);
+    }
+    expect(reached).toContain(open);
+
+    open.focus();
+    await user.keyboard('{Enter}');
+    // Exactly once: the row still opens on a click, and the control inside it
+    // must not make that one press count twice.
+    expect(onOpen.mock.calls).toEqual([['Inbox/Lose Notiz.md']]);
+  });
+
+  it('still opens the finding on a click anywhere in the row, once', async () => {
+    const user = userEvent.setup();
+    const { onOpen } = renderOneFinding();
+
+    await user.click(screen.getByText('Inbox'));
+    expect(onOpen.mock.calls).toEqual([['Inbox/Lose Notiz.md']]);
+  });
+
+  it('counts a click on the finding itself once, not twice', async () => {
+    const user = userEvent.setup();
+    const { onOpen } = renderOneFinding();
+
+    await user.click(screen.getByRole('button', { name: 'Lose Notiz' }));
+    expect(onOpen.mock.calls).toEqual([['Inbox/Lose Notiz.md']]);
+  });
+});
