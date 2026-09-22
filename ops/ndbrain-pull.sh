@@ -102,8 +102,25 @@ if name=$(remote db-name 2>/dev/null) && [ -n "$name" ]; then
   done
 fi
 
+# --- Zustand der Historie drüben ----------------------------------------
+# Hier abgefragt und nicht im Überwachungs-Check selbst: der Check läuft jede
+# Minute, dieses Skript alle fünfzehn, und eine SSH-Verbindung pro Minute wäre
+# der Preis für eine Antwort, die sich so oft gar nicht ändert.
+#
+# Warum es überhaupt hierher gehört: `history.ts` übersetzt jeden git-Fehler in
+# "keine Versionen". Steht das Sidecar seit Wochen, sieht das in der Anwendung
+# aus wie eine Notiz ohne Geschichte, nicht wie ein Ausfall. Hinschauen ist der
+# einzige Weg, es zu merken.
+if zustand=$(ssh -o BatchMode=yes -o ConnectTimeout=20 "$SOURCE" \
+  "pct exec $CTID -- systemctl is-active ndbrain-history.timer" 2>/dev/null); then
+  printf '%s\n' "$zustand" > "$DEST/historie-timer"
+else
+  printf 'unerreichbar\n' > "$DEST/historie-timer"
+fi
+
 # Ein Zeitstempel, den eine Überwachung lesen kann, ohne das Verzeichnis zu
-# durchsuchen: steht er still, läuft das Backup nicht mehr.
+# durchsuchen: steht er still, läuft das Backup nicht mehr. Als letztes
+# geschrieben, damit er nur einen Lauf datiert, der auch durchkam.
 date -Is > "$DEST/zuletzt-gezogen"
 
 notes=$(find "$DEST/vaults" -name '*.md' -not -path '*/.git/*' 2>/dev/null | wc -l)
