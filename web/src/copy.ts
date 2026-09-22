@@ -48,7 +48,6 @@ export const copy = {
     /** The sidebar landmark, for a screen reader's list of regions. */
     label: 'Navigation',
     newNote: 'New note',
-    folder: 'Folder',
     newFolder: 'New folder',
     overview: 'Overview',
     network: 'Whole network',
@@ -77,7 +76,6 @@ export const copy = {
     tagline: 'My Second Brain',
     collapse: 'Collapse sidebar',
     expand: 'Expand sidebar',
-    open: 'open',
     filterShortcut: 'Filter the tree',
     /** Which entry of the recents list is the note on screen. */
     openNow: 'open now',
@@ -115,6 +113,15 @@ export const copy = {
       journal: (days: number, inMonth: number) =>
         `${days} ${days === 1 ? 'daily note' : 'daily notes'} · ${inMonth} this month`,
       loading: 'Loading…',
+      /*
+       * The two readings of a line of numbers that never arrived.
+       *
+       * `0 notes · 0 folders` under a tree that failed to load is a claim about
+       * the vault, and it is false. These say what is actually known instead,
+       * which is nothing.
+       */
+      failed: 'Could not be loaded',
+      offline: 'Offline',
     },
     network: {
       switcher: 'How to show the network',
@@ -152,7 +159,6 @@ export const copy = {
     /** Around the link syntax, which is shown as code. */
     noLinksYet: { before: 'No links yet. Type ', after: ' in the text to connect this note.' },
     linkSyntax: '[[',
-    loading: 'Loading…',
     loadingNeighbourhood: 'Loading…',
   },
 
@@ -280,30 +286,52 @@ export const copy = {
     closeMessage: 'Dismiss message',
   },
 
+  /**
+   * What a view says when the answer never came.
+   *
+   * Deliberately its own block rather than a line inside each view's copy,
+   * because the mistake it exists to prevent is one every view can make on its
+   * own: reading `query.data ?? []` and drawing the empty state over a request
+   * that failed. One vocabulary, so "nothing here" and "we do not know" cannot
+   * drift into sounding alike.
+   *
+   * The nouns below are the subject of those sentences — the thing that could
+   * not be read, named rather than left as "data". "Could not load the
+   * findings" tells somebody which part of the screen is missing; "An error
+   * occurred" tells them nothing they could not see.
+   */
+  trouble: {
+    /** The server answered, and its answer was that it could not. */
+    failed: (what: string) => `Could not load ${what}.`,
+    /** The request was never sent, so there is nothing to blame the server for. */
+    offline: (what: string) => `No connection — ${what} cannot be loaded.`,
+    retry: 'Try again',
+    /** Said once for the whole window, above whatever view is open. */
+    offlineBanner: 'No connection to the server.',
+    /*
+     * Why an offline page is this empty, said plainly.
+     *
+     * ndBrain caches no note text in the browser — the service worker passes
+     * `/api/` through in both directions on purpose. That is the reason there
+     * is never stale note text on this screen, and it is also the reason there
+     * is nothing at all here right now. Both halves are worth saying.
+     */
+    offlineBannerWhy: 'Notes are never kept on this device, so nothing can be shown until it is back.',
+    notes: 'your notes',
+    findings: 'the findings',
+    files: 'the files',
+    network: 'the network',
+    shares: 'what is shared',
+    tasks: 'the tasks',
+    overview: 'the overview',
+  },
+
   overview: {
     title: 'Overview',
     notes: (count: number) => `${count} ${count === 1 ? 'note' : 'notes'}`,
-    nothingToDo: 'nothing to do',
-    needAttention: (count: number) => `${count} need attention`,
-    needsAttention: 'Needs attention',
-    clean: 'Nothing needs attention. The vault is in good order.',
-    /** The findings that came back empty, said once and quietly. */
-    noneOf: (labels: string[]) =>
-      `No ${labels.length === 1 ? labels[0] : labels.slice(0, -1).join(', ') + ' or ' + labels[labels.length - 1]}.`,
-    orphaned: 'orphaned',
-    brokenLinks: 'broken links',
-    untagged: 'untagged',
-    untouched: 'untouched',
-    conflictCopies: 'conflict copies',
-    sinceYesterday: 'Since yesterday',
-    nothingHappened: 'Nothing happened.',
-    openTasks: 'Open tasks',
     noTasks: 'No open tasks.',
     seeAllTasks: 'See all tasks',
-    recentlyEdited: 'Recently edited',
-    nothingYet: 'Nothing yet.',
     tags: 'Tags',
-    noTags: 'No tags yet.',
     loadingGraph: 'Relationships are loading…',
     deleted: 'deleted',
   },
@@ -312,9 +340,14 @@ export const copy = {
     title: 'Tidy up',
     clean: 'Nothing to do — the vault is clean.',
     found: (count: number) => `${count} findings · independent of structure, applies to any folder`,
-    capped: (shown: number, total: number, shownUntagged: number, totalUntagged: number) =>
-      `More findings than fit in one answer — showing the first ${shown} of ${total} orphaned, ` +
-      `${shownUntagged} of ${totalUntagged} untagged. Work through these and the rest will appear.`,
+    capped: (
+      orphans: readonly [number, number],
+      untagged: readonly [number, number],
+      conflicts: readonly [number, number],
+    ): string =>
+      `More findings than fit in one answer — showing the first ${orphans[0]} of ${orphans[1]} orphaned, ` +
+      `${untagged[0]} of ${untagged[1]} untagged, ${conflicts[0]} of ${conflicts[1]} conflict copies. ` +
+      `Work through these and the rest will appear.`,
     nothingSelected: 'Nothing selected',
     selected: (count: number) => `${count} selected`,
     move: 'Move…',
@@ -409,14 +442,10 @@ export const copy = {
     /** The field's name for a screen reader; the placeholder is not one. */
     label: 'Search the full text',
     nothingFound: 'Nothing found',
-    /* Obsidian and Notion both do this: the query you typed is usually the
-       title of the note you were looking for and did not have yet. */
-    createInstead: (q: string) => `Create “${q}”`,
     results: (count: number) => `${count} ${count === 1 ? 'result' : 'results'}`,
     fromLastDays,
     days: (days: number) => `${days} days`,
     folder: 'Folder',
-    newFolder: 'New folder',
     tag: 'Tag',
     clear: 'clear',
     period: 'Period',
@@ -490,7 +519,6 @@ export const copy = {
     accountLabel: 'Account to share with',
     accountPlaceholder: 'account name',
     folder: 'Folder',
-    newFolder: 'New folder',
     folderLabel: 'Folder to share',
     /** Says what leaving it empty means, before the warning under the form does. */
     folderPlaceholder: 'empty = the whole vault',
@@ -516,7 +544,6 @@ export const copy = {
     decline: 'Decline',
     what: 'Shared',
     kind: { vault: 'Vault', folder: 'Folder', note: 'Note' } as const,
-    kindLabel: (kind: string) => `Shared ${kind.toLowerCase()}`,
   },
 
   /* The dialog behind "Share…" on one note — see `web/src/ShareDialog.tsx`. */
@@ -577,6 +604,38 @@ export const copy = {
           : `Now at “${to}” — ${links} notes that link here were rewritten and still point at it.`,
     taken: (to: string) => `“${to}” is taken by another note. Pick another name or folder.`,
     failed: 'Could not rename that note.',
+  },
+
+  renameFolder: {
+    /**
+     * Said afterwards, by the shell, with what the server really did.
+     *
+     * Attachments are counted separately from notes because they move for a
+     * different reason: one sits beside its note so that the note's `![[embed]]`
+     * resolves without a lookup. Somebody who moved a folder of screenshots and
+     * reads only "12 notes moved" is left to guess whether the pictures came.
+     */
+    done: (from: string, to: string, notes: number, files: number, links: number): string => {
+      const parts = [`${notes} ${notes === 1 ? 'note' : 'notes'} moved`];
+      if (files > 0) parts.push(`${files} ${files === 1 ? 'attachment' : 'attachments'}`);
+      if (links > 0) parts.push(`links updated in ${links} ${links === 1 ? 'note' : 'notes'}`);
+      return `“${from}” → “${to}”: ${parts.join(', ')}.`;
+    },
+    /**
+     * What the move could not take, at the path it really has now.
+     *
+     * A folder move carries on past a collision rather than rolling back, so
+     * this sentence is the only place the leftovers are named — and naming the
+     * path matters, because a case change that cannot finish leaves them under
+     * an interim folder name nobody typed. As many as fit, then a count.
+     */
+    leftBehind: (failed: readonly { path: string; reason: string }[]): string => {
+      const named = failed.slice(0, 3).map((entry) => entry.path).join(', ');
+      const more = failed.length > 3 ? ` and ${failed.length - 3} more` : '';
+      const why = failed[0]?.reason.trim() ?? '';
+      const because = why === '' ? '' : ` — ${clip(why, 140)}`;
+      return ` ${failed.length} could not be moved and ${failed.length === 1 ? 'is' : 'are'} still at: ${named}${more}${because}`;
+    },
   },
 
   tree: {
@@ -672,6 +731,24 @@ export const copy = {
     tooMany: 'Too many attempts. Wait a moment.',
     noSelfService:
       'Accounts are created by the administrator — there is deliberately no sign-up.',
+    /**
+     * Why this form is on screen when somebody did not ask for it.
+     *
+     * Without it, an expired session is a click that replaces the whole
+     * application with a login form and says nothing — which reads as a bug, or
+     * worse, as the vault having gone.
+     */
+    expired: 'Your session ended. Sign in again to carry on where you were.',
+    /**
+     * Text that was in the editor and not yet on the server when the session
+     * ended.
+     *
+     * The shell is gone by the time this form renders, and with it the editor
+     * holding the only copy. Nothing else on this screen can offer it back, so
+     * this does — the same bargain the crash box makes, for the same reason.
+     */
+    unsaved: 'This had not been saved when the session ended. Copy it now — it is not on the server.',
+    unsavedLabel: 'Unsaved text',
   },
 
   network: {
@@ -692,7 +769,6 @@ export const copy = {
     doubleClick: 'Double-click opens the note',
     /** Relative times shorter than a minute. */
     justNow: 'just now',
-    loading: 'Relationships are loading…',
     /**
      * The tissue is decoration and says so, in the legend, in as many words.
      *
@@ -798,7 +874,6 @@ export const copy = {
     showRecentHint: 'A shortcut back to the notes you had open.',
     recentCount: 'How many',
     recentCountHint: 'Older ones drop off the end.',
-    off: 'off',
 
     writing: 'Writing',
     saveDelay: 'Save after',
@@ -1121,13 +1196,11 @@ export const copy = {
 
   journal: {
     title: 'Journal',
-    calendarLabel: (month: string) => `Daily notes in ${month}`,
     previousMonth: 'Previous month',
     nextMonth: 'Next month',
     thisMonth: 'Today',
     hasNote: 'has a note',
     noNote: 'no note yet',
-    today: 'today',
     dayLabel: (date: string, state: string, isToday: boolean) =>
       `${date}${isToday ? ', today' : ''}, ${state}`,
     hint: 'Arrow keys move between days, Enter opens one. Page Up and Page Down change the month.',
@@ -1145,7 +1218,6 @@ export const copy = {
     startDay: (date: string) => `Start the note for ${date}`,
     emptyNotes: 'Nothing under “Notizen” yet.',
     cardNoNote: 'No note for this day.',
-    openCalendar: 'Open journal',
   },
 
   /** Brain health: a calm number and what it is made of. Never a reward. */

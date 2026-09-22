@@ -320,7 +320,15 @@ export const CreateFolderResponse = z.object({ folder: z.string() });
 export const RenameFolderResponse = z.object({
   folder: z.string(),
   movedNotes: z.array(z.string()),
+  /** Attachments carried along with the notes they sit beside. */
+  movedFiles: z.array(z.string()),
   updatedLinks: z.array(z.string()),
+  /**
+   * What stayed behind, at the path it really has now. A folder move is not a
+   * transaction: it carries on past what it cannot move and says so, rather
+   * than throwing out the list of what already succeeded.
+   */
+  failed: z.array(z.object({ path: z.string(), reason: z.string() })),
 });
 
 export const RenameNoteResponse = z.object({

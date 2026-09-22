@@ -28,15 +28,25 @@
  * generously" safe, where "re-fetch generously" was not.
  */
 
+import { useSyncExternalStore } from 'react';
 import {
+  QueryClient,
+  onlineManager,
   useMutation,
   useQuery,
   useQueryClient,
-  type QueryClient,
   type UseQueryResult,
 } from '@tanstack/react-query';
 
-import { api, type FileRow, type GraphData, type OpenNote, type TreeData } from './api';
+import {
+  ApiError,
+  ContractError,
+  api,
+  type FileRow,
+  type GraphData,
+  type OpenNote,
+  type TreeData,
+} from './api';
 import { parseTagRegistry, REGISTRY_PATH } from './editor/tagRegistry';
 
 /**
@@ -79,6 +89,143 @@ export const keys = {
  * accurate signal than a timer.
  */
 const FRESH_MS = 30_000;
+
+/**
+ * How many times a request that could still succeed is sent again.
+ *
+ * Two, not three, and never for an answer the server meant. The cost of a retry
+ * is somebody waiting longer for the same truth, so it is only worth paying
+ * where the truth might genuinely be different next time.
+ */
+export const RETRY_LIMIT = 2;
+
+/**
+ * Whether a failed request is worth sending again.
+ *
+ * The old blanket `retry: false` was right about one thing and wrong about
+ * another. Right: this server is one hop away, and most failures here are the
+ * server saying no for a reason that will not change — retrying a 404 three
+ * times delays telling somebody by a second and a half and changes nothing.
+ * Wrong: a request that never arrived is not an answer at all, and the LAN it
+ * is one hop across is exactly where a Wi-Fi handover drops a single request.
+ *
+ * So the decision is per error class, not per application:
+ *
+ *  - **`ApiError` under 500** — the server understood the question and refused
+ *    it. A 404 is the truth about a note, a 403 about a right, a 409 about a
+ *    conflict that an identical second request cannot resolve. A **401** is the
+ *    worst one to retry: the session is over, `request` has already told the
+ *    shell so, and asking again only delays the sign-in screen. A 429 is the
+ *    server asking for *less* traffic, and answering that with more is rude.
+ *  - **408 apart** — a timeout is the server saying the request did not finish,
+ *    not that the answer is no.
+ *  - **`ApiError` 500 and up** — the server fell over, or a reverse proxy
+ *    answered for it. Those are the failures that are genuinely different a
+ *    moment later.
+ *  - **`ContractError`** — this build cannot read what the server sends. The
+ *    next answer will have the same shape; only a reload fixes it.
+ *  - **anything else** — what `fetch` throws when nothing came back: no
+ *    network, DNS, a connection reset. The case retrying was invented for.
+ *
+ * Exported so the policy can be read as a table in a test rather than inferred
+ * from how long a suite takes.
+ */
+export function shouldRetry(failureCount: number, error: unknown): boolean {
+  if (failureCount >= RETRY_LIMIT) return false;
+  if (error instanceof ContractError) return false;
+  if (error instanceof ApiError) return error.status >= 500 || error.status === 408;
+  return true;
+}
+
+/**
+ * How long the retry waits, doubling each time.
+ *
+ * Short enough that two of them are still faster than noticing and pressing
+ * "Try again", long enough that a server coming back up is not met with three
+ * requests in the same tick.
+ */
+export function retryDelayMs(failureCount: number): number {
+  return 400 * 2 ** failureCount;
+}
+
+/**
+ * The cache the whole application reads the server through.
+ *
+ * A function rather than a constant so that `main.tsx` and the tests that
+ * exercise the retry policy get the same client, rather than a test asserting
+ * against a policy nothing in the app uses.
+ *
+ * `refetchOnWindowFocus` stays off, and for the reason it was turned off:
+ * coming back to a tab must not pull the text out from under a half-written
+ * note. `refetchOnReconnect` is the opposite case and is named here explicitly
+ * — it is on by default, and leaving it implicit made it look like the same
+ * decision as the two beside it. A reconnect is the one moment where everything
+ * on screen is known to be as old as the outage, and the note query is exempt
+ * anyway: `staleTime: Infinity` means nothing re-reads an open editor.
+ */
+export function createQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: shouldRetry,
+        retryDelay: retryDelayMs,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: true,
+      },
+    },
+  });
+}
+
+/**
+ * Whether the browser believes it can reach anything at all.
+ *
+ * Read from React Query's own online manager rather than from `navigator`
+ * directly, because that manager is what decides whether a query runs or is
+ * *paused* — and a paused query is precisely the state that used to render as
+ * "Loading…" for as long as the outage lasted. One source for both halves means
+ * the screen cannot say "loading" while the cache says "not even asking".
+ */
+export function useOnline(): boolean {
+  return useSyncExternalStore(
+    (listener) => onlineManager.subscribe(() => listener()),
+    () => onlineManager.isOnline(),
+    () => true,
+  );
+}
+
+/** Why a view has nothing to show, when the reason is not "there is nothing". */
+export type Trouble = 'offline' | 'failed';
+
+/**
+ * The distinction every view here was missing.
+ *
+ * `query.data ?? []` collapses three different situations into an empty list:
+ * the answer said nothing, the answer has not come, and the answer never will.
+ * This tells the last two apart from the first, so a view can draw its empty
+ * state only when the emptiness is real.
+ *
+ * A query that already holds data is never in trouble, even offline — what is
+ * on screen came from the server and is as true as it was a minute ago. Only a
+ * view with nothing to draw has to explain itself.
+ *
+ * `online` is passed in rather than read from the manager here, so that the
+ * answer is a function of what the caller rendered with. A component that shows
+ * trouble has to be subscribed to the connection anyway (`useOnline`), and
+ * taking it as an argument is what makes that a compile-time obligation rather
+ * than a convention.
+ */
+export function troubleOf(
+  query: Pick<UseQueryResult, 'isError' | 'isPending' | 'isPaused'>,
+  online: boolean,
+): Trouble | null {
+  // Paused first, and only while nothing has ever arrived. A request that was
+  // never sent is not the server's fault, and "the server is not answering"
+  // would be a false accusation. A *refetch* that is paused over data already
+  // on screen is not trouble at all — that data is still the server's answer.
+  if (query.isPending && query.isPaused) return 'offline';
+  if (query.isError) return online ? 'failed' : 'offline';
+  return null;
+}
 
 export function useTree(): UseQueryResult<TreeData> {
   return useQuery({ queryKey: keys.tree, queryFn: () => api.tree(), staleTime: FRESH_MS });

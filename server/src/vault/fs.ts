@@ -14,7 +14,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { InvalidPathError, NotAFileError, NoteNotFoundError } from '../errors.js';
+import { InvalidPathError, NotAFileError, NoteExistsError, NoteNotFoundError } from '../errors.js';
 import { caseKey, isNotePath, normalizeVaultPath, resolveInVault, vaultRoot } from './paths.js';
 
 export interface VaultEntry {
@@ -370,6 +370,24 @@ export class Vault {
     const target = await this.resolve(owner, to);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.rename(source, target);
+  }
+
+  /**
+   * Moves a file that is not a note, refusing to land on one that is there.
+   *
+   * `moveNote` is the counterpart for notes and goes through the note lock and
+   * the share bindings; an attachment has neither, so this is the whole of it.
+   * What it must not do is what a bare `rename(2)` does happily: replace the
+   * file at the target and lose it. A folder move is not something anybody
+   * expects to delete a file.
+   */
+  async moveFile(owner: string, from: string, to: string): Promise<void> {
+    const target = normalizeVaultPath(to);
+    if (await this.exists(owner, target)) {
+      throw new NoteExistsError(`a file already exists at ${target}`);
+    }
+    await this.moveNote(owner, from, target);
+    await this.pruneEmptyDirs(owner, from);
   }
 
   /**
