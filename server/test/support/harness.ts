@@ -63,6 +63,7 @@ export async function startHarness(prefix: string, overrides: Partial<Config> = 
   const runtime = await createRuntime(config);
   const server = await buildServer({
     app: runtime.app,
+    db: runtime.db,
     users: runtime.users,
     sessions: runtime.sessions,
     keys: runtime.keys,

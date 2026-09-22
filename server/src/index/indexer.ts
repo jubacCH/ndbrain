@@ -20,10 +20,29 @@ export interface IndexStats {
   updated: number;
   removed: number;
   unchanged: number;
+  /**
+   * Files that are in the vault but could not be indexed, by path.
+   *
+   * Never silently empty of meaning: whatever lands here is also reported
+   * through `onSkipped`, because a skipped note is only tolerable while
+   * somebody can see which one it was.
+   */
+  skipped: string[];
+}
+
+export interface IndexerOptions {
+  /**
+   * A file that is on disk but could not be indexed, with the reason.
+   *
+   * Shaped like the watcher's `onError`, and for the same reason: the indexer
+   * has no logger of its own, and the layer that does — the server, the CLI —
+   * is the one that knows where a warning belongs.
+   */
+  onSkipped?: (owner: string, notePath: string, error: unknown) => void;
 }
 
 function emptyStats(): IndexStats {
-  return { added: 0, updated: 0, removed: 0, unchanged: 0 };
+  return { added: 0, updated: 0, removed: 0, unchanged: 0, skipped: [] };
 }
 
 function hashOf(content: string): string {
@@ -42,10 +61,31 @@ function linkKey(target: string): string {
 export class Indexer {
   readonly #db: Database;
   readonly #notes: NoteService;
+  readonly #onSkipped: ((owner: string, notePath: string, error: unknown) => void) | undefined;
 
-  constructor(db: Database, notes: NoteService) {
+  constructor(db: Database, notes: NoteService, options: IndexerOptions = {}) {
     this.#db = db;
     this.#notes = notes;
+    this.#onSkipped = options.onSkipped;
+  }
+
+  /**
+   * Notes one file the vault holds and the index cannot take, and moves on.
+   *
+   * `listNotes` reports what is on disk; `getNote` applies the naming rules. A
+   * file can sit between the two — `Was ist ein VLAN?.md` and `aux.md` are
+   * legal on Linux and refused by `normalizeVaultPath` — and every way a vault
+   * arrives without passing through this server produces them: Obsidian, an
+   * import, rsync, a shell on the host. `assertLinkableName` says as much: a
+   * name is checked when it is *chosen*, never when it is read.
+   *
+   * So one such file may cost its own indexing and nothing else. It must not
+   * cost the sync, and it must not vanish quietly either — a note missing from
+   * search with no word anywhere about why is the worse failure of the two.
+   */
+  #skip(stats: IndexStats, owner: string, notePath: string, error: unknown): void {
+    stats.skipped.push(notePath);
+    this.#onSkipped?.(owner, notePath, error);
   }
 
   /** Rebuilds one owner's index from the files. Idempotent by construction. */
@@ -54,9 +94,13 @@ export class Indexer {
     const stats = emptyStats();
 
     for (const entry of await this.#notes.listNotes(owner)) {
-      const note = await this.#notes.getNote(owner, entry.path);
-      this.#writeNote(owner, note.path, note.content, note.size, note.mtimeMs);
-      stats.added += 1;
+      try {
+        const note = await this.#notes.getNote(owner, entry.path);
+        this.#writeNote(owner, note.path, note.content, note.size, note.mtimeMs);
+        stats.added += 1;
+      } catch (error) {
+        this.#skip(stats, owner, entry.path, error);
+      }
     }
 
     this.resolveLinks(owner);
@@ -85,19 +129,27 @@ export class Indexer {
     const seen = new Set<string>();
 
     for (const entry of await this.#notes.listNotes(owner)) {
+      // Marked seen before it is read, and whether or not reading works: a file
+      // that is on disk has not been removed, and counting a skipped one as a
+      // removal would make every sync report a deletion that never happened.
       seen.add(entry.path);
-      const note = await this.#notes.getNote(owner, entry.path);
-      const hash = hashOf(note.content);
-      const previous = known.get(entry.path);
 
-      if (previous === hash) {
-        stats.unchanged += 1;
-        continue;
+      try {
+        const note = await this.#notes.getNote(owner, entry.path);
+        const hash = hashOf(note.content);
+        const previous = known.get(entry.path);
+
+        if (previous === hash) {
+          stats.unchanged += 1;
+          continue;
+        }
+
+        this.#writeNote(owner, note.path, note.content, note.size, note.mtimeMs, hash);
+        if (previous === undefined) stats.added += 1;
+        else stats.updated += 1;
+      } catch (error) {
+        this.#skip(stats, owner, entry.path, error);
       }
-
-      this.#writeNote(owner, note.path, note.content, note.size, note.mtimeMs, hash);
-      if (previous === undefined) stats.added += 1;
-      else stats.updated += 1;
     }
 
     for (const path of known.keys()) {

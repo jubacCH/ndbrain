@@ -304,6 +304,27 @@ async function request<T>(path: string, schema: ZodType<T>, init: RequestInit = 
   return result.data;
 }
 
+/**
+ * How much body may be sent with `keepalive`.
+ *
+ * A plain `fetch` is bound to its document: the browser cancels it when the
+ * page goes away, which on a phone — where wiping the app away is how you
+ * leave it — is the normal end of a session rather than an edge case.
+ * `keepalive` is what lets the write finish anyway.
+ *
+ * It is not free. The platform guarantees only 64 KiB of inflight keepalive
+ * body per document, and a fetch over that budget is rejected outright. Turning
+ * "this save may not arrive" into "this save never started" is the wrong trade,
+ * so a long note is written as an ordinary request and the `beforeunload`
+ * question is what stands between it and a closing tab.
+ */
+const KEEPALIVE_BUDGET = 60 * 1024;
+
+/** UTF-8 bytes, not characters: one umlaut is two of them, an emoji four. */
+function keepaliveFits(body: string): boolean {
+  return new TextEncoder().encode(body).length <= KEEPALIVE_BUDGET;
+}
+
 /** For the handful of endpoints that answer 204 and nothing else. */
 const Empty = z.object({}).transform(() => undefined);
 
@@ -341,11 +362,18 @@ export const api = {
    * opened it" — without it a shared note silently loses the other person's
    * paragraph, since the rule is last-writer-wins either way.
    */
-  putNote: (owner: string, path: string, content: string, baseMtimeMs?: number) =>
-    request(`/api/v1/notes/${encodePath(path)}`, S.PutNoteResponse, {
+  putNote: (owner: string, path: string, content: string, baseMtimeMs?: number) => {
+    const body = JSON.stringify({ content, owner, baseMtimeMs });
+    return request(`/api/v1/notes/${encodePath(path)}`, S.PutNoteResponse, {
       method: 'PUT',
-      body: JSON.stringify({ content, owner, baseMtimeMs }),
-    }),
+      body,
+      // The one request that is allowed to outlive the page that started it.
+      // See `keepaliveFits`: over the platform's budget it goes out as an
+      // ordinary request, because a rejected fetch is worse than an uncertain
+      // one.
+      ...(keepaliveFits(body) ? { keepalive: true } : {}),
+    });
+  },
 
   /**
    * Makes sure a note exists, creating it with `content` only if it does not.

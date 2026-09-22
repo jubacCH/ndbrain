@@ -99,6 +99,23 @@ export function normalizeVaultPath(input: string): string {
       throw new InvalidPathError('path segment may not end in a space or a dot');
     }
 
+    // A leading dot hides the entry from every listing this vault does — and
+    // from the watcher, so nothing here would ever learn about it. Writing one
+    // was therefore a way to put a file where the application cannot show it,
+    // cannot index it and cannot delete it again.
+    //
+    // The one that matters is `.git`: the history lives there, it is the only
+    // way back from a mistake, and the timer that commits it runs git as root
+    // over this directory. Git takes several settings out of the repository
+    // itself and runs them as commands, so a writable `.git/config` is a
+    // writable root shell on the host.
+    //
+    // Rejected here rather than in the file routes, so that writing, reading,
+    // listing and watching keep answering to one rule.
+    if (raw.startsWith('.')) {
+      throw new InvalidPathError('path segment may not begin with a dot');
+    }
+
     const stem = raw.split('.')[0] ?? '';
     if (RESERVED_BASENAMES.has(stem.toLowerCase())) {
       throw new InvalidPathError(`"${stem}" is a reserved name on some filesystems`);

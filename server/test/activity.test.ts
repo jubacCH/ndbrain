@@ -71,6 +71,20 @@ describe('the edit log', () => {
     expect(activity[0]).toMatchObject({ path: 'Weg.md', title: 'Weg', action: 'delete', deleted: true });
   });
 
+  it('shows the last thing that happened, even within one millisecond', async () => {
+    // Two edits can share a timestamp: `Date.now()` has millisecond resolution
+    // and a create followed by a delete is well inside one. Ordering by time
+    // alone leaves which of them counts as "the last one" to the database, and
+    // the log would then report a note as created that is already gone —
+    // exactly the wrong half of the answer somebody came here for.
+    await runtime.app.createNote('julian', 'Gleichzeitig.md', 'x');
+    await runtime.app.deleteNote('julian', 'Gleichzeitig.md');
+    runtime.db.run("UPDATE edits SET at = 1758000000000 WHERE path = 'Gleichzeitig.md'");
+
+    const activity = runtime.app.queries.activity('julian', 1757000000000);
+    expect(activity[0]).toMatchObject({ path: 'Gleichzeitig.md', action: 'delete', deleted: true });
+  });
+
   it('records a rename under the new name', async () => {
     await runtime.app.createNote('julian', 'Alt.md', 'x');
     await runtime.app.renameNote('julian', 'Alt.md', 'Neu.md', { view: 'julian' });
