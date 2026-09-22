@@ -15,7 +15,15 @@ import { addTag, removeTag } from './markdown/edit.js';
 import { toggleTask as applyTaskToggle, type TaskExpectation } from './markdown/tasks.js';
 import { proposeFor, type TopicProposal } from './notes/topics.js';
 import { parseNote } from './markdown/parse.js';
-import type { Authorized, Note, NoteService, PutOptions, PutResult, RenameOptions } from './notes/service.js';
+import type {
+  AppendOptions,
+  Authorized,
+  Note,
+  NoteService,
+  PutOptions,
+  PutResult,
+  RenameOptions,
+} from './notes/service.js';
 import { NoteBindings } from './auth/noteBindings.js';
 import type { Database } from './db/database.js';
 import type { VaultFile } from './vault/fs.js';
@@ -221,6 +229,26 @@ export class App {
       await this.indexer.indexNote(owner, result.note.path);
       this.#recordEdit(owner, result.note.path, 'create', actor);
     }
+    return result;
+  }
+
+  /**
+   * Adds text to a note; see `NoteService.appendNote` for why it is one call.
+   *
+   * Logged as a create or an update by what actually happened, so a capture
+   * that started today's note counts as one new note and every later one as an
+   * edit of it — the same distinction `putNote` draws.
+   */
+  async appendNote(
+    owner: string,
+    notePath: string,
+    addition: string,
+    actor?: string,
+    options: AppendOptions = {},
+  ): Promise<PutResult> {
+    const result = await this.notes.appendNote(owner, notePath, addition, options);
+    await this.indexer.indexNote(owner, result.note.path);
+    this.#recordEdit(owner, result.note.path, result.created ? 'create' : 'update', actor);
     return result;
   }
 
