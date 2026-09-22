@@ -55,10 +55,16 @@ const server = vi.hoisted(() => ({
   notes: [] as NoteRow[],
   /** What the vault holds, by path. */
   content: new Map<string, string>(),
-  /** Every note's version, moved on by each write. */
+  /**
+   * Every note's version, moved on by each write.
+   *
+   * A number here and a string on the wire: the server names a version by the
+   * hash of its text, and this fake makes one out of the counter so that what a
+   * write claims as its base stays readable in an assertion.
+   */
   versions: new Map<string, number>(),
   /** Each write that reached the server, in order. */
-  writes: [] as Array<{ path: string; content: string; base: number | undefined }>,
+  writes: [] as Array<{ path: string; content: string; base: string | undefined }>,
   /** How the next write fails, or null to let it through. */
   putFails: null as { status: number; code: string } | null,
   putDelayMs: 0,
@@ -99,10 +105,11 @@ vi.mock('../src/api', async (original) => {
           content: server.content.get(path) ?? '',
           size: 0,
           mtimeMs: server.versions.get(path) ?? 0,
+          hash: String(server.versions.get(path) ?? 0),
         },
       };
     },
-    putNote: async (_owner: string, path: string, content: string, base?: number) => {
+    putNote: async (_owner: string, path: string, content: string, base?: string) => {
       server.writes.push({ path, content, base });
       if (server.putDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, server.putDelayMs));
       const failure = server.putFails;
@@ -116,7 +123,7 @@ vi.mock('../src/api', async (original) => {
       server.versions.set(path, version);
       server.content.set(path, content);
       return {
-        note: { path, title: '', content, size: content.length, mtimeMs: version },
+        note: { path, title: '', content, size: content.length, mtimeMs: version, hash: String(version) },
         created: false,
       };
     },
