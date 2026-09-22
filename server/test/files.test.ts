@@ -21,8 +21,9 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadConfig } from '../src/config.js';
 import { SESSION_COOKIE, buildServer } from '../src/http/server.js';
@@ -398,6 +399,68 @@ describe('the tenant boundary', () => {
 });
 
 describe('export', () => {
+  /**
+   * The bytes of one member, read back out of the archive.
+   *
+   * Enough of a zip reader to prove the entry holds the file that was on disk:
+   * the local file header gives the name and the offset where the deflated data
+   * begins, and raw inflate stops at the end of that stream by itself.
+   */
+  function memberOf(archive: Buffer, name: string): Buffer | null {
+    for (let at = 0; at + 30 <= archive.length; at += 1) {
+      if (archive.readUInt32LE(at) !== 0x04034b50) continue;
+      const nameLength = archive.readUInt16LE(at + 26);
+      const extraLength = archive.readUInt16LE(at + 28);
+      const entry = archive.subarray(at + 30, at + 30 + nameLength).toString('utf8');
+      if (entry !== name) continue;
+      return zlib.inflateRawSync(archive.subarray(at + 30 + nameLength + extraLength));
+    }
+    return null;
+  }
+
+  /**
+   * The archive is built while it is sent, not before.
+   *
+   * The comment on the route promised this from the start; the code under it
+   * read every file into a Buffer first, so peak memory was the size of the
+   * vault. `readFile` is the way to get a file's bytes into memory, and export
+   * is the one route that must never use it: what it hands yazl is a path, and
+   * yazl opens each file only when that entry's turn to be written comes.
+   */
+  it('never pulls a file into memory to archive it', async () => {
+    await upload('/api/v1/files/gross.bin', Buffer.alloc(256 * 1024, 0x61));
+    const readFile = vi.spyOn(runtime.app, 'readFile');
+
+    const response = await server.inject({ url: '/api/v1/export', headers: { cookie } });
+
+    expect(response.statusCode).toBe(200);
+    expect(readFile).not.toHaveBeenCalled();
+    // And the bytes are the file's, so streaming did not mean streaming the
+    // wrong thing: an archive naming a member it never read would still be a
+    // valid zip.
+    expect(memberOf(response.rawPayload, 'gross.bin')).toEqual(Buffer.alloc(256 * 1024, 0x61));
+    expect(memberOf(response.rawPayload, 'Homelab/Proxmox.md')?.toString()).toBe(
+      '# Proxmox\n\nZwei Nodes.\n',
+    );
+  });
+
+  /**
+   * Streaming moved the failure: a file that disappears between the listing and
+   * its turn in the archive is reported by yazl as an `error` event instead of a
+   * rejected promise. Unhandled that would end the process, and the output
+   * stream would never finish, so the request would hang instead of failing.
+   */
+  it('fails the response when a file vanishes mid-archive instead of hanging', async () => {
+    vi.spyOn(runtime.app, 'fileOnDisk').mockResolvedValue(path.join(dataDir, 'weg.bin'));
+
+    const response = await server.inject({ url: '/api/v1/export', headers: { cookie } });
+
+    expect(response.statusCode).toBe(500);
+    // Not a zip: nothing was written yet, so the answer can still be a refusal
+    // rather than an archive with a hole in it.
+    expect(response.headers['content-type']).toContain('application/json');
+  });
+
   it('answers with a zip carrying the vault', async () => {
     await upload('/api/v1/files/bild.png', Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 
