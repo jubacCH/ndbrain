@@ -665,7 +665,7 @@ describe('show in tree', () => {
 
     const row = (await within(tree).findByText('Plan')).closest('button')!;
     expect(row).toHaveAttribute('data-revealed', 'true');
-    expect(row).toHaveAttribute('aria-current', 'false');
+    expect(row).toHaveAttribute('aria-selected', 'false');
     expect(screen.queryByTestId('editor')).toBeNull();
     expect(screen.getByTestId('brain')).toBeInTheDocument();
     expect(server.calls.links).toBe(0);

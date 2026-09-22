@@ -193,10 +193,15 @@ describe('keyboard navigation', () => {
   // tab stop — sixty presses to cross the sidebar, and no way to open a folder
   // without a mouse. The ARIA tree pattern fixes both with roving tabindex.
 
-  it('is a single tab stop, however many rows are showing', () => {
+  it('is a single tab stop, however many rows are showing', async () => {
+    const user = userEvent.setup();
     renderTree();
 
-    const rows = screen.getAllByRole('button').filter((b) => b.className.includes('node'));
+    // Opened two deep, so the count is well past the three top-level rows.
+    await user.click(screen.getByText('Areas').closest('button')!);
+    await user.click(screen.getByText('Homelab').closest('button')!);
+
+    const rows = screen.getAllByRole('treeitem');
     const reachable = rows.filter((b) => b.getAttribute('tabindex') === '0');
 
     expect(rows.length).toBeGreaterThan(3);
@@ -249,8 +254,7 @@ describe('keyboard navigation', () => {
     const user = userEvent.setup();
     renderTree();
 
-    const rows = () =>
-      screen.getAllByRole('button').filter((b) => b.className.includes('node'));
+    const rows = () => screen.getAllByRole('treeitem');
 
     rows()[2]!.focus();
     await user.keyboard('{End}');
@@ -427,7 +431,7 @@ describe('showing a note without opening it', () => {
 
     const row = screen.getByText('Proxmox Cluster').closest('button')!;
     expect(row).toHaveAttribute('data-revealed', 'true');
-    expect(row).toHaveAttribute('aria-current', 'false');
+    expect(row).toHaveAttribute('aria-selected', 'false');
     expect(screen.getByText('Areas').closest('button')).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Homelab').closest('button')).toHaveAttribute('aria-expanded', 'true');
     expect(document.querySelectorAll('[data-revealed]')).toHaveLength(1);
@@ -444,5 +448,146 @@ describe('showing a note without opening it', () => {
     expect(scroll).toHaveBeenCalledTimes(1);
     rerender(<Tree {...base} onSelect={vi.fn()} revealed={{ owner: 'julian', path: 'Willkommen.md', seq: 2 }} />);
     expect(scroll).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * The container said `role="tree"` and held not one `treeitem`.
+ *
+ * A screen reader that is told it is in a tree then asks the rows how deep they
+ * are and which one is selected, and got nothing back: the rows were plain
+ * buttons in plain list items, the nesting was invisible, and the open note was
+ * marked with `aria-current` — a link's word, not a tree's.
+ */
+describe('the tree says it is a tree', () => {
+  it('makes every row a treeitem that carries its depth', async () => {
+    const user = userEvent.setup();
+    renderTree();
+
+    const areas = screen.getByText('Areas').closest('button')!;
+    expect(areas).toHaveAttribute('role', 'treeitem');
+    expect(areas).toHaveAttribute('aria-level', '1');
+
+    await user.click(areas);
+    const homelab = screen.getByText('Homelab').closest('button')!;
+    expect(homelab).toHaveAttribute('role', 'treeitem');
+    expect(homelab).toHaveAttribute('aria-level', '2');
+
+    await user.click(homelab);
+    const note = screen.getByText('Proxmox Cluster').closest('button')!;
+    expect(note).toHaveAttribute('role', 'treeitem');
+    expect(note).toHaveAttribute('aria-level', '3');
+  });
+
+  it('groups the children of an open folder, so the nesting is not only visual', async () => {
+    const user = userEvent.setup();
+    renderTree();
+
+    expect(document.querySelectorAll('ul[role="group"]')).toHaveLength(0);
+    await user.click(screen.getByText('Areas').closest('button')!);
+
+    const group = document.querySelector('ul[role="group"]');
+    expect(group).not.toBeNull();
+    expect(within(group as HTMLElement).getByText('Homelab')).toBeInTheDocument();
+  });
+
+  it('marks the open note as the selected item of the tree', () => {
+    // Filtered, so two notes are on screen at once without opening anything.
+    renderTree({ filter: 'o', selected: { owner: 'julian', path: '00_Inbox/Notiz.md' } });
+
+    expect(screen.getByText('Notiz').closest('button')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('Proxmox Cluster').closest('button')).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('keeps the tree one landmark, whatever it holds', () => {
+    renderTree();
+    expect(screen.getAllByRole('tree')).toHaveLength(1);
+  });
+});
+
+/**
+ * Roving tabindex has to rove.
+ *
+ * `move()` called `.focus()` and left the tab stop where it started, so Tab out
+ * of the tree and back in put you on row one again — the state every roving
+ * tabindex exists to avoid, and the one nobody notices until they try it.
+ */
+describe('the tree remembers where the keyboard was', () => {
+  it('hands the single tab stop to whichever row was last focused', async () => {
+    const user = userEvent.setup();
+    renderTree();
+
+    screen.getByText('Inbox').closest('button')!.focus();
+    await user.keyboard('{ArrowDown}{ArrowDown}');
+    const landed = document.activeElement as HTMLElement;
+    expect(landed).not.toBe(screen.getByText('Inbox').closest('button'));
+
+    // Out of the tree and back: the way in is the tab stop, and it is here.
+    landed.blur();
+    await user.tab();
+    expect(document.activeElement).toBe(landed);
+  });
+
+  it('is still a single tab stop after the focus has moved', async () => {
+    const user = userEvent.setup();
+    renderTree();
+
+    screen.getByText('Inbox').closest('button')!.focus();
+    await user.keyboard('{ArrowDown}');
+
+    const seats = [...document.querySelectorAll('button.node')].filter((b) => b.getAttribute('tabindex') === '0');
+    expect(seats).toHaveLength(1);
+    expect(seats[0]).toBe(document.activeElement);
+  });
+});
+
+/**
+ * The folder pencil was the last row control still in the tab order.
+ *
+ * The note rows' three actions were taken out of it and given keys instead, and
+ * the folder's rename was left behind — so Tab still walked the whole tree, one
+ * folder at a time. It follows the same rule now: out of the tab order, and F2
+ * on the focused row, which is what the note rows already promise.
+ */
+describe('renaming a folder from the keyboard', () => {
+  it('keeps the folder pencil out of the tab order', () => {
+    renderTree();
+    const pencils = screen.getAllByRole('button', { name: /^Rename / });
+    expect(pencils.length).toBeGreaterThan(0);
+    expect(pencils.every((b) => b.getAttribute('tabindex') === '-1')).toBe(true);
+  });
+
+  it('renames the focused folder on F2', async () => {
+    const user = userEvent.setup();
+    const onRenameFolder = vi.fn();
+    renderTree({ onRenameFolder });
+
+    screen.getByText('Areas').closest('button')!.focus();
+    await user.keyboard('{F2}');
+
+    expect(onRenameFolder).toHaveBeenCalledWith('20_Areas');
+  });
+
+  it('says so on the row, so the key is not a secret', () => {
+    renderTree();
+    expect(screen.getByText('Areas').closest('button')).toHaveAttribute('aria-keyshortcuts', 'F2');
+  });
+
+  it("offers neither the pencil nor the key on somebody else's folder", async () => {
+    const user = userEvent.setup();
+    const onRenameFolder = vi.fn();
+    renderTree({
+      notes: [...NOTES, { owner: 'anna', path: 'Team/Gemeinsam.md', title: 'Gemeinsam', size: 1, mtimeMs: 0 }],
+      received: [
+        { id: 's1', owner: 'anna', prefix: 'Team/', grantee: 'julian', canWrite: true, createdAt: 0, kind: 'folder' as const },
+      ],
+      onRenameFolder,
+    });
+
+    const team = screen.getByText('Team').closest('button')!;
+    expect(team).not.toHaveAttribute('aria-keyshortcuts');
+    team.focus();
+    await user.keyboard('{F2}');
+    expect(onRenameFolder).not.toHaveBeenCalled();
   });
 });

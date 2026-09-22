@@ -92,6 +92,15 @@ export const copy = {
     darkTheme: 'Switch to dark theme',
     account: 'Account',
     signedInAs: (name: string) => `Signed in as ${name}`,
+    /**
+     * The first tab stop on the page.
+     *
+     * Everything before the content is navigation — the sidebar alone is around
+     * twenty stops — and without this the only way past it is to walk it.
+     */
+    skipToContent: 'Skip to content',
+    /** The content landmark the skip link jumps to. */
+    contentLabel: 'Content',
     /** The line under each view's title — real numbers, never a slogan. */
     sub: {
       overview: (notes: number, folders: number) =>
