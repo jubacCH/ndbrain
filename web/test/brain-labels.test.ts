@@ -23,10 +23,12 @@ import type { Camera } from '../src/brain/camera';
 import { fit } from '../src/brain/camera';
 import type { LabelCandidate, PlacedLabel, Placement, Rect } from '../src/brain/labels';
 import {
+  NAME_GRAB,
   TISSUE_BAND,
   breakName,
   circleHitsRect,
   deepestPoint,
+  labelAt,
   overlaps,
   placeLabels,
   placeRegionNames,
@@ -370,6 +372,53 @@ describe('choosing among a region’s ways', () => {
     // Out of the tissue entirely, no plaque.
     const outside: Placement = { ...open, depth: () => -5 };
     expect(placeLabels([way], outside)[0]!.plaque).toBe(false);
+  });
+});
+
+describe('clicking a region’s name', () => {
+  const label = (region: number, x: number, y: number, w: number, h: number): PlacedLabel => ({
+    region,
+    lines: [`r${region}`],
+    box: { x, y, w, h },
+    align: 'left',
+    fromX: 0,
+    fromY: 0,
+    cx: 0,
+    cy: 0,
+    toX: x,
+    toY: y,
+    plaque: false,
+  });
+
+  it('gives the region whose name is under the point, with a little slack around it', () => {
+    const names = [label(3, 100, 40, 80, 17), label(7, 300, 200, 60, 34)];
+    expect(labelAt(names, 140, 48)).toBe(3);
+    expect(labelAt(names, 330, 210)).toBe(7);
+    // The slack, as a distance and not as whatever the constant happens to
+    // say: three pixels off a thirteen-pixel word is still that word.
+    expect(labelAt(names, 97, 48)).toBe(3);
+    expect(labelAt(names, 183, 48)).toBe(3);
+    expect(labelAt(names, 140, 37)).toBe(3);
+    expect(labelAt(names, 140, 60)).toBe(3);
+    expect(NAME_GRAB).toBeGreaterThanOrEqual(3);
+  });
+
+  it('gives nothing beyond the slack, and nothing at all when no name is placed', () => {
+    const names = [label(3, 100, 40, 80, 17)];
+    expect(labelAt(names, 100 - NAME_GRAB - 1, 48)).toBe(-1);
+    expect(labelAt(names, 140, 40 + 17 + NAME_GRAB + 1)).toBe(-1);
+    expect(labelAt([], 140, 48)).toBe(-1);
+  });
+
+  it('is answered by the very boxes the names are drawn in, on the real vault', () => {
+    // Not a second guess at where a name went: the placement's own output.
+    // Every name the brain shows can be clicked, and the middle of each gives
+    // its own region back.
+    const { names } = place(SIZES.wide);
+    expect(names.length).toBeGreaterThan(1);
+    for (const name of names) {
+      expect(labelAt(names, name.box.x + name.box.w / 2, name.box.y + name.box.h / 2)).toBe(name.region);
+    }
   });
 });
 

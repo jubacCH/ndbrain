@@ -27,12 +27,19 @@ import { recentsKey } from '../src/accountStorage';
 // The canvas has nothing to draw in jsdom. The stand-in offers what the real
 // brain does with a click on a point: it focuses that note.
 vi.mock('../src/Brain', () => ({
-  Brain: (props: { data: GraphData; focus?: { onPick: (key: string | null) => void } }) => (
+  Brain: (props: {
+    data: GraphData;
+    focus?: { onPick: (picked: { kind: 'note'; key: string } | null) => void };
+  }) => (
     <>
       <canvas className="brain" data-testid="brain" tabIndex={0} />
       {props.focus !== undefined &&
         props.data.nodes.map((n) => (
-          <button key={n.path} type="button" onClick={() => props.focus!.onPick(`${n.owner}\u0000${n.path}`)}>
+          <button
+            key={n.path}
+            type="button"
+            onClick={() => props.focus!.onPick({ kind: 'note', key: `${n.owner}\u0000${n.path}` })}
+          >
             {`pick ${n.owner}/${n.path}`}
           </button>
         ))}

@@ -126,6 +126,7 @@ const sceneWith = (edges: SceneEdge[]): Scene => ({
   parallaxX: 0,
   parallaxY: 0,
   hovered: -1,
+  pickedRegion: -1,
   stamp: 1,
 });
 
