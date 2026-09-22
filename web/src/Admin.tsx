@@ -371,7 +371,7 @@ function NewKey({
       <h4>{copy.admin.newKey}</h4>
       <label>
         <span>{copy.admin.keyName}</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Claude" required />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={copy.admin.keyNameExample} required />
       </label>
       <label>
         <span>{copy.admin.scope}</span>

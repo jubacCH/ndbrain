@@ -23,6 +23,19 @@
  * place, and it hides half the sentence from anyone reading this file.
  */
 
+/** One wording for the period, whether it is a filter chip or a line about one. */
+const fromLastDays = (days: number): string => `from the last ${days} days`;
+
+/**
+ * Cuts text this file did not write down to a length a message can carry.
+ *
+ * Only ever used on what the server said. A refusal can be a paragraph, and a
+ * paragraph appended to a sentence pushes the counts in front of it off the
+ * screen — which is the half somebody actually has to act on.
+ */
+const clip = (text: string, most: number): string =>
+  text.length <= most ? text : `${text.slice(0, most - 1).trimEnd()}…`;
+
 export const copy = {
   /**
    * The language dates and relative times are formatted in. Part of the copy
@@ -143,6 +156,14 @@ export const copy = {
     loadingNeighbourhood: 'Loading…',
   },
 
+  /** What the editor draws over the raw markdown — see `web/src/editor/`. */
+  editor: {
+    /* The live-preview checkbox. A screen reader reads only this, since the
+       `- [ ]` it is drawn over is hidden while the cursor is elsewhere. */
+    taskDone: 'done',
+    taskOpen: 'open',
+  },
+
   /**
    * Prompts and confirmations.
    *
@@ -198,7 +219,19 @@ export const copy = {
     /** Appended to `deleteNote` when other notes the caller can see link to it. */
     linksWillBreak: (count: number) =>
       `${count} ${count === 1 ? 'note links' : 'notes link'} here — ${count === 1 ? 'that link' : 'those links'} will break.`,
-    revokeShare: (what: string) => `Stop sharing ${what}?`,
+    /**
+     * What a share opens, for the two questions below.
+     *
+     * Both branches of the same decision, written together. One of them used to
+     * be a sentence built here and the other a sentence built there, and the
+     * pair drifted until one asked its question in a different language from
+     * the other.
+     */
+    shareExtent: (prefix: string) => (prefix === '' ? 'the whole vault' : `“${prefix}”`),
+    /** Ending a share you gave: the other person loses it. */
+    withdrawShare: (who: string, what: string) => `Withdraw ${who}’s access to ${what}?`,
+    /** Ending a share you were given: you lose it, and can only be given it again. */
+    giveUpShare: (owner: string, what: string) => `Give up your access to ${what} in ${owner}’s vault?`,
   },
 
   errors: {
@@ -213,6 +246,20 @@ export const copy = {
     renameFailed: 'Could not rename that.',
     searchFailed: 'Search failed.',
     bulkFailed: 'That bulk action failed.',
+    /**
+     * A bulk action that did part of its work, said in full.
+     *
+     * Partial success is the normal outcome, so this names the notes it could
+     * not do rather than leaving somebody to find them by hand — as many as fit,
+     * then a count for the rest. The server's reason comes last and clipped: it
+     * is the only part of this sentence nobody here wrote.
+     */
+    bulkPartly: (done: number, failed: readonly string[], reason: string): string => {
+      const named = failed.slice(0, 3).join(', ');
+      const more = failed.length > 3 ? ` and ${failed.length - 3} more` : '';
+      const why = reason.trim() === '' ? '' : ` — ${clip(reason.trim(), 140)}`;
+      return `${done} done, ${failed.length} not: ${named}${more}${why}`;
+    },
     shareFailed: 'Could not share that.',
     revokeFailed: 'Could not withdraw that.',
     replaceFailed: 'Could not replace that file.',
@@ -339,12 +386,15 @@ export const copy = {
 
   search: {
     title: 'Search',
+    placeholder: 'Search the full text…',
+    /** The field's name for a screen reader; the placeholder is not one. */
+    label: 'Search the full text',
     nothingFound: 'Nothing found',
     /* Obsidian and Notion both do this: the query you typed is usually the
        title of the note you were looking for and did not have yet. */
     createInstead: (q: string) => `Create “${q}”`,
     results: (count: number) => `${count} ${count === 1 ? 'result' : 'results'}`,
-    fromLastDays: (days: number) => `from the last ${days} days`,
+    fromLastDays,
     days: (days: number) => `${days} days`,
     folder: 'Folder',
     newFolder: 'New folder',
@@ -352,6 +402,39 @@ export const copy = {
     clear: 'clear',
     period: 'Period',
     property: 'Property',
+    /** Over the values of the property picked above them. */
+    propertyIs: (key: string) => `${key} is`,
+    /**
+     * What the results were narrowed by, after the count.
+     *
+     * The whole line lives here rather than being glued together in the view.
+     * It was glued together in the view, and half the joins stayed in the
+     * language the view was written in while the count beside them was
+     * translated — so the line read “12 results — in 21_Homelab”, in two
+     * languages, in one breath.
+     *
+     * A list rather than a sentence: the parts are independent, they appear in
+     * the order the filters are offered above, and one of them is words
+     * somebody typed.
+     */
+    describeFilters: (filters: {
+      query?: string | undefined;
+      tag?: string | undefined;
+      folder?: string | undefined;
+      days?: number | undefined;
+      prop?: string | undefined;
+      propValue?: string | undefined;
+    }): string => {
+      const parts: string[] = [];
+      if (filters.query !== undefined && filters.query !== '') parts.push(`“${filters.query}”`);
+      if (filters.tag !== undefined) parts.push(`#${filters.tag}`);
+      if (filters.folder !== undefined) parts.push(`in ${filters.folder}`);
+      if (filters.days !== undefined) parts.push(fromLastDays(filters.days));
+      if (filters.prop !== undefined) {
+        parts.push(filters.propValue === undefined ? `with ${filters.prop}` : `${filters.prop}: ${filters.propValue}`);
+      }
+      return parts.join(' · ');
+    },
   },
 
   files: {
@@ -386,11 +469,23 @@ export const copy = {
     newShare: 'Share something',
     account: 'Account',
     accountLabel: 'Account to share with',
+    accountPlaceholder: 'account name',
     folder: 'Folder',
     newFolder: 'New folder',
     folderLabel: 'Folder to share',
+    /** Says what leaving it empty means, before the warning under the form does. */
+    folderPlaceholder: 'empty = the whole vault',
     mayWrite: 'may also write',
+    /** The button under the form. A verb, because it is about to do this. */
+    grant: 'Share',
     wholeVaultWarning: 'With no folder the whole vault is shared — including anything added later.',
+    /** The other half of that warning: a folder carries everything beneath it. */
+    folderWarning: (folder: string) => `“${folder}” is shared with every folder under it.`,
+    /** The two lists, each counted in its heading. */
+    byYou: (count: number) => `Shared by you · ${count}`,
+    withYou: (count: number) => `Shared with you · ${count}`,
+    /** The column that says read or read + write. */
+    right: 'Access',
     readWrite: 'read + write',
     readOnly: 'read only',
     withdraw: 'Withdraw',
@@ -432,6 +527,8 @@ export const copy = {
   },
 
   tree: {
+    /** The tree landmark itself, for a screen reader's list of regions. */
+    label: 'Notes',
     /* Carbon's empty-state anatomy: name the action, say what it gets you, offer
        the one control that does it. "You have no notes" states a deficiency and
        leaves the person exactly where they were. */
@@ -451,6 +548,8 @@ export const copy = {
   },
 
   context: {
+    /** The panel itself, for a screen reader's list of regions. */
+    label: 'Context',
     linksHere: 'Links here',
     orphanedNote: 'Nobody — this note is orphaned.',
     /** A daily note nothing links to: reached by its date, so not orphaned. */
@@ -460,6 +559,8 @@ export const copy = {
     linksOut: 'Links out',
     noLinks: { before: 'No links yet. Type ', after: ' in the editor.' },
     pointsNowhere: 'Points nowhere',
+    /** Beside a link with no note behind it: the one useful thing to do about it. */
+    writeIt: 'Write it',
     file: 'File',
     vaultOf: (owner: string) => `${owner}'s vault`,
     spaceOf: (space: string) => `Space ${space}`,
@@ -732,6 +833,8 @@ export const copy = {
     keysForSpace: 'A key for a space reaches into that space and nowhere else.',
     noKeys: 'No keys for this account.',
     keyName: 'Name',
+    /** An example in the field, so the name reads as "which agent", not "which key". */
+    keyNameExample: 'Claude',
     scope: 'Folder',
     wholeVault: 'the whole vault',
     lastUsed: 'Last used',

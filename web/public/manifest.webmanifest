@@ -1,14 +1,14 @@
 {
   "name": "ndBrain",
   "short_name": "ndBrain",
-  "description": "Notizen als Markdown-Dateien, mit einem Bibliothekar darüber.",
+  "description": "Your notes as plain Markdown files, with a librarian on top of them.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#050b0e",
   "theme_color": "#050b0e",
   "orientation": "any",
-  "lang": "de",
+  "lang": "en",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
