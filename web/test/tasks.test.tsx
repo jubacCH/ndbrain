@@ -159,7 +159,9 @@ describe('honesty about what is shown', () => {
 
   it('does not claim a cap that did not happen', () => {
     renderTasks({ data: tasks([task('A.md', 1, 'eins')], 1, false) });
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    // The live region stays — that is what lets it announce later — and says
+    // nothing. What must be absent is the claim, not the place to put it.
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 
   it('tells an empty vault apart from an empty filter result', () => {

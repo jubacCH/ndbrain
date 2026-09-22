@@ -98,11 +98,11 @@ export function AdminSpaces(props: AdminSpacesProps): React.JSX.Element {
       </h3>
       <p className="setnote">{copy.spaces.explain}</p>
 
-      {status !== null && (
-        <p className={status.kind === 'ok' ? 'setok' : 'setbad'} role="status">
-          {status.text}
-        </p>
-      )}
+      {/* The region, not the line: a `role="status"` mounted together with its
+          one message has nothing to change and is never announced. */}
+      <div role="status">
+        {status !== null && <p className={status.kind === 'ok' ? 'setok' : 'setbad'}>{status.text}</p>}
+      </div>
 
       {spaces.length === 0 ? (
         <p className="empty">{copy.spaces.none}</p>

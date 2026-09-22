@@ -238,7 +238,10 @@ describe('a truncated answer', () => {
       }),
     });
 
-    expect(screen.getByRole('status')).toHaveTextContent(/1 of 5 conflict copies/i);
+    // The cap is announced, so it sits in one of the live regions the view
+    // keeps open whether it has anything to say or not.
+    const said = screen.getAllByRole('status').map((node) => node.textContent ?? '');
+    expect(said.join(' ')).toMatch(/1 of 5 conflict copies/i);
   });
 });
 

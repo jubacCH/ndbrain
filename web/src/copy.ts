@@ -726,6 +726,16 @@ export const copy = {
     searchView: 'search',
     recentAppearHere: 'Recently edited notes appear here.',
     nothingFound: 'Nothing found.',
+    /**
+     * Read out as the list changes, never shown.
+     *
+     * The list is below a field that keeps the focus, so nothing on screen says
+     * what typing did. Sighted use has the list itself for that.
+     *
+     * Counts rather than borrowing `nothingFound`: the same words in a hidden
+     * region and in the visible list would be one sentence appearing twice.
+     */
+    found: (n: number) => `${n} ${n === 1 ? 'result' : 'results'}`,
     choose: 'choose',
     open: 'open',
     close: 'close',

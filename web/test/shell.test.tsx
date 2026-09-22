@@ -767,7 +767,9 @@ describe('the shell, signed in', () => {
     await act(async () => {
       fireEvent.click(cell);
     });
-    const message = await screen.findByText(copy.errors.noteGone);
+    // The drawn one: the same words also sit in the live region that stays in
+    // the main column, which is how they get announced at all.
+    const message = await screen.findByText(copy.errors.noteGone, { selector: '.floaterror span' });
     expect(frame).toContainElement(message);
   });
 

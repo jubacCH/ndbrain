@@ -1701,9 +1701,13 @@ function Shell({
     },
   ];
 
+  // The box itself carries no live role. It is drawn in one of two places —
+  // here, or portalled into the full-screen host — so it comes and goes as a
+  // whole, and a region that appears with its message is never announced. The
+  // announcing is done by a region that stays put; see `<main>` below.
   const errorBox =
     error === null ? null : (
-      <div className="floaterror" role="status">
+      <div className="floaterror">
         <span>{error}</span>
         <button type="button" onClick={() => setError(null)} aria-label={copy.errors.closeMessage}>
           ✕
@@ -1997,6 +2001,12 @@ function Shell({
               it the browser moves the document position and leaves the focus
               where it was, and the next Tab carries on in the sidebar. */}
           <main className="main" id="main" tabIndex={-1} aria-label={copy.shell.contentLabel}>
+            {/* The message, said rather than drawn. Always here, wherever the
+                box itself ends up, so what changes is its words. */}
+            <p className="sr-live" role="status">
+              {error ?? ''}
+            </p>
+
             {/* In full screen only the network frame is visible, so a message
                 raised there — a note that could not be opened — is drawn in it. */}
             {error !== null &&
@@ -2151,9 +2161,13 @@ function Shell({
 
               {view === 'tidy' && tidyTrouble === null && (
                 <>
-                  {topicsDone !== null && (
-                    <p className="warnline" role="status">{copy.topics.done(topicsDone)}</p>
-                  )}
+                  {/* The region, not the line: a `role="status"` mounted with
+                      its one message has nothing to change and is never read. */}
+                  <div role="status">
+                    {topicsDone !== null && (
+                      <p className="warnline">{copy.topics.done(topicsDone)}</p>
+                    )}
+                  </div>
                   <TopicsPanel
                     proposals={topicsQuery.data?.proposals ?? []}
                     busy={bulkBusy}
