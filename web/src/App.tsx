@@ -89,6 +89,7 @@ import {
   useTagRegistry,
   useTags,
   useTasks,
+  useSaveNote,
   useTidy,
   useToggleTask,
   useTree,
@@ -149,6 +150,15 @@ function useMedia(query: string): boolean {
 
 /** The same width at which `styles.css` turns the sidebar into a drawer. */
 const DRAWER_QUERY = '(max-width: 820px)';
+
+/**
+ * How long a failed write waits before trying again.
+ *
+ * Longer than any debounce, because the thing it is waiting for is not a pause
+ * in typing but a server that was not there — and short enough that the text is
+ * on disk before somebody who saw the warning has finished reading it.
+ */
+const SAVE_RETRY_MS = 2_000;
 
 function isDark(theme: Theme, systemDark: boolean): boolean {
   return theme === 'dark' || (theme === 'system' && systemDark);
@@ -356,6 +366,15 @@ function Shell({
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<{ owner: string; path: string; content: string } | null>(null);
   /**
+   * The note whose text this tab still owes the server, by `refKey`, or null.
+   *
+   * Set when a write failed and its text was put back in `pending`, cleared
+   * when that text finally lands. It is what keeps the failure on screen after
+   * a switch to another note — opening one used to report "Saved" over it — and
+   * what makes the browser ask before the tab is closed on top of it.
+   */
+  const owed = useRef<string | null>(null);
+  /**
    * The version each note's text on this screen started from, by `refKey`, sent
    * with every write of that note.
    *
@@ -439,6 +458,17 @@ function Shell({
   // Tasks sit beside the calendar, so they are wanted exactly while the journal is.
   const tasksQuery = useTasks(taskFilter, view === 'journal');
   const toggleTaskMutation = useToggleTask();
+  const saveNoteMutation = useSaveNote();
+  /**
+   * The write itself, reachable from a callback that must not be rebuilt.
+   *
+   * `write` is at the bottom of the chain that ends in the editor's change
+   * handler and in the listeners registered once for `pagehide`; taking the
+   * mutation object as a dependency would tear all of that down and build it
+   * again on every render.
+   */
+  const saveNote = useRef(saveNoteMutation.mutateAsync);
+  saveNote.current = saveNoteMutation.mutateAsync;
 
   const notes = treeQuery.data?.notes ?? [];
   /** Which vaults are spaces, and what they are called; from the tree reply. */
@@ -519,18 +549,30 @@ function Shell({
         if (previous !== null) await previous;
         if (isOpen()) setSaveState('saving');
         try {
-          const result = await api.putNote(
-            outstanding.owner,
-            outstanding.path,
-            outstanding.content,
-            versions.current.get(key),
-          );
+          const base = versions.current.get(key);
+          // Through the mutation rather than `api.putNote` straight: what a
+          // write does to the cache — this note's entry updated in place, and
+          // exactly the queries an edit can have changed marked stale — belongs
+          // with the other server state, not spelled out again in the shell.
+          // Spread rather than `baseMtimeMs: base`, because a note being saved
+          // for the first time has no version and `exactOptionalPropertyTypes`
+          // separates "absent" from "present but undefined".
+          const result = await saveNote.current({
+            owner: outstanding.owner,
+            path: outstanding.path,
+            content: outstanding.content,
+            ...(base === undefined ? {} : { baseMtimeMs: base }),
+          });
           // This write is now the version to compare this note's next one against.
           versions.current.set(key, result.note.mtimeMs);
+          // The debt is paid. Reported even when this note is no longer the one
+          // on screen, because the warning it left there is about this text.
+          const settled = owed.current === key;
+          if (settled) owed.current = null;
           // Cleared only when nothing was typed while the write was in flight —
           // otherwise this would drop text newer than the version just stored.
           if (pending.current === null) window.__ndbrainPending = null;
-          if (isOpen()) setSaveState(pending.current === null ? 'saved' : 'dirty');
+          if (isOpen() || settled) setSaveState(pending.current === null ? 'saved' : 'dirty');
 
           // Somebody else's version was displaced and kept. Reported plainly and
           // left on screen: the text on this screen won, and the other one is only
@@ -538,17 +580,6 @@ function Shell({
           if (result.conflictCopy !== undefined) {
             setError(copy.errors.conflict(result.conflictCopy));
           }
-
-          // An edit can move links, so the panel, the findings and the graph are
-          // marked stale. Note what is *not* here: the note list. Notes appear and
-          // disappear on create, delete and rename — not when their text changes —
-          // and re-reading the whole tree plus a four-scan tidy pass on every pause
-          // in typing was pure waste. Marking is also not fetching: a stale query
-          // nobody is rendering costs nothing until something asks for it.
-          invalidate.afterEdit(client, outstanding.owner, outstanding.path);
-          // A newly created note *is* a structural change: the conflict copy above
-          // is a new file, and so is a first save of a note typed into the palette.
-          if (result.created || result.conflictCopy !== undefined) invalidate.afterStructure(client);
         } catch (caught) {
           if (isOpen()) setSaveState('failed');
           if (caught instanceof ApiError && caught.status === 404) {
@@ -563,6 +594,33 @@ function Shell({
             invalidate.afterStructure(client);
             return;
           }
+
+          // The buffer was emptied before the request went out, so this text is
+          // now nowhere but in the editor — and every way out of here (opening
+          // another note, changing view, signing out, the tab being hidden)
+          // asks `pending` whether there is anything to write. Put it back, and
+          // try again on a timer: a server that was briefly not there is the
+          // common case, and the alternative is a paragraph that quietly never
+          // reaches the disk.
+          //
+          // Not when something newer is already waiting — that text is a later
+          // version of this same document and includes it — and not into a note
+          // being deleted, which is the one case where a write would bring a
+          // file back from the dead. Not after a 401 either: the session is
+          // over, every retry would fail the same way, and the text stays in
+          // the crash box's slot where it was put on the keystroke.
+          const sessionGone = caught instanceof ApiError && caught.status === 401;
+          if (!sessionGone && pending.current === null && !deleting.current.has(key)) {
+            pending.current = outstanding;
+            window.__ndbrainPending = { path: outstanding.path, content: outstanding.content };
+            owed.current = key;
+            if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+            saveTimer.current = window.setTimeout(() => void flushLater.current?.(), SAVE_RETRY_MS);
+            // Said whichever note is on screen. The indicator is one for the
+            // whole window, and text owed to the server is worth more on it
+            // than the state of the note that happens to be open.
+            setSaveState('failed');
+          }
           setError(caught instanceof ApiError ? caught.message : copy.errors.saveFailed);
         }
       })();
@@ -575,6 +633,14 @@ function Shell({
     },
     [client],
   );
+
+  /**
+   * `flush`, for the retry inside `write`.
+   *
+   * `flush` is built on `write`, so `write` cannot name it. The ref is the
+   * knot in that circle, and it is assigned below as soon as `flush` exists.
+   */
+  const flushLater = useRef<(() => Promise<void>) | null>(null);
 
   /** Writes whatever is pending right now. */
   const flush = useCallback(async (): Promise<void> => {
@@ -594,6 +660,7 @@ function Shell({
     pending.current = null;
     await write(outstanding);
   }, [write]);
+  flushLater.current = flush;
 
   /** Writes what is pending and waits until no write is running any more. */
   const settle = useCallback(async (): Promise<void> => {
@@ -621,7 +688,17 @@ function Shell({
     [flush],
   );
 
-  // A closing tab must not take the last sentence with it.
+  // A retry must not outlive the screen it belongs to: a session that ended
+  // mid-save would otherwise fire one into a shell that is no longer there.
+  useEffect(
+    () => () => {
+      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+    },
+    [],
+  );
+
+  // A closing tab must not take the last sentence with it. The request itself
+  // is sent with `keepalive`, so it survives the page it was started from.
   useEffect(() => {
     const onHide = (): void => {
       if (pending.current !== null) void flush();
@@ -633,6 +710,27 @@ function Shell({
       document.removeEventListener('visibilitychange', onHide);
     };
   }, [flush]);
+
+  /**
+   * Asks before the window is closed on text that is not on disk.
+   *
+   * `pagehide` above starts the write, and `keepalive` lets it finish — but
+   * neither can promise it arrived, and a note over the keepalive budget is
+   * sent as an ordinary request that the browser will cancel. A save that
+   * failed and is waiting for its retry has nothing on its side at all.
+   *
+   * The browser owns the wording; `preventDefault` is the whole of the API.
+   * `returnValue` is set as well for the browsers that still want it.
+   */
+  useEffect(() => {
+    const onLeaving = (event: BeforeUnloadEvent): void => {
+      if (pending.current === null && owed.current === null) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onLeaving);
+    return () => window.removeEventListener('beforeunload', onLeaving);
+  }, []);
 
   const openNote = useCallback(
     /**
@@ -655,13 +753,15 @@ function Shell({
         // were looking at. Now a late answer updates its own entry and changes
         // nothing on screen.
         //
-        // Always read afresh. The entry outlives the editor by the cache's
-        // garbage-collection time, and saves never write back into it, so with
-        // `staleTime: Infinity` a note reopened within those minutes came back
-        // as the text it had when it was *first* opened — without what was
-        // typed since — and the next keystroke saved that old text over the
-        // newer file, which the server then had to keep as a conflict copy.
-        // Pending text is flushed above, so what the server has is the latest.
+        // Always read afresh, even though a save now writes its result back
+        // into this entry. The write-back only covers what *this* tab wrote:
+        // the file can also have moved on under another tab, an agent through
+        // MCP or an editor on the disk, and with `staleTime: Infinity` a note
+        // reopened within the cache's garbage-collection time would come back
+        // as the text it had when it was first opened — the next keystroke then
+        // saving that old text over the newer file, which the server has to
+        // keep as a conflict copy. Pending text is flushed above, so nothing of
+        // this tab's is lost by reading the server's version.
         const opened = await client.fetchQuery({
           queryKey: keys.note(owner, path),
           queryFn: () => api.getNote(owner, path),
@@ -671,7 +771,11 @@ function Shell({
         setOpenRef({ owner, path });
         versions.current.set(refKey(owner, path), opened.note.mtimeMs);
         setView('note');
-        setSaveState('saved');
+        // Not unconditionally 'saved'. A write that failed left its text in the
+        // buffer and its warning on screen, and opening another note used to
+        // paint over both — the one moment at which somebody would close the
+        // tab believing everything was on disk.
+        setSaveState(owed.current === null ? 'saved' : 'failed');
         setDrawerOpen(false);
         setRevealed(null);
         setError(null);
@@ -877,14 +981,15 @@ function Shell({
       const title = path.split('/').pop()?.replace(/\.md$/i, '') ?? '';
 
       try {
-        await api.putNote(owner, path, `# ${title}\n\n`);
-        await refreshTree();
+        // The same mutation the editor saves through: a create is a write like
+        // any other, and it is the mutation that says what a write invalidates.
+        await saveNote.current({ owner, path, content: `# ${title}\n\n` });
         await openNote(owner, path);
       } catch (caught) {
         setError(caught instanceof ApiError ? caught.message : copy.errors.createFailed);
       }
     },
-    [openNote, refreshTree],
+    [openNote],
   );
 
   // Always in your own vault. Creating into somebody else's shared folder is
