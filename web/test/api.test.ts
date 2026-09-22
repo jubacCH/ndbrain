@@ -174,3 +174,52 @@ describe('creating a note only if it is absent', () => {
     expect(JSON.parse(String(init.body))).toEqual({ content: 'template', owner: 'julian', ifAbsent: true });
   });
 });
+
+describe('a save that has to survive the page it was started from', () => {
+  /** Answers every write, and reports how each one was sent. */
+  function watchWrites(): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ note: { path: 'a.md', title: 'a', content: 'x', size: 1, mtimeMs: 2 }, created: false }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  it('is sent with keepalive, so closing the tab does not cancel it', async () => {
+    // Without this the browser cancels the request as the document goes away,
+    // and the window for that is the whole save delay — on a phone, where
+    // wiping the app away is how you leave it, that is every time.
+    const fetchMock = watchWrites();
+
+    await api.putNote('julian', 'a.md', 'the last sentence', 111);
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.keepalive).toBe(true);
+  });
+
+  it('is sent as an ordinary request when it is larger than the keepalive budget', async () => {
+    // Over the platform's 64 KiB the fetch would be rejected outright, which
+    // turns "this may not arrive" into "this never started". The question on
+    // the way out is what covers a note this long.
+    const fetchMock = watchWrites();
+
+    await api.putNote('julian', 'a.md', 'x'.repeat(70 * 1024), 111);
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.keepalive).toBeUndefined();
+  });
+
+  it('measures the body in bytes, not characters', async () => {
+    const fetchMock = watchWrites();
+
+    // 40k characters, 120k bytes: inside the budget by length and well outside
+    // it in what actually goes on the wire.
+    await api.putNote('julian', 'a.md', '€'.repeat(40 * 1024), 111);
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.keepalive).toBeUndefined();
+  });
+});
