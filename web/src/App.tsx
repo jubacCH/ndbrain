@@ -697,7 +697,8 @@ function Shell({
     [],
   );
 
-  // A closing tab must not take the last sentence with it.
+  // A closing tab must not take the last sentence with it. The request itself
+  // is sent with `keepalive`, so it survives the page it was started from.
   useEffect(() => {
     const onHide = (): void => {
       if (pending.current !== null) void flush();
@@ -709,6 +710,27 @@ function Shell({
       document.removeEventListener('visibilitychange', onHide);
     };
   }, [flush]);
+
+  /**
+   * Asks before the window is closed on text that is not on disk.
+   *
+   * `pagehide` above starts the write, and `keepalive` lets it finish — but
+   * neither can promise it arrived, and a note over the keepalive budget is
+   * sent as an ordinary request that the browser will cancel. A save that
+   * failed and is waiting for its retry has nothing on its side at all.
+   *
+   * The browser owns the wording; `preventDefault` is the whole of the API.
+   * `returnValue` is set as well for the browsers that still want it.
+   */
+  useEffect(() => {
+    const onLeaving = (event: BeforeUnloadEvent): void => {
+      if (pending.current === null && owed.current === null) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onLeaving);
+    return () => window.removeEventListener('beforeunload', onLeaving);
+  }, []);
 
   const openNote = useCallback(
     /**
