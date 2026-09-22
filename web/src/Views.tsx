@@ -271,7 +271,22 @@ export function TidyView({
                         aria-label={copy.tidy.select(row.title)}
                       />
                     </td>
-                    <td className="nm">{row.title}</td>
+                    {/* The row opens on a click anywhere in it, which the
+                        keyboard cannot do. The control that carries the action
+                        is the title, as it is in the conflicts table below —
+                        one tab stop per row, named by the note it opens. */}
+                    <td className="nm">
+                      <button
+                        type="button"
+                        className="rowopen"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpen(row.path);
+                        }}
+                      >
+                        {row.title}
+                      </button>
+                    </td>
                     <td className="pth">{row.path.split('/').slice(0, -1).join('/') || '/'}</td>
                     <td>
                       <span className={`pill p-${row.kind}`}>{row.finding}</span>
@@ -424,9 +439,18 @@ export function TasksView({
                       onClick={() => onOpen(group.owner, group.path, group.tasks[0]?.line ?? 1)}
                     >
                       <td className="nm" colSpan={2}>
-                        {group.owner !== self && <span className="pill p-info">{group.owner}</span>}
-                        {group.path.split('/').slice(0, -1).join('/') || '/'}
-                        <span className="pth"> · {group.path.split('/').pop()}</span>
+                        <button
+                          type="button"
+                          className="rowopen"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onOpen(group.owner, group.path, group.tasks[0]?.line ?? 1);
+                          }}
+                        >
+                          {group.owner !== self && <span className="pill p-info">{group.owner}</span>}
+                          {group.path.split('/').slice(0, -1).join('/') || '/'}
+                          <span className="pth"> · {group.path.split('/').pop()}</span>
+                        </button>
                       </td>
                     </tr>
                     {group.tasks.map((task) => (
@@ -440,11 +464,15 @@ export function TasksView({
                             aria-label={task.done ? copy.tasks.uncheck(task.text) : copy.tasks.check(task.text)}
                           />
                         </td>
-                        <td
-                          onClick={() => onOpen(task.owner, task.path, task.line)}
-                          style={task.done ? { textDecoration: 'line-through', opacity: 0.65 } : undefined}
-                        >
-                          {task.text}
+                        <td>
+                          <button
+                            type="button"
+                            className="rowopen"
+                            style={task.done ? { textDecoration: 'line-through', opacity: 0.65 } : undefined}
+                            onClick={() => onOpen(task.owner, task.path, task.line)}
+                          >
+                            {task.text}
+                          </button>
                         </td>
                       </tr>
                     ))}

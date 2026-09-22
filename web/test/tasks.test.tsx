@@ -196,3 +196,64 @@ describe('honesty about what is shown', () => {
     expect(screen.getByText(/no open tasks match this filter/i)).toBeInTheDocument();
   });
 });
+
+/**
+ * Both ways into a note from this list were an `onClick` on a table cell: the
+ * note header above a group, and the task text itself. The keyboard reached the
+ * checkbox that ticks a task off and nothing else — there was no way to go and
+ * read the task where it was written.
+ */
+describe('opening a task without a mouse', () => {
+  function renderTwo() {
+    return renderTasks({
+      data: tasks([
+        task('Homelab/Proxmox.md', 6, 'RAM prüfen'),
+        task('Homelab/Proxmox.md', 9, 'Quorum prüfen'),
+      ]),
+    });
+  }
+
+  it('lets Tab reach the note header and Enter open it at its first task', async () => {
+    const user = userEvent.setup();
+    const { onOpen } = renderTwo();
+
+    const header = screen.getByRole('button', { name: /Proxmox\.md/ });
+
+    const reached: Element[] = [];
+    for (let step = 0; step < 12; step += 1) {
+      await user.tab();
+      reached.push(document.activeElement!);
+    }
+    expect(reached).toContain(header);
+
+    header.focus();
+    await user.keyboard('{Enter}');
+    expect(onOpen.mock.calls).toEqual([['julian', 'Homelab/Proxmox.md', 6]]);
+  });
+
+  it('lets Tab reach a task and Enter open it at its own line', async () => {
+    const user = userEvent.setup();
+    const { onOpen } = renderTwo();
+
+    const second = screen.getByRole('button', { name: 'Quorum prüfen' });
+
+    const reached: Element[] = [];
+    for (let step = 0; step < 12; step += 1) {
+      await user.tab();
+      reached.push(document.activeElement!);
+    }
+    expect(reached).toContain(second);
+
+    second.focus();
+    await user.keyboard('{Enter}');
+    expect(onOpen.mock.calls).toEqual([['julian', 'Homelab/Proxmox.md', 9]]);
+  });
+
+  it('counts one click on a task once, not twice', async () => {
+    const user = userEvent.setup();
+    const { onOpen } = renderTwo();
+
+    await user.click(screen.getByRole('button', { name: 'RAM prüfen' }));
+    expect(onOpen.mock.calls).toEqual([['julian', 'Homelab/Proxmox.md', 6]]);
+  });
+});
