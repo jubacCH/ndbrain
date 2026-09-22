@@ -314,9 +314,9 @@ export class App {
    *
    * Goes through `updateNote` like every other write — this is not a second
    * write path, only a second way of computing the next `content` before
-   * handing it to the one that exists. `baseMtimeMs` is set from the same read
-   * the toggle was checked against, so a write landing in the gap between that
-   * read and this one still produces a conflict copy instead of overwriting it.
+   * handing it to the one that exists. `baseHash` is set from the same read the
+   * toggle was checked against, so a write landing in the gap between that read
+   * and this one still produces a conflict copy instead of overwriting it.
    */
   async toggleTask(
     owner: string,
@@ -345,7 +345,7 @@ export class App {
       return { note, created: false };
     }
 
-    const write: PutOptions = { baseMtimeMs: note.mtimeMs };
+    const write: PutOptions = { baseHash: note.hash };
     if (options.authorize !== undefined) write.authorize = options.authorize;
     return this.updateNote(owner, notePath, result.content, actor, write);
   }

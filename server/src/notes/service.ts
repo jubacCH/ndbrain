@@ -24,6 +24,7 @@ import {
 import { Vault, type VaultEntry } from '../vault/fs.js';
 import { InvalidPathError } from '../errors.js';
 import { KeyedMutex } from './mutex.js';
+import { contentHash } from '../auth/noteBindings.js';
 import type { NoteLifecycle } from '../auth/shares.js';
 
 export interface Note {
@@ -33,6 +34,15 @@ export interface Note {
   content: string;
   size: number;
   mtimeMs: number;
+  /**
+   * Which version of the text this is — the hash of `content`.
+   *
+   * Handed out with every read so that a writer can name the version it started
+   * from as something other than a clock reading; see `PutOptions.baseHash`.
+   * Opaque to every client: nothing outside this server computes it, so the
+   * algorithm can change without a single caller knowing.
+   */
+  hash: string;
 }
 
 export interface ParsedNoteRecord extends Note {
@@ -61,8 +71,18 @@ export interface Authorized {
 
 export interface PutOptions extends Authorized {
   /**
-   * The `mtimeMs` the client last saw. When the note on disk is newer, the
-   * version about to be overwritten is kept as a conflict copy.
+   * The `hash` of the text the writer started from, as a read handed it out.
+   *
+   * The version the writer saw, said in the only terms that cannot lie: when
+   * the note on disk no longer holds that text, the version about to be
+   * overwritten is kept as a conflict copy.
+   */
+  baseHash?: string;
+  /**
+   * The `mtimeMs` the client last saw — the same question asked of the clock.
+   *
+   * Only consulted when no `baseHash` is given, and only for as long as clients
+   * that predate the hash are still out there; see `#preserveDisplaced`.
    */
   baseMtimeMs?: number;
 }
@@ -227,6 +247,7 @@ export class NoteService {
       content,
       size: stat.size,
       mtimeMs: stat.mtimeMs,
+      hash: contentHash(content),
     };
   }
 
@@ -304,7 +325,7 @@ export class NoteService {
   /**
    * Overwrites an existing note.
    *
-   * Takes the same `baseMtimeMs` as `putNote`, and for the same reason: an agent
+   * Takes the same base version as `putNote`, and for the same reason: an agent
    * writing through MCP reads a note, thinks about it, and writes it back, and
    * everything a person typed in between is inside that window. Without the base
    * version this call cannot tell "I am the only writer" from "somebody else
@@ -383,7 +404,7 @@ export class NoteService {
       // version, never a create. Without this, a save racing a rename of the
       // same note lands after the move and brings a new note into being at the
       // old path — outside whatever share the writer holds on the moved one.
-      if (existing === undefined && options.baseMtimeMs !== undefined) {
+      if (existing === undefined && namesAVersion(options)) {
         throw new NoteNotFoundError('note does not exist');
       }
 
@@ -487,6 +508,30 @@ export class NoteService {
    * Only meaningful when the client says which version it started from; a client
    * that sends nothing gets the old behaviour, which is right for a single-user
    * vault where the only writer is the person watching.
+   *
+   * **Which version that is, is asked of the text and not of the clock.** This
+   * used to compare timestamps — `current.mtimeMs <= base`, overwrite without a
+   * copy — and the project already knew better elsewhere: the README says change
+   * detection compares content hashes because a restore, a `git checkout` or an
+   * rsync leaves changed text behind an *older* stamp. A tab holding the version
+   * from before such a restore then found `mtimeMs <= base` true and silently
+   * overwrote what had just been brought back. A filesystem with whole-second
+   * stamps loses a version the same way without anybody restoring anything.
+   *
+   * So `baseHash` is the contract: the hash a read handed out, sent back by the
+   * writer, compared against the text that is on disk now. It answers the
+   * question that actually matters — "is the file still holding what you started
+   * from" — in both directions, and it also stops the copies a bare `touch` used
+   * to produce, where the stamp moved and not a word did.
+   *
+   * `baseMtimeMs` stays as the fallback, for one narrow reason: a deploy does not
+   * close the browser tabs that are already open, and those tabs send nothing
+   * else. Its comparison is `!==` rather than `<=`, which is the most that can be
+   * had from a clock — "the stamp is not the one you read" catches the restore
+   * too, and the only thing it gets wrong is a `touch`, which is what the old
+   * comparison already got wrong. It is not a second contract for callers to
+   * choose from: everything inside this server that reads before it writes sends
+   * `baseHash`.
    */
   async #preserveDisplaced(
     owner: string,
@@ -494,15 +539,19 @@ export class NoteService {
     incoming: string,
     options: PutOptions,
   ): Promise<string | null> {
-    const base = options.baseMtimeMs;
-    if (base === undefined || base <= 0) return null;
+    if (!namesAVersion(options)) return null;
 
     const current = await this.getNote(owner, canonical);
-    if (current.mtimeMs <= base) return null;
 
-    // Identical content is not a conflict, whatever the timestamps say. Two
+    // Identical content is not a conflict, whatever anything else says. Two
     // clients autosaving the same text would otherwise litter the folder.
     if (current.content === incoming) return null;
+
+    const displaced =
+      options.baseHash !== undefined
+        ? current.hash !== options.baseHash
+        : current.mtimeMs !== options.baseMtimeMs;
+    if (!displaced) return null;
 
     const copyPath = conflictPath(canonical, new Date());
     await this.#vault.writeNote(owner, copyPath, current.content);
@@ -639,6 +688,19 @@ export class NoteService {
         'that pair cannot survive on Windows or macOS',
     );
   }
+}
+
+/**
+ * Whether this write says which version it is an edit of.
+ *
+ * One answer for both forms, because two places asking it separately is how the
+ * create guard in `putNote` and the conflict check below would come to disagree
+ * about what "an edit" is. A non-positive `baseMtimeMs` is not a version: it is
+ * what a client sends when it has none.
+ */
+function namesAVersion(options: PutOptions): boolean {
+  if (options.baseHash !== undefined) return true;
+  return options.baseMtimeMs !== undefined && options.baseMtimeMs > 0;
 }
 
 function titleOf(notePath: string): string {

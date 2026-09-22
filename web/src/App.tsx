@@ -568,7 +568,7 @@ function Shell({
         if (typeof line === 'function') setJumpLine(line(fresh.note.content) ?? null);
         // The buffer takes this note: it is the one on screen, and the version
         // just read is the base its writes will claim.
-        opened(owner, path, fresh.note.mtimeMs);
+        opened(owner, path, fresh.note.hash);
         setView('note');
         setDrawerOpen(false);
         setRevealed(null);

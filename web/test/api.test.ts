@@ -159,7 +159,7 @@ describe('creating a note only if it is absent', () => {
   it('asks the server not to write over an existing note', async () => {
     const fetchMock = vi.fn(async () =>
       new Response(
-        JSON.stringify({ note: { path: '50_Journal/2026/09/2026-09-17.md', title: '2026-09-17', content: 'x', size: 1, mtimeMs: 1 }, created: false }),
+        JSON.stringify({ note: { path: '50_Journal/2026/09/2026-09-17.md', title: '2026-09-17', content: 'x', size: 1, mtimeMs: 1, hash: 'h1' }, created: false }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       ),
     );
@@ -180,7 +180,7 @@ describe('a save that has to survive the page it was started from', () => {
   function watchWrites(): ReturnType<typeof vi.fn> {
     const fetchMock = vi.fn(async () =>
       new Response(
-        JSON.stringify({ note: { path: 'a.md', title: 'a', content: 'x', size: 1, mtimeMs: 2 }, created: false }),
+        JSON.stringify({ note: { path: 'a.md', title: 'a', content: 'x', size: 1, mtimeMs: 2, hash: 'h2' }, created: false }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       ),
     );
@@ -188,13 +188,30 @@ describe('a save that has to survive the page it was started from', () => {
     return fetchMock;
   }
 
+  it('names the version it started from as a version, not as a moment', async () => {
+    // What stands between a restore and a note silently overwritten: the server
+    // compares this against the text that is on disk now. A timestamp cannot
+    // answer that question, because a restore leaves changed text behind an
+    // older one — see `NoteService.#preserveDisplaced`.
+    const fetchMock = watchWrites();
+
+    await api.putNote('julian', 'a.md', 'weiter', 'h1');
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      content: 'weiter',
+      owner: 'julian',
+      baseHash: 'h1',
+    });
+  });
+
   it('is sent with keepalive, so closing the tab does not cancel it', async () => {
     // Without this the browser cancels the request as the document goes away,
     // and the window for that is the whole save delay — on a phone, where
     // wiping the app away is how you leave it, that is every time.
     const fetchMock = watchWrites();
 
-    await api.putNote('julian', 'a.md', 'the last sentence', 111);
+    await api.putNote('julian', 'a.md', 'the last sentence', 'h1');
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(init.keepalive).toBe(true);
@@ -206,7 +223,7 @@ describe('a save that has to survive the page it was started from', () => {
     // the way out is what covers a note this long.
     const fetchMock = watchWrites();
 
-    await api.putNote('julian', 'a.md', 'x'.repeat(70 * 1024), 111);
+    await api.putNote('julian', 'a.md', 'x'.repeat(70 * 1024), 'h1');
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(init.keepalive).toBeUndefined();
@@ -217,7 +234,7 @@ describe('a save that has to survive the page it was started from', () => {
 
     // 40k characters, 120k bytes: inside the budget by length and well outside
     // it in what actually goes on the wire.
-    await api.putNote('julian', 'a.md', '€'.repeat(40 * 1024), 111);
+    await api.putNote('julian', 'a.md', '€'.repeat(40 * 1024), 'h1');
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(init.keepalive).toBeUndefined();
