@@ -1017,6 +1017,29 @@ export const copy = {
     open: 'Open',
     reveal: 'Show in tree',
     delete: 'Delete…',
+    /** The panel for a whole knowledge area, reached by clicking its name. */
+    region: {
+      label: (name: string) => `About the ${name} area`,
+      area: 'Knowledge area',
+      notes: 'Notes',
+      contents: 'Contents',
+      topics: 'Topics',
+      noTopics: 'none',
+      lastActive: 'Last active',
+      strongest: 'Most connected',
+      noStrongest: 'None of these notes is linked to anything yet.',
+      links: (count: number) => `${count} ${count === 1 ? 'link' : 'links'}`,
+      empty: 'This area holds no note this view can show.',
+      hint: 'Arrow keys walk the areas.',
+    },
+    /** The panel for one link, reached by clicking the link itself. */
+    link: {
+      label: (from: string, to: string) => `Why ${from} and ${to} are connected`,
+      heading: 'Why are these connected?',
+      between: 'Between',
+      none: 'Nothing but the link itself.',
+      hint: 'Arrow keys walk a note’s links.',
+    },
   },
   /** The start page: where to pick up, what happened today, how the vault is doing. */
   home: {

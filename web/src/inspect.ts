@@ -9,6 +9,8 @@
  */
 
 import type { GraphData } from './api';
+import type { NoteKind } from './brain/kind';
+import { noteKind } from './brain/kind';
 import { refKey } from './refkey';
 
 type GraphNode = GraphData['nodes'][number];
@@ -148,6 +150,115 @@ export function whyConnected(index: GraphIndex, from: string, to: string): Reaso
   }
 
   return { link, folder, tags, shared };
+}
+
+/* ===================== a whole region ===================== */
+
+/** One note of a region, with the degree the server counted for it. */
+export interface RegionMember {
+  key: string;
+  owner: string;
+  path: string;
+  title: string;
+  folder: string;
+  /** Resolved links in both directions, as the graph reply gives them. */
+  links: number;
+}
+
+/** How many notes of one kind a region holds. */
+export interface KindCount {
+  kind: NoteKind;
+  /** For `folder`: the name the vault itself uses. Empty for every other kind. */
+  label: string;
+  count: number;
+}
+
+/**
+ * What can be said about a knowledge area without asking anything of anybody.
+ *
+ * The briefing's region panel is "Orbit8 · 124 Notes · 18 Resources · 8 MOCs ·
+ * 6 Projects · Last active: Today", and then four tabs of which three want an
+ * AI. What is left is what the graph reply already carries, counted: how many
+ * notes and of which kind, which tags they share, when one of them was last
+ * written, and which of them are the most connected.
+ *
+ * Nothing is estimated. A region whose notes carry no tags gets an empty list,
+ * not a guess — the rule `Home.tsx` states for the whole app.
+ */
+export interface RegionFacts {
+  /** Notes of the region the reply actually carries. */
+  notes: number;
+  /** Notes per kind, most first; only the kinds the region has. */
+  kinds: KindCount[];
+  /** Tags its notes carry, most first, compared without case. */
+  tags: Array<{ tag: string; count: number }>;
+  /** The most recent edit among them, or null where the region holds no note. */
+  lastActive: number | null;
+  /**
+   * The most connected notes, most first — the briefing's "strong connections"
+   * (point 29) for this area, which is `degree` and nothing else.
+   *
+   * A note linked to nothing is left out rather than listed with a zero: it is
+   * the opposite of a strong connection, and the tidy view already names it.
+   */
+  strongest: RegionMember[];
+}
+
+/** Counts a region's notes, tags, kinds and degrees. `keys` are its members. */
+export function regionFacts(index: GraphIndex, keys: Iterable<string>): RegionFacts {
+  const kinds = new Map<string, KindCount>();
+  const tags = new Map<string, { tag: string; count: number }>();
+  const members: RegionMember[] = [];
+  let notes = 0;
+  let lastActive: number | null = null;
+
+  for (const key of keys) {
+    const node = index.nodes.get(key);
+    // A member the reply does not carry: the layout knows it, the panel cannot
+    // show it, and counting it would make the total disagree with the list.
+    if (node === undefined) continue;
+    notes += 1;
+    if (lastActive === null || node.updatedAt > lastActive) lastActive = node.updatedAt;
+
+    const kind = noteKind(node.folder, node.title);
+    const id = kind.kind === 'folder' ? `folder\u0000${kind.label}` : kind.kind;
+    const held = kinds.get(id);
+    if (held === undefined) kinds.set(id, { kind: kind.kind, label: kind.label, count: 1 });
+    else held.count += 1;
+
+    // Case-folded, like the shared tags in `whyConnected`, and kept in the
+    // spelling the first note that carries it uses.
+    const seen = new Set<string>();
+    for (const tag of node.tags) {
+      const low = tag.toLowerCase();
+      if (seen.has(low)) continue;
+      seen.add(low);
+      const count = tags.get(low);
+      if (count === undefined) tags.set(low, { tag, count: 1 });
+      else count.count += 1;
+    }
+
+    if (node.links > 0) {
+      members.push({
+        key,
+        owner: node.owner,
+        path: node.path,
+        title: node.title,
+        folder: node.folder,
+        links: node.links,
+      });
+    }
+  }
+
+  // Ties are broken by name everywhere below, so the same region always reads
+  // the same way however the reply happened to be ordered.
+  return {
+    notes,
+    kinds: [...kinds.values()].sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label)),
+    tags: [...tags.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag)),
+    lastActive,
+    strongest: members.sort((a, b) => b.links - a.links || a.title.localeCompare(b.title) || a.path.localeCompare(b.path)),
+  };
 }
 
 /** How long a summary may run before it is cut, in characters. */

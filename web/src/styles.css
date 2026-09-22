@@ -5448,10 +5448,26 @@ th.pick input,
 }
 
 .inspector-links ul,
+ul.inspector-links,
 .inspector-activity {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* How connected one of an area's notes is, beside its name. */
+.inspector-degree {
+  flex: none;
+  font-size: var(--t-xs);
+  color: rgba(150, 190, 200, 0.7);
+  font-variant-numeric: tabular-nums;
+}
+
+/* What the arrow keys do here. The canvas cannot say it; this panel can. */
+.inspector-hint {
+  margin: var(--s-3) 0 0;
+  font-size: var(--t-xs);
+  color: rgba(150, 190, 200, 0.6);
 }
 
 .inspector-row {
