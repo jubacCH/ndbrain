@@ -61,6 +61,39 @@ export interface BulkResult {
   failed: Array<{ path: string; reason: string }>;
 }
 
+export interface FolderRenameResult {
+  /** Where the folder ended up. */
+  folder: string;
+  /** Final paths of the notes that made it, bounded by the caller's view. */
+  movedNotes: string[];
+  /** Final paths of the attachments that made it, bounded the same way. */
+  movedFiles: string[];
+  /** Notes whose links were rewritten to follow the move. */
+  updatedLinks: string[];
+  /**
+   * What stayed behind, at the path it really has now, and why.
+   *
+   * A folder move is not a transaction — see `renameFolder`. Without this the
+   * caller learned of a partial move only through an exception that also threw
+   * away the list of what had already succeeded.
+   */
+  failed: Array<{ path: string; reason: string }>;
+}
+
+/**
+ * How many files a folder move is willing to look at before it refuses.
+ *
+ * The same ceiling the file listing uses. High enough that no real vault meets
+ * it, and a refusal is the only safe answer if one does: a partial listing
+ * would move part of a folder and report it as the whole of it.
+ */
+const LISTING_CEILING = 100_000;
+
+/** The message to record for something that would not move. */
+function reasonFor(error: unknown): string {
+  return error instanceof Error ? error.message : 'unknown error';
+}
+
 export class App {
   readonly notes: NoteService;
   readonly indexer: Indexer;
@@ -871,6 +904,23 @@ export class App {
    * have taken them, and losing them would quietly flatten a structure somebody
    * built on purpose.
    *
+   * **Attachments come too.** The folder used to be walked with `listNotes`,
+   * which reports `.md` and nothing else, so a screenshot or a PDF stayed
+   * behind. That broke the arrangement the whole file layout rests on — an
+   * attachment lives beside its note so that `![[rack.png]]` resolves against
+   * the note's own folder without an index lookup — and it left the old folder
+   * un-removable, because it was not empty. They are moved after the notes and
+   * refuse to overwrite anything already standing at their target.
+   *
+   * **What happens when one note will not move.** It is reported, and the rest
+   * still move. Not a transaction, and deliberately so, for the reason
+   * `#overSelection` gives: undoing the moves that worked means undoing the
+   * link rewrites they caused across the whole vault, and a rollback that
+   * itself fails halfway has nowhere left to go. What is *not* acceptable is
+   * the old behaviour, where the exception left `renameFolder` and took
+   * `movedNotes` and `updatedLinks` with it: six notes moved, forty-four not,
+   * and an answer that said only "a note already exists at that path".
+   *
    * **Whose view, and why it is required.** `movedNotes` and `updatedLinks`
    * are both lists of paths, so a caller acting in somebody else's vault — a
    * member renaming a folder in a space — would leak the way `renameNote` once
@@ -885,7 +935,7 @@ export class App {
     from: string,
     to: string,
     options: { view: Viewable; actor?: string },
-  ): Promise<{ folder: string; movedNotes: string[]; updatedLinks: string[] }> {
+  ): Promise<FolderRenameResult> {
     const source = normalizeVaultPath(from);
     const target = normalizeVaultPath(to);
 
@@ -893,7 +943,7 @@ export class App {
       throw new InvalidPathError('a folder name may not end in .md');
     }
     if (source === target) {
-      return { folder: source, movedNotes: [], updatedLinks: [] };
+      return { folder: source, movedNotes: [], movedFiles: [], updatedLinks: [], failed: [] };
     }
     // Moving a folder into itself would move its own new location forever.
     if (target.startsWith(`${source}/`)) {
@@ -908,30 +958,71 @@ export class App {
     // would collide with itself. Going through a name that collides with
     // neither turns it into two moves that are safe everywhere.
     if (caseKey(source) === caseKey(target)) {
-      const temporary = `${source}.${Date.now().toString(36)}.tmp`;
+      // Not `.tmp`. That suffix is reserved for the atomic-write temporaries the
+      // watcher is told to skip, and a directory holding real notes for the
+      // length of two passes is not one of those: the watcher ignored every
+      // path under it while `reconcile` indexed them through `listNotes`, so
+      // anything a failed second pass left behind was half-visible and nothing
+      // ever came back for it. An ordinary name shows up in the tree, where the
+      // person who asked for the rename can see it and finish the job by hand —
+      // and `failed` names it outright.
+      const temporary = `${source}.moving-${Date.now().toString(36)}`;
       const first = await this.renameFolder(owner, source, temporary, options);
       const second = await this.renameFolder(owner, temporary, target, options);
       return {
         folder: target,
         movedNotes: second.movedNotes,
+        movedFiles: second.movedFiles,
         updatedLinks: [...new Set([...first.updatedLinks, ...second.updatedLinks])],
+        // Each failure names the path the thing really has now: still under the
+        // source name if the first pass could not take it, under the interim
+        // name if the second could not.
+        failed: [...first.failed, ...second.failed],
       };
     }
 
     const inside = (p: string): boolean => p === source || p.startsWith(`${source}/`);
     const rebase = (p: string): string => `${target}${p.slice(source.length)}`;
 
-    // Recorded before anything moves: afterwards the old tree is gone.
+    // Recorded before anything moves: afterwards the old tree is gone. One walk
+    // for both halves, because notes and attachments have to agree about what
+    // was in the folder — `listNotes` alone was the bug.
     const subdirs = (await this.notes.listDirs(owner)).filter(inside);
-    const notes = (await this.notes.listNotes(owner)).map((n) => n.path).filter(inside);
+    const listing = await this.notes.vault.listAll(owner, LISTING_CEILING);
+    if (listing.truncated) {
+      // A partial listing would move part of the folder and report it as the
+      // whole of it, which is the failure this function is being fixed for.
+      throw new NotAFileError('the vault is too large to move a folder safely');
+    }
+    const inFolder = listing.files.filter((file) => inside(file.path));
+    const notes = inFolder.filter((file) => file.isNote).map((file) => file.path);
+    const attachments = inFolder.filter((file) => !file.isNote).map((file) => file.path);
 
     const movedNotes: string[] = [];
+    const movedFiles: string[] = [];
+    const failed: { path: string; reason: string }[] = [];
     const updatedLinks = new Set<string>();
 
     for (const notePath of notes) {
-      const result = await this.renameNote(owner, notePath, rebase(notePath), options);
-      movedNotes.push(result.note.path);
-      for (const link of result.updatedLinks) updatedLinks.add(link);
+      try {
+        const result = await this.renameNote(owner, notePath, rebase(notePath), options);
+        movedNotes.push(result.note.path);
+        for (const link of result.updatedLinks) updatedLinks.add(link);
+      } catch (error) {
+        failed.push({ path: notePath, reason: reasonFor(error) });
+      }
+    }
+
+    // After the notes, so that a note and the picture it embeds are never
+    // separated for longer than one move, and before the folder shares below,
+    // so that "the folder has moved" is true by the time they follow.
+    for (const filePath of attachments) {
+      try {
+        await this.notes.vault.moveFile(owner, filePath, rebase(filePath));
+        movedFiles.push(rebase(filePath));
+      } catch (error) {
+        failed.push({ path: filePath, reason: reasonFor(error) });
+      }
     }
 
     // Note shares went along one note at a time, inside each note's lock.
@@ -953,7 +1044,11 @@ export class App {
     return {
       folder: target,
       movedNotes: visibleIn(options.view, owner, movedNotes),
+      movedFiles: visibleIn(options.view, owner, movedFiles),
       updatedLinks: [...updatedLinks],
+      // Bounded like the rest: a failure names a path, and a path in somebody
+      // else's region is the same leak whether the move worked or not.
+      failed: failed.filter((entry) => visibleIn(options.view, owner, [entry.path]).length === 1),
     };
   }
 
