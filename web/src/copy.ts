@@ -1057,6 +1057,26 @@ export const copy = {
    * The note itself is written in the vault's language — see `dayHeading` in
    * `shared/journal.ts` — and none of its text is here.
    */
+  /**
+   * The one field on the start page.
+   *
+   * It never names a path. That is the whole idea: the thought goes somewhere
+   * sensible without anybody deciding where, and "today's note" is as much as
+   * the words need to say. What the field does promise it says plainly — the
+   * confirmation is a fact, not praise, and the failure says the text is still
+   * there, because that is the first thing somebody will want to know.
+   */
+  capture: {
+    title: 'Capture',
+    label: 'Something on your mind',
+    placeholder: 'Write it down and let go of it…',
+    hint: "Goes to today's note. ⌘↵ or Ctrl ↵ sends it.",
+    save: 'Add to today',
+    saving: 'Adding…',
+    saved: "Added to today's note.",
+    failed: 'That could not be sent. Your text is still here — try again.',
+  },
+
   journal: {
     title: 'Journal',
     calendarLabel: (month: string) => `Daily notes in ${month}`,
