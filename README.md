@@ -106,9 +106,11 @@ call is checked twice, against the owner's vault boundary and against the key's 
 secret is shown once and stored only as a SHA-256 hash, and every tool call is logged, so the
 owner can see what their agents actually did.
 
-The tools are `search_notes`, `get_note`, `list_notes`, `vault_map`, `get_links`, `create_note`,
-`append_note` and `edit_note`. There is no delete: an agent should not be able to lose a note in
-one call.
+The tools are `search_notes`, `get_note`, `list_notes`, `vault_map`, `get_links`, `list_tasks`,
+`create_note`, `append_note`, `edit_note`, `rename_note` and `delete_note`. An agent that can only
+ever add makes tidying work it cannot take part in, so it can clear up after itself too — a delete
+through MCP lands in *Recently deleted* like any other, and `delete_note` says in its answer
+whether a saved version to bring back actually exists.
 
 ## Design notes worth knowing before reading the code
 

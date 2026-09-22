@@ -131,10 +131,23 @@ export interface ActivityDay {
   agentWrites: number;
 }
 
-/** The MCP tools that only look — the same list `pulse` filters on. */
-const AGENT_READ_TOOLS = ['get_note', 'search_notes', 'list_notes', 'get_links', 'vault_map'] as const;
+/** The MCP tools that only look — the same list `pulse` filters on, from here. */
+const AGENT_READ_TOOLS = [
+  'get_note',
+  'search_notes',
+  'list_notes',
+  'get_links',
+  'vault_map',
+  'list_tasks',
+] as const;
 /** The MCP tools that change a note. */
-const AGENT_WRITE_TOOLS = ['create_note', 'append_note', 'edit_note'] as const;
+const AGENT_WRITE_TOOLS = [
+  'create_note',
+  'append_note',
+  'edit_note',
+  'delete_note',
+  'rename_note',
+] as const;
 
 /**
  * The per-day edit counts, for `days` buckets; parameters are the buckets as
@@ -668,6 +681,21 @@ export class Queries {
    * note lower the health score for doing exactly what it is meant to. The rule
    * is `isPendingDayLink` in `shared/journal.ts`, applied here so the tidy list,
    * the overview count, the attention total and the tree markers all get it.
+   *
+   * **Only ever called with a whole vault, and it has to stay that way.** The
+   * indexer resolves links against every note the owner has, not against the
+   * caller's region, so `target_path IS NULL` means "nowhere in this vault" —
+   * not "nowhere you can see". Handed a narrowed region, this turns into an
+   * existence oracle: write `[[Candidate]]` into a note inside the region, ask
+   * again, and whether the link comes back as dead tells you whether a note of
+   * that name exists in the half you were never shown.
+   *
+   * `outgoingLinks` above answers the same question safely and is the pattern
+   * to copy: it selects the target through `CASE WHEN <target in view>` and
+   * reports an out-of-region target as unresolved, which is what a caller
+   * outside the region would see anyway. A region-aware version of this query
+   * needs the same treatment — and the tidy view above it needs to be taught
+   * what the new nulls mean — before anything hands it a scoped view.
    */
   deadLinks(view: Viewable): LinkRow[] {
     const scope = scopeSql('l', 'source', view);
@@ -1055,13 +1083,17 @@ export class Queries {
          FROM access_log a
          JOIN api_keys k ON k.id = a.key_id
         WHERE a.owner = ? AND a.at > ? AND a.allowed = 1
-          AND a.tool IN ('get_note', 'search_notes', 'list_notes', 'get_links', 'vault_map')
+          AND a.tool IN (${AGENT_READ_TOOLS.map(() => '?').join(', ')})
         ORDER BY at DESC
         LIMIT ?`,
       owner,
       Math.trunc(sinceMs),
       owner,
       Math.trunc(sinceMs),
+      // From the list above rather than spelled out again here: the two had
+      // already drifted once — a tool added to one was missing from the other,
+      // and the pulse then silently stopped reporting that kind of read.
+      ...AGENT_READ_TOOLS,
       Math.trunc(limit),
     );
 
