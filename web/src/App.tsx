@@ -151,6 +151,15 @@ function useMedia(query: string): boolean {
 /** The same width at which `styles.css` turns the sidebar into a drawer. */
 const DRAWER_QUERY = '(max-width: 820px)';
 
+/**
+ * How long a failed write waits before trying again.
+ *
+ * Longer than any debounce, because the thing it is waiting for is not a pause
+ * in typing but a server that was not there — and short enough that the text is
+ * on disk before somebody who saw the warning has finished reading it.
+ */
+const SAVE_RETRY_MS = 2_000;
+
 function isDark(theme: Theme, systemDark: boolean): boolean {
   return theme === 'dark' || (theme === 'system' && systemDark);
 }
@@ -357,6 +366,15 @@ function Shell({
   const saveTimer = useRef<number | null>(null);
   const pending = useRef<{ owner: string; path: string; content: string } | null>(null);
   /**
+   * The note whose text this tab still owes the server, by `refKey`, or null.
+   *
+   * Set when a write failed and its text was put back in `pending`, cleared
+   * when that text finally lands. It is what keeps the failure on screen after
+   * a switch to another note — opening one used to report "Saved" over it — and
+   * what makes the browser ask before the tab is closed on top of it.
+   */
+  const owed = useRef<string | null>(null);
+  /**
    * The version each note's text on this screen started from, by `refKey`, sent
    * with every write of that note.
    *
@@ -547,10 +565,14 @@ function Shell({
           });
           // This write is now the version to compare this note's next one against.
           versions.current.set(key, result.note.mtimeMs);
+          // The debt is paid. Reported even when this note is no longer the one
+          // on screen, because the warning it left there is about this text.
+          const settled = owed.current === key;
+          if (settled) owed.current = null;
           // Cleared only when nothing was typed while the write was in flight —
           // otherwise this would drop text newer than the version just stored.
           if (pending.current === null) window.__ndbrainPending = null;
-          if (isOpen()) setSaveState(pending.current === null ? 'saved' : 'dirty');
+          if (isOpen() || settled) setSaveState(pending.current === null ? 'saved' : 'dirty');
 
           // Somebody else's version was displaced and kept. Reported plainly and
           // left on screen: the text on this screen won, and the other one is only
@@ -572,6 +594,33 @@ function Shell({
             invalidate.afterStructure(client);
             return;
           }
+
+          // The buffer was emptied before the request went out, so this text is
+          // now nowhere but in the editor — and every way out of here (opening
+          // another note, changing view, signing out, the tab being hidden)
+          // asks `pending` whether there is anything to write. Put it back, and
+          // try again on a timer: a server that was briefly not there is the
+          // common case, and the alternative is a paragraph that quietly never
+          // reaches the disk.
+          //
+          // Not when something newer is already waiting — that text is a later
+          // version of this same document and includes it — and not into a note
+          // being deleted, which is the one case where a write would bring a
+          // file back from the dead. Not after a 401 either: the session is
+          // over, every retry would fail the same way, and the text stays in
+          // the crash box's slot where it was put on the keystroke.
+          const sessionGone = caught instanceof ApiError && caught.status === 401;
+          if (!sessionGone && pending.current === null && !deleting.current.has(key)) {
+            pending.current = outstanding;
+            window.__ndbrainPending = { path: outstanding.path, content: outstanding.content };
+            owed.current = key;
+            if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+            saveTimer.current = window.setTimeout(() => void flushLater.current?.(), SAVE_RETRY_MS);
+            // Said whichever note is on screen. The indicator is one for the
+            // whole window, and text owed to the server is worth more on it
+            // than the state of the note that happens to be open.
+            setSaveState('failed');
+          }
           setError(caught instanceof ApiError ? caught.message : copy.errors.saveFailed);
         }
       })();
@@ -584,6 +633,14 @@ function Shell({
     },
     [client],
   );
+
+  /**
+   * `flush`, for the retry inside `write`.
+   *
+   * `flush` is built on `write`, so `write` cannot name it. The ref is the
+   * knot in that circle, and it is assigned below as soon as `flush` exists.
+   */
+  const flushLater = useRef<(() => Promise<void>) | null>(null);
 
   /** Writes whatever is pending right now. */
   const flush = useCallback(async (): Promise<void> => {
@@ -603,6 +660,7 @@ function Shell({
     pending.current = null;
     await write(outstanding);
   }, [write]);
+  flushLater.current = flush;
 
   /** Writes what is pending and waits until no write is running any more. */
   const settle = useCallback(async (): Promise<void> => {
@@ -628,6 +686,15 @@ function Shell({
       saveTimer.current = window.setTimeout(() => void flush(), prefsRef.current.saveDelayMs);
     },
     [flush],
+  );
+
+  // A retry must not outlive the screen it belongs to: a session that ended
+  // mid-save would otherwise fire one into a shell that is no longer there.
+  useEffect(
+    () => () => {
+      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
+    },
+    [],
   );
 
   // A closing tab must not take the last sentence with it.
@@ -682,7 +749,11 @@ function Shell({
         setOpenRef({ owner, path });
         versions.current.set(refKey(owner, path), opened.note.mtimeMs);
         setView('note');
-        setSaveState('saved');
+        // Not unconditionally 'saved'. A write that failed left its text in the
+        // buffer and its warning on screen, and opening another note used to
+        // paint over both — the one moment at which somebody would close the
+        // tab believing everything was on disk.
+        setSaveState(owed.current === null ? 'saved' : 'failed');
         setDrawerOpen(false);
         setRevealed(null);
         setError(null);
