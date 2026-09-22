@@ -316,7 +316,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // with its own bearer key, not with a browser cookie. Keeping it off the
   // cookie path also means a malicious page cannot reach it with the user's
   // ambient credentials.
-  registerMcpEndpoint(fastify, { app, keys });
+  registerMcpEndpoint(fastify, { app, keys, deleted });
 
   // ---- authentication -----------------------------------------------------
   fastify.post('/api/v1/auth/login', async (request, reply) => {

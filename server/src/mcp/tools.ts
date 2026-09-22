@@ -25,13 +25,21 @@
 
 import type { App } from '../app.js';
 import { withinScope, type ApiKey, type ApiKeyService } from '../auth/keys.js';
+import { normalizePrefix, type View } from '../auth/shares.js';
 import { NoteNotFoundError } from '../errors.js';
+import type { DeletedNotes } from '../notes/deleted.js';
 import { normalizeVaultPath } from '../vault/paths.js';
 
 export interface ToolContext {
   app: App;
   keys: ApiKeyService;
   key: ApiKey;
+  /**
+   * Recently deleted, so `delete_note` can say whether the way back is really
+   * there. A delete that implies a 30-day undo the host never set up is the
+   * one promise this surface must not make loosely.
+   */
+  deleted: DeletedNotes;
 }
 
 /**
@@ -69,8 +77,8 @@ export interface ToolDefinition {
   /**
    * Whether one call can remove content that was there before, the way `rm`
    * or a destructive migration would. Required rather than defaulted so that
-   * adding a ninth tool means deciding this, not inheriting whatever the
-   * eighth tool happened to have.
+   * adding a tool means deciding this, not inheriting whatever the one written
+   * above it happened to have.
    */
   destructive: boolean;
   /** Receives arguments that have already been through `checkArguments`. */
@@ -186,6 +194,53 @@ function inScope<T extends { path: string }>(context: ToolContext, rows: T[]): T
   return rows.filter((row) => withinScope(context.key, row.path));
 }
 
+/**
+ * The key's scope in the shape every query already takes.
+ *
+ * A key's scope is exactly one region of one vault, which is what a `View` is,
+ * so handing a query this puts the scope into the SQL instead of dropping rows
+ * after they come back. That is correctness, not tidiness: a `LIMIT` applied
+ * before the scope cuts the wrong rows. `vault_map` asked for the owner's whole
+ * vault `ORDER BY n.path LIMIT 5000` and filtered afterwards, so a key scoped to
+ * a folder that sorts late answered "No notes." on any vault past five
+ * thousand — and by the rule in the file header it could not tell that from a
+ * folder that is empty, which is the one thing a map must never be wrong about
+ * silently. `search_notes` had the same shape, softened by asking for three
+ * times the limit, which is a guess that runs out rather than a rule. A cap
+ * belongs after what the caller may see, never before it.
+ *
+ * Still one rule and not a second copy of it: `scopeSql` in `queries.ts` builds
+ * this from `regionSql`, the SQL twin of the `inScope` that `withinScope`
+ * itself calls.
+ */
+function keyView(key: ApiKey): View {
+  return [{ owner: key.owner, prefix: key.scope, exact: false, canWrite: key.canWrite }];
+}
+
+/**
+ * That view narrowed to one folder, for the tools that take a `folder`.
+ *
+ * The narrower of the two prefixes, and an empty view — which `scopeSql` turns
+ * into `1 = 0` — when neither contains the other. Deliberate rather than
+ * incidental: asking for a folder outside the scope has to answer exactly like
+ * asking for one that is empty.
+ *
+ * `normalizePrefix` rather than a trailing slash appended here. The slash is
+ * what stops `Homelab` from also covering `Homelab2`, and it is the rule both
+ * shares and key scopes are normalised with; a folder that cannot be a path at
+ * all is refused by it, which is an answer the calling model can correct.
+ */
+function viewUnder(key: ApiKey, folder: string): View {
+  if (folder === '') return keyView(key);
+
+  const prefix = normalizePrefix(folder);
+  if (prefix === '' || key.scope.startsWith(prefix)) return keyView(key);
+  if (prefix.startsWith(key.scope)) {
+    return [{ owner: key.owner, prefix, exact: false, canWrite: key.canWrite }];
+  }
+  return [];
+}
+
 export const TOOLS: ToolDefinition[] = [
   {
     name: 'search_notes',
@@ -215,12 +270,14 @@ export const TOOLS: ToolDefinition[] = [
       if (typeof input['days'] === 'number' && input['days'] > 0) {
         options.sinceMs = Date.now() - input['days'] * 86_400_000;
       }
-      // Ask for extra rows: scope filtering happens after the query, so a scoped
-      // key would otherwise see fewer results than it asked for.
-      options.limit = Math.min(200, (options.limit ?? 20) * 3);
-
-      const found = context.app.queries.search(context.key.owner, input['query'] as string, options);
-      const hits = inScope(context, found).slice(0, clampLimit(input['limit'], 20));
+      // The scope travels with the query, so the limit means what it says. This
+      // used to ask for three times as many rows and drop the out-of-scope ones
+      // afterwards — see `keyView` for why that is a guess and not a rule.
+      const hits = context.app.queries.search(
+        keyView(context.key),
+        input['query'] as string,
+        options,
+      );
 
       context.keys.log(context.key, 'search_notes', null, true);
 
@@ -300,21 +357,14 @@ export const TOOLS: ToolDefinition[] = [
     ),
     handler: async (context, input) => {
       const folder = typeof input['folder'] === 'string' ? input['folder'] : '';
-      const prefix = folder === '' ? '' : `${folder.replace(/\/+$/, '')}/`;
 
-      const rows = context.app.queries
-        .vaultMap(context.key.owner, 5000)
-        // The key's own scope on top of the owner's vault, exactly as everywhere
-        // else: a key always sees less than its owner, never more.
-        //
-        // Through `withinScope` and not by comparing the prefix here. The two
-        // agree today and that is the whole danger: the moment the shared rule
-        // changes — how an empty scope reads, how a trailing slash is handled,
-        // whether case matters — the copy would keep answering the old question
-        // and nothing would say so. One rule, one place, for every tool.
-        .filter((row) => withinScope(context.key, row.path))
-        .filter((row) => row.path.startsWith(prefix))
-        .slice(0, clampLimit(input['limit'], 500));
+      // The scope and the folder both reach the query as one region, so the
+      // limit cuts the notes this key asked for and not the ones that happened
+      // to sort first in somebody's whole vault. See `keyView`.
+      const rows = context.app.queries.vaultMap(
+        viewUnder(context.key, folder),
+        clampLimit(input['limit'], 500),
+      );
 
       context.keys.log(context.key, 'vault_map', folder || null, true);
       if (rows.length === 0) return 'No notes.';
@@ -384,6 +434,55 @@ export const TOOLS: ToolDefinition[] = [
             : `  ${link.targetPath}`,
         ),
       ];
+      return lines.join('\n');
+    },
+  },
+
+  {
+    name: 'list_tasks',
+    title: 'List open tasks',
+    description:
+      'Every unfinished "- [ ]" checkbox written in the notes, with the note it stands in and its ' +
+      'line number. Use it to answer "what is still open" without reading notes one by one, and to ' +
+      'find the note holding a task before editing it. Optionally limited to one folder. Finished ' +
+      'items are left out unless you ask for them.',
+    readOnly: true,
+    destructive: false,
+    inputSchema: schema(
+      {
+        folder: { type: 'string', description: 'Only tasks in notes below this folder.' },
+        include_done: { type: 'boolean', description: 'Include finished items too (default false).' },
+        limit: { type: 'number', description: 'Maximum tasks (default 100).' },
+      },
+      [],
+    ),
+    handler: async (context, input) => {
+      const folder = typeof input['folder'] === 'string' ? input['folder'] : '';
+      // The folder narrows the region rather than filtering the rows the query
+      // came back with, for the same reason `vault_map` does — otherwise the
+      // limit is spent on tasks that are then thrown away. See `keyView`.
+      const view = viewUnder(context.key, folder);
+
+      const filter: Parameters<typeof context.app.queries.tasks>[1] = {
+        limit: clampLimit(input['limit'], 100),
+      };
+      if (input['include_done'] === true) filter.includeDone = true;
+
+      const tasks = context.app.queries.tasks(view, filter);
+      const total = context.app.queries.taskCount(view, filter);
+
+      context.keys.log(context.key, 'list_tasks', folder || null, true);
+      if (tasks.length === 0) return 'No open tasks.';
+
+      const lines = tasks.map(
+        (task) => `${task.done ? '[x]' : '[ ]'} ${task.text}  —  ${task.path}:${task.line}`,
+      );
+      // A capped list that does not say it was capped reads as "that was all of
+      // them", and the work then looks finished when it is not. The task view
+      // reports its own total for exactly this reason.
+      if (total > tasks.length) {
+        lines.push(`… and ${total - tasks.length} more; narrow it with a folder or raise the limit.`);
+      }
       return lines.join('\n');
     },
   },
@@ -473,9 +572,9 @@ export const TOOLS: ToolDefinition[] = [
       'Replace an exact piece of text in a note. The text to replace must appear exactly once — ' +
       'if it appears zero times or several times the edit is refused rather than guessing.',
     readOnly: false,
-    // The one tool of the eight that can actually destroy content: `replace`
-    // is unconstrained, so a single call can remove the whole matched span —
-    // this is what deleted a note's frontmatter three times over before
+    // Destructive by accident rather than by purpose, unlike `delete_note`:
+    // `replace` is unconstrained, so a single call can remove the whole matched
+    // span — this is what deleted a note's frontmatter three times over before
     // checkArguments existed to catch a misnamed argument.
     destructive: true,
     inputSchema: schema(
@@ -530,6 +629,141 @@ export const TOOLS: ToolDefinition[] = [
         ? `Edited ${notePath}`
         : `Edited ${notePath}. Somebody else had changed the note since it was read; ` +
           `their version was kept as ${result.conflictCopy}.`;
+    },
+  },
+
+  {
+    name: 'delete_note',
+    title: 'Delete a note',
+    description:
+      'Delete one note. Use it to clear away something that should not have been written — a note ' +
+      'that merely sits in the wrong place belongs in rename_note instead, which keeps its links ' +
+      'and its history. The note lands in "Recently deleted", where its owner can bring it back ' +
+      'for 30 days; the answer says whether a saved version to bring back actually exists.',
+    readOnly: false,
+    // The one tool whose whole purpose is to remove content.
+    destructive: true,
+    inputSchema: schema(
+      { path: { type: 'string', description: 'Vault-relative path, ending in .md' } },
+      ['path'],
+    ),
+    /**
+     * Whose notes an agent may delete: any note inside its scope, including
+     * ones it never wrote.
+     *
+     * The alternative — a key may delete only what it created — was considered
+     * and `edits` cannot carry it. The column that would answer it is free
+     * text, key names are not unique (two keys may both be called `tidy`), and
+     * decisively: a note that arrived as a file has no `create` row at all. The
+     * watcher and the startup sync index without writing to `edits`, because
+     * that log records what was changed *through* ndBrain. An authorship rule
+     * would therefore refuse exactly the notes an agent is asked to tidy — the
+     * imported vault, which is most of it — and permit exactly the ones nobody
+     * worries about. It would not even be a boundary: an agent that wanted a
+     * note gone could create one, and delete that, to prove it may.
+     *
+     * What bounds the damage is what bounds it for a person: the scope, the
+     * write bit, and the 30-day way back. Which is why this reports whether
+     * that way back is really there rather than assuming it.
+     */
+    handler: async (context, input) => {
+      const notePath = assertInScope(context, 'delete_note', input['path'] as string);
+      assertWritable(context, 'delete_note', notePath);
+
+      // Asked before the delete, the way the browser asks before its
+      // confirmation: afterwards the answer is the same and the choice is gone.
+      // The owner is both sides of it — a key acts as its owner and never as
+      // somebody the vault was shared with.
+      const preview = await context.deleted.preview(context.key.owner, context.key.owner, [notePath]);
+
+      await context.app.deleteNote(context.key.owner, notePath, context.key.name);
+      context.keys.log(context.key, 'delete_note', notePath, true);
+
+      return preview.restorable > 0
+        ? `Deleted ${notePath}. Its owner can bring it back from "Recently deleted" for 30 days.`
+        : `Deleted ${notePath}. No saved version of it exists, so it cannot be brought back.`;
+    },
+  },
+
+  {
+    name: 'rename_note',
+    title: 'Rename or move a note',
+    description:
+      'Rename a note, or move it to another folder, rewriting every [[Wikilink]] that pointed at ' +
+      'it so nothing breaks. Always prefer this over creating a copy and deleting the original: ' +
+      'that loses the links pointing at it and its place in the history. Both paths must lie ' +
+      'inside what this key may reach.',
+    readOnly: false,
+    // The note survives the call, but the call still removes text that was
+    // there: every `[[…]]` naming the old path is replaced, in notes the caller
+    // never named. And unlike a delete there is no "recently renamed" to walk
+    // it back from — which is exactly the case a client should be able to
+    // prompt about.
+    destructive: true,
+    inputSchema: schema(
+      {
+        from: { type: 'string', description: 'Current vault-relative path, ending in .md' },
+        to: { type: 'string', description: 'New vault-relative path, ending in .md' },
+      },
+      ['from', 'to'],
+    ),
+    /**
+     * A scoped key's rename writes outside its scope. Decided, not overlooked.
+     *
+     * `App.renameNote` rewrites every `[[wikilink]]` that pointed at the note
+     * across the whole of the owner's vault — read its comment for why it has
+     * to. So a key scoped to `Agent/` renaming a note there can change a line
+     * in `Privat/`, and that is allowed here.
+     *
+     * The argument for it. The write is not arbitrary: the only text this can
+     * produce is a wikilink naming a path the key was already permitted to
+     * name, in a note that already pointed at a note inside the key's scope. A
+     * key cannot reach a note that never mentioned its folder, cannot choose
+     * what is written there, and cannot read the result. Against that, every
+     * alternative is worse. Rewriting only inside the scope leaves the owner
+     * with a dead link in a note nobody touched — silent damage found weeks
+     * later, which is the very thing the rewrite exists to prevent. Refusing
+     * the rename when an out-of-scope note links to it turns the tool into the
+     * existence oracle `get_links` was carefully built not to be: the refusal
+     * would itself announce that something invisible points here. Allowing
+     * renames only for keys with no scope withholds the tool from exactly the
+     * agent it was built for.
+     *
+     * What is *not* allowed is telling the key what it touched. `view` bounds
+     * the report and never the rewrite, and the view passed is the key's scope
+     * rather than its owner's vault — the REST route passes the caller's share
+     * view for the same reason, and a grantee was once handed
+     * `Privat/Heimlich.md` in this field for free.
+     */
+    handler: async (context, input) => {
+      const source = assertInScope(context, 'rename_note', input['from'] as string);
+      // Both ends. A rename guarded only at the source is the way to walk a
+      // note out of the scope and then read it from outside — the same reason
+      // the REST route checks the destination.
+      const target = assertInScope(context, 'rename_note', input['to'] as string);
+      assertWritable(context, 'rename_note', source);
+
+      // No `authorizeSource`/`authorizeTarget` hooks, unlike the REST route.
+      // Those re-check a *share* inside the note's lock because a share can be
+      // withdrawn mid-call, by its owner or by the binding check running in
+      // that same lock. A key's scope and write bit are set when it is created
+      // and never change: there is nothing for a second look to find.
+      const result = await context.app.renameNote(context.key.owner, source, target, {
+        view: keyView(context.key),
+        actor: context.key.name,
+      });
+
+      context.keys.log(context.key, 'rename_note', target, true);
+
+      const updated = result.updatedLinks;
+      if (updated.length === 0) return `Renamed ${source} to ${target}.`;
+      // Counted as the length of what is named, never separately: a count of
+      // two beside one path would say the second exists. See `App.renameNote`.
+      return (
+        `Renamed ${source} to ${target}. Links updated in ${updated.length} ` +
+        `${updated.length === 1 ? 'note' : 'notes'}:\n` +
+        updated.map((notePath) => `  ${notePath}`).join('\n')
+      );
     },
   },
 ];
