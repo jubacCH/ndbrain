@@ -250,7 +250,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (problem.status === 500) {
       request.log.error({ err: error }, 'unhandled error');
     }
-    void reply.code(problem.status).send({ code: problem.code, message: problem.message });
+    // The type is set explicitly because of the one route that answers with
+    // something else: a failure while the export stream is being built reaches
+    // this handler with `application/zip` already on the reply, and serialising
+    // a problem object under that type throws inside Fastify — where nothing
+    // can catch it, so the process goes down instead of the request.
+    void reply
+      .code(problem.status)
+      .type('application/json; charset=utf-8')
+      .send({ code: problem.code, message: problem.message });
   });
 
   // ---- the web UI ---------------------------------------------------------
@@ -863,11 +871,34 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const owner = requireUser(request).id;
     const { files } = await app.listFiles(owner, 100_000);
 
-    const zip = new ZipFile();
+    // Resolved first, then handed over as paths: `addFile` opens a file only
+    // when that entry's turn to be written comes and pipes it into the output
+    // stream, so the archive costs one file's chunks at a time. `addBuffer`
+    // would cost the whole vault, which is what the paragraph above promises
+    // it does not.
+    const onDisk: { real: string; entry: string; mtimeMs: number }[] = [];
     for (const file of files) {
-      zip.addBuffer(await app.readFile(owner, file.path), file.path, {
-        mtime: new Date(file.mtimeMs),
+      onDisk.push({
+        real: await app.fileOnDisk(owner, file.path),
+        entry: file.path,
+        mtimeMs: file.mtimeMs,
       });
+    }
+
+    const zip = new ZipFile();
+    // A file listed a moment ago can be gone by the time its turn comes, and
+    // yazl reports that as an `error` event rather than a rejected promise.
+    // Unhandled, an `error` on an EventEmitter takes the process down — and the
+    // output stream would never end, so the request would hang instead of
+    // failing. Passing it to the stream Fastify is sending is what turns it
+    // back into a failed response: a 500 while nothing has been written yet, a
+    // cut connection once bytes are on the wire. An archive that quietly omits
+    // a file it could not read is the one outcome to avoid; it is not a backup.
+    zip.on('error', (error: unknown) => {
+      zip.outputStream.emit('error', error instanceof Error ? error : new Error(String(error)));
+    });
+    for (const file of onDisk) {
+      zip.addFile(file.real, file.entry, { mtime: new Date(file.mtimeMs) });
     }
     zip.end();
 
