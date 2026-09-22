@@ -96,6 +96,7 @@ import {
   useToggleTask,
   useTree,
 } from './queries';
+import { useNoteBuffer, type SaveState } from './useNoteBuffer';
 
 export interface Filters {
   tag?: string;
@@ -117,7 +118,6 @@ type View =
   | 'files'
   | 'settings'
   | 'admin';
-type SaveState = 'saved' | 'dirty' | 'saving' | 'failed';
 
 
 /*
@@ -152,15 +152,6 @@ function useMedia(query: string): boolean {
 
 /** The same width at which `styles.css` turns the sidebar into a drawer. */
 const DRAWER_QUERY = '(max-width: 820px)';
-
-/**
- * How long a failed write waits before trying again.
- *
- * Longer than any debounce, because the thing it is waiting for is not a pause
- * in typing but a server that was not there — and short enough that the text is
- * on disk before somebody who saw the warning has finished reading it.
- */
-const SAVE_RETRY_MS = 2_000;
 
 function isDark(theme: Theme, systemDark: boolean): boolean {
   return theme === 'dark' || (theme === 'system' && systemDark);
@@ -272,24 +263,8 @@ function Shell({
   /** The view on screen as of the last render, for the same reason as `openNow`. */
   const viewNow = useRef(view);
   viewNow.current = view;
-  /** Which note is open — the identity, not its content. */
-  const [openRef, setOpenRefState] = useState<{ owner: string; path: string } | null>(null);
-  /**
-   * The open note as of this moment, not as of the last render.
-   *
-   * Read by code that resumes after a request — a save answering, a delete
-   * answering — and must act on what is open *now*. A value captured in a
-   * callback's closure is whatever was open when it started, which is how a
-   * slow delete closed the note opened while it ran.
-   */
-  const openNow = useRef<{ owner: string; path: string } | null>(null);
-  const setOpenRef = useCallback((next: { owner: string; path: string } | null): void => {
-    openNow.current = next;
-    setOpenRefState(next);
-  }, []);
   /** Where to place the cursor on the next open — a task's line, or nowhere. */
   const [jumpLine, setJumpLine] = useState<number | null>(null);
-  const [saveState, setSaveState] = useState<SaveState>('saved');
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<Filters>({});
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -347,14 +322,6 @@ function Shell({
   const systemDark = useMedia('(prefers-color-scheme: dark)');
   /** Which theme is on screen, whatever chose it — the header button flips from here. */
   const dark = isDark(prefs.theme, systemDark);
-  /**
-   * The same preferences, reachable from a callback that must not be rebuilt.
-   *
-   * `scheduleSave` runs on every keystroke and is handed to the editor once;
-   * putting `prefs` in its dependency list would tear down and rebuild the
-   * editor's change handler every time a slider moved.
-   */
-  const prefsRef = useRef(prefs);
   const [filesDir, setFilesDir] = useState('');
   /** Whose files the browser shows: the caller's own vault, or a space's. */
   const [filesOwner, setFilesOwner] = useState(user.id);
@@ -367,62 +334,51 @@ function Shell({
     return loadRecents(user.id);
   });
 
-  const saveTimer = useRef<number | null>(null);
-  const pending = useRef<{ owner: string; path: string; content: string } | null>(null);
-  /**
-   * The note whose text this tab still owes the server, by `refKey`, or null.
-   *
-   * Set when a write failed and its text was put back in `pending`, cleared
-   * when that text finally lands. It is what keeps the failure on screen after
-   * a switch to another note — opening one used to report "Saved" over it — and
-   * what makes the browser ask before the tab is closed on top of it.
-   */
-  const owed = useRef<string | null>(null);
-  /**
-   * The version each note's text on this screen started from, by `refKey`, sent
-   * with every write of that note.
-   *
-   * Kept in a ref rather than state because it has to be right at the moment the
-   * debounce fires, not at the next render — and it is updated from each save's
-   * response, so a run of autosaves does not report the first one's version and
-   * make every later save look like a conflict.
-   *
-   * Per note, not one slot: a save answering after a switch used to write its
-   * version into the slot of the note opened meanwhile, and that note's next
-   * save then claimed a base it had never been read at.
-   */
-  const versions = useRef(new Map<string, number>());
-  /**
-   * The write in flight, if any. Writes run one after another, and opening or
-   * deleting a note waits for them: a read that overtakes a running save shows
-   * the text from before it, and a delete that overtakes one is undone by it.
-   */
-  const saving = useRef<Promise<void> | null>(null);
-  /**
-   * Unsaved text of notes being deleted, by `refKey` — see `deleting`. A slot of
-   * its own per note, because `pending` has one and a note opened while the
-   * question is open types into it.
-   */
-  const held = useRef(new Map<string, { owner: string; path: string; content: string }>());
-  /**
-   * Notes being deleted right now, by `refKey`.
-   *
-   * From the moment the question is about to be asked until the delete has
-   * answered, nothing writes to them: not the debounce, not a switch, not a tab
-   * being hidden. Any of those used to be able to send a PUT that landed after
-   * the DELETE and brought the note straight back. Their unsaved text waits in
-   * `held` meanwhile — it is written after a cancel or a failed delete, and
-   * dropped after a successful one. Mirrored in state so the editor can lock.
-   * One delete per note at a time: a second request for a note already being
-   * deleted returns at once.
-   */
-  const deleting = useRef(new Set<string>());
-  const [deletingKeys, setDeletingKeys] = useState<ReadonlySet<string>>(() => new Set());
-
   const client = useQueryClient();
+  const saveNoteMutation = useSaveNote();
+  /**
+   * The write itself, reachable from a callback that must not be rebuilt.
+   *
+   * `createNoteAt` is handed to the tree and to the palette; taking the
+   * mutation object as a dependency would rebuild it on every render.
+   */
+  const saveNote = useRef(saveNoteMutation.mutateAsync);
+  saveNote.current = saveNoteMutation.mutateAsync;
+  /**
+   * The editor's buffer and everything that gets its text onto the disk.
+   *
+   * The promise that typed text does not go missing is kept in `useNoteBuffer`
+   * and nowhere else: the debounce, the retry, the version each write claims as
+   * its base, the hold a delete puts on a note, and the handlers that ask on the
+   * way out whether anything is still owed. What is left here is the screen
+   * around it — which note the tree highlights, which view is on, what the
+   * header says.
+   */
+  const {
+    openRef,
+    openNow,
+    setOpenRef,
+    saveState,
+    deletingKeys,
+    hasPending,
+    scheduleSave,
+    flush,
+    settle,
+    opened,
+    closed,
+    forget,
+    discard,
+    beginDelete,
+    holdsTextFor,
+    releaseDelete,
+    finishDelete,
+  } = useNoteBuffer({
+    save: saveNoteMutation.mutateAsync,
+    saveDelayMs: prefs.saveDelayMs,
+    onError: setError,
+  });
 
   useEffect(() => {
-    prefsRef.current = prefs;
     applyPrefs(prefs);
     savePrefs(prefs);
   }, [prefs]);
@@ -462,17 +418,6 @@ function Shell({
   // Tasks sit beside the calendar, so they are wanted exactly while the journal is.
   const tasksQuery = useTasks(taskFilter, view === 'journal');
   const toggleTaskMutation = useToggleTask();
-  const saveNoteMutation = useSaveNote();
-  /**
-   * The write itself, reachable from a callback that must not be rebuilt.
-   *
-   * `write` is at the bottom of the chain that ends in the editor's change
-   * handler and in the listeners registered once for `pagehide`; taking the
-   * mutation object as a dependency would tear all of that down and build it
-   * again on every render.
-   */
-  const saveNote = useRef(saveNoteMutation.mutateAsync);
-  saveNote.current = saveNoteMutation.mutateAsync;
 
   const notes = treeQuery.data?.notes ?? [];
   /** Which vaults are spaces, and what they are called; from the tree reply. */
@@ -534,208 +479,6 @@ function Shell({
       .catch(() => undefined);
   }, []);
 
-
-  /**
-   * Writes one note's text, after any write still running.
-   *
-   * The version sent is the note's own, read when the write actually goes out
-   * — after the one before it has answered, so a run of saves chains each on
-   * the version the previous one produced.
-   */
-  const write = useCallback(
-    (outstanding: { owner: string; path: string; content: string }): Promise<void> => {
-      const key = refKey(outstanding.owner, outstanding.path);
-      const previous = saving.current;
-      const isOpen = (): boolean =>
-        openNow.current?.owner === outstanding.owner && openNow.current.path === outstanding.path;
-
-      const run = (async (): Promise<void> => {
-        if (previous !== null) await previous;
-        if (isOpen()) setSaveState('saving');
-        try {
-          const base = versions.current.get(key);
-          // Through the mutation rather than `api.putNote` straight: what a
-          // write does to the cache — this note's entry updated in place, and
-          // exactly the queries an edit can have changed marked stale — belongs
-          // with the other server state, not spelled out again in the shell.
-          // Spread rather than `baseMtimeMs: base`, because a note being saved
-          // for the first time has no version and `exactOptionalPropertyTypes`
-          // separates "absent" from "present but undefined".
-          const result = await saveNote.current({
-            owner: outstanding.owner,
-            path: outstanding.path,
-            content: outstanding.content,
-            ...(base === undefined ? {} : { baseMtimeMs: base }),
-          });
-          // This write is now the version to compare this note's next one against.
-          versions.current.set(key, result.note.mtimeMs);
-          // The debt is paid. Reported even when this note is no longer the one
-          // on screen, because the warning it left there is about this text.
-          const settled = owed.current === key;
-          if (settled) owed.current = null;
-          // Cleared only when nothing was typed while the write was in flight —
-          // otherwise this would drop text newer than the version just stored.
-          if (pending.current === null) window.__ndbrainPending = null;
-          if (isOpen() || settled) setSaveState(pending.current === null ? 'saved' : 'dirty');
-
-          // Somebody else's version was displaced and kept. Reported plainly and
-          // left on screen: the text on this screen won, and the other one is only
-          // recoverable if the person is told the file exists.
-          if (result.conflictCopy !== undefined) {
-            setError(copy.errors.conflict(result.conflictCopy));
-          }
-        } catch (caught) {
-          if (isOpen()) setSaveState('failed');
-          if (caught instanceof ApiError && caught.status === 404) {
-            // The note is no longer at this path: renamed, moved or deleted
-            // while this text was being typed. The server does not bring it
-            // back into being at the old name (a save names its version), so
-            // this text has nowhere to go — said plainly, and the tree
-            // refreshed so the new name is there to paste it into. The text
-            // stays in the editor, and in the crash box's slot: only a save
-            // that succeeded ever clears that.
-            setError(copy.errors.noteMovedWhileSaving);
-            invalidate.afterStructure(client);
-            return;
-          }
-
-          // The buffer was emptied before the request went out, so this text is
-          // now nowhere but in the editor — and every way out of here (opening
-          // another note, changing view, signing out, the tab being hidden)
-          // asks `pending` whether there is anything to write. Put it back, and
-          // try again on a timer: a server that was briefly not there is the
-          // common case, and the alternative is a paragraph that quietly never
-          // reaches the disk.
-          //
-          // Not when something newer is already waiting — that text is a later
-          // version of this same document and includes it — and not into a note
-          // being deleted, which is the one case where a write would bring a
-          // file back from the dead. Not after a 401 either: the session is
-          // over, every retry would fail the same way, and the text stays in
-          // the crash box's slot where it was put on the keystroke.
-          const sessionGone = caught instanceof ApiError && caught.status === 401;
-          if (!sessionGone && pending.current === null && !deleting.current.has(key)) {
-            pending.current = outstanding;
-            window.__ndbrainPending = { path: outstanding.path, content: outstanding.content };
-            owed.current = key;
-            if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
-            saveTimer.current = window.setTimeout(() => void flushLater.current?.(), SAVE_RETRY_MS);
-            // Said whichever note is on screen. The indicator is one for the
-            // whole window, and text owed to the server is worth more on it
-            // than the state of the note that happens to be open.
-            setSaveState('failed');
-          }
-          setError(caught instanceof ApiError ? caught.message : copy.errors.saveFailed);
-        }
-      })();
-
-      saving.current = run;
-      void run.finally(() => {
-        if (saving.current === run) saving.current = null;
-      });
-      return run;
-    },
-    [client],
-  );
-
-  /**
-   * `flush`, for the retry inside `write`.
-   *
-   * `flush` is built on `write`, so `write` cannot name it. The ref is the
-   * knot in that circle, and it is assigned below as soon as `flush` exists.
-   */
-  const flushLater = useRef<(() => Promise<void>) | null>(null);
-
-  /** Writes whatever is pending right now. */
-  const flush = useCallback(async (): Promise<void> => {
-    const outstanding = pending.current;
-    if (outstanding === null) return;
-    // Held, not written: see `deleting`.
-    //
-    // The second layer, not the only one. `scheduleSave` already keeps text
-    // typed into a note being deleted out of `pending` entirely, so this check
-    // is unreachable through the editor and stays anyway: `flush` is called
-    // from a timer, from `pagehide` and from `visibilitychange`, and a delete
-    // starting between such a call being queued and it running would otherwise
-    // recreate the note from the text still sitting in `pending`. Removing it
-    // leaves every test green — which says the hole is narrow, not that it is
-    // closed.
-    if (deleting.current.has(refKey(outstanding.owner, outstanding.path))) return;
-    pending.current = null;
-    await write(outstanding);
-  }, [write]);
-  flushLater.current = flush;
-
-  /** Writes what is pending and waits until no write is running any more. */
-  const settle = useCallback(async (): Promise<void> => {
-    await flush();
-    while (saving.current !== null) await saving.current;
-  }, [flush]);
-
-  const scheduleSave = useCallback(
-    (owner: string, path: string, content: string): void => {
-      // Typed into a note being deleted — possible only in the moment before
-      // its editor locks: kept with that note's held text, never in `pending`.
-      if (deleting.current.has(refKey(owner, path))) {
-        held.current.set(refKey(owner, path), { owner, path, content });
-        window.__ndbrainPending = { path, content };
-        return;
-      }
-      pending.current = { owner, path, content };
-      // Mirrored where the error boundary can still reach it: if a render fault
-      // tears this tree down, the boundary is what hands the text back.
-      window.__ndbrainPending = { path, content };
-      setSaveState('dirty');
-      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
-      saveTimer.current = window.setTimeout(() => void flush(), prefsRef.current.saveDelayMs);
-    },
-    [flush],
-  );
-
-  // A retry must not outlive the screen it belongs to: a session that ended
-  // mid-save would otherwise fire one into a shell that is no longer there.
-  useEffect(
-    () => () => {
-      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
-    },
-    [],
-  );
-
-  // A closing tab must not take the last sentence with it. The request itself
-  // is sent with `keepalive`, so it survives the page it was started from.
-  useEffect(() => {
-    const onHide = (): void => {
-      if (pending.current !== null) void flush();
-    };
-    window.addEventListener('pagehide', onHide);
-    document.addEventListener('visibilitychange', onHide);
-    return () => {
-      window.removeEventListener('pagehide', onHide);
-      document.removeEventListener('visibilitychange', onHide);
-    };
-  }, [flush]);
-
-  /**
-   * Asks before the window is closed on text that is not on disk.
-   *
-   * `pagehide` above starts the write, and `keepalive` lets it finish — but
-   * neither can promise it arrived, and a note over the keepalive budget is
-   * sent as an ordinary request that the browser will cancel. A save that
-   * failed and is waiting for its retry has nothing on its side at all.
-   *
-   * The browser owns the wording; `preventDefault` is the whole of the API.
-   * `returnValue` is set as well for the browsers that still want it.
-   */
-  useEffect(() => {
-    const onLeaving = (event: BeforeUnloadEvent): void => {
-      if (pending.current === null && owed.current === null) return;
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', onLeaving);
-    return () => window.removeEventListener('beforeunload', onLeaving);
-  }, []);
-
   const openNote = useCallback(
     /**
      * `line` is where to put the cursor: a number when the caller knows it,
@@ -766,20 +509,16 @@ function Shell({
         // saving that old text over the newer file, which the server has to
         // keep as a conflict copy. Pending text is flushed above, so nothing of
         // this tab's is lost by reading the server's version.
-        const opened = await client.fetchQuery({
+        const fresh = await client.fetchQuery({
           queryKey: keys.note(owner, path),
           queryFn: () => api.getNote(owner, path),
           staleTime: 0,
         });
-        if (typeof line === 'function') setJumpLine(line(opened.note.content) ?? null);
-        setOpenRef({ owner, path });
-        versions.current.set(refKey(owner, path), opened.note.mtimeMs);
+        if (typeof line === 'function') setJumpLine(line(fresh.note.content) ?? null);
+        // The buffer takes this note: it is the one on screen, and the version
+        // just read is the base its writes will claim.
+        opened(owner, path, fresh.note.mtimeMs);
         setView('note');
-        // Not unconditionally 'saved'. A write that failed left its text in the
-        // buffer and its warning on screen, and opening another note used to
-        // paint over both — the one moment at which somebody would close the
-        // tab believing everything was on disk.
-        setSaveState(owed.current === null ? 'saved' : 'failed');
         setDrawerOpen(false);
         setRevealed(null);
         setError(null);
@@ -794,7 +533,7 @@ function Shell({
         invalidate.afterStructure(client);
       }
     },
-    [settle, client, user.id, setOpenRef],
+    [settle, client, user.id, setOpenRef, opened],
   );
 
   /**
@@ -823,7 +562,7 @@ function Shell({
 
       const run = (async (): Promise<void> => {
         fullscreenRef.current?.leave();
-        if (pending.current !== null) await flush();
+        if (hasPending()) await flush();
 
         const known = notes.some((note) => note.owner === user.id && note.path === path);
         if (!known) {
@@ -842,7 +581,7 @@ function Shell({
       void run.finally(() => dailyInFlight.current.delete(path));
       return run;
     },
-    [notes, user.id, flush, client, openNote],
+    [notes, user.id, hasPending, flush, client, openNote],
   );
 
   /** Today by the device's clock, read at the moment of asking — never cached across midnight. */
@@ -919,14 +658,13 @@ function Shell({
    */
   const reopenAfterRestore = useCallback(async (): Promise<void> => {
     if (openRef === null) return;
-    pending.current = null;
-    window.__ndbrainPending = null;
+    discard();
 
     await client.invalidateQueries({ queryKey: keys.note(openRef.owner, openRef.path) });
     setOpenRef(null);
     await openNote(openRef.owner, openRef.path);
     invalidate.afterStructure(client);
-  }, [openRef, client, openNote]);
+  }, [openRef, client, openNote, discard]);
 
   /**
    * Stores a pasted or dropped file beside the open note.
@@ -1125,7 +863,7 @@ function Shell({
       // What the old path was remembered by goes with it: its version, its
       // place in the recents, and everything that listed it. The same clean-up
       // a delete does, for the same reason — nothing lives at that path now.
-      versions.current.delete(refKey(owner, from));
+      forget(owner, from);
       dropRecent(user.id, owner, from);
       setRecents(loadRecents(user.id));
       invalidate.afterDelete(client, owner, from);
@@ -1135,7 +873,7 @@ function Shell({
       // renaming here rather than in a file manager.
       setError(copy.renameNote.done(at, result.updatedLinks.length));
     },
-    [settle, openNote, client, user.id],
+    [settle, openNote, client, user.id, forget, openNow],
   );
 
   const openRename = useCallback((owner: string, path: string, title: string): void => {
@@ -1182,30 +920,12 @@ function Shell({
    */
   const deleteNote = useCallback(
     async (owner: string, path: string, title: string): Promise<boolean> => {
-      const key = refKey(owner, path);
-      // One delete of a note at a time. Checked and taken before anything is
-      // awaited, so a double click or a second ⌘⌫ cannot start a second one —
-      // whose cancel used to release the note while the first delete ran.
-      if (deleting.current.has(key)) return false;
-      deleting.current.add(key);
-      setDeletingKeys(new Set(deleting.current));
-      // Its unsaved text moves to a slot of its own, out of reach of a note
-      // opened while the question is open.
-      if (pending.current !== null && pending.current.owner === owner && pending.current.path === path) {
-        held.current.set(key, pending.current);
-        pending.current = null;
-        if (saveTimer.current !== null) window.clearTimeout(saveTimer.current);
-        saveTimer.current = null;
-      }
-      const typingHere = (): boolean => held.current.has(key);
-      /** The note stays: release it, and write its unsaved text as it was held. */
-      const release = (): void => {
-        deleting.current.delete(key);
-        setDeletingKeys(new Set(deleting.current));
-        const text = held.current.get(key);
-        held.current.delete(key);
-        if (text !== undefined) void write(text);
-      };
+      // One delete of a note at a time, and nothing writes to the note from
+      // here on: the buffer takes it out of reach and keeps whatever was typed
+      // into it in a slot of its own. A double click or a second ⌘⌫ is refused
+      // before anything is awaited — the second one's cancel used to release
+      // the note while the first delete ran.
+      if (!beginDelete(owner, path)) return false;
       // Text waiting for a different note is written first, as on any switch,
       // and a write of this one that is already running is let finish.
       await settle();
@@ -1227,9 +947,9 @@ function Shell({
         copy.ask.deleteNote(title) +
         (afterwards !== '' ? ` ${afterwards}` : '') +
         (linking > 0 ? ` ${copy.ask.linksWillBreak(linking)}` : '') +
-        (typingHere() ? ` ${copy.ask.unsavedDropped}` : '');
+        (holdsTextFor(owner, path) ? ` ${copy.ask.unsavedDropped}` : '');
       if (!window.confirm(question)) {
-        release();
+        releaseDelete(owner, path);
         return false;
       }
 
@@ -1237,17 +957,12 @@ function Shell({
         await api.deleteNote(owner, path);
       } catch (caught) {
         // Still there, so its unsaved text is still worth saving.
-        release();
+        releaseDelete(owner, path);
         setError(caught instanceof ApiError ? caught.message : copy.errors.deleteNoteFailed);
         return false;
       }
 
-      // Unsaved text in the deleted note is dropped, not written: a save landing
-      // now would bring the note straight back.
-      if (held.current.delete(key) && pending.current === null) window.__ndbrainPending = null;
-      versions.current.delete(key);
-      deleting.current.delete(key);
-      setDeletingKeys(new Set(deleting.current));
+      finishDelete(owner, path);
 
       dropRecent(user.id, owner, path);
       setRecents(loadRecents(user.id));
@@ -1257,8 +972,7 @@ function Shell({
       flushSync(() => {
         setRevealed((current) => (current?.owner === owner && current.path === path ? null : current));
         if (openNow.current?.owner === owner && openNow.current.path === path) {
-          setOpenRef(null);
-          setSaveState('saved');
+          closed();
           if (viewNow.current === 'note') setView('overview');
         }
       });
@@ -1266,7 +980,7 @@ function Shell({
       setError(null);
       return true;
     },
-    [client, settle, write, user.id, setOpenRef],
+    [client, settle, user.id, beginDelete, holdsTextFor, releaseDelete, finishDelete, closed, openNow],
   );
 
   /**
@@ -1786,7 +1500,7 @@ function Shell({
     // can take a while, and a click that changes nothing looks like a click
     // that did not land.
     setArriving(next);
-    if (pending.current !== null) await flush();
+    if (hasPending()) await flush();
     if (next === 'overview') await refreshOverview();
     if (next === 'files') await refreshFiles();
     if (next === 'tidy') await refreshTree();
@@ -1838,7 +1552,7 @@ function Shell({
   };
 
   const signOut = async (): Promise<void> => {
-    if (pending.current !== null) await flush();
+    if (hasPending()) await flush();
     await api.logout();
     // What this browser kept about the account goes with it — see `end` in
     // `App`, which unmounts this shell before forgetting anything.
