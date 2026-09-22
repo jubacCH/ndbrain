@@ -270,6 +270,32 @@ describe('scope narrows further, never wider', () => {
     expect(runtime.app.queries.getNote('julian', 'julian', 'Privat/Eingeschleust.md')).toBeUndefined();
   });
 
+  /**
+   * The same rule for `append_note`, which is worth its own test because the
+   * "not there" no longer comes from the same place. The tool used to read the
+   * note itself and fail on that read; it now hands the whole operation to
+   * `App.appendNote`, and the refusal for an out-of-scope path is raised before
+   * that call while the refusal for a missing note comes out of it. Two sources
+   * are two chances to word it differently, and a scoped agent that can tell
+   * "off limits" from "not there" has been handed the map the header forbids.
+   */
+  it('answers an append outside its scope as it answers a note that is not there', async () => {
+    const outside = await call(scopedKey, 'append_note', {
+      path: 'Privat/Gedanken.md',
+      content: 'eingeschleust',
+    });
+    const missing = await call(scopedKey, 'append_note', {
+      path: 'Homelab/GibtsNicht.md',
+      content: 'eingeschleust',
+    });
+
+    expect(outside.isError).toBe(true);
+    expect(outside.text).toBe(missing.text);
+    expect((await runtime.notes.getNote('julian', 'Privat/Gedanken.md')).content).not.toContain(
+      'eingeschleust',
+    );
+  });
+
   it('does not resolve a link that leaves its scope', async () => {
     // The link sits in a note the key may read, so the raw `[[…]]` is no secret.
     // What get_links adds is the *resolution* — and that is what the scope
@@ -391,6 +417,26 @@ describe('writing tools', () => {
     const note = await runtime.notes.getNote('julian', 'Homelab/UniFi.md');
 
     expect(note.content).toBe('# UniFi\n\nZonen und Regeln.\n\nNachtrag.');
+  });
+
+  /**
+   * What the answer to an append says, now that it can only say one thing.
+   *
+   * It used to have a second form: "somebody else had changed the note since it
+   * was read; their version was kept as …", which asked the agent to go and
+   * reconcile two files. The append no longer reads and writes in two steps, so
+   * that cannot happen and must not be claimed — see
+   * `server/test/concurrency.test.ts`. What is left is what an agent actually
+   * needs: that the text landed, and which note it landed in.
+   */
+  it('confirms the append and names the note, with no conflict to report', async () => {
+    const result = await call(fullKey, 'append_note', {
+      path: 'Homelab/UniFi.md',
+      content: 'Nachtrag.',
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.text).toBe('Appended to Homelab/UniFi.md');
   });
 
   it('refuses to create over an existing note', async () => {

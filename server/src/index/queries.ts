@@ -19,7 +19,7 @@
 import type { Database, SqlValue } from '../db/database.js';
 import { prefixSql } from '../db/prefix.js';
 import { regionSql, type View } from '../auth/shares.js';
-import { caseKey } from '../vault/paths.js';
+import { caseKey, linkKey } from '../vault/paths.js';
 import { DEFAULT_SETTINGS } from '../auth/settings.js';
 import { parseConflictPath } from '../notes/service.js';
 import { isDailyNote, isPendingDayLink } from '../../../shared/journal.js';
@@ -723,6 +723,10 @@ export class Queries {
    * the answer they had. `index.test.ts` pins that down.
    *
    * The raw link text is safe to echo — it stands in a note the caller may read.
+   *
+   * `missingNotes` at the foot of this file regroups exactly these rows into the
+   * names several notes ask for. It takes the rows rather than a view precisely
+   * so that everything settled above applies to it unchanged.
    */
   deadLinks(view: Viewable): LinkRow[] {
     const scope = scopeSql('l', 'source', view);
@@ -1486,6 +1490,89 @@ export class Queries {
       )
       .map(toNoteRow);
   }
+}
+
+/** A name several notes link to that no note answers. */
+export interface MissingNote {
+  /** Whose vault asks. Two vaults writing `[[Pricing]]` are two different names. */
+  owner: string;
+  /** The name as the notes write it, in the spelling most of them use. */
+  name: string;
+  /** The notes that ask, by path, each counted once however often it asks. */
+  asked: string[];
+}
+
+/**
+ * How many different notes must ask before a name is reported.
+ *
+ * Two, and the reason is the difference between a finding and a claim. One note
+ * pointing at a name that is not there is a broken link — a typo, a rename, a
+ * reference made in passing — and the tidy list already carries it as exactly
+ * that. A second note writing the same name independently is the first moment
+ * the vault itself says the name is a thing it expects to have. Below that
+ * there is no gap in the data, only a gap somebody might read into it.
+ */
+export const MISSING_MIN_ASKED = 2;
+
+/**
+ * The names the vault keeps asking for and has never written.
+ *
+ * This is the whole of "what's missing" that the index can honestly answer. It
+ * invents nothing and compares nothing: every row is a name somebody wrote
+ * inside a wikilink, together with the notes that wrote it. A vault with a
+ * thousand notes and no dead links gets an empty list, not a verdict about what
+ * a thousand notes ought to contain.
+ *
+ * **It takes rows rather than a view, and that is the safety argument.** The
+ * input is whatever `deadLinks` returned, so everything that query's comment
+ * settles about regions holds here word for word and cannot be re-decided:
+ * this function can never see a link the caller was not given, and it has no
+ * way to ask the database whether a name exists somewhere it may not look. The
+ * report therefore grows as the region shrinks, exactly as the dead-link list
+ * does, and for the same reason.
+ *
+ * Grouped by `linkKey`, the resolver's own comparison key, so `[[Pricing]]`,
+ * `[[pricing]]` and `[[Pricing.md]]` are one name. `[[Areas/Pricing]]` is not
+ * folded in with them: it addresses a path rather than a title, and merging the
+ * two would assert that the same note was meant — which the data does not say.
+ * Under-merging costs a duplicate row; over-merging would cost the truth.
+ */
+export function missingNotes(links: readonly LinkRow[]): MissingNote[] {
+  interface Group {
+    owner: string;
+    /** Spelling → the notes that write it that way. */
+    spellings: Map<string, Set<string>>;
+    asked: Set<string>;
+  }
+  const groups = new Map<string, Group>();
+  for (const link of links) {
+    const key = `${link.owner}\u0000${linkKey(link.targetRaw)}`;
+    let group = groups.get(key);
+    if (group === undefined) groups.set(key, (group = { owner: link.owner, spellings: new Map(), asked: new Set() }));
+    const writers = group.spellings.get(link.targetRaw);
+    if (writers === undefined) group.spellings.set(link.targetRaw, new Set([link.source]));
+    else writers.add(link.source);
+    group.asked.add(link.source);
+  }
+
+  const out: MissingNote[] = [];
+  for (const group of groups.values()) {
+    if (group.asked.size < MISSING_MIN_ASKED) continue;
+    // The spelling most notes use, not the one most links use: a note that
+    // writes `[[pricing]]` ten times is still one note with one opinion.
+    const name = [...group.spellings.entries()].sort(
+      (a, b) => b[1].size - a[1].size || (a[0] < b[0] ? -1 : 1),
+    )[0]![0];
+    out.push({ owner: group.owner, name, asked: [...group.asked].sort() });
+  }
+  // Most asked for first; then by name and owner, so the same vault always
+  // reads the same way however the rows happened to be ordered.
+  return out.sort(
+    (a, b) =>
+      b.asked.length - a.asked.length ||
+      (a.name === b.name ? 0 : a.name < b.name ? -1 : 1) ||
+      (a.owner === b.owner ? 0 : a.owner < b.owner ? -1 : 1),
+  );
 }
 
 /**

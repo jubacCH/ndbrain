@@ -33,6 +33,7 @@ import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
 import type { Database } from '../db/database.js';
 import type { ReconcileState } from '../index/watcher.js';
+import { missingNotes } from '../index/queries.js';
 import { HealthProbe } from './health.js';
 import { toProblem } from './errors.js';
 import { NoteNotFoundError } from '../errors.js';
@@ -1429,6 +1430,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // and the list can never disagree about what counts as a finding.
     const untagged = app.queries.untaggedFindings(owner);
     const conflicts = app.queries.conflictCopies(owner);
+    // Grouped from the whole dead-link list, above the cap. "Four notes ask for
+    // this name" counted off a truncated page would be a smaller number handed
+    // over as if it were the answer — and this is the one number in the reply
+    // whose point is how many notes stand behind it.
+    const missing = missingNotes(deadLinks);
 
     return {
       orphans: orphans.slice(0, limit),
@@ -1436,12 +1442,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       deadLinks: deadLinks.slice(0, limit),
       stale: stale.slice(0, limit),
       conflicts: conflicts.slice(0, limit),
+      missing: missing.slice(0, limit),
       truncated:
         orphans.length > limit ||
         untagged.length > limit ||
         deadLinks.length > limit ||
         stale.length > limit ||
-        conflicts.length > limit,
+        conflicts.length > limit ||
+        missing.length > limit,
       /** The real totals, so a capped list can still report what it stands for. */
       totals: {
         orphans: orphans.length,
@@ -1449,6 +1457,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         deadLinks: deadLinks.length,
         stale: stale.length,
         conflicts: conflicts.length,
+        missing: missing.length,
       },
     };
   });

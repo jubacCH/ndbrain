@@ -281,8 +281,9 @@ function tidy(): Tidy {
     deadLinks: [{ owner: 'julian', source: 'Quelle.md', targetRaw: 'Nirgends', targetPath: null, heading: null, alias: null, offset: 3 }],
     stale: [row('Alt.md', 'Alt')],
     conflicts: [],
+    missing: [],
     truncated: false,
-    totals: { orphans: 1, untagged: 1, deadLinks: 1, stale: 1, conflicts: 0 },
+    totals: { orphans: 1, untagged: 1, deadLinks: 1, stale: 1, conflicts: 0, missing: 0 },
   };
 }
 
