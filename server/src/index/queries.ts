@@ -1297,12 +1297,18 @@ export class Queries {
                 MAX(e.at)                                        AS at,
                 COUNT(*)                                         AS edits,
                 -- The actor and action of the most recent edit for this note.
+                --
+                -- rowid breaks the tie, and it has to: at is in milliseconds,
+                -- and a create followed by a delete fits inside one of them.
+                -- Ordered by time alone, which of the two counts as the last
+                -- edit is left to the database, so the log could report a note
+                -- as created that is already deleted.
                 (SELECT actor  FROM edits x
                   WHERE x.owner = e.owner AND x.path = e.path
-                  ORDER BY x.at DESC LIMIT 1)                    AS actor,
+                  ORDER BY x.at DESC, x.rowid DESC LIMIT 1)      AS actor,
                 (SELECT action FROM edits x
                   WHERE x.owner = e.owner AND x.path = e.path
-                  ORDER BY x.at DESC LIMIT 1)                    AS action,
+                  ORDER BY x.at DESC, x.rowid DESC LIMIT 1)      AS action,
                 n.title                                          AS title
            FROM edits e
            LEFT JOIN notes n ON n.owner = e.owner AND n.path = e.path
@@ -1356,7 +1362,7 @@ export class Queries {
       `SELECT e.owner, e.path, MAX(e.at) AS at,
               (SELECT actor FROM edits x
                 WHERE x.owner = e.owner AND x.path = e.path AND x.action = 'delete'
-                ORDER BY x.at DESC LIMIT 1) AS actor
+                ORDER BY x.at DESC, x.rowid DESC LIMIT 1) AS actor
          FROM edits e
         WHERE ${scope.sql} AND e.action = 'delete' AND e.at >= ? ${narrow}
           AND NOT EXISTS (SELECT 1 FROM edits y
