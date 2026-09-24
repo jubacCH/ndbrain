@@ -22,6 +22,14 @@ export default defineConfig({
     // The shared schemas live above this project; the test runner has to be
     // allowed to read them for the same reason the bundler is.
     include: ['test/**/*.test.{ts,tsx}'],
+    // Longer than the `asyncUtilTimeout` in `test/setup.ts`, and that relation
+    // is the whole point. Both used to be five seconds, so the runner always
+    // won: `waitFor` could never spend the ceiling it was given, and a test
+    // waiting for an element that never appears reported "took too long"
+    // instead of naming what it was waiting for. Under load that also made
+    // slow-but-correct tests fail. `test/timeouts.test.ts` keeps the two apart.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
   server: {
     // `npm run dev` talks to a server started separately, so the API is on

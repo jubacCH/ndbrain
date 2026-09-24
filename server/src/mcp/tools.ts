@@ -738,7 +738,10 @@ export const TOOLS: ToolDefinition[] = [
         notePath,
         edited,
         context.key.name,
-        { baseMtimeMs: note.mtimeMs },
+        // The text this edit was reasoned about, not the moment it was read at:
+        // the note may have been restored from a backup in the meantime, which
+        // leaves changed text behind an older stamp. See `#preserveDisplaced`.
+        { baseHash: note.hash },
       );
       context.keys.log(context.key, 'edit_note', notePath, true);
       return result.conflictCopy === undefined

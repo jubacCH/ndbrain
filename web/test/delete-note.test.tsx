@@ -78,8 +78,14 @@ const server = vi.hoisted(() => ({
   putMissing: false,
   /** Every note's version on the server, by path; a save moves it on. */
   versions: new Map<string, number>(),
-  /** Each write with the version it said it started from. */
-  writes: [] as Array<{ path: string; base: number | undefined }>,
+  /**
+   * Each write with the version it said it started from.
+   *
+   * A string, because a version is the hash of a note's text and no longer the
+   * moment it was read at; this fake makes one out of its counter so that the
+   * base a write claims stays readable in an assertion.
+   */
+  writes: [] as Array<{ path: string; base: string | undefined }>,
   /** The order requests started and ended in. */
   log: [] as string[],
   /** What the delete preview answers; null makes it fail. */
@@ -136,7 +142,14 @@ vi.mock('../src/api', async (original) => {
       return {
         owner,
         canWrite: writable(owner, path),
-        note: { path, title: row.title, content: '', size: 0, mtimeMs: server.versions.get(path) ?? 0 },
+        note: {
+          path,
+          title: row.title,
+          content: '',
+          size: 0,
+          mtimeMs: server.versions.get(path) ?? 0,
+          hash: String(server.versions.get(path) ?? 0),
+        },
       };
     },
     links: async (owner: string, path: string) => {
@@ -153,7 +166,7 @@ vi.mock('../src/api', async (original) => {
       }));
       return { backlinks: rows, outgoing: [] };
     },
-    putNote: async (owner: string, path: string, _content: string, base?: number) => {
+    putNote: async (owner: string, path: string, _content: string, base?: string) => {
       server.log.push(`put-start ${path}`);
       server.written.push([owner, path]);
       server.writes.push({ path, base });
@@ -162,7 +175,10 @@ vi.mock('../src/api', async (original) => {
       const version = (server.versions.get(path) ?? 0) + 1000;
       server.versions.set(path, version);
       server.log.push(`put-end ${path}`);
-      return { note: { path, title: '', content: '', size: 0, mtimeMs: version }, created: false };
+      return {
+        note: { path, title: '', content: '', size: 0, mtimeMs: version, hash: String(version) },
+        created: false,
+      };
     },
     deletePreview: async (owner: string, paths: string[]) => {
       server.previews.push([owner, paths]);
@@ -445,7 +461,12 @@ describe("deleting from the note's header", () => {
       await askToDelete();
       await waitFor(() => expect(confirm).toHaveBeenCalled());
       await typeInEditor();
-      await waitFor(() => expect(screen.getByText('disk full')).toBeInTheDocument(), { timeout: 3000 });
+      // The drawn message; the same words also sit in the live region that lets
+      // them be announced.
+      await waitFor(
+        () => expect(screen.getByText('disk full', { selector: '.floaterror span' })).toBeInTheDocument(),
+        { timeout: 3000 },
+      );
       await waitFor(() => expect(server.written).toEqual([['julian', PLAN]]), { timeout: 2000 });
       expect(screen.getByTestId('editor')).toHaveAttribute('data-locked', 'false');
     });
@@ -665,7 +686,7 @@ describe('show in tree', () => {
 
     const row = (await within(tree).findByText('Plan')).closest('button')!;
     expect(row).toHaveAttribute('data-revealed', 'true');
-    expect(row).toHaveAttribute('aria-current', 'false');
+    expect(row).toHaveAttribute('aria-selected', 'false');
     expect(screen.queryByTestId('editor')).toBeNull();
     expect(screen.getByTestId('brain')).toBeInTheDocument();
     expect(server.calls.links).toBe(0);
@@ -784,14 +805,14 @@ describe('races around saving and deleting', () => {
     await waitFor(() => expect(server.writes).toHaveLength(2), { timeout: 3000 });
 
     expect([...server.writes].sort((a, b) => a.path.localeCompare(b.path)), order()).toEqual([
-      { path: 'Loose.md', base: 222 },
-      { path: PLAN, base: 111 },
+      { path: 'Loose.md', base: '222' },
+      { path: PLAN, base: '111' },
     ]);
 
     // The held write answered while Loose was open; Loose goes on from its own version.
     await typeInEditor();
     await waitFor(() => expect(server.writes).toHaveLength(3), { timeout: 2000 });
-    expect(server.writes[2], order()).toEqual({ path: 'Loose.md', base: 1222 });
+    expect(server.writes[2], order()).toEqual({ path: 'Loose.md', base: '1222' });
   });
 
   it('a second save of the same note waits for the first, and starts from the version it produced', async () => {
@@ -810,7 +831,7 @@ describe('races around saving and deleting', () => {
       `put-start ${PLAN}`,
       `put-end ${PLAN}`,
     ]);
-    expect(server.writes[1]).toEqual({ path: PLAN, base: 1111 });
+    expect(server.writes[1]).toEqual({ path: PLAN, base: '1111' });
   });
 
   it('a switch while the links are counted, then a cancel, no typing: the held text is saved against its own version', async () => {
@@ -823,7 +844,7 @@ describe('races around saving and deleting', () => {
     await switchTo('Loose', 'Loose.md');
     await waitFor(() => expect(confirm).toHaveBeenCalled(), { timeout: 3000 });
     await waitFor(() => expect(server.writes).toHaveLength(1), { timeout: 2000 });
-    expect(server.writes, order()).toEqual([{ path: PLAN, base: 111 }]);
+    expect(server.writes, order()).toEqual([{ path: PLAN, base: '111' }]);
   });
 
   it('a slow delete does not close the note opened meanwhile', async () => {
@@ -858,7 +879,7 @@ describe('races around saving and deleting', () => {
     server.putDelayMs = 0;
     await typeInEditor();
     await waitFor(() => expect(server.writes).toHaveLength(2), { timeout: 2000 });
-    expect(server.writes[1], order()).toEqual({ path: PLAN, base: 1111 });
+    expect(server.writes[1], order()).toEqual({ path: PLAN, base: '1111' });
   });
 
   it('a save that answers after the switch does not become the version of the note now open', async () => {
@@ -872,7 +893,7 @@ describe('races around saving and deleting', () => {
     await waitFor(() => expect(server.log).toContain(`put-end ${PLAN}`), { timeout: 3000 });
     await typeInEditor();
     await waitFor(() => expect(server.writes).toHaveLength(2), { timeout: 3000 });
-    expect(server.writes[1], order()).toEqual({ path: 'Loose.md', base: 222 });
+    expect(server.writes[1], order()).toEqual({ path: 'Loose.md', base: '222' });
   });
 
   it('a delete asked during a running save starts only after the save has answered', async () => {
@@ -896,7 +917,9 @@ describe('a save of a note that was renamed meanwhile', () => {
     await user.click(within(screen.getByTestId('editor')).getByRole('button', { name: 'type' }));
     await waitFor(() => expect(server.writes).toHaveLength(1));
 
-    expect(await screen.findByText(copy.errors.noteMovedWhileSaving)).toBeInTheDocument();
+    expect(
+      await screen.findByText(copy.errors.noteMovedWhileSaving, { selector: '.floaterror span' }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('note does not exist')).toBeNull();
     expect(screen.getByText(copy.save.failed)).toBeInTheDocument();
     // Still open, and the text is where the crash box would find it.

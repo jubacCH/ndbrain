@@ -154,6 +154,33 @@ async function answer(pending: Pending, hits: SearchHit[]): Promise<void> {
   });
 }
 
+/**
+ * The list answers a field that keeps the focus, so nothing said out loud
+ * changes as the list does — unless a live region that was on screen *before*
+ * the hits arrived changes its words. A region created with its first message
+ * has nothing to change, and is never announced.
+ *
+ * This checks the region is there while the palette is still empty, and that
+ * the count later turns up in that same node — compared by reference. It does
+ * not check that anything is spoken; no test in a jsdom can.
+ */
+describe('what the list is, out loud', () => {
+  it('counts the hits in a region that was open before them', async () => {
+    server.byTitle = [note('Homelab/Proxmox.md')];
+    renderPalette();
+
+    const [region] = screen.getAllByRole('status');
+    expect(region).toBeDefined();
+    expect(region!.textContent).toBe('');
+
+    const pending = await typeAndWait('quorum');
+    await answer(pending, [hit('Homelab/Cluster.md', 'drei Knoten für das [Quorum] im Cluster')]);
+
+    await waitFor(() => expect(region!.textContent).toBe(copy.palette.found(2)));
+    expect(screen.getAllByRole('status')[0]).toBe(region);
+  });
+});
+
 describe('two halves', () => {
   it('lists notes by title on top and full-text hits below, with the words marked', async () => {
     server.byTitle = [note('Homelab/Proxmox.md')];

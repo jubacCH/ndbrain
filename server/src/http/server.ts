@@ -28,6 +28,7 @@ import { InvalidShareError, type Need, type Share, type ShareService } from '../
 import type { SettingsService } from '../auth/settings.js';
 import type { History, Version } from '../vault/history.js';
 import { DeletedNotes } from '../notes/deleted.js';
+import type { PutOptions } from '../notes/service.js';
 import { SessionService, UnknownUserError, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
 import type { Config } from '../config.js';
@@ -414,7 +415,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   fastify.put('/api/v1/notes/*', async (request, reply) => {
     const { owner, path } = target(request, 'write');
     const caller = requireUser(request).id;
-    const { content, baseMtimeMs, ifAbsent } = body(request, S.PutNoteRequest);
+    const { content, baseMtimeMs, baseHash, ifAbsent } = body(request, S.PutNoteRequest);
 
     // "Make sure it exists": the one form of this request that may never write
     // over anything, so it does not take a base version and cannot make a copy.
@@ -425,9 +426,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       return reply.code(result.created ? 201 : 200).send(result);
     }
 
-    // Optional and only meaningful for a shared note: see App.putNote.
-    const options =
-      baseMtimeMs !== undefined && baseMtimeMs > 0 ? { baseMtimeMs, authorize } : { authorize };
+    // Both optional, and both passed on as they arrived: which of them decides
+    // is the write path's question, not the route's — `#preserveDisplaced`
+    // prefers the hash and keeps the stamp for tabs that predate it. A stamp of
+    // zero is dropped here as well as there, because it is what a client with no
+    // version at all sends.
+    const options: PutOptions = { authorize };
+    if (baseHash !== undefined) options.baseHash = baseHash;
+    if (baseMtimeMs !== undefined && baseMtimeMs > 0) options.baseMtimeMs = baseMtimeMs;
 
     const result = await app.putNote(owner, path, content, caller, options);
     // The copy of the displaced version sits beside the note, but a note share

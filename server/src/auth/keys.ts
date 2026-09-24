@@ -158,6 +158,31 @@ export class ApiKeyService {
     }
   }
 
+  /**
+   * How long a call stays in the access log.
+   *
+   * Ninety days, and the number is not a compromise between remembering and
+   * forgetting: nothing can read past it. `recentAccess` asks for the newest
+   * rows and `Queries.pulse` for a window, and the activity views above them
+   * reach back a fortnight. A row older than this horizon has no query that
+   * could name it.
+   *
+   * Why it needs a horizon at all: every MCP call takes a row, reads included,
+   * because a read leaves no other trace anywhere. On the live instance that
+   * had grown to 529 904 rows and 69.9 MB of a 71.9 MB database in two months —
+   * the log was ninety-seven per cent of the file, and the nightly database
+   * backup carried all of it.
+   */
+  static readonly LOG_HORIZON_MS = 90 * 24 * 60 * 60 * 1000;
+
+  /** Drops log rows past the horizon. Returns how many went. */
+  purgeLog(now = Date.now()): number {
+    const before = this.#db.get<{ n: number }>('SELECT COUNT(*) AS n FROM access_log');
+    this.#db.run('DELETE FROM access_log WHERE at < ?', now - ApiKeyService.LOG_HORIZON_MS);
+    const after = this.#db.get<{ n: number }>('SELECT COUNT(*) AS n FROM access_log');
+    return Number(before?.n ?? 0) - Number(after?.n ?? 0);
+  }
+
   recentAccess(owner: string, limit = 100): Array<{
     keyId: string;
     tool: string;

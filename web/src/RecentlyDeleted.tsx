@@ -72,14 +72,18 @@ export function RecentlyDeleted({
       </h3>
       <p className="h-sub">{copy.deleted.hint}</p>
 
-      {outcome !== null && (
-        <p className="deleted-outcome" role="status">
-          {outcome.message}{' '}
-          <button type="button" className="btn" onClick={() => onOpen(outcome.owner, outcome.path)}>
-            {copy.deleted.open}
-          </button>
-        </p>
-      )}
+      {/* The region, not the line: a `role="status"` mounted together with its
+          one message has nothing to change and is never announced. */}
+      <div role="status">
+        {outcome !== null && (
+          <p className="deleted-outcome">
+            {outcome.message}{' '}
+            <button type="button" className="btn" onClick={() => onOpen(outcome.owner, outcome.path)}>
+              {copy.deleted.open}
+            </button>
+          </p>
+        )}
+      </div>
       {error !== null && (
         <p className="warnline" role="alert">
           {error}

@@ -24,6 +24,9 @@ import { VaultWatcher } from './index/watcher.js';
 import { NoteService } from './notes/service.js';
 import { Vault } from './vault/fs.js';
 
+/** How often the two self-growing tables are swept. */
+const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 export interface Runtime {
   config: Config;
   db: Database;
@@ -72,7 +75,23 @@ export async function createRuntime(config: Config, options: RuntimeOptions = {}
   const settings = new SettingsService(db);
   const history = new History(config.dataDir);
 
-  sessions.purgeExpired();
+  // Both tables that grow without anybody asking, swept on one timer.
+  //
+  // `sessions` was swept here already, but only here — its docstring said "on
+  // start and periodically" while a service that runs for months starts rarely.
+  // `access_log` was never swept at all, and on the live instance it had become
+  // ninety-seven per cent of the database file.
+  //
+  // Daily rather than hourly: nothing here is urgent, and a sweep is a write
+  // that blocks the event loop for as long as it runs, because `node:sqlite` is
+  // synchronous. `unref` so it can never be the reason the process stays up.
+  const sweep = (): void => {
+    sessions.purgeExpired();
+    keys.purgeLog();
+  };
+  sweep();
+  const sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS);
+  sweepTimer.unref();
 
   return {
     config,
@@ -87,7 +106,10 @@ export async function createRuntime(config: Config, options: RuntimeOptions = {}
     shares,
     settings,
     history,
-    close: () => db.close(),
+    close: () => {
+      clearInterval(sweepTimer);
+      db.close();
+    },
   };
 }
 

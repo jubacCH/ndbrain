@@ -57,6 +57,14 @@ export const Note = z.object({
   content: z.string(),
   size: z.number(),
   mtimeMs: Timestamp,
+  /**
+   * Which version of the text this is — an opaque token from the server.
+   *
+   * Sent back as `baseHash` when this text is edited and written, which is how
+   * a write says what it started from. Nothing outside the server computes it
+   * or reads anything into it: it is compared for equality and nothing else.
+   */
+  hash: z.string(),
 });
 
 export const OpenNote = z.object({
@@ -596,7 +604,20 @@ export const PutNoteRequest = z
     content: z.string(),
     /** Which vault. Also accepted in the query string; the route reads both. */
     owner: UserId.optional(),
-    /** The version the editor started from; drives conflict detection. */
+    /**
+     * The version the editor started from — the `hash` its read handed out.
+     * Drives conflict detection: when the note on disk no longer holds that
+     * text, the version this write displaces is kept as a copy.
+     */
+    baseHash: z.string().min(1).optional(),
+    /**
+     * The same, asked of the clock.
+     *
+     * Kept for tabs opened before `baseHash` existed — a deploy does not close
+     * them — and ignored whenever `baseHash` is there. A stamp cannot answer the
+     * question honestly: a restore or an rsync leaves changed text behind an
+     * older one. See `NoteService.#preserveDisplaced`.
+     */
     baseMtimeMs: z.number().optional(),
     /**
      * Create the note only if it is not there. An existing note is returned

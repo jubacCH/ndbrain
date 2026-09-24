@@ -47,8 +47,8 @@ type Save = (vars: {
   owner: string;
   path: string;
   content: string;
-  baseMtimeMs?: number;
-}) => Promise<{ note: { mtimeMs: number }; conflictCopy?: string | undefined }>;
+  baseHash?: string;
+}) => Promise<{ note: { hash: string }; conflictCopy?: string | undefined }>;
 
 /**
  * How long a failed write waits before trying again.
@@ -86,9 +86,10 @@ export interface NoteBuffer {
   settle: () => Promise<void>;
   /**
    * A note has just been read from the server and is now the one on screen:
-   * the version it was read at is what its writes will claim as their base.
+   * the version it was read at — its `hash` — is what its writes will claim as
+   * their base.
    */
-  opened: (owner: string, path: string, mtimeMs: number) => void;
+  opened: (owner: string, path: string, hash: string) => void;
   /** Nothing is open any more, and nothing is owed on the screen. */
   closed: () => void;
   /** Nothing lives at this path now: forget the version it was read at. */
@@ -173,6 +174,12 @@ export function useNoteBuffer({
    * The version each note's text on this screen started from, by `refKey`, sent
    * with every write of that note.
    *
+   * The server's `hash` of that text, not the moment it was read at: a restore
+   * or an rsync leaves changed text behind an *older* timestamp, and a write
+   * naming a timestamp would be told it was the only writer and overwrite what
+   * had just been brought back. Opaque here — it is passed back exactly as it
+   * came.
+   *
    * Kept in a ref rather than state because it has to be right at the moment the
    * debounce fires, not at the next render — and it is updated from each save's
    * response, so a run of autosaves does not report the first one's version and
@@ -182,7 +189,7 @@ export function useNoteBuffer({
    * version into the slot of the note opened meanwhile, and that note's next
    * save then claimed a base it had never been read at.
    */
-  const versions = useRef(new Map<string, number>());
+  const versions = useRef(new Map<string, string>());
   /**
    * The write in flight, if any. Writes run one after another, and opening or
    * deleting a note waits for them: a read that overtakes a running save shows
@@ -233,17 +240,17 @@ export function useNoteBuffer({
           // write does to the cache — this note's entry updated in place, and
           // exactly the queries an edit can have changed marked stale — belongs
           // with the other server state, not spelled out again in the shell.
-          // Spread rather than `baseMtimeMs: base`, because a note being saved
+          // Spread rather than `baseHash: base`, because a note being saved
           // for the first time has no version and `exactOptionalPropertyTypes`
           // separates "absent" from "present but undefined".
           const result = await saveNote.current({
             owner: outstanding.owner,
             path: outstanding.path,
             content: outstanding.content,
-            ...(base === undefined ? {} : { baseMtimeMs: base }),
+            ...(base === undefined ? {} : { baseHash: base }),
           });
           // This write is now the version to compare this note's next one against.
-          versions.current.set(key, result.note.mtimeMs);
+          versions.current.set(key, result.note.hash);
           // The debt is paid. Reported even when this note is no longer the one
           // on screen, because the warning it left there is about this text.
           const settled = owed.current === key;
@@ -414,9 +421,9 @@ export function useNoteBuffer({
   const hasPending = useCallback((): boolean => pending.current !== null, []);
 
   const opened = useCallback(
-    (owner: string, path: string, mtimeMs: number): void => {
+    (owner: string, path: string, hash: string): void => {
       setOpenRef({ owner, path });
-      versions.current.set(refKey(owner, path), mtimeMs);
+      versions.current.set(refKey(owner, path), hash);
       // Not unconditionally 'saved'. A write that failed left its text in the
       // buffer and its warning on screen, and opening another note used to
       // paint over both — the one moment at which somebody would close the tab
