@@ -177,6 +177,24 @@ export const copy = {
        `- [ ]` it is drawn over is hidden while the cursor is elsewhere. */
     taskDone: 'done',
     taskOpen: 'open',
+
+    /**
+     * The mode line under a note in vim mode.
+     *
+     * Vim's own words, upper case, because they are what every other vim says
+     * and somebody who switched this on came for that vocabulary. The hint
+     * beside them is ours, and it exists so that a sequence nobody can
+     * remember cannot lock the note into Insert mode.
+     */
+    vim: {
+      normal: 'NORMAL',
+      insert: 'INSERT',
+      visual: 'VISUAL',
+      visualLine: 'VISUAL LINE',
+      visualBlock: 'VISUAL BLOCK',
+      replace: 'REPLACE',
+      leaveWith: (keys: string) => `${keys} leaves`,
+    },
   },
 
   /**
@@ -897,6 +915,26 @@ export const copy = {
     writing: 'Writing',
     saveDelay: 'Save after',
     saveDelayHint: 'How long typing pauses before the note is written.',
+    /*
+     * Vim keys. The hint says what changes rather than what the feature is
+     * called, because the thing somebody needs to know before switching it on
+     * is that ordinary keys stop being text.
+     */
+    vimMode: 'Vim keys',
+    vimModeHint:
+      'Modal editing: letters move the cursor until you press i. Off unless you ask for it — it changes what every key without ⌘ does.',
+    vimLeave: 'Leave Insert mode with',
+    vimLeaveHint:
+      'Escape is Vim’s own way back to Normal mode. Pick a sequence instead and Escape belongs to the note again: it hands the next Tab to the browser, which is how the note is left without a mouse. The mode line under the note always names the key in use, and Ctrl-[ works whatever you choose.',
+    /** The tooltip on each choice, since the difference is what Escape then does. */
+    vimLeaveOptionHint: (keys: string): string =>
+      keys === 'Escape'
+        ? 'Vim’s own key. Leaving the note then takes a second Escape, in Normal mode, before Tab.'
+        : `Typed quickly while in Insert mode. Escape goes back to releasing the note for Tab.`,
+    /* Tab is the other key the two modes share, and the one nobody expects to
+       change. Said once, under the pair of settings it belongs to. */
+    vimTabNote:
+      'Tab indents while you are typing and steps out of the note while you are not — so in Normal mode one Tab leaves.',
 
     findings: 'Findings',
     serverSide: 'Stored on the server, so every device reports the same thing.',
