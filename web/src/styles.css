@@ -722,6 +722,34 @@ input {
   background: var(--surface-3);
 }
 
+/* ---- editor: the vim mode line ----------------------------------------- */
+
+/* The search panel sits on top of the note, the mode line under it, so the
+   rule that separates them has to change sides. */
+.cm-editor .cm-panels-bottom {
+  border-top: 1px solid var(--line);
+  border-bottom: none;
+}
+
+/* Quiet on purpose. It is read constantly and says the same thing most of the
+   time; the moment it has to be loud is the moment it changes, and movement is
+   what the eye catches, not weight. */
+.cm-editor .cm-vim-status {
+  display: flex;
+  gap: var(--s-2);
+  align-items: baseline;
+  padding: var(--s-0) var(--s-2);
+  font-family: var(--mono);
+  font-size: 0.8em;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+
+.cm-editor .cm-vim-hint {
+  letter-spacing: normal;
+  color: var(--text-3);
+}
+
 /* ---- lists, tables, chips ---------------------------------------------- */
 
 .h-big {

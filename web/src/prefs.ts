@@ -25,8 +25,21 @@ export type Measure = 'narrow' | 'medium' | 'wide';
 /** How the whole network is shown: the brain, a table, or a map of the folders. */
 export type NetworkView = 'graph' | 'list' | 'map';
 
+/**
+ * What takes the note out of Insert mode when vim keys are on.
+ *
+ * `Escape` is vim's own answer and the default. The three sequences are what
+ * vim users have mapped for themselves for as long as there has been a
+ * `.vimrc`, and they are offered here for one concrete reason: choosing one
+ * gives Escape back to the note, where it is the way out by keyboard.
+ */
+export type LeaveInsert = 'Escape' | 'jk' | 'jj' | 'kj';
+
 /** The views the network switcher offers, in the order it shows them. */
 export const NETWORK_VIEWS: readonly NetworkView[] = ['graph', 'list', 'map'];
+
+/** The keys the leave-Insert setting offers, in the order it shows them. */
+export const LEAVE_INSERT: readonly LeaveInsert[] = ['Escape', 'jk', 'jj', 'kj'];
 
 export interface Prefs {
   theme: Theme;
@@ -68,6 +81,19 @@ export interface Prefs {
   sidebarCollapsed: boolean;
   /** Which of the network's three views was last chosen. */
   networkView: NetworkView;
+  /**
+   * Modal editing in the note.
+   *
+   * Off, and it has to stay off until somebody asks: it changes what every
+   * unmodified key does, which is not a default anybody may be given.
+   */
+  vimMode: boolean;
+  /**
+   * What takes the note out of Insert mode — and, by the same choice, who owns
+   * Escape. See `editor/vim.ts`; it is stored even while vim is off, so
+   * switching the mode on again comes back to the key that was chosen.
+   */
+  vimLeaveInsert: LeaveInsert;
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -82,6 +108,8 @@ export const DEFAULT_PREFS: Prefs = {
   pulseMs: 2000,
   sidebarCollapsed: false,
   networkView: 'graph',
+  vimMode: false,
+  vimLeaveInsert: 'Escape',
 };
 
 /**
@@ -165,6 +193,10 @@ export function loadPrefs(): Prefs {
       networkView: NETWORK_VIEWS.includes(stored.networkView as NetworkView)
         ? (stored.networkView as NetworkView)
         : DEFAULT_PREFS.networkView,
+      vimMode: typeof stored.vimMode === 'boolean' ? stored.vimMode : DEFAULT_PREFS.vimMode,
+      vimLeaveInsert: LEAVE_INSERT.includes(stored.vimLeaveInsert as LeaveInsert)
+        ? (stored.vimLeaveInsert as LeaveInsert)
+        : DEFAULT_PREFS.vimLeaveInsert,
     };
   } catch {
     return { ...DEFAULT_PREFS };
