@@ -42,6 +42,48 @@ const groups = () => ({
   measure: screen.getByRole('radiogroup', { name: copy.settings.measure }),
 });
 
+/**
+ * Vim keys, and the key that leaves Insert mode.
+ *
+ * The second is a question about the first, so it is not asked before vim is
+ * on. What it decides is who owns Escape — vim, or the note's own way out by
+ * keyboard — which is why it is a setting at all rather than a rule.
+ */
+describe('the vim keys switch', () => {
+  it('is off in the defaults, and hides the question that depends on it', () => {
+    expect(DEFAULT_PREFS.vimMode).toBe(false);
+    renderSettings();
+
+    expect(screen.getByRole('switch', { name: copy.settings.vimMode })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+    expect(screen.queryByRole('radiogroup', { name: copy.settings.vimLeave })).toBeNull();
+  });
+
+  it('asks which key leaves Insert mode once it is on', async () => {
+    const user = userEvent.setup();
+    const { onPrefs } = renderSettings({ vimMode: true, vimLeaveInsert: 'Escape' });
+
+    const keys = screen.getByRole('radiogroup', { name: copy.settings.vimLeave });
+    within(keys).getAllByRole('radio')[0]!.focus();
+    await user.keyboard('{ArrowRight}');
+
+    expect(onPrefs).toHaveBeenCalledWith(expect.objectContaining({ vimLeaveInsert: 'jk' }));
+  });
+
+  it('switches on without touching the key that was chosen before', async () => {
+    const user = userEvent.setup();
+    const { onPrefs } = renderSettings({ vimMode: false, vimLeaveInsert: 'kj' });
+
+    await user.click(screen.getByRole('switch', { name: copy.settings.vimMode }));
+
+    expect(onPrefs).toHaveBeenCalledWith(
+      expect.objectContaining({ vimMode: true, vimLeaveInsert: 'kj' }),
+    );
+  });
+});
+
 describe('the theme switch', () => {
   it('changes the theme on the right arrow and takes the focus with it', async () => {
     const user = userEvent.setup();

@@ -2033,6 +2033,8 @@ function Shell({
                     line={jumpLine ?? undefined}
                     onChange={(content) => scheduleSave(open.owner, open.note.path, content)}
                     onAttach={attachFile}
+                    vimMode={prefs.vimMode}
+                    vimLeaveInsert={prefs.vimLeaveInsert}
                   />
                 ))}
 

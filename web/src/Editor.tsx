@@ -36,6 +36,8 @@ import { formatKeymap } from './editor/format';
 import { embedContext, livePreview } from './editor/livePreview';
 import { tables } from './editor/tableView';
 import { markdownTheme } from './editor/theme';
+import { VIM_OFF, setVimEditing, vimEditing, type VimSettings } from './editor/vim';
+import type { LeaveInsert } from './prefs';
 
 export interface EditorProps {
   /**
@@ -92,6 +94,15 @@ export interface EditorProps {
    * rather than inserting a link to something that is not there.
    */
   onAttach?: (file: File) => Promise<string | null>;
+  /**
+   * Modal editing, from the preferences.
+   *
+   * Two plain values rather than one object, because they are effect
+   * dependencies: a fresh `{ on, leaveInsert }` on every render would
+   * reconfigure the editor on every keystroke.
+   */
+  vimMode?: boolean;
+  vimLeaveInsert?: LeaveInsert;
 }
 
 export interface NoteExtensions {
@@ -102,6 +113,14 @@ export interface NoteExtensions {
   attach?: () => ((file: File) => Promise<string | null>) | undefined;
   tags?: () => readonly string[] | null;
   onChange?: (content: string) => void;
+  /**
+   * Modal editing, as it stands when the editor is built.
+   *
+   * Only the starting value: the extension sits in a compartment of its own and
+   * is reconfigured from the component when the setting changes, because
+   * rebuilding the editor would throw away unsaved text. Left out, vim is off.
+   */
+  vim?: VimSettings;
 }
 
 /**
@@ -119,8 +138,13 @@ export function noteExtensions({
   attach,
   tags,
   onChange,
+  vim,
 }: NoteExtensions): Extension[] {
   return [
+    // First, and before every keymap: vim answers a key press with a DOM event
+    // handler, and in Normal mode it has to see the key before `indentWithTab`
+    // and the default bindings do.
+    vimEditing(vim ?? VIM_OFF),
     history(),
     drawSelection(),
     highlightActiveLine(),
@@ -194,6 +218,8 @@ export function Editor({
   line,
   onChange,
   onAttach,
+  vimMode = false,
+  vimLeaveInsert = 'Escape',
 }: EditorProps): React.JSX.Element {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -212,6 +238,11 @@ export function Editor({
   // rebuilding would throw away the cursor mid-sentence.
   const tagsRef = useRef(tags);
   tagsRef.current = tags;
+  // Read through a ref for the same reason: the build effect must not list the
+  // vim setting among its dependencies, or switching it would rebuild the
+  // editor and lose whatever has not been saved.
+  const vimRef = useRef<VimSettings>({ on: vimMode, leaveInsert: vimLeaveInsert });
+  vimRef.current = { on: vimMode, leaveInsert: vimLeaveInsert };
 
   useEffect(() => {
     if (host.current === null) return;
@@ -229,6 +260,7 @@ export function Editor({
           attach: () => onAttachRef.current,
           tags: () => tagsRef.current,
           onChange: (content) => onChangeRef.current(content),
+          vim: vimRef.current,
         }),
       ],
     });
@@ -250,6 +282,13 @@ export function Editor({
   useEffect(() => {
     view.current?.dispatch({ effects: lock.current.reconfigure(lockExtension(locked)) });
   }, [locked]);
+
+  // The same treatment for vim, and for the same reason: somebody who switches
+  // modal editing on halfway through a paragraph keeps the paragraph.
+  useEffect(() => {
+    const instance = view.current;
+    if (instance !== null) setVimEditing(instance, { on: vimMode, leaveInsert: vimLeaveInsert });
+  }, [vimMode, vimLeaveInsert]);
 
   // Placing the cursor is a second effect rather than part of the document's
   // initial selection above: that effect only runs when the note switches, so
