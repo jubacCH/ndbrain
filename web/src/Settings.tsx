@@ -22,7 +22,7 @@ import { useRef, useState } from 'react';
 
 import { ApiError, api } from './api';
 import { copy } from './copy';
-import type { Measure, Prefs, StartView, Theme } from './prefs';
+import { LEAVE_INSERT, type LeaveInsert, type Measure, type Prefs, type StartView, type Theme } from './prefs';
 
 export interface SettingsProps {
   prefs: Prefs;
@@ -107,6 +107,15 @@ function Segmented<T extends string>({
     </div>
   );
 }
+
+/*
+ * The key that leaves Insert mode — and, by the same choice, who owns Escape.
+ * Labelled with the keys themselves: there is no better name for `jk` than
+ * `jk`, and the difference between the four is what the tooltip carries.
+ */
+const LEAVE_OPTIONS: Array<{ value: LeaveInsert; label: string; hint: string }> = LEAVE_INSERT.map(
+  (value) => ({ value, label: value, hint: copy.settings.vimLeaveOptionHint(value) }),
+);
 
 const START_VIEWS: Array<{ value: StartView; label: string }> = [
   { value: 'overview', label: 'Overview' },
@@ -273,6 +282,37 @@ export function SettingsView({
             <span className="sliderval">{(prefs.saveDelayMs / 1000).toFixed(1)} s</span>
           </div>
         </div>
+
+        {/*
+          Off by default, and it has to stay that way: this changes what every
+          key without a modifier does, which is not something to hand somebody
+          who did not ask for it. The second row only appears once it is on,
+          because the question it asks has no meaning before that.
+        */}
+        <Toggle
+          label={copy.settings.vimMode}
+          hint={copy.settings.vimModeHint}
+          checked={prefs.vimMode}
+          onChange={(value) => set('vimMode', value)}
+        />
+
+        {prefs.vimMode && (
+          <>
+            <div className="setrow setrow-sub">
+              <div className="setlabel">
+                <span>{copy.settings.vimLeave}</span>
+                <small>{copy.settings.vimLeaveHint}</small>
+              </div>
+              <Segmented
+                label={copy.settings.vimLeave}
+                options={LEAVE_OPTIONS}
+                value={prefs.vimLeaveInsert}
+                onPick={(key) => set('vimLeaveInsert', key)}
+              />
+            </div>
+            <p className="setnote">{copy.settings.vimTabNote}</p>
+          </>
+        )}
       </section>
 
       <section className="setgroup">
