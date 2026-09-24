@@ -246,6 +246,21 @@ export function Palette({
           aria-label={copy.palette.titleLabel}
         />
 
+        {/*
+          What the list below became, for somebody who cannot see it.
+
+          The field keeps the focus while the list is rewritten under it, so
+          nothing that is read out changes — and a region that appears together
+          with its first message has nothing to change either. This one is open
+          for as long as the palette is, and only its words change.
+
+          Not on screen: the list itself says all this to anybody who can see
+          it, and a second count above it would be clutter.
+        */}
+        <p className="sr-live" role="status">
+          {query.trim() === '' ? '' : copy.palette.found(results.length + inNotes.length)}
+        </p>
+
         <div className="palette-list" ref={listRef}>
           {rows.map((row, index) =>
             row.kind === 'command' ? (

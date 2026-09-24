@@ -146,3 +146,34 @@ describe('the view fills its column', () => {
     expect(pane).toMatch(/flex:\s*1/);
   });
 });
+
+/**
+ * The skip link is the one control that must be reachable while it is invisible.
+ *
+ * `display: none` and `visibility: hidden` take an element out of the tab order
+ * as well as off the screen, which would leave the link there in the markup and
+ * useless — the failure that makes a skip link look present in a review and be
+ * absent in use. It is moved off the page instead, and comes back on focus.
+ */
+describe('the skip link', () => {
+  function declarations(selector: string): string {
+    return rules(css)
+      .filter(([selectors]) => selectors.split(',').some((one) => one.trim() === selector))
+      .map(([, body]) => body)
+      .join(';');
+  }
+
+  it('is hidden by position, never by display or visibility', () => {
+    const resting = declarations('.skiplink');
+
+    expect(resting).not.toMatch(/display:\s*none/);
+    expect(resting).not.toMatch(/visibility:\s*hidden/);
+    expect(resting).toMatch(/position:\s*(absolute|fixed)/);
+  });
+
+  it('shows itself once it has the focus', () => {
+    const focused = declarations('.skiplink:focus');
+    expect(focused).not.toBe('');
+    expect(focused).toMatch(/top:|left:|transform:/);
+  });
+});

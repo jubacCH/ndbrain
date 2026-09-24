@@ -254,6 +254,119 @@ describe('an agent writing over somebody', () => {
   });
 });
 
+/**
+ * The clock is not the version.
+ *
+ * `mtime` answers "which version did you see" only for as long as every write
+ * moves it forward. A restore, a `git checkout`, an rsync or a copy back from a
+ * backup leave changed text behind an *older* stamp, and a filesystem that
+ * keeps whole seconds leaves two versions behind the same one. The README
+ * states the rule for the indexer — change detection compares content hashes,
+ * not timestamps — and these tests state it for the conflict guard, which used
+ * to ask `current.mtimeMs <= base` and overwrite anything that answered yes.
+ *
+ * The hash a read hands out is what a write names as the version it started
+ * from; `baseMtimeMs` stays as the fallback for a client that predates it.
+ */
+describe('a note that changed behind the clock’s back', () => {
+  const vaultFile = (notePath: string): string =>
+    path.join(dataDir, 'vaults', 'julian', notePath);
+
+  /** What a tab holds after reading a note: the version, as the server names it. */
+  async function asOpenedInATab(
+    notePath: string,
+  ): Promise<{ baseMtimeMs: number; baseHash: string }> {
+    const note = await runtime.app.notes.getNote('julian', notePath);
+    return { baseMtimeMs: note.mtimeMs, baseHash: note.hash };
+  }
+
+  it('keeps the restored version although its stamp is older than the tab’s', async () => {
+    const tab = await asOpenedInATab('Plan.md');
+
+    // A restore, past the service the way `git checkout` or rsync would do it:
+    // other text, and a stamp from before the tab ever read the note.
+    await runtime.app.notes.vault.writeNote('julian', 'Plan.md', 'Aus dem Backup geholt.\n');
+    const past = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    await fs.utimes(vaultFile('Plan.md'), past, past);
+
+    const saved = await runtime.app.putNote('julian', 'Plan.md', 'Was im Tab stand.\n', 'julian', tab);
+
+    expect(saved.conflictCopy).toBeDefined();
+    const copy = await runtime.app.notes.getNote('julian', saved.conflictCopy!);
+    expect(copy.content).toContain('Aus dem Backup geholt');
+  });
+
+  // The same restore, seen by a tab that was opened before this protocol
+  // existed and sends nothing but a timestamp: the deploy does not close the
+  // tabs, so the fallback has to hold this case too. It does, by asking whether
+  // the stamp is the one the tab read rather than whether it is newer.
+  it('keeps it for a tab from before the deploy, which sends only a stamp', async () => {
+    const tab = await asOpenedInATab('Plan.md');
+
+    await runtime.app.notes.vault.writeNote('julian', 'Plan.md', 'Aus dem Backup geholt.\n');
+    const past = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    await fs.utimes(vaultFile('Plan.md'), past, past);
+
+    const saved = await runtime.app.putNote('julian', 'Plan.md', 'Was im Tab stand.\n', 'julian', {
+      baseMtimeMs: tab.baseMtimeMs,
+    });
+
+    expect(saved.conflictCopy).toBeDefined();
+  });
+
+  /**
+   * The version no clock ever recorded.
+   *
+   * On a filesystem that keeps whole seconds — FAT, a network share, more than
+   * one NAS — two writes inside one second are one moment as far as `mtime` is
+   * concerned, and the tab's stamp equals the file's while the text behind it is
+   * somebody else's. Forced here rather than waited for, by putting the stamp
+   * back exactly where the tab read it; both stamps are asserted along the way,
+   * so this cannot quietly pass for the wrong reason.
+   *
+   * The stamp is set before the tab reads as well, and set back afterwards with
+   * the very same call: a write leaves sub-millisecond precision behind that
+   * `utimes` cannot reproduce from a `Date`, so the two reads only agree when
+   * both of them look at a stamp this test put there.
+   */
+  it('keeps a version the clock never recorded at all', async () => {
+    const stamp = new Date(Date.now() - 3600 * 1000);
+    await fs.utimes(vaultFile('Plan.md'), stamp, stamp);
+
+    const tab = await asOpenedInATab('Plan.md');
+
+    await runtime.app.notes.vault.writeNote('julian', 'Plan.md', 'Jemand anders.\n');
+    await fs.utimes(vaultFile('Plan.md'), stamp, stamp);
+    const now = await runtime.app.notes.getNote('julian', 'Plan.md');
+    expect(now.mtimeMs).toBe(tab.baseMtimeMs);
+
+    const saved = await runtime.app.putNote('julian', 'Plan.md', 'Was im Tab stand.\n', 'julian', tab);
+
+    expect(saved.conflictCopy).toBeDefined();
+    const copy = await runtime.app.notes.getNote('julian', saved.conflictCopy!);
+    expect(copy.content).toContain('Jemand anders');
+  });
+
+  /**
+   * The other direction, and the reason the hash is worth a protocol change
+   * rather than only a comparison turned around: `touch`, a backup tool or a
+   * sync that rewrites the same bytes moves the stamp without changing a word.
+   * The tab has seen this text, so there is nothing to keep — where the stamp
+   * alone would litter the folder with a copy of what the writer already had.
+   */
+  it('makes no copy when only the stamp moved and the text did not', async () => {
+    const tab = await asOpenedInATab('Plan.md');
+
+    const later = new Date(Date.now() + 60_000);
+    await fs.utimes(vaultFile('Plan.md'), later, later);
+
+    const saved = await runtime.app.putNote('julian', 'Plan.md', 'Ergänzt.\n', 'julian', tab);
+
+    expect(saved.conflictCopy).toBeUndefined();
+    expect(await conflictCopies()).toEqual([]);
+  });
+});
+
 describe('names nothing could link to', () => {
   // A pipe is missing from this list on purpose: it never reaches the check,
   // because `normalizeVaultPath` already rejects it as unsafe in a file name.

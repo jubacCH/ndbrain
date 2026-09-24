@@ -24,6 +24,7 @@ import {
 import { Vault, type VaultEntry } from '../vault/fs.js';
 import { InvalidPathError } from '../errors.js';
 import { KeyedMutex } from './mutex.js';
+import { contentHash } from '../auth/noteBindings.js';
 import type { NoteLifecycle } from '../auth/shares.js';
 
 export interface Note {
@@ -33,6 +34,15 @@ export interface Note {
   content: string;
   size: number;
   mtimeMs: number;
+  /**
+   * Which version of the text this is — the hash of `content`.
+   *
+   * Handed out with every read so that a writer can name the version it started
+   * from as something other than a clock reading; see `PutOptions.baseHash`.
+   * Opaque to every client: nothing outside this server computes it, so the
+   * algorithm can change without a single caller knowing.
+   */
+  hash: string;
 }
 
 export interface ParsedNoteRecord extends Note {
@@ -61,8 +71,18 @@ export interface Authorized {
 
 export interface PutOptions extends Authorized {
   /**
-   * The `mtimeMs` the client last saw. When the note on disk is newer, the
-   * version about to be overwritten is kept as a conflict copy.
+   * The `hash` of the text the writer started from, as a read handed it out.
+   *
+   * The version the writer saw, said in the only terms that cannot lie: when
+   * the note on disk no longer holds that text, the version about to be
+   * overwritten is kept as a conflict copy.
+   */
+  baseHash?: string;
+  /**
+   * The `mtimeMs` the client last saw — the same question asked of the clock.
+   *
+   * Only consulted when no `baseHash` is given, and only for as long as clients
+   * that predate the hash are still out there; see `#preserveDisplaced`.
    */
   baseMtimeMs?: number;
 }
@@ -101,17 +121,25 @@ export interface PutResult {
  * which of two files to keep. Seconds would be noise, and UTC would make the
  * timestamp disagree with the one shown everywhere else in the UI.
  *
+ * `ordinal` is which copy of that minute this is, and it is why the minute can
+ * stay: two conflicts inside one minute — and the autumn hour, which hands the
+ * same minute out a second time — otherwise want the same name, and the second
+ * copy would replace the first. The first of a minute carries no suffix, so
+ * every name written before this existed is still exactly what this produces
+ * and still reads back; see `parseConflictPath`.
+ *
  * Exported so `parseConflictPath` below, and the tidy-up finding that uses it,
  * can be checked against exactly what this writes rather than a second,
  * hand-copied pattern that could drift from it.
  */
-export function conflictPath(notePath: string, when: Date): string {
+export function conflictPath(notePath: string, when: Date, ordinal = 1): string {
   const pad = (value: number): string => String(value).padStart(2, '0');
   const stamp =
     `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ` +
     `${pad(when.getHours())}.${pad(when.getMinutes())}`;
+  const nth = ordinal > 1 ? `-${ordinal}` : '';
 
-  return `${notePath.replace(/\.md$/i, '')} (Konflikt ${stamp})${NOTE_EXTENSION}`;
+  return `${notePath.replace(/\.md$/i, '')} (Konflikt ${stamp}${nth})${NOTE_EXTENSION}`;
 }
 
 /** What a conflict copy's name says about the version it displaced. */
@@ -120,6 +148,8 @@ export interface ConflictInfo {
   originalPath: string;
   /** The moment named in the copy's filename, read as local time — see `conflictPath`. */
   at: number;
+  /** Which copy of that minute this is. 1 for a name that carries no count. */
+  ordinal: number;
 }
 
 /**
@@ -133,7 +163,9 @@ export interface ConflictInfo {
  * note whose name merely contains the word.
  */
 export function parseConflictPath(notePath: string): ConflictInfo | null {
-  const match = /^(.+) \(Konflikt (\d{4})-(\d{2})-(\d{2}) (\d{2})\.(\d{2})\)\.md$/.exec(notePath);
+  const match = /^(.+) \(Konflikt (\d{4})-(\d{2})-(\d{2}) (\d{2})\.(\d{2})(?:-(\d+))?\)\.md$/.exec(
+    notePath,
+  );
   if (match === null) return null;
 
   const base = match[1] ?? '';
@@ -142,6 +174,11 @@ export function parseConflictPath(notePath: string): ConflictInfo | null {
   const day = Number(match[4] ?? '');
   const hour = Number(match[5] ?? '');
   const minute = Number(match[6] ?? '');
+  // Optional, because that is what a name written before the count existed
+  // looks like — and every copy already lying in a vault is one of those. A
+  // name that stopped parsing would drop out of the tidy-up view, which is the
+  // one place these files are ever reported.
+  const ordinal = match[7] === undefined ? 1 : Number(match[7]);
 
   const at = new Date(year, month - 1, day, hour, minute);
   if (Number.isNaN(at.getTime())) return null;
@@ -152,10 +189,12 @@ export function parseConflictPath(notePath: string): ConflictInfo | null {
   // "2026-13-45 99.99" quietly becomes some date the following year rather than
   // NaN. Regenerating the name from what was just parsed and comparing it back
   // to the input catches that: a rolled-over `at` renders a different stamp, so
-  // the two will not match, and this is not a conflict copy after all.
-  if (conflictPath(originalPath, at) !== notePath) return null;
+  // the two will not match, and this is not a conflict copy after all. The same
+  // round trip rules out a count this would never write — `-1`, `-0`, `-02` —
+  // without a second rule for it.
+  if (conflictPath(originalPath, at, ordinal) !== notePath) return null;
 
-  return { originalPath, at: at.getTime() };
+  return { originalPath, at: at.getTime(), ordinal };
 }
 
 /** For a service nobody listens to — the unit tests that build one bare. */
@@ -227,6 +266,7 @@ export class NoteService {
       content,
       size: stat.size,
       mtimeMs: stat.mtimeMs,
+      hash: contentHash(content),
     };
   }
 
@@ -304,7 +344,7 @@ export class NoteService {
   /**
    * Overwrites an existing note.
    *
-   * Takes the same `baseMtimeMs` as `putNote`, and for the same reason: an agent
+   * Takes the same base version as `putNote`, and for the same reason: an agent
    * writing through MCP reads a note, thinks about it, and writes it back, and
    * everything a person typed in between is inside that window. Without the base
    * version this call cannot tell "I am the only writer" from "somebody else
@@ -383,7 +423,7 @@ export class NoteService {
       // version, never a create. Without this, a save racing a rename of the
       // same note lands after the move and brings a new note into being at the
       // old path — outside whatever share the writer holds on the moved one.
-      if (existing === undefined && options.baseMtimeMs !== undefined) {
+      if (existing === undefined && namesAVersion(options)) {
         throw new NoteNotFoundError('note does not exist');
       }
 
@@ -487,6 +527,30 @@ export class NoteService {
    * Only meaningful when the client says which version it started from; a client
    * that sends nothing gets the old behaviour, which is right for a single-user
    * vault where the only writer is the person watching.
+   *
+   * **Which version that is, is asked of the text and not of the clock.** This
+   * used to compare timestamps — `current.mtimeMs <= base`, overwrite without a
+   * copy — and the project already knew better elsewhere: the README says change
+   * detection compares content hashes because a restore, a `git checkout` or an
+   * rsync leaves changed text behind an *older* stamp. A tab holding the version
+   * from before such a restore then found `mtimeMs <= base` true and silently
+   * overwrote what had just been brought back. A filesystem with whole-second
+   * stamps loses a version the same way without anybody restoring anything.
+   *
+   * So `baseHash` is the contract: the hash a read handed out, sent back by the
+   * writer, compared against the text that is on disk now. It answers the
+   * question that actually matters — "is the file still holding what you started
+   * from" — in both directions, and it also stops the copies a bare `touch` used
+   * to produce, where the stamp moved and not a word did.
+   *
+   * `baseMtimeMs` stays as the fallback, for one narrow reason: a deploy does not
+   * close the browser tabs that are already open, and those tabs send nothing
+   * else. Its comparison is `!==` rather than `<=`, which is the most that can be
+   * had from a clock — "the stamp is not the one you read" catches the restore
+   * too, and the only thing it gets wrong is a `touch`, which is what the old
+   * comparison already got wrong. It is not a second contract for callers to
+   * choose from: everything inside this server that reads before it writes sends
+   * `baseHash`.
    */
   async #preserveDisplaced(
     owner: string,
@@ -494,22 +558,59 @@ export class NoteService {
     incoming: string,
     options: PutOptions,
   ): Promise<string | null> {
-    const base = options.baseMtimeMs;
-    if (base === undefined || base <= 0) return null;
+    if (!namesAVersion(options)) return null;
 
     const current = await this.getNote(owner, canonical);
-    if (current.mtimeMs <= base) return null;
 
-    // Identical content is not a conflict, whatever the timestamps say. Two
+    // Identical content is not a conflict, whatever anything else says. Two
     // clients autosaving the same text would otherwise litter the folder.
     if (current.content === incoming) return null;
 
-    const copyPath = conflictPath(canonical, new Date());
+    const displaced =
+      options.baseHash !== undefined
+        ? current.hash !== options.baseHash
+        : current.mtimeMs !== options.baseMtimeMs;
+    if (!displaced) return null;
+
+    const copyPath = await this.#freeConflictPath(owner, canonical, new Date());
     await this.#vault.writeNote(owner, copyPath, current.content);
     // A new note like any other: whatever was once shared under that name is
     // not this copy's to inherit.
     this.#lifecycle.created(owner, copyPath);
     return copyPath;
+  }
+
+  /**
+   * The name for a copy: the first one of that minute nothing has taken.
+   *
+   * `conflictPath` names by the minute because a person reads that name, so two
+   * conflicts of the same note inside one minute ask for the same one — and
+   * `writeNote` replaces what is there. That would be a conflict copy lost to a
+   * conflict copy: the one file in the vault that nothing else holds a version
+   * of, overwritten by the mechanism built to stop exactly that. The hour that
+   * repeats itself when the clocks go back in autumn produces the same
+   * collision a good deal more slowly.
+   *
+   * Whoever took the name does not matter — an earlier copy, a restore, a file
+   * written by hand — only whether it is free. One directory listing answers it
+   * for every candidate, compared case-insensitively because a name differing
+   * from an existing file only in case is not free either: that pair cannot
+   * survive on Windows or macOS, which is why `#assertTargetFree` refuses it
+   * everywhere. The loop ends because every round rules out one more of the
+   * finitely many names in that directory.
+   *
+   * Called inside the note's lock, like everything else about the copy: two
+   * writes to one note are serialised, so between looking and writing nothing
+   * of ndBrain's can take the name that was just found free.
+   */
+  async #freeConflictPath(owner: string, notePath: string, when: Date): Promise<string> {
+    const siblings = await this.#vault.siblingCaseKeys(owner, notePath);
+
+    for (let ordinal = 1; ; ordinal += 1) {
+      const candidate = conflictPath(notePath, when, ordinal);
+      const name = candidate.slice(candidate.lastIndexOf('/') + 1);
+      if (!siblings.has(caseKey(name))) return candidate;
+    }
   }
 
   async deleteNote(owner: string, notePath: string, options: Authorized = {}): Promise<void> {
@@ -639,6 +740,19 @@ export class NoteService {
         'that pair cannot survive on Windows or macOS',
     );
   }
+}
+
+/**
+ * Whether this write says which version it is an edit of.
+ *
+ * One answer for both forms, because two places asking it separately is how the
+ * create guard in `putNote` and the conflict check below would come to disagree
+ * about what "an edit" is. A non-positive `baseMtimeMs` is not a version: it is
+ * what a client sends when it has none.
+ */
+function namesAVersion(options: PutOptions): boolean {
+  if (options.baseHash !== undefined) return true;
+  return options.baseMtimeMs !== undefined && options.baseMtimeMs > 0;
 }
 
 function titleOf(notePath: string): string {
