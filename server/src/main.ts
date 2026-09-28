@@ -110,8 +110,13 @@ async function main(): Promise<void> {
     server.log.info({ signal }, 'shutting down');
 
     try {
+      // The HTTP server first — and with it the WebSocket route — so nothing
+      // new can join a room or write to a note while the rest shuts down.
       await server.close();
       await watcher.stop();
+      // Every open room writes what it holds before the database it writes
+      // through goes away.
+      await runtime.rooms?.closeAll();
       runtime.close();
     } catch (error) {
       server.log.error({ err: error }, 'error during shutdown');

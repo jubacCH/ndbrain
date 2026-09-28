@@ -23,7 +23,7 @@
  * agent they never heard of is not.
  */
 
-import type { App } from '../app.js';
+import { EditNotUniqueError, type App } from '../app.js';
 import { withinScope, type ApiKey, type ApiKeyService } from '../auth/keys.js';
 import { normalizePrefix, type View } from '../auth/shares.js';
 import { NoteNotFoundError } from '../errors.js';
@@ -680,6 +680,7 @@ export const TOOLS: ToolDefinition[] = [
         notePath,
         input['content'] as string,
         context.key.name,
+        { agent: true },
       );
       context.keys.log(context.key, 'append_note', notePath, true);
       return `Appended to ${result.note.path}`;
@@ -713,41 +714,37 @@ export const TOOLS: ToolDefinition[] = [
       const find = input['find'] as string;
       if (find === '') throw new ToolRefusal('nothing to find');
 
-      const note = await context.app.notes.getNote(context.key.owner, notePath);
-      const occurrences = note.content.split(find).length - 1;
-
-      // Refusing an ambiguous edit is the whole point: a "replace the first
-      // match" fallback silently edits the wrong paragraph.
-      if (occurrences === 0) throw new ToolRefusal('that text does not appear in the note');
-      if (occurrences > 1) {
-        throw new ToolRefusal(
-          `that text appears ${occurrences} times; include more context to make it unique`,
-        );
-      }
-
       // Spliced by offset rather than with `String.replace`. That method reads
       // `$&`, '$`', `$'` and `$$` in the replacement as patterns even when the
       // thing being searched for is a plain string — so replacing a line with
       // one that mentions `$'` (bash quoting, and ordinary in a homelab note)
       // would paste the rest of the file into the middle of the note. Nothing
       // outside the found span may change, and the only way to mean that is to
-      // keep the two ends of the note untouched.
-      const at = note.content.indexOf(find);
-      const edited =
-        note.content.slice(0, at) +
-        (input['replace'] as string) +
-        note.content.slice(at + find.length);
-
-      const result = await context.app.updateNote(
-        context.key.owner,
-        notePath,
-        edited,
-        context.key.name,
-        // The text this edit was reasoned about, not the moment it was read at:
-        // the note may have been restored from a backup in the meantime, which
-        // leaves changed text behind an older stamp. See `#preserveDisplaced`.
-        { baseHash: note.hash },
-      );
+      // keep the two ends of the note untouched. See `replaceOnce`.
+      //
+      // Counted against the live text when a room is open for the note, so an
+      // agent edits what people are looking at, not what the file held a
+      // second ago; see `App.editNote`.
+      let result;
+      try {
+        result = await context.app.editNote(
+          context.key.owner,
+          notePath,
+          find,
+          input['replace'] as string,
+          context.key.name,
+          { agent: true },
+        );
+      } catch (error) {
+        if (error instanceof EditNotUniqueError) {
+          throw new ToolRefusal(
+            error.occurrences === 0
+              ? 'that text does not appear in the note'
+              : `that text appears ${error.occurrences} times; include more context to make it unique`,
+          );
+        }
+        throw error;
+      }
       context.keys.log(context.key, 'edit_note', notePath, true);
       return result.conflictCopy === undefined
         ? `Edited ${notePath}`

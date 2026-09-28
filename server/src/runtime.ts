@@ -14,6 +14,7 @@ import { ApiKeyService, type ApiKey } from './auth/keys.js';
 import { NoteBindings, noteLifecycle } from './auth/noteBindings.js';
 import { ShareService } from './auth/shares.js';
 import { SettingsService } from './auth/settings.js';
+import { RoomRegistry } from './collab/rooms.js';
 import { History } from './vault/history.js';
 import { SessionService, UserService } from './auth/users.js';
 import { indexFile, type Config } from './config.js';
@@ -40,6 +41,8 @@ export interface Runtime {
   shares: ShareService;
   settings: SettingsService;
   history: History;
+  /** Live rooms, or `null` when collaboration is off; see `App.attachCollab`. */
+  rooms: RoomRegistry | null;
   close(): void;
 }
 
@@ -83,6 +86,20 @@ export async function createRuntime(config: Config, options: RuntimeOptions = {}
   const settings = new SettingsService(db);
   const history = new History(config.dataDir);
 
+  // Off entirely when collaboration is off: no registry means `App.#room`
+  // always answers "no room open", which is exactly today's behaviour.
+  const rooms = config.collab
+    ? new RoomRegistry({
+        load: (owner, notePath) => app.loadForRoom(owner, notePath),
+        readDisk: (owner, notePath) => app.readDiskForRoom(owner, notePath),
+        persist: (owner, notePath, text, baseHash, actors) =>
+          app.persistFromRoom(owner, notePath, text, baseHash, actors),
+        conflictCopy: (owner, notePath, text, actor) => app.conflictCopyFromRoom(owner, notePath, text, actor),
+        log: (error) => console.error('collab room:', error),
+      })
+    : null;
+  if (rooms !== null) app.attachCollab(rooms, history);
+
   // Both tables that grow without anybody asking, swept on one timer.
   //
   // `sessions` was swept here already, but only here — its docstring said "on
@@ -120,6 +137,7 @@ export async function createRuntime(config: Config, options: RuntimeOptions = {}
     shares,
     settings,
     history,
+    rooms,
     close: () => {
       clearInterval(sweepTimer);
       db.close();
