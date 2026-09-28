@@ -26,6 +26,12 @@ export interface Config {
   allowedOrigins: string[];
   /** How often the watcher compares the whole vault against the index. */
   reconcileIntervalMs: number;
+  /**
+   * Live collaboration over a WebSocket. Off means no socket route at all and
+   * every browser saves the way it did before — the way back if something
+   * about the live path misbehaves, without rolling back code.
+   */
+  collab: boolean;
   logLevel: string;
   /** Built web UI to serve. Absent means API only — the default in tests. */
   webRoot?: string;
@@ -61,6 +67,7 @@ export function loadConfig(env = process.env): Config {
       .map((origin) => origin.trim())
       .filter((origin) => origin.length > 0),
     reconcileIntervalMs: envInt('NDBRAIN_RECONCILE_INTERVAL_MS', 5 * 60 * 1000),
+    collab: envBool('NDBRAIN_COLLAB', true),
     logLevel: envString('NDBRAIN_LOG_LEVEL', 'info'),
   };
 

@@ -56,7 +56,7 @@ not.
 | `server/src/collab/room.ts` | One open note: `Y.Doc` with one `Y.Text` named `content`, `epoch` (random id, new per room instance), `lastPersisted` (`{ text, hash }`), connected clients, persist timer. |
 | `server/src/collab/rooms.ts` | Registry keyed by `owner:path`. `open`, `get`, `rekey` (rename), `close`, limits. |
 | `server/src/collab/socket.ts` | WebSocket route `GET /api/v1/collab`, `y-protocols` sync and awareness, origin check, permission checks, limits. |
-| `server/src/collab/merge.ts` | `minimalDiff(from, to)` into Y operations, and `threeWay(base, incoming, live)` with `diff-match-patch`. Pure, no I/O. |
+| `server/src/collab/merge.ts` | `minimalDiff(from, to)` into Y operations, and `threeWay(base, incoming, live)` with `fast-diff` and `node-diff3`. Pure, no I/O. |
 
 ### The one door: `room.transform`
 
@@ -90,9 +90,11 @@ Every method on `App` that changes a note's content asks the registry first. If 
   if the file's hash differs from `lastPersisted.hash`, it is a three-way merge with base
   `lastPersisted.text`, incoming the file content, live the room text. `lastPersisted` then moves
   to the file content.
-- **Three-way merge:** `diff-match-patch` computes the patch base → incoming and applies it to the
-  live text. Hunks that apply are merged through `transform`. If any hunk fails, the incoming text
-  is written out as a conflict copy exactly as today, so a failed merge never loses text.
+- **Three-way merge:** `fast-diff` computes the character diff base → incoming, and `node-diff3`
+  merges it against the live text. Hunks that apply are merged through `transform`. If any hunk
+  fails, the incoming text is written out as a conflict copy exactly as today, so a failed merge
+  never loses text. diff3 recognises the same change made on both sides, which a patch applier
+  would insert twice.
 
 ### Persisting
 
@@ -119,8 +121,9 @@ removes it after five seconds without further agent writes.
 
 - **Rename or move** (single, bulk, folder rename): persist, run the rename as today, then
   `rooms.rekey(old, new)`. Clients receive a `moved` message with the new owner and path.
-- **Delete:** persist is skipped, the delete runs as today, the room closes and clients receive
-  `deleted` with the account name. Recovery is *Recently deleted*.
+- **Delete:** the room persists once more first, so *Recently deleted* holds the last text, the
+  delete runs as today, the room closes and clients receive `deleted` with the account name.
+  Recovery is *Recently deleted*.
 
 ### Permissions during a session
 
@@ -140,9 +143,9 @@ removes it after five seconds without further agent writes.
   public origin is refused with 403.
 - **Awareness is sanitised.** The server overwrites `name` and `color` in every awareness update
   with values derived from the session. The robot prefix is reserved for server-owned entries.
-- **Limits:** message size 1 MiB, an update rate limit per socket, 20 sockets per account, 200 open
-  rooms per process. Exceeding a limit closes the socket with a distinct close code; the client
-  falls back to today's mode for that note.
+- **Limits:** message size 8 MiB (a large note's first sync must fit), an update rate limit per
+  socket, 20 sockets per account, 200 open rooms per process. Exceeding a limit closes the socket
+  with a distinct close code; the client falls back to today's mode for that note.
 
 ### Configuration
 
@@ -151,8 +154,8 @@ in today's mode. This is the kill switch, no code rollback needed.
 
 ### Server dependencies
 
-`yjs`, `y-protocols`, `lib0`, `@fastify/websocket`, `diff-match-patch`. All pure JavaScript; `ws`
-works without its optional native add-ons, so the no-toolchain install rule holds.
+`yjs`, `y-protocols`, `lib0`, `@fastify/websocket`, `fast-diff`, `node-diff3`. All pure JavaScript;
+`ws` works without its optional native add-ons, so the no-toolchain install rule holds.
 
 ## Browser
 
