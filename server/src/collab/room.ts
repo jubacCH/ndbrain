@@ -100,6 +100,7 @@ export class Room {
   closed = false;
 
   readonly #deps: RoomDeps;
+  readonly #log: (error: unknown) => void;
   readonly #actors = new Set<string>();
   readonly #agents = new Map<string, AgentPresence>();
   #timer: NodeJS.Timeout | null = null;
@@ -110,6 +111,7 @@ export class Room {
     this.path = path;
     this.lastPersisted = initial;
     this.#deps = deps;
+    this.#log = deps.log ?? console.error;
     this.text = this.doc.getText('content');
     this.doc.transact(() => this.text.insert(0, initial.text), SERVER);
 
@@ -194,8 +196,12 @@ export class Room {
     if (!this.peers.delete(peer)) return;
     removeAwarenessStates(this.awareness, [...peer.clientIds], SERVER);
     if (this.peers.size > 0) return;
+    // Just ask for a flush: it decides on its own, once it is done, whether
+    // the room is actually idle and clean enough to close. A write that
+    // lands while the flush is in flight, or a persist that fails, leaves
+    // something behind — the room's own retry (or the next flush) will pick
+    // it up and try the idle check again then.
     await this.flush();
-    if (this.peers.size === 0 && !this.closed) this.destroy();
   }
 
   control(message: Control, only?: Peer): void {
@@ -220,23 +226,49 @@ export class Room {
    * Writes the live text now, after taking in whatever changed on disk.
    *
    * Serialised: two flushes never overlap, so `lastPersisted` always names
-   * what the file held when the next one starts.
+   * what the file held when the next one starts. Resolves to whether the
+   * room is clean afterwards — persist succeeded, or there was nothing to
+   * write — and false when persist failed (the room keeps its own retry
+   * armed either way; see `#persistNow`).
+   *
+   * Runs the idle-close check every time, not only from `leave`: a room with
+   * no peers closes once it is actually clean (`#idleClean`), whichever
+   * flush — debounced, forced by `leave`, or a shutdown call — turns out to
+   * be the one that leaves it that way.
    */
-  flush(): Promise<void> {
+  flush(): Promise<boolean> {
     if (this.#timer !== null) {
       clearTimeout(this.#timer);
       this.#timer = null;
     }
-    this.#chain = this.#chain.then(() => this.#persistNow()).catch((error) => this.#deps.log?.(error));
-    return this.#chain;
+    const attempt = this.#chain.then(() => this.#persistNow());
+    const settled = attempt.catch((error) => {
+      // #persistNow handles its own expected failure (a rejected persist)
+      // without throwing; anything that reaches here is unexpected, but must
+      // still not break the chain for whatever flushes next.
+      this.#log(error);
+      return false;
+    });
+    this.#chain = settled.then(() => undefined);
+    return settled.then((clean) => {
+      if (this.#idleClean()) this.destroy();
+      return clean;
+    });
   }
 
   destroy(): void {
     if (this.closed) return;
     this.closed = true;
     if (this.#timer !== null) clearTimeout(this.#timer);
-    for (const agent of this.#agents.values()) clearTimeout(agent.timer);
-    this.#agents.clear();
+    if (this.#agents.size > 0) {
+      // Cancelling the expiry timer alone would leave the synthetic
+      // presence entry it was going to clear sitting in `states` forever —
+      // the room can now close (idle-clean) while an agent's cursor is
+      // still showing, not only once its own timeout has run.
+      removeAwarenessStates(this.awareness, [...this.#agents.values()].map((agent) => agent.clientID), SERVER);
+      for (const agent of this.#agents.values()) clearTimeout(agent.timer);
+      this.#agents.clear();
+    }
     this.awareness.destroy();
     this.doc.destroy();
     this.peers.clear();
@@ -252,38 +284,58 @@ export class Room {
     this.#timer.unref?.();
   }
 
-  async #persistNow(): Promise<void> {
-    if (this.closed) return;
+  /** No peers, nothing unwritten, nothing pending: safe to throw away. */
+  #idleClean(): boolean {
+    return (
+      this.peers.size === 0 &&
+      !this.closed &&
+      this.#timer === null &&
+      this.#actors.size === 0 &&
+      this.text.toString() === this.lastPersisted.text
+    );
+  }
+
+  /** True when the room is clean afterwards: persisted, or nothing to write. */
+  async #persistNow(): Promise<boolean> {
+    if (this.closed) return true;
 
     const disk = await this.#deps.readDisk(this.owner, this.path);
+    if (this.closed) return true;
     if (disk === null) {
       this.closeDeleted(this.owner);
-      return;
+      return true;
     }
     if (disk.hash !== this.lastPersisted.hash) {
       // Somebody wrote the file outside the room (vim, rsync, git). Their
       // change is merged in as the owner's, and the file is the new base.
       await this.merge(this.lastPersisted.text, disk.text, { actor: this.owner });
+      if (this.closed) return true;
       this.lastPersisted = disk;
     }
 
     const text = this.text.toString();
     const actors = [...this.#actors];
     this.#actors.clear();
-    if (text === this.lastPersisted.text) return;
+    if (text === this.lastPersisted.text) return true;
 
     try {
       this.lastPersisted = await this.#deps.persist(this.owner, this.path, text, this.lastPersisted.hash, actors);
     } catch (error) {
       if (error instanceof NoteNotFoundError) {
         this.closeDeleted(this.owner);
-        return;
+        return true;
       }
+      // The write is not lost: put its actors back and let the debounced
+      // retry try again. The room stays open — `leave` no longer decides to
+      // close on its own, only the idle check after a later, clean flush does.
       for (const actor of actors) this.#actors.add(actor);
       this.#schedule();
-      throw error;
+      this.#log(error);
+      return false;
     }
+    if (this.closed) return true;
     this.control({ type: 'persisted', hash: this.lastPersisted.hash });
+    return true;
   }
 
   #showAgent(keyName: string, index: number): void {

@@ -20,9 +20,11 @@ export class RoomRegistry {
   readonly #rooms = new Map<string, Room>();
   readonly #opening = new Map<string, Promise<Room>>();
   readonly #deps: RegistryDeps;
+  readonly #log: (error: unknown) => void;
 
   constructor(deps: RegistryDeps) {
     this.#deps = deps;
+    this.#log = deps.log ?? console.error;
   }
 
   get size(): number {
@@ -74,10 +76,18 @@ export class RoomRegistry {
     this.#rooms.set(key(owner, to), room);
   }
 
-  /** For shutdown: every room writes what it holds. */
+  /**
+   * For shutdown: every room writes what it holds, then closes regardless.
+   *
+   * A room with peers still attached, or one whose flush leaves it dirty
+   * (persist failed), would otherwise stay open on its own — the process is
+   * exiting, so every room is destroyed either way; a failed persist is
+   * logged first, naming the note, so the operator knows what to check.
+   */
   async closeAll(): Promise<void> {
     for (const room of this.all()) {
-      await room.flush();
+      const clean = await room.flush();
+      if (!clean) this.#log(new Error(`could not persist ${room.owner}/${room.path} before shutdown`));
       room.destroy();
     }
   }

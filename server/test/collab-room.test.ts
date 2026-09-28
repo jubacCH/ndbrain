@@ -161,6 +161,92 @@ describe('Room', () => {
     expect(a.sent.length).toBe(before.a);
     expect(b.sent.length).toBe(before.b + 1);
   });
+
+  it('persists a write that lands during the final leave-flush before closing', async () => {
+    const d = disk('x');
+    let releasePersist: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releasePersist = resolve;
+    });
+    const persistCalls: string[] = [];
+    const deps: RoomDeps = {
+      ...d.deps,
+      persist: async (owner, path, text, baseHash, actors) => {
+        persistCalls.push(text);
+        await gate;
+        return d.deps.persist(owner, path, text, baseHash, actors);
+      },
+    };
+    const closed = vi.fn();
+    const room = new Room('julian', 'N.md', { text: 'x', hash: contentHash('x') }, { ...deps, onClosed: closed });
+    const p = peer();
+    room.join(p);
+    room.transform(() => 'y', { actor: 'julian' });
+
+    const leaving = room.leave(p);
+    // Give the leave-triggered flush a moment to start its persist call and
+    // hang there, still holding the room open.
+    await wait(5);
+    expect(persistCalls).toEqual(['y']);
+    expect(room.closed).toBe(false);
+
+    // A write lands — an agent, say — while that persist is still in flight.
+    room.transform((live) => `${live}z`, { actor: 'agent', agent: true });
+
+    releasePersist?.();
+    await leaving;
+
+    // The in-flight persist (of the now-stale 'y') finished, but the room is
+    // not clean: 'yz' still needs to be written, so it stays open.
+    expect(room.closed).toBe(false);
+    expect(closed).not.toHaveBeenCalled();
+
+    // The debounced retry for the later write catches up and, once the text
+    // matches what was written, the idle check closes the room.
+    await wait(30);
+    expect(d.file()!.text).toBe('yz');
+    expect(room.closed).toBe(true);
+    expect(closed).toHaveBeenCalledWith(room);
+  });
+
+  it('keeps the room open when persist fails at leave, and closes once the retry succeeds', async () => {
+    const d = disk('x');
+    let fail = true;
+    const deps: RoomDeps = {
+      ...d.deps,
+      persist: async (owner, path, text, baseHash, actors) => {
+        if (fail) throw new Error('disk full');
+        return d.deps.persist(owner, path, text, baseHash, actors);
+      },
+    };
+    const closed = vi.fn();
+    const logged: unknown[] = [];
+    const room = new Room(
+      'julian',
+      'N.md',
+      { text: 'x', hash: contentHash('x') },
+      { ...deps, onClosed: closed, log: (error) => logged.push(error) },
+    );
+    const p = peer();
+    room.join(p);
+    room.transform(() => 'y', { actor: 'julian' });
+
+    await room.leave(p);
+
+    // The write is not lost — it is still sitting in the live text, with its
+    // retry armed — and the room was not destroyed to cancel that retry.
+    expect(room.text.toString()).toBe('y');
+    expect(room.closed).toBe(false);
+    expect(closed).not.toHaveBeenCalled();
+    expect(logged).toHaveLength(1);
+
+    fail = false;
+    await wait(30);
+
+    expect(d.file()!.text).toBe('y');
+    expect(room.closed).toBe(true);
+    expect(closed).toHaveBeenCalledWith(room);
+  });
 });
 
 describe('RoomRegistry', () => {
@@ -192,5 +278,32 @@ describe('RoomRegistry', () => {
     expect(reg.get('julian', 'A.md')).toBeUndefined();
     expect(reg.get('julian', 'Ordner/B.md')).toBe(room);
     expect(room.path).toBe('Ordner/B.md');
+  });
+
+  it('destroys every room on shutdown, logging the one that could not be written', async () => {
+    const d = disk('text');
+    const load = vi.fn(async () => ({ text: 'text', hash: contentHash('text') }));
+    const logged: unknown[] = [];
+    const reg = new RoomRegistry({
+      ...d.deps,
+      load,
+      log: (error) => logged.push(error),
+      persist: async (owner, path, text, baseHash, actors) => {
+        if (path === 'A.md') throw new Error('disk full');
+        return d.deps.persist(owner, path, text, baseHash, actors);
+      },
+    });
+
+    const a = await reg.open('julian', 'A.md');
+    const b = await reg.open('julian', 'B.md');
+    a.transform(() => 'changed a', { actor: 'julian' });
+    b.transform(() => 'changed b', { actor: 'julian' });
+
+    await reg.closeAll();
+
+    expect(a.closed).toBe(true);
+    expect(b.closed).toBe(true);
+    expect(reg.size).toBe(0);
+    expect(logged.some((error) => error instanceof Error && error.message.includes('A.md'))).toBe(true);
   });
 });
