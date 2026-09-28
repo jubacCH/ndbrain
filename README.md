@@ -63,6 +63,124 @@ git repository beside it, a database snapshot, and a pull from the backup host. 
 in [ops/README.md](ops/README.md), in German like the scripts themselves, because its reader is
 the operator and not the compiler.
 
+## Architecture
+
+One Node process, one folder of Markdown files, one SQLite file. Everything else is a view of
+those three.
+
+```mermaid
+flowchart LR
+  subgraph clients[Clients]
+    ui[Web UI / PWA]
+    agent[MCP clients]
+    ext[Editors on disk<br/>vim, Obsidian, rsync, git]
+  end
+
+  subgraph server[server/ — one Node process]
+    http[http/server.ts<br/>REST, session auth]
+    mcp[mcp/endpoint.ts<br/>stateless MCP, key auth]
+    gate[auth/shares.ts<br/>caller → owner gate]
+    app[app.ts<br/>files + index as one operation]
+    notes[notes/service.ts<br/>the single write path]
+    idx[index/indexer.ts]
+    watch[index/watcher.ts<br/>chokidar + reconcile]
+    q[index/queries.ts]
+  end
+
+  vault[(vaults/&lt;owner&gt;/*.md<br/>the truth)]
+  db[(SQLite index<br/>a cache)]
+  git[(.git in each vault<br/>written by ops/ only)]
+
+  ui --> http
+  agent --> mcp
+  http --> gate
+  mcp --> gate
+  gate --> app
+  app --> notes --> vault
+  app --> idx --> db
+  ext --> vault
+  vault -. events .-> watch --> idx
+  http --> q --> db
+  http -. history, restore .-> git
+```
+
+### Server modules
+
+| Module | Responsibility |
+|---|---|
+| `vault/paths.ts` | Pure path rules and the tenant boundary. No I/O, so the security-critical part is exhaustively testable. |
+| `vault/fs.ts` | Owner-scoped filesystem access. Every method takes an owner, re-checks containment against the real path (symlinks), and writes through a temporary file renamed into place. |
+| `notes/service.ts` | The only code that writes to a vault. Holds the per-note lock (`notes/mutex.ts`, keyed by `owner:path`), the case-collision guard and the conflict guard. |
+| `app.ts` | Owns the pair of files and index. Every change (put, append, rename with link rewrite, delete, bulk tag) writes the file and reindexes it in one call, so no caller can forget the second half. |
+| `index/indexer.ts` | Parses notes (`markdown/`) into the index: titles, tags, links, tasks, properties, FTS5 text. `rebuild` from scratch is the normal recovery, not an emergency tool. |
+| `index/watcher.ts` | Picks up edits made outside the server, and reconciles the whole vault every five minutes. |
+| `index/queries.ts` | Every read the UI and the agents make. Each query takes an owner or a share view and filters on it in SQL. |
+| `auth/` | Accounts, sessions, agent keys, shares and note bindings. `shares.ts` is the gate between the caller and the owner. |
+| `http/server.ts` | Thin REST layer: decode, name the caller from the session, call `App`, map errors. Every route obtains its owner and path through one function, `target()`, which runs the permission check. |
+| `mcp/endpoint.ts`, `mcp/tools.ts` | MCP over stateless Streamable HTTP, implemented directly against the protocol so it sits inside Fastify's auth and error handling. |
+| `vault/history.ts` | Reads the git history that `ops/vault-history.sh` maintains. Never writes to it. |
+| `db/` | The `node:sqlite` wrapper and the schema with its migrations. Every row carries `owner`, including the FTS table. |
+| `runtime.ts` | Wiring shared by the server and the `ndbrain-user` CLI, so both open the same database the same way. |
+
+### What the database holds
+
+Two kinds of tables share one file, and they are treated differently.
+
+- **Derived from the vault:** `notes`, `notes_fts`, `links`, `tags`, `tasks`, `props`. Losing them
+  costs a reindex (`ndbrain-user reindex`) and nothing else. A migration may drop and rebuild them.
+- **Not derivable:** `users`, `sessions`, `api_keys`, `shares`, `user_settings`, and the logs
+  `edits` and `access_log`. These are why the database is backed up at all, and why `reindex`
+  rebuilds the first group without touching the second.
+
+### A write, end to end
+
+1. The editor buffers keystrokes and sends one debounced `PUT` with the text and the `baseHash`
+   of the version it started from (`web/src/useNoteBuffer.ts`).
+2. `http/server.ts` resolves the caller from the session, and `target()` asks the share gate
+   whether this caller may write to this owner's note. A refusal answers "not found".
+3. `NoteService` takes the lock for `owner:path`. If the file no longer holds the text named by
+   `baseHash`, the version about to be displaced is written out as a conflict copy first.
+4. The new text goes to a temporary file in the same directory and is renamed over the note.
+5. `App` reindexes the note and logs the edit in `edits`, still inside the same operation.
+6. The watcher sees its own write a moment later, compares the content hash with the index,
+   finds nothing new and does nothing. No time window, no ignore list.
+7. Within two minutes the history timer on the host commits the vault; within fifteen, the
+   backup host pulls it.
+
+### How changes reach the browser
+
+There is no push channel. No WebSocket, no server-sent events: a persistent connection would
+bring reconnect logic, proxy timeouts and a second lifecycle, for a tool with one person and a
+few agents. Instead there are three mechanisms, each for a different kind of change.
+
+- **Changes you make yourself** invalidate the affected TanStack Query entries explicitly
+  (tree, tidy-up, links, graph). Anything else counts as fresh for 30 seconds.
+- **Activity by others** comes from `GET /api/v1/pulse`, polled every two seconds (adjustable in
+  settings) while the brain view or a note is on screen, and not at all otherwise. It returns the
+  owner's writes from `edits` and agent reads from `access_log` since the last poll, with the
+  server's clock as the cursor. The brain lights up those notes, and the note view's
+  neighbourhood does the same.
+- **Changes on disk** (rsync, `git pull`, vim over SSH) reach the index through the watcher within
+  about a quarter of a second, or through the next reconcile if the watcher missed them. The
+  browser sees them on its next fetch.
+
+An **open note is never re-read underneath the editor**. Replacing text while somebody types is
+worse than showing text that is a few seconds old. Opening a note always fetches it fresh, and if
+someone else changed it in the meantime, the next save does not overwrite their version: the
+`baseHash` no longer matches, and the displaced text is kept as a conflict copy that shows up in
+*Tidy up*.
+
+### Web client
+
+React and Vite, TanStack Query for server state, CodeMirror 6 as a Markdown source editor with a
+live preview (`web/src/editor/`). `App.tsx` holds the shell and the views; `useNoteBuffer.ts` holds
+the one hard promise in the client, that typed text does not go missing (debounced writes,
+retry on failure, `keepalive` and `beforeunload` on the way out). The brain view (`web/src/brain/`)
+is a canvas renderer over the link graph from `GET /api/v1/graph`: layout, clustering, edge
+bundling and hit testing are plain TypeScript, with no graph library. `shared/schema.ts` holds the
+zod schemas both sides compile against, so a response the client cannot parse fails loudly at the
+boundary.
+
 ## Multi-tenant from the ground up
 
 Every user gets their own vault directory. This is a security boundary, not a convenience:
