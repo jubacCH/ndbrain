@@ -251,13 +251,21 @@ export function parseNote(source: string): ParsedNote {
 
   const tasks: Task[] = [];
   const maskedLines = masked.split('\n');
+  const bodyLines = body.split('\n');
   // Lines the frontmatter block occupies, so task lines refer to the file.
   const frontmatterLines = bodyOffset === 0 ? 0 : countLines(source.slice(0, bodyOffset));
+  // A step-by-step plan is a checklist for one piece of work, not a list of open
+  // tasks. Only a literal `false` counts, so a `tasks:` key meaning something
+  // else in somebody's vault is left alone.
+  const listsTasks = frontmatter?.['tasks'] !== false;
 
-  for (let i = 0; i < maskedLines.length; i += 1) {
+  for (let i = 0; listsTasks && i < maskedLines.length; i += 1) {
     const line = maskedLines[i];
     if (line === undefined) continue;
-    const m = TASK_RE.exec(line.replace(/\r$/, ''));
+    // Match on the mask, so a task inside a code block is no task — but read the
+    // text from the original line, or every code span in it comes back blank.
+    if (!TASK_RE.test(line.replace(/\r$/, ''))) continue;
+    const m = TASK_RE.exec((bodyLines[i] ?? '').replace(/\r$/, ''));
     if (!m) continue;
     tasks.push({
       done: (m[1] ?? ' ').toLowerCase() === 'x',

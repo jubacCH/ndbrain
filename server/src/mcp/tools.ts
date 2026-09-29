@@ -445,7 +445,8 @@ export const TOOLS: ToolDefinition[] = [
       'Every unfinished "- [ ]" checkbox written in the notes, with the note it stands in and its ' +
       'line number. Use it to answer "what is still open" without reading notes one by one, and to ' +
       'find the note holding a task before editing it. Optionally limited to one folder. Finished ' +
-      'items are left out unless you ask for them.',
+      'items are left out unless you ask for them. A note with "tasks: false" in its frontmatter ' +
+      'is left out too — put that on a step-by-step plan, whose checkboxes are not open tasks.',
     readOnly: true,
     destructive: false,
     inputSchema: schema(

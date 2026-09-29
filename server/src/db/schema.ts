@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -389,6 +389,16 @@ const MIGRATIONS: Array<(db: Database) => void> = [
       );
     }
     db.exec('CREATE UNIQUE INDEX users_id_lower ON users (lower(id));');
+  },
+
+  // v11 -> v12: re-read every task
+  //
+  // Task text used to come out of the code-masked line, so every inline code
+  // span in a task was stored as blanks, and `tasks: false` in the frontmatter
+  // is new. Neither shows up until a note changes — the same trap as v7, so the
+  // note rows go and the next sync reads the files again.
+  (db) => {
+    db.exec('DELETE FROM notes_fts; DELETE FROM props; DELETE FROM tasks; DELETE FROM notes;');
   },
 ];
 

@@ -167,6 +167,19 @@ describe('tasks', () => {
   it('does not treat a plain list item as a task', () => {
     expect(parseNote('- Kein Task\n- [nicht] wirklich\n').tasks).toHaveLength(0);
   });
+
+  it('keeps inline code in the task text', () => {
+    // The code span is masked for matching, but the text is what a person wrote.
+    const note = parseNote('- [ ] Secrets aus `.env` in den Vault, dann `docker compose up`\n');
+    expect(note.tasks[0]?.text).toBe('Secrets aus `.env` in den Vault, dann `docker compose up`');
+  });
+
+  it('lets a note opt out of the task list with `tasks: false`', () => {
+    // A step-by-step plan is a checklist for one piece of work, not a list of
+    // open tasks; without this it drowns every real one.
+    expect(parseNote('---\ntasks: false\n---\n\n- [ ] Step 1\n').tasks).toHaveLength(0);
+    expect(parseNote('---\ntasks: [a]\n---\n\n- [ ] Echt\n').tasks).toHaveLength(1);
+  });
 });
 
 describe('external links', () => {
