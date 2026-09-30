@@ -554,8 +554,8 @@ describe('the shell, signed in', () => {
     expect(window.localStorage.getItem('ndbrain.recents')).toBeNull();
     expect(window.localStorage.getItem('ndbrain.openFolders')).toBeNull();
     // Brain arrangements, as the network view leaves them.
-    window.localStorage.setItem('ndbrain.brain.v3/julian/network', JSON.stringify({ 'anna/Shared/Salary review.md': [1, 2] }));
-    window.localStorage.setItem('ndbrain.brain.v3/anna/network', JSON.stringify({ 'anna/Anna only.md': [1, 2] }));
+    window.localStorage.setItem('ndbrain.brain.v4/julian/network', JSON.stringify({ 'anna/Shared/Salary review.md': [1, 2] }));
+    window.localStorage.setItem('ndbrain.brain.v4/anna/network', JSON.stringify({ 'anna/Anna only.md': [1, 2] }));
 
     await signOut();
     await signIn('anna');
@@ -570,7 +570,7 @@ describe('the shell, signed in', () => {
     expect(stored).not.toMatch(/Salary review/);
     expect(stored).not.toMatch(/julian/i);
     // Anna's own arrangement is hers and stays.
-    expect(window.localStorage.getItem('ndbrain.brain.v3/anna/network')).not.toBeNull();
+    expect(window.localStorage.getItem('ndbrain.brain.v4/anna/network')).not.toBeNull();
   });
 
   it('gives each account its own recents when both come back', async () => {

@@ -289,7 +289,7 @@ describe('remembering across sessions', () => {
     // exists — outside the silhouette, or in another region's cell — and a
     // remembered note is never moved by the simulation, so it would stay there.
     // Reading them is worse than laying the brain out again.
-    const stale = ['ndbrain.brain.v1/julian/network', 'ndbrain.brain.v2/julian/network'];
+    const stale = ['ndbrain.brain.v1/julian/network', 'ndbrain.brain.v2/julian/network', 'ndbrain.brain.v3/julian/network'];
     for (const key of stale) window.localStorage.setItem(key, '{"jb\\u0000a.md":[512,384]}');
     // A build newer than this one keeps what only it can read.
     window.localStorage.setItem('ndbrain.brain.v9/julian/network', '{"jb\\u0000a.md":[1,2]}');
@@ -297,8 +297,9 @@ describe('remembering across sessions', () => {
     expect(loadPositions(mine).size).toBe(0);
     for (const key of stale) expect(window.localStorage.getItem(key), key).toBeNull();
     expect(window.localStorage.getItem('ndbrain.brain.v9/julian/network')).not.toBeNull();
-    // And this build's own key is a third one again.
-    expect(positionsKey(mine)).toBe('ndbrain.brain.v3/julian/network');
+    // And this build's own key is a fourth one again: v4 moved the days into a
+    // lobe of their own and the centre to the fissure.
+    expect(positionsKey(mine)).toBe('ndbrain.brain.v4/julian/network');
   });
 
   it('forgets notes that are gone rather than growing forever', () => {

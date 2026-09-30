@@ -70,8 +70,10 @@
  * here, since none of them hold an object.
  */
 
+import { isDailyNote, isoDate, parseJournalPath } from '../../../shared/journal';
 import type { RegionGroup } from './clusters';
 import { groupRegions } from './clusters';
+import { MAP_DEGREE } from './edges';
 import type { BrainGraph } from './model';
 import { hash32, unit } from './seed';
 import type { Side } from './shape';
@@ -284,6 +286,43 @@ const CLAMP_MARGIN = 1.25;
 /** The loose arrangement's gentle pull towards the middle. */
 const GRAVITY = 0.004;
 
+/**
+ * The journal's lobe: the share of the silhouette it takes, and where.
+ *
+ * **A fixed share, not one in proportion to its notes.** A year of daily notes
+ * is three quarters of a vault, and a cell sized by the note count would give
+ * the journal most of the brain — a calendar with some thinking attached. It
+ * gets the back of the left hemisphere, a little under a fifth of the whole,
+ * however many days it holds.
+ *
+ * **Reserved whether or not there is a journal.** The other regions' cells are
+ * relaxed over the silhouette without the lobe every time. Were the lobe only
+ * carved out once the first daily note exists, that note would re-deal every
+ * cell of the left hemisphere, and every doubling of the journal would again.
+ * Reserved, the anchors are the same with no journal, a month of one and three
+ * years of one. Without a journal the regions next to the lobe still reach into
+ * it (their cells take its samples); only their anchors ignore it.
+ */
+const JOURNAL_SHARE = 0.18;
+const JOURNAL_SIDE: Side = -1;
+const JOURNAL_AT = { x: -0.6, y: 0.82 };
+/**
+ * The room a day gets on the journal's spiral, world units: at most a square of
+ * this side. A journal of a few weeks is a small coil in the middle of its lobe
+ * and grows outwards one day at a time; only once the coil fills the lobe does
+ * the room shrink. Below that, a new day changes the place of no other day.
+ *
+ * Laid out as a spiral whose turns are further apart than the days along it
+ * (`JOURNAL_ALONG` of the room along the trace, its inverse between turns), so
+ * the trace reads as a trace and not as an even mesh of dots. A day's cell
+ * body is at most `JOURNAL_BODY` of its step along the trace: small, because
+ * a year of days is three hundred bodies, and the lobe has to stay quiet beside
+ * the regions that carry the thinking.
+ */
+const JOURNAL_STEP = 12;
+const JOURNAL_ALONG = 0.65;
+const JOURNAL_BODY = 0.35;
+
 /** The most a note may move in one step, in world units. */
 const MAX_SPEED = 30;
 /** Velocity kept per step. Lower is calmer; this is still lively enough to see settle. */
@@ -391,6 +430,23 @@ export class BrainLayout {
   #inertia = INERTIA;
   /** Hash of each node's neighbours, for `Place.links`. */
   readonly #links: Uint32Array;
+  /**
+   * Daily notes, by node index — in the brain only. A day's place is its date on
+   * the journal's spiral: nothing the simulation computes, and nothing a link
+   * pulls on. Zero throughout in the loose arrangement.
+   */
+  readonly #daily: Uint8Array;
+  /** The journal's region index, or -1 when the vault has no daily notes. */
+  #journal = -1;
+  /** Links per note, those from days not counted (brain only; see the constructor). */
+  readonly #degree: Float64Array;
+  /**
+   * The note the brain is organised around, or -1: the best-connected note,
+   * links from days not counted, when it is a map (`MAP_DEGREE`). The layout
+   * puts it at the fissure and the renderer draws it as the radiant centre, both
+   * from this one answer. Always -1 in the loose arrangement.
+   */
+  readonly centre: number;
 
   /**
    * Node indices in key order.
@@ -446,6 +502,36 @@ export class BrainLayout {
       graph.nodes.map((_, i) => i).sort((a, b) => (graph.nodes[a]!.key < graph.nodes[b]!.key ? -1 : 1)),
     );
 
+    const brain = this.arrangement === 'brain';
+    this.#daily = new Uint8Array(n);
+    if (brain) for (let i = 0; i < n; i += 1) this.#daily[i] = isDailyNote(graph.nodes[i]!.path) ? 1 : 0;
+    const days = this.#daily.reduce((sum, d) => sum + d, 0);
+    // Links that do not come from a day, per note. Everything the layout ranks
+    // notes by goes by this — which note is a region's hub, which are its cores,
+    // which is the centre — for the reason days are left out of the clusters: a
+    // project mentioned on a hundred days would otherwise become the hub of its
+    // region, and each day written could rearrange that region round it.
+    this.#degree = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) {
+      let fromDays = 0;
+      if (brain && this.#daily[i] !== 1) {
+        for (const e of graph.touching[i]!) {
+          const edge = graph.edges[e]!;
+          if (this.#daily[edge.a === i ? edge.b : edge.a] === 1) fromDays += 1;
+        }
+      }
+      this.#degree[i] = graph.nodes[i]!.degree - fromDays;
+    }
+    // The centre: the note with the most such links, when that is a map. Ties go
+    // to the first key, never to the server's order.
+    let centre = -1;
+    if (brain) {
+      for (const i of this.#seq) {
+        if (this.#daily[i] !== 1 && (centre === -1 || this.#degree[i]! > this.#degree[centre]!)) centre = i;
+      }
+    }
+    this.centre = centre !== -1 && this.#degree[centre]! >= MAP_DEGREE ? centre : -1;
+
     // Regions only where there are hemispheres to divide: the neighbourhood is
     // six notes round one, and a cell of the silhouette means nothing to it.
     const grouping =
@@ -462,9 +548,13 @@ export class BrainLayout {
     this.#moving = new Int32Array(n);
     this.#still = new Int32Array(n);
 
-    const notes = Math.max(n, MIN_NOTES);
+    const notes = Math.max(n - days, MIN_NOTES);
     if (this.arrangement === 'brain') {
-      this.unitLength = Math.sqrt((notes * AREA_PER_NOTE) / OUTLINE.area);
+      // Sized by the notes that are not days, and grown by the journal's lobe
+      // once there is a journal to fill it: the days share a fixed area however
+      // many there are, and a year of them must not spread the rest thin.
+      const lobe = days > 0 ? 1 / (1 - JOURNAL_SHARE) : 1;
+      this.unitLength = Math.sqrt((notes * lobe * AREA_PER_NOTE) / OUTLINE.area);
       // Room for the cell bodies and glow of the notes pressing against the rim.
       const pad = 30;
       this.bounds = {
@@ -481,9 +571,12 @@ export class BrainLayout {
 
     this.#links = new Uint32Array(n);
     for (let i = 0; i < n; i += 1) {
-      const neighbours = graph.touching[i]!.map((e) => {
+      // A day that links to a note is not a change to that note's place: without
+      // this, every daily note mentioning a project would set the project moving.
+      const neighbours = graph.touching[i]!.flatMap((e) => {
         const edge = graph.edges[e]!;
-        return graph.nodes[edge.a === i ? edge.b : edge.a]!.key;
+        const other = edge.a === i ? edge.b : edge.a;
+        return this.#daily[other] === 1 && this.#daily[i] !== 1 ? [] : [graph.nodes[other]!.key];
       });
       this.#links[i] = hash32([...new Set(neighbours)].sort().join('\n'));
     }
@@ -492,6 +585,7 @@ export class BrainLayout {
     this.#remembered = remembered;
     const changed = new Uint8Array(n);
     let count = 0;
+    let countedOthers = 0;
     for (let i = 0; i < n; i += 1) {
       const at = options.remembered?.get(graph.nodes[i]!.key);
       if (at === undefined || !Number.isFinite(at.x) || !Number.isFinite(at.y)) {
@@ -511,8 +605,13 @@ export class BrainLayout {
       remembered[i] = 1;
       if (at.links !== this.#links[i] || this.x[i] !== at.x || this.y[i] !== at.y) changed[i] = 1;
       count += 1;
+      if (this.#daily[i] !== 1) countedOthers += 1;
     }
     this.rememberedShare = n === 0 ? 1 : count / n;
+    // Whether this is a brain nobody has seen, judged by the notes that are not
+    // days: importing a year of daily notes is not a reason to lay out afresh
+    // everything that was already remembered.
+    const fresh = (n - days === 0 ? (n === 0 ? 1 : count / n) : countedOthers / (n - days)) < 0.5;
 
     // The cells, and then the fence: a remembered note that is outside the
     // silhouette or well inside another region's cell is put back on the nearest
@@ -526,11 +625,15 @@ export class BrainLayout {
     this.#tether = new Uint8Array(n);
     this.#homeX = Float64Array.from(this.x);
     this.#homeY = Float64Array.from(this.y);
-    if (this.rememberedShare < 0.5) {
+    if (fresh) {
       this.mobile.fill(1);
+      // The centre is put at the fissure and stays there; everything else
+      // arranges itself round it.
+      if (this.centre !== -1) this.mobile[this.centre] = 0;
     } else {
       for (let i = 0; i < n; i += 1) {
-        if (changed[i] !== 1) continue;
+        // A day is put on its place and moves nobody to make room for it.
+        if (changed[i] !== 1 || this.#daily[i] === 1) continue;
         this.mobile[i] = 1;
         if (remembered[i] === 1) {
           this.#tether[i] = 1;
@@ -542,6 +645,7 @@ export class BrainLayout {
         }
       }
     }
+    for (let i = 0; i < n; i += 1) if (this.#daily[i] === 1) this.mobile[i] = 0;
 
     // Springs in key order, with their strength decided once.
     const edges = graph.edges
@@ -551,6 +655,10 @@ export class BrainLayout {
     this.#springB = Int32Array.from(edges.map((s) => s.e.b));
     this.#springK = Float64Array.from(edges.map(({ e }) => {
       if (this.arrangement !== 'brain') return SPRING;
+      // A link from a day is drawn like any other and pulls on nothing: the day
+      // is placed by its date, and a note mentioned on forty days must not be
+      // hauled towards the journal by forty springs.
+      if (this.#daily[e.a] === 1 || this.#daily[e.b] === 1) return 0;
       const of = this.regionOf;
       if (this.nodeSide[e.a] !== this.nodeSide[e.b]) return SPRING * ACROSS_FISSURE;
       return of[e.a] === of[e.b] ? SPRING : SPRING * ACROSS_CLUSTERS;
@@ -567,8 +675,8 @@ export class BrainLayout {
 
     this.#seed(remembered);
 
-    const fresh = this.rememberedShare < 0.5;
     if (fresh && this.arrangement === 'brain') this.#galaxies();
+    if (this.#journal !== -1) this.#days(fresh ? null : remembered);
     this.alpha = !fresh ? WARM : this.arrangement === 'brain' ? JOIN : 1;
     if (fresh && this.arrangement === 'brain') this.#inertia = JOIN_INERTIA;
     // Nothing that may move, nothing to simulate: a refetch that changed no link.
@@ -606,16 +714,20 @@ export class BrainLayout {
    * notes reach the outline — not because a force pushes them there.
    */
   #buildCells(groups: readonly RegionGroup[], remembered: Uint8Array): Region[] {
-    const { nodes, edges, touching } = this.graph;
+    const { edges, touching } = this.graph;
     const u = this.unitLength;
     const k = groups.length;
     if (k === 0) return [];
 
     const hubs: number[] = [];
     const outward = new Float64Array(k);
+    this.#journal = groups.findIndex((group) => group.journal);
+    const journal = this.#journal;
     groups.forEach((group, r) => {
       let hub = group.members[0]!;
-      for (const i of group.members) if (nodes[i]!.degree > nodes[hub]!.degree) hub = i;
+      for (const i of group.members) if (this.#degree[i]! > this.#degree[hub]!) hub = i;
+      // The centre is its region's hub even where another note ties with it.
+      if (this.centre !== -1 && this.regionOf[this.centre] === r) hub = this.centre;
       hubs.push(hub);
       let out = 0;
       for (const i of group.members) {
@@ -640,6 +752,7 @@ export class BrainLayout {
     let connective = -1;
     let lead = -1;
     for (let r = 0; r < k; r += 1) {
+      if (r === journal) continue;
       // A whole folder group, never half of one. The two halves of a cut group
       // are dealt to opposite hemispheres as a pair; pinning one of them at the
       // fissure takes it out of that pair, leaves its sibling to the load deal,
@@ -658,7 +771,14 @@ export class BrainLayout {
         lead = score;
       }
     }
-    if (connective === -1) connective = 0;
+    // Where the vault has a centre — a map of content linked to at least
+    // `MAP_DEGREE` notes, drawn as the radiant core of the picture — its region
+    // is the one at the fissure, whatever its size or its outward share, so that
+    // the centre can sit in the middle of the brain with its region round it.
+    // Which note that is changes only when another note overtakes it in links.
+    const centred = this.centre !== -1 ? this.regionOf[this.centre]! : -1;
+    if (centred !== -1 && centred !== journal) connective = centred;
+    if (connective === -1) connective = journal === 0 && k > 1 ? 1 : 0;
 
     // The weight a cell's size and a hemisphere's load are counted in: one
     // share, plus one for every doubling of the notes in the region. Not the
@@ -670,7 +790,14 @@ export class BrainLayout {
     const side = new Int8Array(k);
     const decided = new Uint8Array(k);
     const load: Record<number, number> = { [-1]: 0, [1]: 0 };
+    if (journal !== -1) {
+      // The journal's half is fixed, like its lobe, and adds nothing to the
+      // deal: the lobe is reserved with or without it (`JOURNAL_SHARE`).
+      side[journal] = JOURNAL_SIDE;
+      decided[journal] = 1;
+    }
     groups.forEach((group, r) => {
+      if (r === journal) return;
       let known = 0;
       let left = 0;
       let sum = 0;
@@ -690,6 +817,18 @@ export class BrainLayout {
       decided[connective] = 1;
       // It counts for less on its side: sitting at the fissure it serves both.
       load[1] = load[1]! + this.#cellW[connective]! * 0.6;
+    }
+    // The centre's region may be half of a cut group. Its other half then goes
+    // to the other hemisphere, as a cut pair always does.
+    if (groups[connective]!.half >= 0) {
+      const sibling = [...groups.keys()].find(
+        (r) => r !== connective && groups[r]!.group === groups[connective]!.group && groups[r]!.half >= 0,
+      );
+      if (sibling !== undefined && decided[sibling] !== 1) {
+        side[sibling] = -side[connective]! as Side;
+        decided[sibling] = 1;
+        load[side[sibling]!] = load[side[sibling]!]! + this.#cellW[sibling]!;
+      }
     }
     // The two halves of a cut folder group go to opposite hemispheres. That
     // balances the halves by construction and, more to the point, it is stable:
@@ -733,23 +872,9 @@ export class BrainLayout {
       for (const i of group.members) this.nodeSide[i] = remembered[i] === 1 ? (this.x[i]! < 0 ? -1 : 1) : side[r]!;
     });
 
-    // The grid of the interior, normalised.
-    const cols = Math.round((OUTLINE.maxX - OUTLINE.minX) / SAMPLE_STEP);
-    const rows = Math.round((OUTLINE.maxY - OUTLINE.minY) / SAMPLE_STEP);
-    const sx: number[] = [];
-    const sy: number[] = [];
-    for (let a = 0; a <= cols; a += 1) {
-      const px = OUTLINE.minX + a * SAMPLE_STEP;
-      for (let b = 0; b <= rows; b += 1) {
-        const py = OUTLINE.minY + b * SAMPLE_STEP;
-        if (withinOutline(px, py, SAMPLE_MARGIN) && Math.abs(px) > FISSURE * MEDIAL_CLEAR) {
-          sx.push(px);
-          sy.push(py);
-        }
-      }
-    }
-    this.#sampleX = Float64Array.from(sx);
-    this.#sampleY = Float64Array.from(sy);
+    const { sx, sy, lobe } = interior();
+    this.#sampleX = sx;
+    this.#sampleY = sy;
     this.#sampleOf = new Int32Array(sx.length).fill(-1);
 
     const cellX = new Float64Array(k);
@@ -762,7 +887,7 @@ export class BrainLayout {
       // the region's identity can, as soon as another cluster becomes its
       // largest, and hashing that swapped cells across the brain.
       const mine = [...groups.keys()]
-        .filter((r) => side[r] === s)
+        .filter((r) => side[r] === s && r !== journal)
         .sort((a, b) => (groups[a]!.group < groups[b]!.group ? -1 : groups[a]!.group > groups[b]!.group ? 1 : groups[a]!.half - groups[b]!.half));
       if (mine.length === 0) continue;
       const h = centre(s);
@@ -776,8 +901,10 @@ export class BrainLayout {
         cellX[pinned] = s * (FISSURE + FISSURE_CELL);
         cellY[pinned] = 0.02;
       }
+      // Never over the journal's lobe, with or without a journal (see
+      // `JOURNAL_SHARE`).
       const points: number[] = [];
-      for (let p = 0; p < sx.length; p += 1) if (sideOf(sx[p]!) === s) points.push(p);
+      for (let p = 0; p < sx.length; p += 1) if (sideOf(sx[p]!) === s && lobe[p] !== 1) points.push(p);
       const accX = new Float64Array(mine.length);
       const accY = new Float64Array(mine.length);
       const accN = new Int32Array(mine.length);
@@ -809,6 +936,20 @@ export class BrainLayout {
       }
     }
 
+    if (journal !== -1) {
+      // The journal's anchor is the middle of its lobe.
+      let ax = 0;
+      let ay = 0;
+      let an = 0;
+      for (let p = 0; p < sx.length; p += 1) {
+        if (lobe[p] !== 1) continue;
+        ax += sx[p]!;
+        ay += sy[p]!;
+        an += 1;
+      }
+      cellX[journal] = ax / Math.max(an, 1);
+      cellY[journal] = ay / Math.max(an, 1);
+    }
     for (let r = 0; r < k; r += 1) {
       this.#cellX[r] = cellX[r]! * u;
       this.#cellY[r] = cellY[r]! * u;
@@ -826,7 +967,7 @@ export class BrainLayout {
     // Which cell every sample fell to, and from that each cell's area.
     const area = new Int32Array(k);
     for (let p = 0; p < sx.length; p += 1) {
-      const r = nearestCell(regions, this.#cellW, sx[p]! * u, sy[p]! * u, sideOf(sx[p]!));
+      const r = journal !== -1 && lobe[p] === 1 ? journal : nearestCell(regions, this.#cellW, sx[p]! * u, sy[p]! * u, sideOf(sx[p]!), journal);
       this.#sampleOf[p] = r;
       if (r !== -1) area[r] = area[r]! + 1;
     }
@@ -938,7 +1079,7 @@ export class BrainLayout {
     for (const region of this.regions) {
       const members = region.members;
       const m = members.length;
-      if (m === 0) continue;
+      if (m === 0 || region.id === this.#journal) continue;
       const r = region.id;
       const inRegion = new Set(members);
       // Members arrive in hash order; their position in that list is the only
@@ -964,7 +1105,7 @@ export class BrainLayout {
         .filter((i) => i !== hub && inDegree.get(i)! >= CORE_MIN_LINKS)
         .sort(
           (a, b) =>
-            inDegree.get(b)! - inDegree.get(a)! || nodes[b]!.degree - nodes[a]!.degree || place.get(a)! - place.get(b)!,
+            inDegree.get(b)! - inDegree.get(a)! || this.#degree[b]! - this.#degree[a]! || place.get(a)! - place.get(b)!,
         )
         .slice(0, coreCount - 1);
       const isCore = new Set([hub, ...cores]);
@@ -1004,7 +1145,7 @@ export class BrainLayout {
       const down = new Set(order);
       let rest = members
         .filter((i) => !down.has(i))
-        .sort((a, b) => nodes[b]!.degree - nodes[a]!.degree || place.get(a)! - place.get(b)!);
+        .sort((a, b) => this.#degree[b]! - this.#degree[a]! || place.get(a)! - place.get(b)!);
       while (rest.length > 0) {
         const ready = rest.filter((i) => down.has(parent.get(i)!));
         if (ready.length === 0) {
@@ -1044,6 +1185,17 @@ export class BrainLayout {
       const coreX: number[] = [];
       const coreY: number[] = [];
       for (const c of [hub, ...cores]) {
+        if (c === this.centre) {
+          // The centre sits on the fissure, as close to the middle as a note
+          // may come, level with its pinned cell. Its region is round it.
+          const px = region.side * FISSURE * FISSURE_KEEP * u;
+          const py = region.cy;
+          coreX.push(px);
+          coreY.push(py);
+          this.x[c] = px;
+          this.y[c] = py;
+          continue;
+        }
         const need = knot(c) * 0.8;
         let candidates = cell.filter(
           (p) =>
@@ -1065,7 +1217,10 @@ export class BrainLayout {
             score = Infinity;
             for (let k = 0; k < coreX.length; k += 1) score = Math.min(score, (x - coreX[k]!) ** 2 + (y - coreY[k]!) ** 2);
           }
-          if (score > best) {
+          // Equal within rounding counts as equal, and the first sample wins: the
+          // grid is symmetric, and which of two mirror-image points is further
+          // would otherwise be decided by the last bit of a brain one note larger.
+          if (score > best + 1e-9 * u * u) {
             best = score;
             px = x;
             py = y;
@@ -1080,15 +1235,19 @@ export class BrainLayout {
       // The leaves, on a sunflower round their core.
       for (const c of [hub, ...cores]) {
         const phase = (hash32(nodes[c]!.key) / 0x1_0000_0000) * Math.PI * 2;
+        // The centre's knot opens away from the fissure only: a half sunflower,
+        // twice as far out per leaf so it keeps the density of a whole one.
+        const half = c === this.centre;
+        const medial = half ? FISSURE * FISSURE_KEEP * u : FISSURE * MEDIAL_CLEAR * u;
         leaves.get(c)!.forEach((i, k) => {
-          const radius = LEAF_STEP * Math.sqrt(k + 1);
-          const angle = phase + k * GOLDEN;
-          let dx = Math.cos(angle) * radius;
+          const radius = LEAF_STEP * Math.sqrt((half ? 2 : 1) * (k + 1));
+          const angle = half ? (((k * GOLDEN) % (Math.PI * 2)) - Math.PI) / 2 : phase + k * GOLDEN;
+          let dx = Math.cos(angle) * radius * (half ? region.side : 1);
           let dy = Math.sin(angle) * radius;
           for (let pull = 0; pull < 12; pull += 1) {
             const x = this.x[c]! + dx;
             const y = this.y[c]! + dy;
-            const clear = Math.abs(x) >= FISSURE * MEDIAL_CLEAR * u && Math.sign(x) === Math.sign(this.x[c]!);
+            const clear = Math.abs(x) >= medial && Math.sign(x) === Math.sign(this.x[c]!);
             if (clear && withinOutline(x / u, y / u, WALL)) break;
             dx *= 0.8;
             dy *= 0.8;
@@ -1098,6 +1257,77 @@ export class BrainLayout {
         });
       }
     }
+  }
+
+  /**
+   * Puts the days on the journal's spiral.
+   *
+   * Oldest in the middle of the lobe, each later day one step further along an
+   * Archimedean spiral whose turns are as far apart as its steps, so a year
+   * reads as one continuous trace and the newest day is always at its outer
+   * end. Consecutive days are neighbours on the trace, which is where the links
+   * a daily note carries to the day before and after end up: short.
+   *
+   * The step is `JOURNAL_STEP` until the coil would outgrow the lobe, and then
+   * as large as lets every day fit. A place that falls outside the lobe — past
+   * the rim, into the fissure — is skipped, and the trace goes on beyond it.
+   *
+   * `remembered` null places every day; otherwise only the days not remembered,
+   * each on the place its date has among all of them now. That is the next
+   * place along the trace for a new day, so it lands beside yesterday.
+   */
+  #days(remembered: Uint8Array | null): void {
+    const { nodes } = this.graph;
+    const region = this.regions[this.#journal];
+    if (region === undefined) return;
+    const u = this.unitLength;
+    const dated = region.members
+      .map((i) => {
+        const date = parseJournalPath(nodes[i]!.path);
+        return { i, day: date === null ? '' : isoDate(date) };
+      })
+      .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : nodes[a.i]!.key < nodes[b.i]!.key ? -1 : 1));
+    const count = dated.length;
+    if (count === 0) return;
+
+    const { lobe, sx, radius: lobeRadius } = interior();
+    let lobeSamples = 0;
+    for (let p = 0; p < sx.length; p += 1) lobeSamples += lobe[p]!;
+    const area = lobeSamples * SAMPLE_STEP * SAMPLE_STEP * u * u;
+    let room = Math.min(JOURNAL_STEP, Math.sqrt(area / count) * 0.9);
+
+    const places: Point[] = [];
+    const limit = lobeRadius * u * 2.5;
+    let along = room * JOURNAL_ALONG;
+    for (;;) {
+      places.length = 0;
+      along = room * JOURNAL_ALONG;
+      const turn = room / JOURNAL_ALONG;
+      // Turns `turn` apart: r = turn · θ / 2π. Starts a turn out, and moves on
+      // by the angle whose chord is one step along, so the first days in the
+      // middle do not sit on top of each other.
+      let theta = Math.PI * 2;
+      for (let guard = 0; places.length < count && guard < count * 40; guard += 1) {
+        const radius = (turn * theta) / (Math.PI * 2);
+        if (radius > limit) break;
+        const x = region.cx + Math.cos(theta) * radius;
+        const y = region.cy + Math.sin(theta) * radius;
+        if (inLobe(x / u, y / u) && withinOutline(x / u, y / u, WALL)) places.push({ x, y });
+        theta += 2 * Math.asin(Math.min(1, along / (2 * radius)));
+      }
+      if (places.length === count || room < 1) break;
+      room *= 0.92;
+    }
+
+    // A day's cell body fits its step, so a dense year does not merge into a
+    // band. Set from the step alone, so it is the same however the day arrived.
+    for (const { i } of dated) this.r[i] = Math.min(this.r[i]!, along * JOURNAL_BODY);
+    dated.forEach(({ i }, k) => {
+      if (remembered !== null && remembered[i] === 1) return;
+      const at = places[Math.min(k, places.length - 1)] ?? { x: region.cx, y: region.cy };
+      this.x[i] = at.x;
+      this.y[i] = at.y;
+    });
   }
 
   /**
@@ -1114,7 +1344,7 @@ export class BrainLayout {
   #seed(remembered: Uint8Array): void {
     const { nodes, touching, edges } = this.graph;
     for (const i of this.#seq) {
-      if (remembered[i] === 1) continue;
+      if (remembered[i] === 1 || this.#daily[i] === 1) continue;
       const key = nodes[i]!.key;
 
       let sx = 0;
@@ -1180,6 +1410,10 @@ export class BrainLayout {
       this.mobile[this.graph.edges[e]!.a] = 1;
       this.mobile[this.graph.edges[e]!.b] = 1;
     }
+    // Days stay on their date: picking up a note mentioned on forty days does
+    // not unravel the journal, and picking up a day moves nothing else.
+    for (let k = 0; k < this.#daily.length; k += 1) if (this.#daily[k] === 1) this.mobile[k] = 0;
+    if (this.#daily[i] === 1) this.mobile.fill(0);
     this.mobile[i] = 0;
     this.alphaTarget = HELD;
     this.alpha = Math.max(this.alpha, HELD);
@@ -1230,7 +1464,10 @@ export class BrainLayout {
     let st = 0;
     for (const i of this.#seq) {
       if (this.mobile[i] === 1 && i !== this.pinned) this.#moving[m++] = i;
-      else this.#still[st++] = i;
+      // Days push on nothing. They never move themselves, and a note beside the
+      // lobe is kept out of it by its cell; were they part of the repulsion, the
+      // day written this morning would nudge the notes next to the journal.
+      else if (this.#daily[i] !== 1) this.#still[st++] = i;
     }
     const brain = this.arrangement === 'brain';
     repel(
@@ -1336,6 +1573,8 @@ export class BrainLayout {
     const { x, y } = this;
     const u = this.unitLength;
     for (const i of this.#seq) {
+      // A day is held on its place, not by forces (`#days`).
+      if (this.#daily[i] === 1) continue;
       const r = this.regionOf[i]!;
       const region = this.regions[r];
       let fx = 0;
@@ -1357,7 +1596,10 @@ export class BrainLayout {
         }
         // Home: a note that has drifted into a neighbour's cell is pushed back.
         if (region.side === this.nodeSide[i]) {
-          const near = nearestCell(this.regions, this.#cellW, x[i]!, y[i]!, this.nodeSide[i]!);
+          const near =
+            this.#journal !== -1 && inLobe(x[i]! / u, y[i]! / u)
+              ? this.#journal
+              : nearestCell(this.regions, this.#cellW, x[i]!, y[i]!, this.nodeSide[i]!, this.#journal);
           if (near !== -1 && near !== r) {
             fx += dx * CELL_HOME;
             fy += dy * CELL_HOME;
@@ -1435,11 +1677,18 @@ function weightedDistance(region: Region, weight: number, x: number, y: number):
  * of twenty notes claim a wider cell than one of six without claiming the
  * hemisphere.
  */
-function nearestCell(regions: readonly Region[], weight: Float64Array, x: number, y: number, side: number): number {
+function nearestCell(
+  regions: readonly Region[],
+  weight: Float64Array,
+  x: number,
+  y: number,
+  side: number,
+  skip: number,
+): number {
   let best = -1;
   let bd = Infinity;
   for (const region of regions) {
-    if (region.side !== side) continue;
+    if (region.side !== side || region.id === skip) continue;
     const d = weightedDistance(region, weight[region.id]!, x, y);
     if (d < bd) {
       bd = d;
@@ -1447,6 +1696,64 @@ function nearestCell(regions: readonly Region[], weight: Float64Array, x: number
     }
   }
   return best;
+}
+
+/**
+ * The grid the inside of the outline is sampled on, normalised, and which of its
+ * points make up the journal's lobe.
+ *
+ * The same for every vault, so worked out once. The lobe is the points of the
+ * journal's hemisphere nearest `JOURNAL_AT`, as many as `JOURNAL_SHARE` of all
+ * of them: a disc round the back of that hemisphere, cut off by its rim.
+ */
+interface Interior {
+  sx: Float64Array<ArrayBuffer>;
+  sy: Float64Array<ArrayBuffer>;
+  lobe: Uint8Array<ArrayBuffer>;
+  radius: number;
+}
+
+let grid: Interior | null = null;
+
+function interior(): Interior {
+  if (grid !== null) return grid;
+  const cols = Math.round((OUTLINE.maxX - OUTLINE.minX) / SAMPLE_STEP);
+  const rows = Math.round((OUTLINE.maxY - OUTLINE.minY) / SAMPLE_STEP);
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (let a = 0; a <= cols; a += 1) {
+    const px = OUTLINE.minX + a * SAMPLE_STEP;
+    for (let b = 0; b <= rows; b += 1) {
+      const py = OUTLINE.minY + b * SAMPLE_STEP;
+      if (withinOutline(px, py, SAMPLE_MARGIN) && Math.abs(px) > FISSURE * MEDIAL_CLEAR) {
+        xs.push(px);
+        ys.push(py);
+      }
+    }
+  }
+  const sx = Float64Array.from(xs);
+  const sy = Float64Array.from(ys);
+  const distance = (p: number): number => Math.hypot(sx[p]! - JOURNAL_AT.x, sy[p]! - JOURNAL_AT.y);
+  const near = [...sx.keys()]
+    .filter((p) => sideOf(sx[p]!) === JOURNAL_SIDE)
+    .sort((a, b) => distance(a) - distance(b) || a - b)
+    .slice(0, Math.round(sx.length * JOURNAL_SHARE));
+  const lobe = new Uint8Array(sx.length);
+  for (const p of near) lobe[p] = 1;
+  const radius = near.length === 0 ? 0 : distance(near[near.length - 1]!);
+  grid = { sx, sy, lobe, radius };
+  return grid;
+}
+
+/** Whether a normalised point lies in the journal's lobe. */
+function inLobe(x: number, y: number): boolean {
+  const { radius } = interior();
+  return (
+    sideOf(x) === JOURNAL_SIDE &&
+    Math.hypot(x - JOURNAL_AT.x, y - JOURNAL_AT.y) <= radius &&
+    withinOutline(x, y, SAMPLE_MARGIN) &&
+    Math.abs(x) > FISSURE * MEDIAL_CLEAR
+  );
 }
 
 /**

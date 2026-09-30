@@ -39,6 +39,7 @@
  * nothing depends on the order the server listed notes or links in.
  */
 
+import { JOURNAL_ROOT, isDailyNote } from '../../../shared/journal';
 import type { BrainGraph } from './model';
 import { hash32 } from './seed';
 
@@ -127,6 +128,15 @@ export function detectClusters(graph: Pick<BrainGraph, 'nodes' | 'edges'>, tags?
   const { nodes, edges } = graph;
   const n = nodes.length;
 
+  // Daily notes are not clustered by their links. A day links to the day before
+  // and after it and to whatever was worked on that day, so over a year the
+  // journal would out-vote every other signal: a project mentioned on forty days
+  // would have a daily note as its strongest tie, and each new day could tip it.
+  // They are gathered into one cluster of their own below, and their links are
+  // left out of every other note's ties, so a new day changes no other cluster.
+  const daily = nodes.map((node) => isDailyNote(node.path));
+  const others = daily.reduce((sum, d) => sum + (d ? 0 : 1), 0);
+
   // Path hash, then the key itself for the one-in-four-billion collision.
   // Never the array index.
   const hashes = nodes.map((node) => hash32(node.key));
@@ -139,15 +149,18 @@ export function detectClusters(graph: Pick<BrainGraph, 'nodes' | 'edges'>, tags?
   // a reference returned is a stronger tie than one made in passing.
   const links: Array<Map<number, number>> = nodes.map(() => new Map());
   for (const e of edges) {
+    if (daily[e.a] === true || daily[e.b] === true) continue;
     links[e.a]!.set(e.b, (links[e.a]!.get(e.b) ?? 0) + 1);
     links[e.b]!.set(e.a, (links[e.b]!.get(e.a) ?? 0) + 1);
   }
 
-  // Only the tags that can tell notes apart.
-  const tagsOf: Array<Set<string>> = nodes.map((node) => new Set(tags?.get(node.key) ?? []));
+  // Only the tags that can tell notes apart. Counted over the notes that are
+  // clustered here, so a year of daily notes does not change which tags count
+  // as too common.
+  const tagsOf: Array<Set<string>> = nodes.map((node, i) => new Set(daily[i] === true ? [] : (tags?.get(node.key) ?? [])));
   const tagCount = new Map<string, number>();
   for (const set of tagsOf) for (const tag of set) tagCount.set(tag, (tagCount.get(tag) ?? 0) + 1);
-  const tooCommon = Math.max(2, n * TAG_TOO_COMMON);
+  const tooCommon = Math.max(2, others * TAG_TOO_COMMON);
 
   /**
    * How closely two linked notes are bound. Symmetric, which is what keeps the
@@ -274,7 +287,7 @@ export function detectClusters(graph: Pick<BrainGraph, 'nodes' | 'edges'>, tags?
     }
   }
   for (const i of order) {
-    if (links[i]!.size > 0) continue;
+    if (links[i]!.size > 0 || daily[i] === true) continue;
     const node = nodes[i]!;
     let folder = node.folder;
     for (;;) {
@@ -294,7 +307,22 @@ export function detectClusters(graph: Pick<BrainGraph, 'nodes' | 'edges'>, tags?
     }
   }
 
-  return assemble(nodes, label, rank, order, tags);
+  // The journal: every daily note in one cluster, named for its first day in
+  // hash order. Never split and never joined with anything else.
+  let journal = -1;
+  for (const i of order) {
+    if (daily[i] !== true) continue;
+    if (journal === -1) journal = i;
+    label[i] = journal;
+  }
+
+  const clustering = assemble(nodes, label, rank, order, tags);
+  if (journal !== -1) {
+    const c = clustering.of[journal]!;
+    clustering.clusters[c]!.folder = JOURNAL_ROOT;
+    clustering.clusters[c]!.name = JOURNAL_ROOT;
+  }
+  return clustering;
 }
 
 function assemble(
@@ -432,6 +460,11 @@ export interface RegionGroup {
    */
   group: string;
   half: number;
+  /**
+   * Whether this is the journal: every daily note, in one region that is never
+   * cut and that the layout gives a lobe of fixed size instead of a cell.
+   */
+  journal: boolean;
   /** Cluster indices into `Clustering.clusters`. */
   clusters: number[];
   /** Node indices, in hash order. */
@@ -459,8 +492,16 @@ const MERGE_BELOW = 8;
 const SPLIT_ABOVE = 20;
 /** Where a cut group's first half ends, as a share of its notes. */
 const CUT_AT = 0.375;
-/** Never more cells than this: past nine the labels stop fitting round the rim. */
+/**
+ * Never more cells than this: past nine the labels stop fitting round the rim.
+ *
+ * One of the nine is always kept for the journal, whether the vault has one or
+ * not. Counting it only once it exists would let the first daily note decide
+ * whether some other group is cut in two, and every region would be dealt again
+ * for a note that has nothing to do with any of them.
+ */
 const MAX_REGIONS = 9;
+const JOURNAL_REGIONS = 1;
 /**
  * A region that holds this much of a top-level folder is named after that
  * folder rather than after the subfolder most of it sits in.
@@ -548,7 +589,13 @@ export function groupRegions(
   // One draft region per folder group, in key order so nothing depends on the
   // order the clusters came in.
   const byGroup = new Map<string, number[]>();
+  let journal = -1;
   clusters.forEach((cluster, c) => {
+    // The journal cluster holds daily notes and nothing else (`detectClusters`).
+    if (isDailyNote(nodes[cluster.members[0]!]!.path)) {
+      journal = c;
+      return;
+    }
     const key = dominant(cluster.members.map((i) => place[i]!.group)).value;
     const list = byGroup.get(key);
     if (list === undefined) byGroup.set(key, [c]);
@@ -611,7 +658,7 @@ export function groupRegions(
   // it would compound the names: "Services: Homelab: Homelab".
   const memberKeys = (list: readonly number[]): string[] =>
     list.flatMap((c) => clusters[c]!.members).map((i) => nodes[i]!.key);
-  const room = (): number => MAX_REGIONS - drafts.length;
+  const room = (): number => MAX_REGIONS - JOURNAL_REGIONS - drafts.length;
   const oversized = drafts
     .map((draft, i) => ({ draft, i }))
     .filter(({ draft }) => draft.notes > SPLIT_ABOVE && draft.clusters.length > 1)
@@ -667,10 +714,24 @@ export function groupRegions(
       name: draft.name,
       group: draft.key,
       half: draft.half,
+      journal: false,
       clusters: draft.clusters,
       members,
     };
   });
+  if (journal !== -1) {
+    // A fixed identity: which day comes first in hash order changes with every
+    // day written, and the journal is the same region all the same.
+    regions.push({
+      id: `\u0000${JOURNAL_ROOT}`,
+      name: prettyFolder(JOURNAL_ROOT),
+      group: `\u0000${JOURNAL_ROOT}`,
+      half: -1,
+      journal: true,
+      clusters: [journal],
+      members: [...clusters[journal]!.members],
+    });
+  }
   regions.sort((a, b) => hash32(a.id) - hash32(b.id) || (a.id < b.id ? -1 : 1));
   regions.forEach((region, r) => {
     for (const i of region.members) regionOf[i] = r;
