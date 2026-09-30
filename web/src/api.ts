@@ -357,6 +357,27 @@ export const api = {
     request(`/api/v1/notes/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, S.OpenNote),
 
   /**
+   * Which version of a note is on disk now — the `hash` and nothing else.
+   *
+   * Asked while a note is open, so the editor can say that the file is no
+   * longer the one it was filled from *before* the next save displaces
+   * somebody's paragraph into a conflict copy. Deliberately not `getNote`: the
+   * question is asked every couple of seconds and the answer is one token, so
+   * shipping the whole text with it would be a waste on every tick and the
+   * editor must not be refilled from it anyway.
+   *
+   * Refused with the same 404 a missing note gives when the caller may read the
+   * note but not write it — being told that a file moved on is only of use to
+   * somebody who could overwrite it. Callers treat any failure as "no answer",
+   * never as "unchanged".
+   */
+  noteVersion: (owner: string, path: string) =>
+    request(
+      `/api/v1/version/${encodePath(path)}?owner=${encodeURIComponent(owner)}`,
+      S.NoteVersionResponse,
+    ),
+
+  /**
    * Writes a note.
    *
    * `baseHash` is the version the editor started from — the `hash` the read that

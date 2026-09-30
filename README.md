@@ -158,7 +158,7 @@ Two kinds of tables share one file, and they are treated differently.
 
 There is no push channel. No WebSocket, no server-sent events: a persistent connection would
 bring reconnect logic, proxy timeouts and a second lifecycle, for a tool with one person and a
-few agents. Instead there are three mechanisms, each for a different kind of change.
+few agents. Instead there are four mechanisms, each for a different kind of change.
 
 - **Changes you make yourself** invalidate the affected TanStack Query entries explicitly
   (tree, tidy-up, links, graph). Anything else counts as fresh for 30 seconds.
@@ -170,12 +170,22 @@ few agents. Instead there are three mechanisms, each for a different kind of cha
 - **Changes on disk** (rsync, `git pull`, vim over SSH) reach the index through the watcher within
   about a quarter of a second, or through the next reconcile if the watcher missed them. The
   browser sees them on its next fetch.
+- **The open note's own version** comes from `GET /api/v1/version/<path>`, on the same interval
+  and only while a note the caller may *write* is open and the tab is in the foreground. It
+  answers one thing — the `hash` of the file right now — and the editor compares it against the
+  version it was filled from. Deliberately not part of the pulse: the pulse answers for the
+  caller's own vault only, because when somebody works and on what is information about that
+  person, and the case this is for is a note shared for writing in *somebody else's* vault. So
+  the question is narrowed instead of the pulse widened: one named note, one fact, no actor and
+  no time.
 
 An **open note is never re-read underneath the editor**. Replacing text while somebody types is
 worse than showing text that is a few seconds old. Opening a note always fetches it fresh, and if
 someone else changed it in the meantime, the next save does not overwrite their version: the
 `baseHash` no longer matches, and the displaced text is kept as a conflict copy that shows up in
-*Tidy up*.
+*Tidy up*. A bar under the header says so **before** that save, so the copy can be avoided rather
+than only explained; it offers to load the other version, and asks first when there is text in
+the editor that has not been written yet.
 
 ### Web client
 
@@ -218,7 +228,8 @@ notes live that are not one person's — a household, a team, a shared project.
 A write-shared note has real conflicts, and the answer is last-writer-wins. The incoming text
 lands, the version it displaced is written out beside it as a conflict copy and indexed like any
 other note. Nothing is merged: a merge that gets it wrong is worse than two files, because it
-looks finished.
+looks finished. While such a note is open, the editor also polls its version and warns before the
+save rather than only after it — see *How changes reach the browser*.
 
 ## Agents
 

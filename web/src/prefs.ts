@@ -69,7 +69,14 @@ export interface Prefs {
    * toggle feel like it forgot.
    */
   lastRecentCount: number;
-  /** Poll interval for the live pulse in the network views, in milliseconds. */
+  /**
+   * How often this tab asks the server what changed, in milliseconds.
+   *
+   * One setting for both polls — the live pulse in the network views, and the
+   * open note's version, which is what the stale-note warning rests on.
+   * Deliberately not two: somebody who slows this down is saying something
+   * about how often this tab should talk to the server, not about one view.
+   */
   pulseMs: number;
   /**
    * Whether the sidebar is folded down to its icons.

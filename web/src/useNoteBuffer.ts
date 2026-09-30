@@ -74,6 +74,18 @@ export interface NoteBuffer {
   openNow: RefObject<NoteRef | null>;
   setOpenRef: (next: NoteRef | null) => void;
   saveState: SaveState;
+  /**
+   * Whether the open note's file holds something other than what this screen
+   * started from — as far as anybody has told this buffer.
+   *
+   * False until a version is reported through `sawVersion`, and false again the
+   * moment this tab's own write makes the file its own. It lives here rather
+   * than in the shell because it is a statement about `versions`, and
+   * `versions` is the one thing in this file the promise about typed text rests
+   * on: a second copy of that comparison somewhere else would be the copy that
+   * eventually disagreed.
+   */
+  stale: boolean;
   /** Notes being deleted right now, by `refKey` — the editor locks on these. */
   deletingKeys: ReadonlySet<string>;
   /** Whether any text is waiting to be written. */
@@ -90,6 +102,16 @@ export interface NoteBuffer {
    * their base.
    */
   opened: (owner: string, path: string, hash: string) => void;
+  /**
+   * The version a note's file carries on the server, as something just read it.
+   *
+   * Ignored unless it is about the note on screen: an answer that arrives after
+   * a switch is about a note this screen no longer shows, and acting on it
+   * would warn about the wrong one. Otherwise it decides `stale`, in both
+   * directions — a report equal to the version this screen holds is how the
+   * warning goes away again.
+   */
+  sawVersion: (owner: string, path: string, hash: string) => void;
   /** Nothing is open any more, and nothing is owed on the screen. */
   closed: () => void;
   /** Nothing lives at this path now: forget the version it was read at. */
@@ -133,6 +155,7 @@ export function useNoteBuffer({
     setOpenRefState(next);
   }, []);
   const [saveState, setSaveState] = useState<SaveState>('saved');
+  const [stale, setStale] = useState(false);
 
   /**
    * The write and the place complaints are said, reachable from callbacks that
@@ -251,6 +274,13 @@ export function useNoteBuffer({
           });
           // This write is now the version to compare this note's next one against.
           versions.current.set(key, result.note.hash);
+          // And it is now what the file holds, so whatever displaced version
+          // the warning was about has been dealt with — either kept as the copy
+          // reported below, or never really there. Said here rather than left
+          // to the next poll: a bar still warning about a save that has just
+          // happened, beside the message reporting its outcome, reads as a
+          // second, unresolved problem.
+          if (isOpen()) setStale(false);
           // The debt is paid. Reported even when this note is no longer the one
           // on screen, because the warning it left there is about this text.
           const settled = owed.current === key;
@@ -424,6 +454,10 @@ export function useNoteBuffer({
     (owner: string, path: string, hash: string): void => {
       setOpenRef({ owner, path });
       versions.current.set(refKey(owner, path), hash);
+      // This text came from the file a moment ago, so nothing is displaced yet
+      // — and a warning left over from the note before this one would be about
+      // a file nobody is looking at.
+      setStale(false);
       // Not unconditionally 'saved'. A write that failed left its text in the
       // buffer and its warning on screen, and opening another note used to
       // paint over both — the one moment at which somebody would close the tab
@@ -433,9 +467,22 @@ export function useNoteBuffer({
     [setOpenRef],
   );
 
+  const sawVersion = useCallback((owner: string, path: string, hash: string): void => {
+    // The second layer, not the only one: the shell's poll is torn down when
+    // the open note changes and drops the answer that is still in flight. This
+    // check stays anyway, because it is the one that belongs to the buffer —
+    // the promise here is that `stale` is about the note on screen, and a
+    // caller that forgot to guard its own late answer would otherwise break it
+    // from outside. Removing it leaves every test green, which says the hole is
+    // narrow, not that it is closed.
+    if (openNow.current?.owner !== owner || openNow.current.path !== path) return;
+    setStale(hash !== versions.current.get(refKey(owner, path)));
+  }, []);
+
   const closed = useCallback((): void => {
     setOpenRef(null);
     setSaveState('saved');
+    setStale(false);
   }, [setOpenRef]);
 
   const forget = useCallback((owner: string, path: string): void => {
@@ -498,12 +545,14 @@ export function useNoteBuffer({
     openNow,
     setOpenRef,
     saveState,
+    stale,
     deletingKeys,
     hasPending,
     scheduleSave,
     flush,
     settle,
     opened,
+    sawVersion,
     closed,
     forget,
     discard,
