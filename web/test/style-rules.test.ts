@@ -196,8 +196,17 @@ describe('the skip link', () => {
  * admire the result.
  */
 describe('the text-size knob', () => {
-  /** Every rule whose body sets a font-size built from `--text-scale`. */
-  const scaled = rules(css).filter(([, body]) => /font-size:[^;]*var\(--text-scale\)/.test(body));
+  /**
+   * Every rule whose body sets a font-size built from `--text-scale`.
+   *
+   * The property may carry a fallback (`var(--text-scale, 1)`), so the match
+   * stops at the name rather than at the closing bracket. Written the strict
+   * way this stopped matching the moment the fallback was added, and the test
+   * passed the wrong way round: nothing matched, so nothing was checked.
+   */
+  const scaled = rules(css).filter(([, body]) =>
+    /font-size:[^;]*var\(\s*--text-scale\s*[,)]/.test(body),
+  );
 
   it('is declared on the root element, so every rem follows it', () => {
     expect(scaled.length).toBeGreaterThan(0);
@@ -235,5 +244,31 @@ describe('the text-size knob', () => {
 
     expect(tokens.length).toBe(6);
     for (const [, name, value] of tokens) expect(value!.trim(), `--t-${name}`).toMatch(/rem$/);
+  });
+});
+
+/**
+ * The knob has to hold a value before any Javascript has run.
+ *
+ * `rem` is only useful here because the root's font size is computed from
+ * `--text-scale`, and a `var()` whose custom property was never declared makes
+ * the whole declaration invalid at computed-value time: the browser throws away
+ * `font-size` and the root falls back to its own 16px. Every `--t-*` token then
+ * resolves against a size the stylesheet did not choose.
+ *
+ * That is not a hypothetical. The inline script in `index.html` sets the
+ * property only when localStorage holds a size, and its own comment calls it
+ * "deliberately forgiving" — which it could afford to be while `:root` still
+ * declared `--text-scale: 1`. A first visit, a private window, a browser with
+ * site data blocked, or no Javascript at all leaves nothing to read.
+ */
+describe('the text-size knob before Javascript', () => {
+  it('resolves to a size even when nothing has set the property', () => {
+    const declared = /--text-scale:\s*[^;]+/.test(css);
+    const fallback = /var\(\s*--text-scale\s*,[^)]+\)/.test(css);
+
+    // Either is enough on its own: a declaration in the cascade, or a fallback
+    // at the point of use. Neither leaves the root element sized by accident.
+    expect(declared || fallback, 'no declaration and no var() fallback').toBe(true);
   });
 });

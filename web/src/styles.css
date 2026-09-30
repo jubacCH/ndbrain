@@ -2518,7 +2518,14 @@ tbody tr[data-selected='true']:hover td {
  * pixel is a pixel. Large type therefore sits in slightly tighter padding than
  * small type rather than in a proportionally larger box. */
 html {
-  font-size: calc(15.5px * var(--text-scale));
+  /* The fallback carries the whole setting when nothing has set the property,
+     and something has to: a `var()` with no declaration and no fallback is
+     invalid at computed-value time, which throws this `font-size` away and
+     leaves the root at the browser's own 16px — so every `--t-*` token would
+     resolve against a size chosen by accident. The inline script in
+     `index.html` writes the property only when localStorage holds a size, and
+     calls itself "deliberately forgiving"; this is what lets it be. */
+  font-size: calc(15.5px * var(--text-scale, 1));
 }
 
 body {
