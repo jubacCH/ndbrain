@@ -16,7 +16,8 @@
  * nothing to operate on.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import nodePath from 'node:path';
 
 import cookiePlugin from '@fastify/cookie';
 import staticPlugin from '@fastify/static';
@@ -26,7 +27,7 @@ import type { App, BulkResult } from '../app.js';
 import type { ApiKeyService } from '../auth/keys.js';
 import { InvalidShareError, type Need, type Share, type ShareService } from '../auth/shares.js';
 import type { SettingsService } from '../auth/settings.js';
-import type { History, Version } from '../vault/history.js';
+import type { History, HistoryView } from '../vault/history.js';
 import { DeletedNotes } from '../notes/deleted.js';
 import type { PutOptions } from '../notes/service.js';
 import { SessionService, UnknownUserError, UserService, type User } from '../auth/users.js';
@@ -35,9 +36,10 @@ import type { Config } from '../config.js';
 import type { Database } from '../db/database.js';
 import type { ReconcileState } from '../index/watcher.js';
 import { missingNotes } from '../index/queries.js';
+import { contentSecurityPolicy, HSTS, inlineScriptHashes } from './csp.js';
 import { HealthProbe } from './health.js';
 import { toProblem } from './errors.js';
-import { NoteNotFoundError } from '../errors.js';
+import { HistoryUnreadableError, NoteNotFoundError } from '../errors.js';
 import { isNotePath, normalizeVaultPath } from '../vault/paths.js';
 import { LoginThrottle } from './throttle.js';
 import { ZipFile } from 'yazl';
@@ -182,6 +184,29 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     trustProxy: true,
   });
 
+  /**
+   * A broken sidecar has to be visible without opening a note.
+   *
+   * The whole failure this guards against is a silent one: an operator whose
+   * history stopped working weeks ago found out by clicking a note and noticing
+   * the list was short. So `History` says it here instead, with a fixed marker
+   * to grep for and git's own first line as the reason — and at most once a
+   * minute per vault, because otherwise the line that matters scrolls away
+   * under the hundred identical ones behind it.
+   *
+   * Installed here rather than passed to `createRuntime`, for the reason
+   * `main.ts` gives about its own warnings: the runtime is built before the
+   * server that owns the logger. Doing it in `buildServer` also means the test
+   * harness exercises this wiring rather than one of its own.
+   */
+  history.reportTo(({ owner, reason }) => {
+    fastify.log.warn(
+      { account: owner, git: reason },
+      'history unreadable: the vault has a sidecar repository that could not be read — ' +
+        'earlier versions of notes in it cannot be listed or restored until this is fixed',
+    );
+  });
+
   await fastify.register(cookiePlugin);
 
   /**
@@ -204,12 +229,71 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     done(null, payload);
   });
 
+  /**
+   * The content security policy, composed once from the page being served.
+   *
+   * Read at start-up rather than per request: the file does not change while the
+   * process runs — a deploy replaces the image — and hashing it on every reply
+   * would put a synchronous read in front of every response.
+   *
+   * With no web root there is no inline script to allow, so the policy is the
+   * strict one; see `csp.ts`. A web root whose `index.html` cannot be read is
+   * said out loud, because the consequence is subtle: the page would still load
+   * from `'self'`, only its theme bootstrap would be blocked, and a white flash
+   * on a dark phone is not something anybody traces back to a header.
+   */
+  const pageFile =
+    config.webRoot === undefined ? undefined : nodePath.join(config.webRoot, 'index.html');
+  let scriptHashes: string[] = [];
+  if (pageFile !== undefined) {
+    try {
+      scriptHashes = inlineScriptHashes(readFileSync(pageFile, 'utf8'));
+    } catch (error) {
+      fastify.log.warn(
+        { err: error, pageFile },
+        'could not read the page to hash its inline scripts — the content security ' +
+          'policy will block them, which shows up as the theme not applying before ' +
+          'the first paint',
+      );
+    }
+  }
+  const policy = contentSecurityPolicy(scriptHashes);
+
   fastify.addHook('onSend', async (request, reply) => {
     // A notes server has no business being framed, sniffed or used as a referrer
     // source for a URL that contains a note name.
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Referrer-Policy', 'no-referrer');
+
+    // Only where a route has not already said something stricter: the file
+    // download answers with `default-src 'none'; sandbox`, and overwriting that
+    // with the page's policy would let a served file load from this origin.
+    if (reply.getHeader('content-security-policy') === undefined) {
+      reply.header('Content-Security-Policy', policy);
+    }
+
+    /**
+     * HSTS, and why this server sends it at all.
+     *
+     * TLS is terminated by the reverse proxy, not here, so the header could just
+     * as well be added there — and if it were, this would be duplicated work.
+     * It is not: the proxy forwards what the application sends and adds nothing
+     * of its own, so a header that only the proxy could set is a header nobody
+     * sets. Sending it from here also means it cannot be lost by a proxy being
+     * reconfigured or replaced, which is the usual way such a header disappears.
+     *
+     * Gated on `cookieSecure` rather than on the request's scheme. That flag is
+     * already the operator's statement about whether there is TLS in front —
+     * `NDBRAIN_COOKIE_SECURE=false` is documented as the plain-HTTP test case —
+     * and pinning a browser to HTTPS for a year from a server reached over
+     * `http://` is how that test turns into a lockout. A scheme check would
+     * depend on `X-Forwarded-Proto` arriving, and a header that quietly stops
+     * being sent when a proxy stops setting one is worse than an explicit flag.
+     */
+    if (config.cookieSecure) {
+      reply.header('Strict-Transport-Security', HSTS);
+    }
 
     // Nothing behind the session gate may be cached. Two reasons, and the second
     // is the one that bit: vault contents are private, and they are mutable —
@@ -1058,13 +1142,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * share on this note is not a key to that one. A version outside the window
    * reads exactly like one that was never there.
    */
-  async function visibleVersions(caller: string, owner: string, path: string): Promise<Version[]> {
+  async function visibleVersions(caller: string, owner: string, path: string): Promise<HistoryView> {
     const from = shares.pastVisibleFrom(caller, owner, path);
-    return (await history.versions(owner, path)).filter((version) => version.at >= from);
+    const view = await history.versions(owner, path);
+    return { state: view.state, versions: view.versions.filter((version) => version.at >= from) };
   }
 
   async function visibleContentAt(caller: string, owner: string, path: string, version: string): Promise<string> {
-    if (!(await visibleVersions(caller, owner, path)).some((known) => known.id === version)) {
+    const view = await visibleVersions(caller, owner, path);
+    // A list that could not be fetched cannot be used to refuse a version id.
+    if (view.state === 'broken') throw new HistoryUnreadableError('the history could not be read');
+    if (!view.versions.some((known) => known.id === version)) {
       throw new NoteNotFoundError('no such version of this note');
     }
     return history.contentAt(owner, path, version);
@@ -1080,10 +1168,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       return { content: await visibleContentAt(caller, owner, path, query.version) };
     }
 
-    return {
-      available: await history.available(owner),
-      versions: await visibleVersions(caller, owner, path),
-    };
+    // The state comes out of the same `git log` the versions do, so this is one
+    // subprocess rather than the two it used to take — the separate
+    // `history.available` probe is gone, and with it the question of what to
+    // do when the probe and the listing disagree.
+    return visibleVersions(caller, owner, path);
   });
 
   fastify.post('/api/v1/history/restore', async (request) => {
@@ -1250,10 +1339,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * The secret comes back in this response and nowhere else, ever — only its
    * SHA-256 is stored. That is the whole security model of the thing, so the
    * response says so and the interface has to make it impossible to miss.
+   *
+   * `expiresInDays` is left out by most callers, and the service then applies
+   * the default lifetime. Deliberately not defaulted here: a default written in
+   * the route is a default the CLI does not have, and two places that both
+   * decide how long a key lasts is how they come to disagree.
    */
   fastify.post('/api/v1/admin/keys', async (request, reply) => {
     requireAdmin(request);
-    const { owner, name, scope, canWrite } = body(request, S.CreateKeyRequest);
+    const { owner, name, scope, canWrite, expiresInDays } = body(request, S.CreateKeyRequest);
 
     if (users.get(owner) === undefined) {
       return reply.code(404).send({ code: 'unknown_user', message: 'no such account' });
@@ -1261,6 +1355,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     const created = keys.create(owner, name, {
       ...(scope === undefined ? {} : { scope }),
+      ...(expiresInDays === undefined ? {} : { expiresInDays }),
       canWrite: canWrite ?? false,
     });
     // Flattened: the service hands back { key, secret }, and the secret belongs

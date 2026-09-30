@@ -3,7 +3,24 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
+/**
+ * When this bundle was built, frozen into it.
+ *
+ * A single-page app without a router never navigates, so a tab left open
+ * keeps running the JavaScript it started with — through a deploy, and with
+ * no way for the person in front of it to tell. That cost real time once:
+ * a setting was looked for that the running bundle did not have yet.
+ *
+ * Seconds precision, UTC, and no commit hash: the Dockerfile copies only
+ * `web/`, `server/` and `shared/`, so the build cannot see git, and carrying
+ * the hash in would mean changing the deploy command for a line of text.
+ * The time answers the question that is actually asked — is this older than
+ * the deploy — without touching anything that deploys.
+ */
+const BUILT_AT = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+
 export default defineConfig({
+  define: { __BUILT_AT__: JSON.stringify(BUILT_AT) },
   plugins: [react()],
   resolve: {
     // shared/schema.ts lives above this project and imports zod by bare name.

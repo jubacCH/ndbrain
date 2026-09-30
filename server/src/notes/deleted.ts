@@ -21,10 +21,10 @@
  * next to it under `restoredPath`, never over what is there.
  */
 
-import { NoteNotFoundError, NothingToRestoreError } from '../errors.js';
+import { HistoryUnreadableError, NoteNotFoundError, NothingToRestoreError } from '../errors.js';
 import type { ShareService } from '../auth/shares.js';
 import type { App } from '../app.js';
-import type { History, HistoryState } from '../vault/history.js';
+import type { History, HistoryState, Version } from '../vault/history.js';
 import { inScope } from '../auth/shares.js';
 import { restoredPath, restoreScopes, type DeletedRow } from '../index/queries.js';
 import { CaseCollisionError } from '../errors.js';
@@ -43,8 +43,12 @@ export const DELETED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
  * - `no-commit`: it does, but nothing has been recorded yet.
  * - `no-version`: history exists, but no saved version holds this note — it
  *   was created and deleted between two ticks of the timer.
+ * - `broken`: there is a history and it could not be read. Kept apart from
+ *   `no-history` because the two are opposite news: one says the feature was
+ *   never set up, the other that it was and has stopped working, and saying the
+ *   first when the second is true is how a way back disappears unnoticed.
  */
-export type RestoreState = 'ready' | 'no-history' | 'no-commit' | 'no-version';
+export type RestoreState = 'ready' | 'no-history' | 'no-commit' | 'no-version' | 'broken';
 
 export interface DeletedNote extends DeletedRow {
   folder: string;
@@ -67,8 +71,17 @@ export interface DeletePreview {
   unsaved: number;
   /** Notes the caller could not bring back at all, whatever the host keeps. */
   notYours: number;
-  /** Whether the host keeps any history where the caller could restore. */
-  history: boolean;
+  /**
+   * Notes the caller could bring back, if only the history could be asked.
+   *
+   * Its own count rather than folded into `unsaved`, which would have the
+   * confirmation say "no version of them has been saved yet" about notes whose
+   * versions are very likely all there behind an unreadable repository. The
+   * question before a delete is the last place to guess.
+   */
+  unknown: number;
+  /** What the host keeps where the caller could restore. */
+  history: HistoryState;
 }
 
 /** How many other names a restore tries before it gives up. */
@@ -117,11 +130,27 @@ export class DeletedNotes {
         state = await this.#history.state(row.owner);
         states.set(row.owner, state);
       }
-      const version = state === 'ready' ? await this.#version(caller, row.owner, row.path, row.at) : null;
+      // One unreadable vault must not take the whole list down: the rest of
+      // somebody's deleted notes may live in vaults that are perfectly fine,
+      // and a 503 for all of them would hide those too. So it is caught here
+      // and carried per note as `broken`, which is the one thing it may not be
+      // silent about.
+      let version: Version | null = null;
+      let restore: RestoreState =
+        state === 'none' ? 'no-history' : state === 'empty' ? 'no-commit' : state === 'broken' ? 'broken' : 'ready';
+      if (state === 'ready') {
+        try {
+          version = await this.#version(caller, row.owner, row.path, row.at);
+          restore = version === null ? 'no-version' : 'ready';
+        } catch (error) {
+          if (!(error instanceof HistoryUnreadableError)) throw error;
+          restore = 'broken';
+        }
+      }
       out.push({
         ...row,
         folder: row.path.includes('/') ? row.path.slice(0, row.path.lastIndexOf('/')) : '',
-        restore: state === 'none' ? 'no-history' : state === 'empty' ? 'no-commit' : version === null ? 'no-version' : 'ready',
+        restore,
         savedAt: version?.at ?? null,
       });
     }
@@ -158,7 +187,12 @@ export class DeletedNotes {
       });
       if (row === undefined) throw new NoteNotFoundError('note does not exist');
 
-      if ((await this.#history.state(owner)) !== 'ready') {
+      // A history that cannot be read is not a history with nothing in it.
+      // Refusing with `NothingToRestoreError` would tell somebody their note is
+      // gone for good on the strength of a question that was never answered.
+      const state = await this.#history.state(owner);
+      if (state === 'broken') throw new HistoryUnreadableError('the history could not be read');
+      if (state !== 'ready') {
         throw new NothingToRestoreError('no saved version of this note exists');
       }
       const version = await this.#version(caller, owner, path, row.at);
@@ -200,16 +234,37 @@ export class DeletedNotes {
   async preview(caller: string, owner: string, paths: string[]): Promise<DeletePreview> {
     const canonical = paths.map((notePath) => normalizeVaultPath(notePath));
     const mine = canonical.filter((path) => this.#mayRestore(caller, owner, path));
-    const out: DeletePreview = { restorable: 0, unsaved: 0, notYours: canonical.length - mine.length, history: false };
+    const out: DeletePreview = {
+      restorable: 0,
+      unsaved: 0,
+      notYours: canonical.length - mine.length,
+      unknown: 0,
+      history: 'none',
+    };
     if (mine.length === 0) return out;
 
     const state = await this.#history.state(owner);
-    out.history = state !== 'none';
+    out.history = state;
+    if (state === 'broken') {
+      out.unknown = mine.length;
+      return out;
+    }
     if (state !== 'ready') {
       out.unsaved = mine.length;
       return out;
     }
-    const recorded = await this.#history.recorded(owner, mine);
+    // Thrown rather than swallowed by `recorded`, and caught here rather than
+    // let out: the confirmation still has to appear, and it has to say that the
+    // way back could not be checked instead of that there is none.
+    let recorded: Set<string>;
+    try {
+      recorded = await this.#history.recorded(owner, mine);
+    } catch (error) {
+      if (!(error instanceof HistoryUnreadableError)) throw error;
+      out.history = 'broken';
+      out.unknown = mine.length;
+      return out;
+    }
     for (const path of mine) {
       if (recorded.has(path)) out.restorable += 1;
       else out.unsaved += 1;

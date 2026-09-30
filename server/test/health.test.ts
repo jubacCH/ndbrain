@@ -12,9 +12,11 @@
  * vault could be read off.
  */
 
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { Database } from '../src/db/database.js';
@@ -172,5 +174,67 @@ describe('when the watcher last reconciled', () => {
 
     expect(watcher.reconcileState()).toBe('ok');
     expect(watcher.reconcileState(Date.now() + 10 * 60_000)).toBe('stale');
+  });
+});
+
+/**
+ * The sidecar, as something the operator can be told about without signing in.
+ *
+ * `history` was two words, `ok` and `unavailable`, and `unavailable` was both
+ * "no sidecar was ever set up" and "the sidecar is there and cannot be read".
+ * The first may well be deliberate; the second is a way back that has stopped
+ * working. A monitor that cannot tell them apart cannot alert on the one that
+ * matters, and the reply is the only place an unauthenticated watcher can look.
+ */
+describe('what the health endpoint says about the history', () => {
+  const run = promisify(execFile);
+
+  it('is unavailable where no sidecar was ever set up, and that is not degraded', async () => {
+    const reply = await health();
+
+    expect(reply.body['checks']).toMatchObject({ history: 'unavailable' });
+    expect(reply.body['status']).toBe('ok');
+    expect(reply.status).toBe(200);
+  });
+
+  it('is ok once the vault has a repository with a commit in it', async () => {
+    const cwd = path.join(h.dataDir, 'vaults', 'anna');
+    await h.runtime.app.createNote('anna', 'Notiz.md', '# Notiz\n');
+    await run('git', ['init', '-q', '-b', 'main'], { cwd });
+    await run('git', ['add', '-A'], { cwd });
+    await run('git', ['commit', '-q', '-m', 'Vault-Stand'], {
+      cwd,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'ndBrain',
+        GIT_AUTHOR_EMAIL: 'ndbrain@localhost',
+        GIT_COMMITTER_NAME: 'ndBrain',
+        GIT_COMMITTER_EMAIL: 'ndbrain@localhost',
+      },
+    });
+
+    const reply = await health();
+    expect(reply.body['checks']).toMatchObject({ history: 'ok' });
+  });
+
+  it('is broken, and degraded, when the repository is there and cannot be read', async () => {
+    const cwd = path.join(h.dataDir, 'vaults', 'anna');
+    await h.runtime.app.createNote('anna', 'Notiz.md', '# Notiz\n');
+    await run('git', ['init', '-q', '-b', 'main'], { cwd });
+    await fs.rm(path.join(cwd, '.git', 'objects'), { recursive: true, force: true });
+
+    const reply = await health();
+
+    expect(reply.body['checks']).toMatchObject({ history: 'broken' });
+    // Degraded and still a 200, for the reason the reconcile check gives: the
+    // operator has to fix this, and pulling the server out of a load balancer
+    // over a history nobody is reading this second would be the worse outage.
+    expect(reply.body['status']).toBe('degraded');
+    expect(reply.status).toBe(200);
+    // The rule the whole endpoint is built on still holds: no paths, no
+    // account names, and nothing with a digit in it to measure a vault by.
+    expect(reply.raw).not.toContain(h.dataDir);
+    expect(reply.raw).not.toContain('anna');
+    expect(reply.raw).not.toMatch(/\d/);
   });
 });

@@ -46,8 +46,15 @@ with no arguments for the rest — passwords, agent keys, spaces, reindex.
 The vault and the index live on the host (`/srv/ndbrain/vaults` and `/srv/ndbrain/index` in
 `docker-compose.yml`), so removing the container can never take notes with it. TLS is expected to
 be terminated by a reverse proxy in front; `NDBRAIN_COOKIE_SECURE=false` is for a plain-HTTP test
-and nothing else, because the browser will otherwise drop the session cookie. The remaining
-settings and their defaults are in `server/src/config.ts`, which is short on purpose.
+and nothing else, because the browser will otherwise drop the session cookie. That same flag also
+decides whether `Strict-Transport-Security` is sent, so a plain-HTTP test cannot pin a browser to
+HTTPS for a year — the proxy adds no headers of its own, which is why this one comes from here.
+The remaining settings and their defaults are in `server/src/config.ts`, which is short on purpose.
+
+Every response carries a content security policy composed from the page actually being served:
+the theme bootstrap in `web/index.html` is allowed by digest, so `script-src` needs no
+`'unsafe-inline'`. Change that inline script and the digest follows by itself; see
+`server/src/http/csp.ts` for what each directive is there for.
 
 ## Layout
 
@@ -223,6 +230,13 @@ and by a read/write flag, so a key can only ever see less than its owner and nev
 call is checked twice, against the owner's vault boundary and against the key's own scope. The
 secret is shown once and stored only as a SHA-256 hash, and every tool call is logged, so the
 owner can see what their agents actually did.
+
+A key also runs out. A year by default, choosable per key when it is made (`--days`, or
+`--forever` for something unattended like a monthly job), and the keys that existed before this
+kept no deadline rather than being given one retroactively. An expired key is refused exactly as
+an unknown one is, so nothing about the answer says a real key was presented — the admin view and
+the server log are where the deadline is visible, and the log names the key a fortnight ahead
+together with the command that replaces it.
 
 The tools are `search_notes`, `get_note`, `list_notes`, `vault_map`, `get_links`, `list_tasks`,
 `list_findings`, `create_note`, `append_note`, `edit_note`, `rename_note` and `delete_note`. An

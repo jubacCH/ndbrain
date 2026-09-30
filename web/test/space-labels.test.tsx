@@ -129,7 +129,7 @@ describe('the inspector', () => {
       canWrite: false,
       note: { path: 'Ferien/Plan.md', title: 'Plan', content: '', size: 0, mtimeMs: 0, hash: 'h1' },
     });
-    vi.spyOn(api, 'history').mockResolvedValue({ available: false, versions: [] });
+    vi.spyOn(api, 'history').mockResolvedValue({ state: 'none', versions: [] });
   });
 
   it('says the note is in a space, by name, with the space icon', () => {

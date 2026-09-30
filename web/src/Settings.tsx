@@ -21,6 +21,7 @@
 import { useRef, useState } from 'react';
 
 import { ApiError, api } from './api';
+import { builtAtLocal } from './build';
 import { copy } from './copy';
 import { LEAVE_INSERT, type LeaveInsert, type Measure, type Prefs, type StartView, type Theme } from './prefs';
 
@@ -136,6 +137,10 @@ export function SettingsView({
 }: SettingsProps): React.JSX.Element {
   const set = <K extends keyof Prefs>(key: K, value: Prefs[K]): void =>
     onPrefs({ ...prefs, [key]: value });
+
+  // Read once per render rather than memoised: it is a constant baked into the
+  // bundle, and `toLocaleString` on a constant is not worth a dependency array.
+  const shown = builtAtLocal(copy.locale);
 
   return (
     <div className="pane padded settings">
@@ -348,6 +353,21 @@ export function SettingsView({
         onSignedOutEverywhere={onSignedOutEverywhere}
         onRenamed={onRenamed}
       />
+
+      {/*
+        Last, and quiet: nobody comes here for it. It exists for the one
+        occasion when it matters — a setting that is missing because the tab
+        predates the build that has it — and on that occasion it is the only
+        thing on screen that can say so.
+      */}
+      <section className="setgroup">
+        <h3 className="cap">{copy.settings.build}</h3>
+        <p className="sethint">
+          {shown === null
+            ? copy.settings.builtAtUnknown
+            : `${copy.settings.builtAt(shown)} ${copy.settings.builtAtStale}`}
+        </p>
+      </section>
     </div>
   );
 }

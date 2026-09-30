@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -399,6 +399,26 @@ const MIGRATIONS: Array<(db: Database) => void> = [
   // note rows go and the next sync reads the files again.
   (db) => {
     db.exec('DELETE FROM notes_fts; DELETE FROM props; DELETE FROM tasks; DELETE FROM notes;');
+  },
+
+  // v12 -> v13: an agent key can expire.
+  //
+  // Nullable, and every row that already exists keeps NULL — "this key was made
+  // without a deadline". Not a date in the past, which would take every running
+  // agent down the moment the new image starts, and not today plus a year
+  // either: a key handed out without a lifetime did not agree to one, and
+  // inventing a deadline retroactively is an outage at a time nobody chose. The
+  // four keys on the live instance therefore survive the upgrade untouched, and
+  // the deadline arrives with the next key made rather than with the migration.
+  //
+  // NULL stays a legitimate value afterwards rather than being a leftover the
+  // next migration cleans up: a key for a job that runs once a month is a
+  // different case from one for a session, and the one that has to be renewed
+  // every quarter is the one that ends up pasted into a file somewhere as a
+  // workaround. See `DEFAULT_LIFETIME_DAYS` in `auth/keys.ts` for what a key
+  // gets when nobody chooses.
+  (db) => {
+    db.exec('ALTER TABLE api_keys ADD COLUMN expires_at INTEGER;');
   },
 ];
 

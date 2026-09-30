@@ -21,8 +21,10 @@ const USAGE = `ndbrain-user — manage ndBrain accounts
   enable <name>               re-enable an account
   list                        list accounts
 
-  key create <user> <name> [--write] [--scope <folder>]
-                              create an agent key for MCP (prints the key once)
+  key create <user> <name> [--write] [--scope <folder>] [--days <n> | --forever]
+                              create an agent key for MCP (prints the key once).
+                              Lasts a year unless --days or --forever says
+                              otherwise; --forever is for a job, not a session.
   key list <user>             list a user's agent keys
   key revoke <key-id>         revoke a key immediately
   key log <user>              recent agent tool calls
@@ -112,10 +114,13 @@ async function main(): Promise<void> {
         if (action === 'create') {
           const [owner, keyName] = rest2;
           if (owner === undefined || keyName === undefined) {
-            throw new Error('usage: key create <user> <name> [--write] [--scope <folder>]');
+            throw new Error(
+              'usage: key create <user> <name> [--write] [--scope <folder>] ' +
+                '[--days <n> | --forever]',
+            );
           }
           const scopeIndex = rest2.indexOf('--scope');
-          const options: { scope?: string; canWrite?: boolean } = {
+          const options: { scope?: string; canWrite?: boolean; expiresInDays?: number | null } = {
             canWrite: rest2.includes('--write'),
           };
           if (scopeIndex !== -1) {
@@ -124,11 +129,31 @@ async function main(): Promise<void> {
             options.scope = scope;
           }
 
+          // `--forever` has to be typed out. Leaving the lifetime off gives the
+          // default rather than no expiry, so the key that never dies is the one
+          // somebody asked for and not the one nobody thought about.
+          const daysIndex = rest2.indexOf('--days');
+          if (rest2.includes('--forever')) {
+            if (daysIndex !== -1) throw new Error('--days and --forever contradict each other');
+            options.expiresInDays = null;
+          } else if (daysIndex !== -1) {
+            const days = Number(rest2[daysIndex + 1]);
+            if (!Number.isInteger(days) || days < 1 || days > 3650) {
+              throw new Error('--days needs a whole number of days between 1 and 3650');
+            }
+            options.expiresInDays = days;
+          }
+
           const { key, secret } = runtime.keys.create(owner, keyName, options);
           const lines = [
             `created ${key.id} for ${key.owner}`,
             `scope: ${key.scope === '' ? 'entire vault' : key.scope}`,
             `access: ${key.canWrite ? 'read and write' : 'read only'}`,
+            `expires: ${
+              key.expiresAt === null
+                ? 'never — nothing will tell you when this one should have gone'
+                : new Date(key.expiresAt).toISOString().slice(0, 10)
+            }`,
             '',
             secret,
             '',
@@ -151,6 +176,11 @@ async function main(): Promise<void> {
               key.canWrite ? 'write' : 'read',
               key.scope === '' ? 'whole vault' : key.scope,
               key.revoked ? 'REVOKED' : null,
+              key.expiresAt === null
+                ? 'no expiry'
+                : key.expiresAt <= Date.now()
+                  ? `EXPIRED ${new Date(key.expiresAt).toISOString().slice(0, 10)}`
+                  : `expires ${new Date(key.expiresAt).toISOString().slice(0, 10)}`,
               key.lastUsedAt === null ? 'never used' : `last used ${new Date(key.lastUsedAt).toISOString()}`,
             ]
               .filter(Boolean)

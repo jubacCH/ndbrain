@@ -420,11 +420,23 @@ export const Version = z.object({
   size: z.number(),
 });
 
+/**
+ * What the host keeps for a vault.
+ *
+ * `none` and `empty` are deployment facts; `broken` is a defect. It replaced an
+ * `available: boolean`, which had no room for the difference and so reported a
+ * corrupt repository, a missing git and a sidecar the server may not read as
+ * "there is no history here" — indistinguishable from a fresh install.
+ */
+export const HistoryState = z.enum(['none', 'empty', 'ready', 'broken']);
+
 export const HistoryResponse = z.object({
-  /** False where the host has no sidecar repository — a deployment fact. */
-  available: z.boolean(),
+  state: HistoryState,
   versions: z.array(Version),
 });
+
+export type HistoryState = z.infer<typeof HistoryState>;
+export type HistoryResponse = z.infer<typeof HistoryResponse>;
 
 export const VersionContentResponse = z.object({ content: z.string() });
 
@@ -438,10 +450,15 @@ export const RestoreResponse = z.object({ note: Note, created: z.boolean() });
 
 /**
  * Why a deleted note can or cannot be brought back: a saved version exists; the
- * host keeps no history; it does but has recorded nothing yet; or no saved
- * version holds this note.
+ * host keeps no history; it does but has recorded nothing yet; no saved version
+ * holds this note; or the history is there and could not be read.
+ *
+ * `broken` is the one that is nobody's design. The other four are answers; it
+ * is an admission, and it exists because it used to be reported as `no-history`
+ * — "this server keeps no history", said to somebody whose history was sitting
+ * right there behind a repository nothing could open.
  */
-export const RestoreState = z.enum(['ready', 'no-history', 'no-commit', 'no-version']);
+export const RestoreState = z.enum(['ready', 'no-history', 'no-commit', 'no-version', 'broken']);
 
 export const DeletedNote = z.object({
   owner: z.string(),
@@ -478,7 +495,15 @@ export const DeletePreviewResponse = z.object({
   restorable: z.number(),
   unsaved: z.number(),
   notYours: z.number(),
-  history: z.boolean(),
+  /** Notes the caller could bring back and the history could not be asked about. */
+  unknown: z.number(),
+  /**
+   * What the host keeps. A boolean before, which forced a broken sidecar into
+   * the same shape as a host without one, and put "this server keeps no
+   * history, so it cannot be restored" in front of somebody about to delete a
+   * note whose history existed and was merely unreadable.
+   */
+  history: HistoryState,
 });
 
 /* ---- administration ------------------------------------------------------ */
@@ -550,6 +575,8 @@ export const ApiKey = z.object({
   canWrite: z.boolean(),
   createdAt: Timestamp,
   lastUsedAt: Timestamp.nullable(),
+  /** When it stops working; null for a key made without a deadline. */
+  expiresAt: Timestamp.nullable(),
   revoked: z.boolean(),
 });
 
@@ -561,8 +588,28 @@ export const CreateKeyRequest = z
     name: z.string().min(1).max(64),
     scope: z.string().max(1024).optional(),
     canWrite: z.boolean().optional(),
+    /**
+     * How long the key lasts. Left out it takes the default lifetime; `null`
+     * means no deadline, for the job that runs once a month.
+     *
+     * Three-valued rather than a zero meaning "never", because a request that
+     * says `null` said something and a request that says `0` has to be looked
+     * up. Ten years is the ceiling: past that the number is decoration.
+     */
+    expiresInDays: z.number().int().min(1).max(3650).nullable().optional(),
   })
   .strict();
+
+/**
+ * How far ahead a key running out is called out.
+ *
+ * Here rather than once per side, because both sides act on it: the server's
+ * daily log line names the keys inside this window and the admin table switches
+ * from a date to a countdown at the same edge. Two `14`s in two files is one
+ * that drifts, and the drift would show as a screen that says nothing while the
+ * log is already warning.
+ */
+export const KEY_EXPIRY_WARNING_DAYS = 14;
 
 /** The one response that carries a secret; it is never retrievable again. */
 export const CreatedKeyResponse = ApiKey.extend({ secret: z.string() });

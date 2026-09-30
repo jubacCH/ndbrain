@@ -50,6 +50,7 @@ export type {
   User,
   Version,
   DeletedNote,
+  HistoryState,
   RestoreState,
 } from '../../shared/schema';
 
@@ -613,11 +614,29 @@ export const api = {
   adminKeys: (owner: string) =>
     request(`/api/v1/admin/keys?owner=${encodeURIComponent(owner)}`, S.AdminKeysResponse),
 
-  /** The only call that ever returns a key secret. It cannot be asked for again. */
-  createKey: (owner: string, name: string, scope: string, canWrite: boolean) =>
+  /**
+   * The only call that ever returns a key secret. It cannot be asked for again.
+   *
+   * `expiresInDays` is `null` for a key with no deadline and omitted to take
+   * the server's default lifetime — the server decides that number, so that
+   * the CLI and this form cannot come to disagree about it.
+   */
+  createKey: (
+    owner: string,
+    name: string,
+    scope: string,
+    canWrite: boolean,
+    expiresInDays?: number | null,
+  ) =>
     request('/api/v1/admin/keys', S.CreatedKeyResponse, {
       method: 'POST',
-      body: JSON.stringify({ owner, name, ...(scope === '' ? {} : { scope }), canWrite }),
+      body: JSON.stringify({
+        owner,
+        name,
+        ...(scope === '' ? {} : { scope }),
+        ...(expiresInDays === undefined ? {} : { expiresInDays }),
+        canWrite,
+      }),
     }),
 
   // ---- spaces -----------------------------------------------------------------

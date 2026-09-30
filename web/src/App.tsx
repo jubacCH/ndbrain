@@ -2283,8 +2283,8 @@ function Shell({
                   onSetDisabled={(id, disabled) =>
                     adminAct(() => api.adminSetDisabled(id, disabled)).then(() => undefined)
                   }
-                  onCreateKey={(owner, name, scope, canWrite) =>
-                    adminAct(() => api.createKey(owner, name, scope, canWrite))
+                  onCreateKey={(owner, name, scope, canWrite, expiresInDays) =>
+                    adminAct(() => api.createKey(owner, name, scope, canWrite, expiresInDays))
                   }
                   onRevokeKey={(id) => adminAct(() => api.revokeKey(id)).then(() => undefined)}
                   spaces={{
