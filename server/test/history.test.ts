@@ -125,6 +125,80 @@ describe('with a sidecar', () => {
     await commit('julian', 'Vault-Stand 2026-08-15 18:30 · 1 geändert');
   });
 
+  /**
+   * A rename must not be where a note's past stops.
+   *
+   * `git log -- <path>` walks only the commits that touched that exact name, so
+   * after a rename it finds the one commit that created the new name and the
+   * note reads as written today. The versions are all still in the repository;
+   * nothing is lost but the way to ask for them, and the answer looks exactly
+   * like a note with no history — the failure mode this whole file is about.
+   *
+   * `--follow` is what asks across the rename. It works on one path only, which
+   * is what this method passes, and it relies on git's rename detection: a
+   * rename that also rewrites most of the content is not recognised, and then
+   * the history genuinely does start over. That is a limit of the detection,
+   * not of the question being asked.
+   */
+  it('keeps the versions when the note is renamed', async () => {
+    const renamed = await server.inject({
+      method: 'POST',
+      url: '/api/v1/rename',
+      headers: { cookie },
+      payload: { from: 'Notiz.md', to: 'Umbenannt.md' },
+    });
+    expect(renamed.statusCode).toBe(200);
+    await commit('julian', 'Vault-Stand 2026-08-16 08:00 · 1 umbenannt');
+
+    const response = await server.inject({
+      url: '/api/v1/history/Umbenannt.md',
+      headers: { cookie },
+    });
+    const parsed = S.HistoryResponse.parse(response.json());
+
+    expect(parsed.state).toBe('ready');
+    // Three from before the rename, plus the commit that renamed it.
+    expect(parsed.versions).toHaveLength(4);
+  });
+
+  /**
+   * And the versions it keeps have to be readable, or the list is worse than
+   * short.
+   *
+   * `contentAt` asks `git show <version>:<today's path>`. In the commits before
+   * a rename that path does not exist, so every version `--follow` recovered
+   * answers "the note did not exist at that version". Listing four versions of
+   * which three refuse to open is a worse answer than honestly listing one:
+   * before, the history was visibly short, and now it looks complete and is
+   * not.
+   *
+   * So the path is not one value but one per version — the name the file had in
+   * that commit, which is exactly what `--follow` was tracking to build the
+   * list in the first place.
+   */
+  it('can open a version from before the rename', async () => {
+    await server.inject({
+      method: 'POST',
+      url: '/api/v1/rename',
+      headers: { cookie },
+      payload: { from: 'Notiz.md', to: 'Umbenannt.md' },
+    });
+    await commit('julian', 'Vault-Stand 2026-08-16 08:00 · 1 umbenannt');
+
+    const list = S.HistoryResponse.parse(
+      (await server.inject({ url: '/api/v1/history/Umbenannt.md', headers: { cookie } })).json(),
+    );
+    const oldest = list.versions[list.versions.length - 1]!;
+
+    const response = await server.inject({
+      url: `/api/v1/history/Umbenannt.md?version=${oldest.id}`,
+      headers: { cookie },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().content).toBe('Fassung eins.\n');
+  });
+
   it('lists the versions, newest first', async () => {
     const response = await server.inject({ url: '/api/v1/history/Notiz.md', headers: { cookie } });
     const parsed = S.HistoryResponse.parse(response.json());

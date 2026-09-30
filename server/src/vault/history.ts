@@ -51,6 +51,21 @@ export interface Version {
 }
 
 /**
+ * A version, plus the name the file carried in that commit.
+ *
+ * Not the same as today's path once a rename is in the history, which is the
+ * whole reason this exists: `git show <commit>:<path>` addresses the tree of
+ * that commit, where the note is still filed under its old name.
+ *
+ * Server-side only, deliberately. It never reaches `Version` and so never
+ * reaches a client: somebody lent a single note through a share has no business
+ * learning which folder it used to live in, and the old path would say.
+ */
+interface VersionAt extends Version {
+  pathAt: string;
+}
+
+/**
  * What the host keeps for a vault; see `History.state`.
  *
  * - `none`: no repository. A fresh install, a test, a host without the timer.
@@ -137,6 +152,15 @@ const WARN_TTL_MS = 60_000;
  * source makes the file binary to grep, diff and review tools.
  */
 const NUL = '\u0000';
+
+/**
+ * A full commit hash, used to find where each entry starts in git's output.
+ *
+ * Anchoring on this rather than on a field count: the listing interleaves
+ * commit metadata with file names, and a commit that reports a different number
+ * of names than expected would otherwise shift every field after it.
+ */
+const COMMIT_ID = /^[0-9a-f]{40}$/;
 
 /**
  * What git says when it did not find a repository — for four different reasons.
@@ -448,6 +472,17 @@ export class History {
    * honestly means that, and it is the only thing that produces `ready` here.
    */
   async versions(owner: string, notePath: string): Promise<HistoryView> {
+    const { state, versions } = await this.#versionsAt(owner, notePath);
+    // `pathAt` is dropped here rather than never collected: reading a version
+    // needs it, and the client must not have it.
+    return { state, versions: versions.map(({ pathAt: _pathAt, ...rest }) => rest) };
+  }
+
+  /** As `versions`, keeping the name each version was filed under. */
+  async #versionsAt(
+    owner: string,
+    notePath: string,
+  ): Promise<{ state: HistoryState; versions: VersionAt[] }> {
     const notePathCanonical = normalizeVaultPath(notePath);
     const root = this.#root(owner);
 
@@ -457,11 +492,26 @@ export class History {
         root,
         [
           'log',
+          // Across a rename, or a note's past stops at the day it got its
+          // name. `git log -- <path>` walks only the commits that touched that
+          // exact name, so a renamed note showed one version and read as
+          // though it had never been edited — indistinguishable from a note
+          // with no history at all. Valid for a single path, which is what
+          // this passes, and dependent on git's rename detection: a rename
+          // that also rewrites most of the content is not recognised.
+          '--follow',
           `--max-count=${MAX_VERSIONS}`,
           // %x00 emits a real NUL byte; splitting on a space or a tab would
           // come apart on the first commit subject that contains one, and every
           // subject this sidecar writes contains several.
-          '--format=%H%x00%at%x00%s%x00',
+          // The name in each commit, so a version from before a rename can be
+          // read afterwards. `-z` makes git separate the names with NUL too,
+          // which matters because a note may legitimately be called
+          // "Sitzung\nNotizen.md" — splitting the names on a newline would cut
+          // such a path in half and address a file that does not exist.
+          '-z',
+          '--name-only',
+          '--format=%H%x00%at%x00%s',
           '--',
           notePathCanonical,
         ],
@@ -477,17 +527,26 @@ export class History {
       return { state: this.#brokenBy(owner, failure), versions: [] };
     }
 
+    // `<hash> NUL <at> NUL <subject> NUL "\n" <path> NUL` per commit. The loop
+    // finds each group by recognising the hash rather than by counting from the
+    // start, so a commit that reports no name — or more than one — costs that
+    // entry instead of shifting every field after it by one and turning the
+    // rest of the list into nonsense.
     const fields = stdout.split(NUL);
-    const out: Version[] = [];
-    for (let i = 0; i + 2 < fields.length; i += 3) {
+    const out: VersionAt[] = [];
+    for (let i = 0; i < fields.length; i += 1) {
       const id = (fields[i] ?? '').trim();
-      if (id === '') continue;
+      if (!COMMIT_ID.test(id)) continue;
+      const pathAt = (fields[i + 3] ?? '').trim();
+      if (pathAt === '') continue;
       out.push({
         id,
         at: Number(fields[i + 1]) * 1000,
         subject: (fields[i + 2] ?? '').trim(),
         size: 0,
+        pathAt,
       });
+      i += 3;
     }
     return { state: 'ready', versions: out };
   }
@@ -510,14 +569,19 @@ export class History {
     const notePathCanonical = normalizeVaultPath(notePath);
     const root = this.#root(owner);
 
-    const known = await this.versions(owner, notePathCanonical);
+    const known = await this.#versionsAt(owner, notePathCanonical);
     if (known.state === 'broken') throw new HistoryUnreadableError('the history could not be read');
-    if (!known.versions.some((version) => version.id === versionId)) {
+    const wanted = known.versions.find((version) => version.id === versionId);
+    if (wanted === undefined) {
       throw new NoteNotFoundError('no such version of this note');
     }
 
+    // The name it had then, not the name it has now. Asking for today's path in
+    // a commit from before a rename is answered "path does not exist in", which
+    // this method would report as "the note did not exist at that version" — a
+    // version the server had just listed as available.
     try {
-      const { stdout } = await this.#run(root, ['show', `${versionId}:${notePathCanonical}`], {
+      const { stdout } = await this.#run(root, ['show', `${versionId}:${wanted.pathAt}`], {
         maxBuffer: 32 * 1024 * 1024,
       });
       return stdout;
