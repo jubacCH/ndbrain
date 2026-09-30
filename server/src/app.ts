@@ -565,7 +565,6 @@ export class App {
     }
 
     await this.notes.vault.deleteNote(owner, canonical);
-    await this.notes.vault.pruneEmptyDirs(owner, canonical);
   }
 
   async deleteNote(owner: string, notePath: string, actor?: string, options: Authorized = {}): Promise<void> {

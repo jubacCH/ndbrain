@@ -380,7 +380,6 @@ export class Vault {
       throw new NoteExistsError(`a file already exists at ${target}`);
     }
     await this.moveNote(owner, from, target);
-    await this.pruneEmptyDirs(owner, from);
   }
 
   /**
@@ -419,7 +418,18 @@ export class Vault {
     await fs.rename(source, target);
   }
 
-  /** Removes a directory only if nothing is left in it. */
+  /**
+   * Removes a directory only if nothing is left in it.
+   *
+   * Asked for, never guessed. There used to be a `pruneEmptyDirs` beside this
+   * which walked up from a deleted or moved note and removed every folder it
+   * had left empty — the one operation here that destroyed something nobody
+   * had named. A folder prepared with `createDir` is indistinguishable on disk
+   * from one that only ever held the note which has just left, so it deleted
+   * both, chain and all. An empty folder is a finding in the tidy view now:
+   * the vault says what stands out and the person decides, and this is the
+   * route that decision takes.
+   */
   async removeDirIfEmpty(owner: string, vaultPath: string): Promise<boolean> {
     const absolute = await this.resolve(owner, vaultPath);
     try {
@@ -427,23 +437,6 @@ export class Vault {
       return true;
     } catch {
       return false;
-    }
-  }
-
-  /** Removes directories that became empty after a move or delete. */
-  async pruneEmptyDirs(owner: string, vaultPath: string): Promise<void> {
-    const root = this.rootFor(owner);
-    let dir = path.dirname(await this.resolve(owner, vaultPath));
-
-    while (dir !== root && dir.startsWith(root + path.sep)) {
-      try {
-        const entries = await fs.readdir(dir);
-        if (entries.length > 0) return;
-        await fs.rmdir(dir);
-      } catch {
-        return;
-      }
-      dir = path.dirname(dir);
     }
   }
 }

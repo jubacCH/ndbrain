@@ -114,13 +114,19 @@ describe('bulk move', () => {
     expect(body.failed).toEqual([]);
   });
 
-  it('prunes the folder it emptied', async () => {
+  /**
+   * This used to assert that `Inbox` was gone: a move pruned the folder it had
+   * emptied, and every folder above it. It deleted prepared structure along
+   * with the leftovers — there is no way to tell them apart on disk — so a move
+   * now moves, and the empty folder is a finding in the tidy view.
+   */
+  it('leaves the folder it emptied standing', async () => {
     await bulk({
       action: 'move',
       paths: ['Inbox/Eins.md', 'Inbox/Zwei.md', 'Inbox/Drei.md'],
       dir: 'Archiv',
     });
-    expect(await runtime.notes.listDirs('julian')).not.toContain('Inbox');
+    expect(await runtime.notes.listDirs('julian')).toEqual(['Archiv', 'Inbox']);
   });
 });
 

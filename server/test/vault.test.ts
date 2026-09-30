@@ -217,13 +217,19 @@ describe('create / update / delete / rename', () => {
     await expect(notes.updateNote('julian', 'Fehlt.md', 'x')).rejects.toThrow(NoteNotFoundError);
   });
 
-  it('deletes a note and prunes the directory it emptied', async () => {
+  /**
+   * This used to assert the opposite: a delete walked up from the note and
+   * removed every folder it had left empty. On disk there is nothing to tell
+   * such a folder from one somebody prepared with `createFolder`, so it removed
+   * those too, chain and all — see `folders.test.ts`. Deleting a note now
+   * deletes a note, and the empty folder is reported in the tidy view instead.
+   */
+  it('deletes a note and leaves the directory it emptied standing', async () => {
     await notes.createNote('julian', 'Ordner/Einzeln.md', 'x');
     await notes.deleteNote('julian', 'Ordner/Einzeln.md');
 
     await expect(notes.getNote('julian', 'Ordner/Einzeln.md')).rejects.toThrow(NoteNotFoundError);
-    const dirs = await notes.listDirs('julian');
-    expect(dirs).not.toContain('Ordner');
+    expect(await notes.listDirs('julian')).toEqual(['Ordner']);
   });
 
   it('keeps a directory that still holds notes', async () => {
