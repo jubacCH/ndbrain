@@ -736,11 +736,30 @@ export const RenameFolderRequest = z
   .object({ from: VaultPath, to: VaultPath, owner: UserId.optional() })
   .strict();
 
+/**
+ * The shape of a bulk request, and deliberately not its limits.
+ *
+ * The route checks the values itself and keeps its own codes, because each of
+ * them says more than `invalid_body` would: `no_selection` for an empty
+ * selection, `selection_too_large` for one past the cap of 500, and
+ * `unknown_action` for an action nobody implements. So `action` is a string
+ * rather than an enum, and `paths` carries no `min` or `max`.
+ *
+ * `paths` is an array of plain strings, not of `VaultPath`, for the same
+ * reason: one bad path among two hundred good ones is reported against that
+ * path in the per-note result, rather than failing the whole request and
+ * leaving the caller to guess which one it was.
+ *
+ * An earlier version of this declared `owner` required, `max(1000)` and the
+ * action as an enum, and was used by nothing — three claims about a route that
+ * did none of them. It could not be used: the route names a local variable
+ * `body`, which shadowed the `body()` helper that would have applied it.
+ */
 export const BulkRequest = z
   .object({
-    owner: UserId,
-    paths: z.array(VaultPath).min(1).max(1000),
-    action: z.enum(['move', 'tag', 'untag', 'delete']),
+    owner: UserId.optional(),
+    paths: z.array(z.string()),
+    action: z.string(),
     dir: z.string().optional(),
     tag: z.string().optional(),
   })

@@ -271,6 +271,44 @@ describe('notes', () => {
   });
 });
 
+/**
+ * Two routes that do the same thing to different things, held to one standard.
+ *
+ * `body()` exists to replace the hand-written `typeof body.x === 'string' ?
+ * body.x : ''` at the top of a mutating route, and its docstring says why: that
+ * pattern turns a wrong type into a default, so a client sending the wrong
+ * shape is told "not found" rather than what was wrong with its request.
+ *
+ * The folder route uses it. The note route still does the dance — and could not
+ * stop, because it names a local variable `body`, which shadows the helper. The
+ * schema for it (`RenameNoteRequest`, with real `VaultPath` checks) sat unused
+ * next to a route that validated by hand and more weakly.
+ */
+describe('renaming a note and renaming a folder', () => {
+  it.each([
+    ['/api/v1/rename', 'a note'],
+    ['/api/v1/folders/rename', 'a folder'],
+  ])('%s says what is wrong with a body of the wrong shape', async (url) => {
+    const response = await server.inject({
+      method: 'POST',
+      url,
+      headers: as(julianCookie),
+      // A number where a path belongs. Not a path that is refused — a body that
+      // is not one, which is the case a schema catches and a `typeof` check
+      // quietly converts.
+      payload: { from: 42, to: 'Neu.md' },
+    });
+
+    // Both answered 400 even before this, so the status code proves nothing:
+    // the note route reached it by turning 42 into `''` and then refusing the
+    // empty path, telling a client that sent a number that its path was empty.
+    // What is checked is the answer, which is the part a caller can act on.
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ code: 'invalid_body' });
+    expect(response.json().message).toContain('from');
+  });
+});
+
 describe('task list', () => {
   beforeEach(async () => {
     await runtime.app.createNote(

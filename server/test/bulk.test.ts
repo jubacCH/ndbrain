@@ -217,6 +217,26 @@ describe('bulk request validation', () => {
     expect(body.code).toBe('no_selection');
   });
 
+  /**
+   * The case `body()`'s own docstring names, which this route still had.
+   *
+   * A client sending `paths: "a.md"` instead of `["a.md"]` was told "nothing
+   * selected": the hand-written filter kept only the strings out of a value
+   * that was not an array, got none, and the emptiness check answered. The
+   * selection was not empty — the request was the wrong shape, and the reply
+   * sent the caller looking at the wrong thing.
+   *
+   * The schema checks the shape; the route keeps checking the values, because
+   * `no_selection`, `selection_too_large` and `unknown_action` each say more
+   * than `invalid_body` would.
+   */
+  it('says the body is wrong, not that nothing was selected', async () => {
+    const { status, body } = await bulk({ action: 'delete', paths: 'Inbox/Eins.md' });
+    expect(status).toBe(400);
+    expect(body.code).toBe('invalid_body');
+    expect(body.message).toContain('paths');
+  });
+
   it('rejects an unknown action', async () => {
     const { status, body } = await bulk({ action: 'sprengen', paths: ['Inbox/Eins.md'] });
     expect(status).toBe(400);

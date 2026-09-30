@@ -616,10 +616,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   fastify.post('/api/v1/rename', async (request) => {
     const caller = requireUser(request).id;
-    const body = (request.body ?? {}) as { from?: unknown; to?: unknown; owner?: unknown };
-    const from = typeof body.from === 'string' ? body.from : '';
-    const to = typeof body.to === 'string' ? body.to : '';
-    const owner = typeof body.owner === 'string' && body.owner !== '' ? body.owner : caller;
+    // Through the schema, like the folder route beside it. The hand-written
+    // `typeof` dance this replaces turned a number into `''` and then refused
+    // the empty path, so a client that sent the wrong type was told its path
+    // was empty. It could not use `body()` while a local variable of that name
+    // shadowed the helper.
+    const { from, to, owner: named } = body(request, S.RenameNoteRequest);
+    const owner = named ?? caller;
 
     // Both ends: moving a note *out* of a shared folder would otherwise let a
     // grantee walk it into a part of the vault they were never given.
@@ -1525,16 +1528,18 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // wholesale — see App.#overSelection for why that is not a transaction.
   fastify.post('/api/v1/bulk', async (request, reply) => {
     const caller = requireUser(request).id;
-    const body = (request.body ?? {}) as Record<string, unknown>;
+    // The shape through the schema, the values below. A client that sent
+    // `paths: "a.md"` used to be told "nothing selected", because the filter
+    // this replaces kept the strings out of a value that was not an array and
+    // found none — the exact failure `body()` was written to end.
+    const asked = body(request, S.BulkRequest);
+
     // One vault per request. A selection spanning two vaults would have to report
     // two different reasons for the same-looking failure, and "move these into
     // Archiv" has no meaning across a boundary.
-    const owner = typeof body['owner'] === 'string' && body['owner'] !== '' ? body['owner'] : caller;
-
-    const paths = Array.isArray(body['paths'])
-      ? body['paths'].filter((value): value is string => typeof value === 'string')
-      : [];
-    const action = typeof body['action'] === 'string' ? body['action'] : '';
+    const owner = asked.owner !== undefined && asked.owner !== '' ? asked.owner : caller;
+    const paths = asked.paths;
+    const action = asked.action;
 
     if (paths.length === 0) {
       return reply.code(400).send({ code: 'no_selection', message: 'nothing selected' });
@@ -1549,8 +1554,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     // Trimmed before the emptiness check: a tag of spaces would otherwise pass
     // here, be ignored downstream, and report success for a no-op.
-    const tag = typeof body['tag'] === 'string' ? body['tag'].trim().replace(/^#/, '').trim() : '';
-    const dir = typeof body['dir'] === 'string' ? body['dir'] : '';
+    const tag = (asked.tag ?? '').trim().replace(/^#/, '').trim();
+    const dir = asked.dir ?? '';
 
     // Checked per note rather than once for the selection: a write-shared folder
     // is a region, not a vault, and a selection may reach past its edge. Failing
