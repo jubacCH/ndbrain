@@ -427,10 +427,21 @@ describe('the commands', () => {
     expect(within(dialog).queryByRole('option', { name: new RegExp(`^${copy.nav.admin}`) })).toBeNull();
   });
 
-  it('starts a note, through the same prompt the sidebar opens', async () => {
-    vi.stubGlobal('prompt', vi.fn(() => 'Homelab/Backup plan'));
+  /*
+   * The dialog itself is `new-note.test.tsx`'s subject. What this pins is the
+   * command: that it reaches the same door the sidebar's "+" does, and that the
+   * note really lands. It used to open a `window.prompt`, which is left
+   * unstubbed here on purpose — jsdom has no implementation, so a prompt that
+   * came back would throw rather than quietly return null.
+   */
+  it('starts a note, through the same dialog the sidebar opens', async () => {
     mount();
     await runCommand('new note', copy.nav.newNote);
+
+    const dialog = await screen.findByRole('dialog', { name: copy.newNote.title });
+    await userEvent.type(within(dialog).getByLabelText(copy.newNote.name), 'Homelab/Backup plan');
+    await userEvent.click(within(dialog).getByRole('button', { name: copy.newNote.submit }));
+
     await waitFor(() => expect(server.written.map((w) => w.path)).toEqual(['Homelab/Backup plan.md']));
     const editor = await screen.findByTestId('editor');
     expect(editor).toHaveAttribute('data-path', 'Homelab/Backup plan.md');

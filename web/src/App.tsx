@@ -50,6 +50,7 @@ import { mayChange, mayChangeFolder, mayShare } from './rights';
 import { OwnersContext, ownerDirectory, ownerKind, ownerLabel } from './owners';
 import { ShareDialog, type ShareTarget } from './ShareDialog';
 import { RenameDialog, vaultFolders, type RenameTarget } from './RenameDialog';
+import { NewNoteDialog, type NewNoteTarget } from './NewNoteDialog';
 import { SettingsView } from './Settings';
 import { AdminView } from './Admin';
 import { TopicsPanel } from './Topics';
@@ -335,6 +336,8 @@ function Shell({
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
   /** The note the rename dialog is open for, or null. */
   const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
+  /** The vault the new-note dialog is open on, or null. */
+  const [newNote, setNewNote] = useState<NewNoteTarget | null>(null);
   const [props, setProps] = useState<Array<{ key: string; count: number }>>([]);
   const [propValues, setPropValues] = useState<Array<{ value: string; count: number }>>([]);
   const [pulse, setPulse] = useState<PulseEvent[]>([]);
@@ -847,35 +850,57 @@ function Shell({
     [client],
   );
 
+  /**
+   * Writes one new note at a whole path and opens it, letting a refusal throw.
+   *
+   * Separate from `createNoteAt` below because the new-note dialog wants the
+   * refusal: it is still on screen and is the place a name the server would not
+   * take can be corrected. Reporting it through the shell's error line instead
+   * would send the person back to the button to start again, which is the
+   * prompt's behaviour rather than a dialog's.
+   */
+  const writeNewNote = useCallback(
+    async (owner: string, path: string): Promise<void> => {
+      const title = path.split('/').pop()?.replace(/\.md$/i, '') ?? '';
+      // The same mutation the editor saves through: a create is a write like
+      // any other, and it is the mutation that says what a write invalidates.
+      await saveNote.current({ owner, path, content: `# ${title}\n\n` });
+      await openNote(owner, path);
+    },
+    [openNote],
+  );
+
+  /** The same write for the callers that have nowhere to show a refusal. */
   const createNoteAt = useCallback(
     async (owner: string, rawName: string): Promise<void> => {
       const name = rawName.trim();
       if (name === '') return;
 
-      const path = name.endsWith('.md') ? name : `${name}.md`;
-      const title = path.split('/').pop()?.replace(/\.md$/i, '') ?? '';
-
       try {
-        // The same mutation the editor saves through: a create is a write like
-        // any other, and it is the mutation that says what a write invalidates.
-        await saveNote.current({ owner, path, content: `# ${title}\n\n` });
-        await openNote(owner, path);
+        await writeNewNote(owner, name.endsWith('.md') ? name : `${name}.md`);
       } catch (caught) {
         setError(caught instanceof ApiError ? caught.message : copy.errors.createFailed);
       }
     },
-    [openNote],
+    [writeNewNote],
   );
 
-  // Always in your own vault. Creating into somebody else's shared folder is
-  // possible through the dead-link button below, where the folder is implied by
-  // the note you are standing in; offering it here would mean a vault picker on
-  // the most-used button in the application.
-  const createNote = async (): Promise<void> => {
-    const name = window.prompt(copy.ask.newNoteName);
-    if (name === null) return;
-    await createNoteAt(user.id, name);
-  };
+  /**
+   * Opens the new-note dialog on one vault.
+   *
+   * `null` for your own, which is where the sidebar's button, the palette's
+   * command and the tree's first-run invitation all start one; a space's name
+   * where the space's own header did. Both are the same dialog, because
+   * starting a note is the same decision in either place — a name and a folder
+   * — and the vault is not something to choose halfway through.
+   *
+   * The drawer goes, for the reason `openPalette` gives: the space's "+" is a
+   * tree row, which on a phone is inside it.
+   */
+  const startNote = useCallback((owner: string, space: string | null): void => {
+    setDrawerOpen(false);
+    setNewNote({ owner, space });
+  }, []);
 
   const createFolder = async (): Promise<void> => {
     const name = window.prompt(copy.ask.newFolderName);
@@ -1126,28 +1151,6 @@ function Shell({
     names.delete(user.id);
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [granted, received, owners, adminUsersQuery.data, user.id]);
-
-  /**
-   * Starts a note in a space.
-   *
-   * Never a daily note and never a vault picker on the main button: this is
-   * reached from the space's own header, and only where some share on it may
-   * write. The name typed may still land outside the writable part (a member
-   * who may write in one folder only), which is said here before anything is
-   * sent — the server refuses it regardless.
-   */
-  const createInSpace = async (owner: string): Promise<void> => {
-    const label = ownerLabel(owners, owner);
-    const name = window.prompt(copy.ask.newNoteIn(label));
-    if (name === null || name.trim() === '') return;
-    const trimmed = name.trim();
-    const path = trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
-    if (!mayChange(user.id, received, owner, path)) {
-      setError(copy.errors.noWriteHere(label));
-      return;
-    }
-    await createNoteAt(owner, trimmed);
-  };
 
   /** Whether a note may be deleted from a place that holds only its path. */
   const mayDelete = useCallback(
@@ -1568,6 +1571,32 @@ function Shell({
     [renameTarget, notes, treeQuery.data, received, user.id],
   );
 
+  /**
+   * Where the new-note dialog may start one: the folders of that vault and its
+   * root, narrowed to the ones the caller may write in.
+   *
+   * The same list the rename dialog is given, for the same reason — and here it
+   * also *is* the check that the note lands somewhere writable. A slash in the
+   * name only nests deeper inside what was picked, and the dialog refuses `..`,
+   * so there is no typed half left to verify. The server checks again anyway.
+   */
+  const newNoteFolders = useMemo(
+    () =>
+      newNote === null
+        ? []
+        : ['', ...vaultFolders(notes, treeQuery.data?.dirs ?? [], newNote.owner)].filter((dir) =>
+            mayChangeFolder(user.id, received, newNote.owner, dir),
+          ),
+    [newNote, notes, treeQuery.data, received, user.id],
+  );
+
+  /** What that vault already holds, so a clash is named before it is sent. */
+  const newNoteTaken = useMemo(
+    () =>
+      new Set(newNote === null ? [] : notes.filter((row) => row.owner === newNote.owner).map((row) => row.path)),
+    [newNote, notes],
+  );
+
   // Only your own folders can be shared out, so the suggestions on that form
   // come from your own notes rather than from everything you can see.
   const ownDirs = useMemo(
@@ -1767,9 +1796,9 @@ function Shell({
       key: 'new-note',
       label: copy.nav.newNote,
       keywords: copy.palette.keywords.newNote,
-      // The same prompt the sidebar's "+" opens: the palette shortens the
+      // The same dialog the sidebar's "+" opens: the palette shortens the
       // reach for it, it does not become a second way of naming a note.
-      run: () => void createNote(),
+      run: () => startNote(user.id, null),
     },
     {
       key: 'files',
@@ -1998,9 +2027,9 @@ function Shell({
             onRenameNote={openRename}
             onShareNote={openShare}
             mayShareNote={mayShareNote}
-            onCreateIn={(owner) => void createInSpace(owner)}
+            onCreateIn={(owner) => startNote(owner, ownerLabel(owners, owner))}
             revealed={revealed}
-            onCreateFirst={() => void createNote()}
+            onCreateFirst={() => startNote(user.id, null)}
             trouble={treeTrouble}
             onRetry={() => askAgain(keys.tree)}
           />
@@ -2021,7 +2050,7 @@ function Shell({
           setDrawerOpen(false);
           void showView('tidy');
         }}
-        onNewNote={() => void createNote()}
+        onNewNote={() => startNote(user.id, null)}
         onNewFolder={() => void createFolder()}
         onSettings={() => {
           setDrawerOpen(false);
@@ -2565,6 +2594,19 @@ function Shell({
           granted={granted}
           people={people}
           onClose={() => setShareTarget(null)}
+        />
+      )}
+
+      {/* Only where there is somewhere to write. In a space shared for reading
+          the folder list comes back empty, and a dialog offering nowhere to put
+          the note would be a form that cannot be submitted. */}
+      {newNote !== null && newNoteFolders.length > 0 && (
+        <NewNoteDialog
+          target={newNote}
+          folders={newNoteFolders}
+          taken={newNoteTaken}
+          onCreate={(path) => writeNewNote(newNote.owner, path)}
+          onClose={() => setNewNote(null)}
         />
       )}
 
