@@ -270,6 +270,26 @@ export class NoteService {
     };
   }
 
+  /**
+   * Which version of a note's text is on disk, without reading the note out.
+   *
+   * The same token `getNote` hands out, from the same function, so a client can
+   * compare what it was given when it opened the note against what is there
+   * now. It exists separately because the answer is polled: `getNote` would
+   * ship the whole text and a `stat` with every question, and the question is
+   * asked every couple of seconds while somebody is typing.
+   *
+   * Asked of the text, not of the clock, and for exactly the reason
+   * `#preserveDisplaced` gives at length: a restore, a `git checkout` or an
+   * rsync leaves changed text behind an *older* stamp, and a `touch` moves the
+   * stamp without changing a word. A version read off `mtimeMs` would miss the
+   * first and cry wolf about the second.
+   */
+  async noteVersion(owner: string, notePath: string): Promise<string> {
+    const canonical = this.#assertNotePath(notePath);
+    return contentHash(await this.#vault.readNote(owner, canonical));
+  }
+
   async getParsedNote(owner: string, notePath: string): Promise<ParsedNoteRecord> {
     const note = await this.getNote(owner, notePath);
     return { ...note, parsed: parseNote(note.content) };

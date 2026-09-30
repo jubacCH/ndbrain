@@ -146,6 +146,7 @@ describe('responses match the shared schema', () => {
     ['/api/v1/search?q=Siehe', S.SearchResponse],
     ['/api/v1/quickfind?q=Eins', S.QuickFindResponse],
     ['/api/v1/backlinks/Eins.md', S.LinksResponse],
+    ['/api/v1/version/Eins.md', S.NoteVersionResponse],
   ];
 
   for (const [url, schema] of cases) {
