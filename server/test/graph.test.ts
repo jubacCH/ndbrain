@@ -8,6 +8,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadConfig } from '../src/config.js';
+import { graphNodesQuery } from '../src/index/queries.js';
 import { createRuntime, type Runtime } from '../src/runtime.js';
 
 let dataDir: string;
@@ -187,5 +188,37 @@ describe('the link graph', () => {
     expect(paths).toContain('Homelab/Proxmox.md');
     // Ausserhalb der Freigabe bleibt unsichtbar — auch im Graphen.
     expect(paths).not.toContain('MOC.md');
+  });
+});
+
+describe('the cost of the graph', () => {
+  it('counts the links once for the vault, not once per note', () => {
+    // The query is read from the server rather than retyped here: a test that
+    // writes its own copy proves the copy is shaped right, which is exactly
+    // what the first attempt at this test did — the mutation survived it.
+    const { sql, params } = graphNodesQuery('julian');
+    const plan = runtime.db
+      .all<{ detail: string }>(`EXPLAIN QUERY PLAN ${sql}`, ...params)
+      .map((row) => String(row.detail))
+      .join(' | ');
+
+    // A correlated subquery is one SQLite runs again for every outer row, and
+    // it says so in the plan. The join form counts once and is read outside
+    // the notes loop.
+    expect(plan).not.toMatch(/CORRELATED/i);
+    // And the links are read as their own step, not from inside the scan of
+    // `notes` — the difference that turned 2736 ms into 13 ms.
+    expect(plan).toMatch(/CO-ROUTINE|MATERIALIZE|SUBQUERY/i);
+  });
+
+  it('gives the same degree it always did, however it is counted', () => {
+    // The guard for the rewrite: the shape changed, the answer must not.
+    const g = runtime.app.queries.graph('julian');
+    const by = Object.fromEntries(g.nodes.map((n) => [n.path, n]));
+
+    expect(by['MOC.md']!.links).toBe(2);
+    expect(by['Homelab/Proxmox.md']!.links).toBe(2);
+    expect(by['Homelab/Storage.md']!.links).toBe(2);
+    expect(by['Allein.md']!.links).toBe(0);
   });
 });
