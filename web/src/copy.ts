@@ -913,6 +913,18 @@ export const copy = {
     recentCountHint: 'Older ones drop off the end.',
 
     writing: 'Writing',
+    build: 'This version',
+    /*
+     * Says which bundle is running, because nothing else does.
+     *
+     * A single-page app never navigates, so a tab left open keeps the
+     * JavaScript it started with across a deploy. Somebody looking for a
+     * setting that is not there has no way to tell whether it was never
+     * built or simply has not reached them yet.
+     */
+    builtAt: (when: string): string => `Loaded from a build made ${when}.`,
+    builtAtStale: 'Close the tab and open it again to pick up a newer one.',
+    builtAtUnknown: 'Running from a development build, which carries no date.',
     saveDelay: 'Save after',
     saveDelayHint: 'How long typing pauses before the note is written.',
     /*

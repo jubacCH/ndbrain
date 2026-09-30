@@ -141,3 +141,14 @@ describe('the measure switch', () => {
     expect(options.filter((option) => option.getAttribute('tabindex') === '0')).toHaveLength(1);
   });
 });
+
+describe('which bundle is running', () => {
+  it('is named on the page, because nothing else names it', () => {
+    // The reason this is here at all: a single-page app never navigates, so a
+    // tab left open keeps its JavaScript across a deploy. Somebody hunting a
+    // setting that is not there needs one place that says how old this is.
+    renderSettings();
+
+    expect(screen.getByRole('heading', { name: copy.settings.build })).toBeInTheDocument();
+  });
+});
