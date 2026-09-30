@@ -12,12 +12,21 @@
  * pause in typing, so a word typed at speed costs one request rather than one per
  * key, and an answer that arrives late for a query already replaced is dropped.
  * The last row hands the words to the Search view, where filters live.
+ *
+ * The field keeps the focus for as long as the palette is open, and the list
+ * below it is a `listbox` whose active `option` the field names through
+ * `aria-activedescendant`. That is the combobox pattern, and it is the reason
+ * the arrow keys say something rather than only drawing something: a row moved
+ * to is read out, where a `data-active` attribute is silent. It is also what
+ * keeps the keyboard honest — there is no list to tab into, so there is no way
+ * to end up somewhere Escape does not reach.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { copy } from './copy';
 
 import { api, refKey, type NoteRow, type SearchHit } from './api';
+import { useModalFocus } from './modal';
 import { ownerLabel, useOwners } from './owners';
 import { snippetParts } from './snippet';
 
@@ -102,6 +111,10 @@ export function Palette({
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  /** The id `aria-activedescendant` points at; one per row, by position. */
+  const rowId = (index: number): string => `${listId}-row-${index}`;
 
   // Each keystroke starts a request; a slow one must not overwrite the results of
   // a newer, faster one, so stale responses are dropped.
@@ -115,8 +128,18 @@ export function Palette({
     setQuery('');
     setActive(0);
     setTextHits({ query: '', hits: [] });
-    input.current?.focus();
   }, [open]);
+
+  /*
+   * The focus goes into the field, stays inside the panel, and goes back to
+   * whatever opened it — ⌘K is pressed from the editor and from the header, and
+   * landing on `body` afterwards means the next key goes nowhere.
+   *
+   * Escape comes from here rather than from the field, which is the whole of
+   * the bug it fixes: bound to the field, it was unreachable from anywhere else
+   * inside the panel.
+   */
+  useModalFocus(open, box, onClose, input);
 
   useEffect(() => {
     if (!open) return;
@@ -210,6 +233,10 @@ export function Palette({
    *
    * Advertising either in the footer would promise a key that works on one
    * platform and prints on another, so the footer names the arrows and stops.
+   *
+   * Escape is not here. It belongs to the panel, not to the field — see
+   * `useModalFocus` above. It was bound here, and that was the defect: a Tab
+   * out of the field left no key that closed the palette.
    */
   const onKeyDown = (event: React.KeyboardEvent): void => {
     if (event.key === 'ArrowDown' || (event.key === 'n' && event.ctrlKey)) {
@@ -221,13 +248,30 @@ export function Palette({
     } else if (event.key === 'Enter') {
       event.preventDefault();
       choose(rows[current]);
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      onClose();
     }
   };
 
   const folder = (path: string): string => path.split('/').slice(0, -1).join('/') || '/';
+
+  /**
+   * What makes a row an option of the list rather than a button in a div.
+   *
+   * `tabIndex: -1` is the deliberate half. The field owns the focus and names
+   * the active row, which is what `aria-activedescendant` is for; a row that
+   * were a tab stop would take the focus out of the field, silence the arrow
+   * keys that are bound there, and put the person somewhere Escape used not to
+   * reach. `data-active` stays beside `aria-selected` because the stylesheet
+   * draws from it — the same state, said once to a stylesheet and once to a
+   * screen reader.
+   */
+  const asOption = (index: number): React.ComponentProps<'button'> & { 'data-active': boolean } => ({
+    role: 'option',
+    id: rowId(index),
+    'aria-selected': index === current,
+    tabIndex: -1,
+    'data-active': index === current,
+    onMouseEnter: () => setActive(index),
+  });
 
   return (
     <div
@@ -236,7 +280,14 @@ export function Palette({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="palette" role="dialog" aria-modal="true" aria-label={copy.palette.label}>
+      <div ref={box} className="palette" role="dialog" aria-modal="true" aria-label={copy.palette.label}>
+        {/*
+          A combobox over the list below, which is what the arrow keys are
+          doing: the focus never leaves this field, and the row it has walked to
+          is named rather than only drawn. `aria-activedescendant` is left off
+          entirely while there is no row to point at — an id that resolves to
+          nothing is worse than no claim at all.
+        */}
         <input
           ref={input}
           value={query}
@@ -244,6 +295,11 @@ export function Palette({
           onKeyDown={onKeyDown}
           placeholder={copy.palette.placeholder}
           aria-label={copy.palette.titleLabel}
+          role="combobox"
+          aria-expanded
+          aria-autocomplete="list"
+          aria-controls={listId}
+          aria-activedescendant={current >= 0 ? rowId(current) : undefined}
         />
 
         {/*
@@ -261,15 +317,21 @@ export function Palette({
           {query.trim() === '' ? '' : copy.palette.found(results.length + inNotes.length)}
         </p>
 
-        <div className="palette-list" ref={listRef}>
+        {/*
+          A listbox, and its rows are options. The headings between them and the
+          empty line are `presentation`: a listbox may hold options and groups,
+          nothing else, and wrapping each half in a group would be three nested
+          passes over the same array for a label the live region above already
+          reads out.
+        */}
+        <div className="palette-list" ref={listRef} id={listId} role="listbox" aria-label={copy.palette.label}>
           {rows.map((row, index) =>
             row.kind === 'command' ? (
               <button
                 type="button"
                 key={`command:${row.command.key}`}
                 className="palette-item palette-command"
-                data-active={index === current}
-                onMouseEnter={() => setActive(index)}
+                {...asOption(index)}
                 onClick={() => choose(row)}
               >
                 <span className="t">{row.command.label}</span>
@@ -282,11 +344,15 @@ export function Palette({
           )}
 
           {results.length > 0 && words !== '' && (
-            <p className="palette-section">{copy.palette.notes}</p>
+            <p className="palette-section" role="presentation">
+              {copy.palette.notes}
+            </p>
           )}
 
           {results.length === 0 && inNotes.length === 0 && (
-            <p className="empty">{query === '' ? copy.palette.recentAppearHere : copy.palette.nothingFound}</p>
+            <p className="empty" role="presentation">
+              {query === '' ? copy.palette.recentAppearHere : copy.palette.nothingFound}
+            </p>
           )}
 
           {rows.map((row, index) => {
@@ -297,8 +363,7 @@ export function Palette({
                 type="button"
                 key={refKey(note.owner, note.path)}
                 className="palette-item"
-                data-active={index === current}
-                onMouseEnter={() => setActive(index)}
+                {...asOption(index)}
                 onClick={() => choose(row)}
               >
                 <span className="t">{note.title}</span>
@@ -314,7 +379,9 @@ export function Palette({
           })}
 
           {inNotes.length > 0 && (
-            <p className="palette-section">{copy.palette.inNotes}</p>
+            <p className="palette-section" role="presentation">
+              {copy.palette.inNotes}
+            </p>
           )}
 
           {rows.map((row, index) => {
@@ -325,8 +392,7 @@ export function Palette({
                 type="button"
                 key={`text:${refKey(hit.owner, hit.path)}`}
                 className="palette-item palette-hit"
-                data-active={index === current}
-                onMouseEnter={() => setActive(index)}
+                {...asOption(index)}
                 onClick={() => choose(row)}
               >
                 <span className="t">{hit.title}</span>
@@ -353,8 +419,7 @@ export function Palette({
                 type="button"
                 key="search-all"
                 className="palette-item palette-command palette-all"
-                data-active={index === current}
-                onMouseEnter={() => setActive(index)}
+                {...asOption(index)}
                 onClick={() => choose(row)}
               >
                 <span className="t">{copy.palette.searchAll(row.query)}</span>

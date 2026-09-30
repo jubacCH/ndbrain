@@ -137,7 +137,7 @@ function renderPalette() {
   return handlers;
 }
 
-const box = (): HTMLElement => screen.getByRole('textbox', { name: copy.palette.titleLabel });
+const box = (): HTMLElement => screen.getByRole('combobox', { name: copy.palette.titleLabel });
 
 /** Types the words and lets the pause pass, so the full-text request goes out. */
 async function typeAndWait(words: string): Promise<Pending> {
@@ -192,8 +192,8 @@ describe('two halves', () => {
     const list = screen.getByRole('dialog', { name: copy.palette.label });
     const notesHeading = await within(list).findByText(copy.palette.notes);
     const inNotesHeading = within(list).getByText(copy.palette.inNotes);
-    const byTitle = within(list).getByRole('button', { name: /Proxmox/ });
-    const byText = within(list).getByRole('button', { name: /Cluster/ });
+    const byTitle = within(list).getByRole('option', { name: /Proxmox/ });
+    const byText = within(list).getByRole('option', { name: /Cluster/ });
 
     const order = [notesHeading, byTitle, inNotesHeading, byText];
     for (let i = 1; i < order.length; i += 1) {
@@ -206,7 +206,7 @@ describe('two halves', () => {
   it('keeps the commands', async () => {
     renderPalette();
     fireEvent.change(box(), { target: { value: 'today' } });
-    expect(await screen.findByRole('button', { name: new RegExp(copy.palette.openToday) })).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: new RegExp(copy.palette.openToday) })).toBeInTheDocument();
   });
 
   it('does not offer a note twice when its title already matched', async () => {
@@ -218,16 +218,16 @@ describe('two halves', () => {
       hit('Homelab/Backup.md', 'Sicherung von [Proxmox] nach Azure'),
     ]);
     await screen.findByText(copy.palette.inNotes);
-    expect(screen.getAllByRole('button', { name: /Proxmox/ })).toHaveLength(2); // the title row and the Backup hit
-    expect(screen.getAllByRole('button', { name: /^Proxmox/ })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /Backup/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('option', { name: /Proxmox/ })).toHaveLength(2); // the title row and the Backup hit
+    expect(screen.getAllByRole('option', { name: /^Proxmox/ })).toHaveLength(1);
+    expect(screen.getByRole('option', { name: /Backup/ })).toBeInTheDocument();
   });
 
   it('shows an excerpt as text, never as markup', async () => {
     renderPalette();
     const pending = await typeAndWait('bild');
     await answer(pending, [hit('Evil.md', 'ein [Bild] <img src=x onerror="window.__owned=1"> hier')]);
-    const row = await screen.findByRole('button', { name: /Evil/ });
+    const row = await screen.findByRole('option', { name: /Evil/ });
     expect(row.querySelector('img')).toBeNull();
     expect(row).toHaveTextContent('<img src=x onerror="window.__owned=1">');
     expect((window as unknown as { __owned?: number }).__owned).toBeUndefined();
@@ -258,7 +258,7 @@ describe('asking the server', () => {
     server.byTitle = [note('Homelab/Proxmox.md')];
     const { onOpenNote } = renderPalette();
     fireEvent.change(box(), { target: { value: 'prox' } });
-    await screen.findByRole('button', { name: /Proxmox/ });
+    await screen.findByRole('option', { name: /Proxmox/ });
     expect(server.searches).toHaveLength(0);
     fireEvent.keyDown(box(), { key: 'Enter' });
     expect(onOpenNote).toHaveBeenCalledWith('julian', 'Homelab/Proxmox.md');
@@ -269,11 +269,11 @@ describe('asking the server', () => {
     const older = await typeAndWait('pro');
     const newer = await typeAndWait('proxmox');
     await answer(newer, [hit('Fresh.md', 'the [proxmox] cluster')]);
-    await screen.findByRole('button', { name: /Fresh/ });
+    await screen.findByRole('option', { name: /Fresh/ });
     await answer(older, [hit('Stale.md', 'a [pro] tip')]);
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(screen.queryByRole('button', { name: /Stale/ })).toBeNull();
-    expect(screen.getByRole('button', { name: /Fresh/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Stale/ })).toBeNull();
+    expect(screen.getByRole('option', { name: /Fresh/ })).toBeInTheDocument();
   });
 });
 
@@ -283,7 +283,7 @@ describe('the keyboard', () => {
     const { onOpenNote, onSearchAll } = renderPalette();
     const pending = await typeAndWait('quorum');
     await answer(pending, [hit('Homelab/Cluster.md', 'für das [Quorum]')]);
-    await screen.findByRole('button', { name: /Cluster/ });
+    await screen.findByRole('option', { name: /Cluster/ });
 
     const active = (): string => screen.getByRole('dialog').querySelector('[data-active="true"]')?.textContent ?? '';
     expect(active()).toMatch(/Proxmox/);
@@ -307,14 +307,14 @@ describe('the keyboard', () => {
   it('offers the Search view for the words typed, by click as well', async () => {
     const { onSearchAll, onClose } = renderPalette();
     fireEvent.change(box(), { target: { value: 'backup azure' } });
-    await userEvent.click(await screen.findByRole('button', { name: new RegExp(copy.palette.searchAll('backup azure')) }));
+    await userEvent.click(await screen.findByRole('option', { name: new RegExp(copy.palette.searchAll('backup azure')) }));
     expect(onSearchAll).toHaveBeenCalledWith('backup azure');
     expect(onClose).toHaveBeenCalled();
   });
 
   it('offers no search row before anything is typed', () => {
     renderPalette();
-    expect(screen.queryByRole('button', { name: /Search all/ })).toBeNull();
+    expect(screen.queryByRole('option', { name: /Search all/ })).toBeNull();
   });
 });
 
@@ -363,7 +363,7 @@ async function runCommand(words: string, label: string): Promise<void> {
   await openPalette();
   fireEvent.change(box(), { target: { value: words } });
   const dialog = screen.getByRole('dialog', { name: copy.palette.label });
-  const row = await within(dialog).findByRole('button', { name: new RegExp(`^${label}`) });
+  const row = await within(dialog).findByRole('option', { name: new RegExp(`^${label}`) });
   await userEvent.click(row);
 }
 
@@ -375,7 +375,7 @@ describe('in the shell', () => {
     await openPalette();
     const pending = await typeAndWait('quorum');
     await answer(pending, [hit('Homelab/Cluster.md', 'Drei Knoten für das [Quorum].')]);
-    await userEvent.click(await screen.findByRole('button', { name: /Cluster/ }));
+    await userEvent.click(await screen.findByRole('option', { name: /Cluster/ }));
     const editor = await screen.findByTestId('editor');
     await waitFor(() => expect(editor).toHaveAttribute('data-line', '3'));
   });
@@ -384,7 +384,7 @@ describe('in the shell', () => {
     mount();
     await openPalette();
     fireEvent.change(box(), { target: { value: 'azure' } });
-    await userEvent.click(await screen.findByRole('button', { name: new RegExp(copy.palette.searchAll('azure')) }));
+    await userEvent.click(await screen.findByRole('option', { name: new RegExp(copy.palette.searchAll('azure')) }));
     expect(await screen.findByRole('heading', { level: 1, name: copy.nav.search })).toBeInTheDocument();
     await waitFor(() => expect(server.searches.some((s) => s.q === 'azure')).toBe(true));
   });
@@ -424,7 +424,7 @@ describe('the commands', () => {
     fireEvent.change(box(), { target: { value: 'accounts' } });
     const dialog = screen.getByRole('dialog', { name: copy.palette.label });
     await within(dialog).findByText(copy.palette.nothingFound);
-    expect(within(dialog).queryByRole('button', { name: new RegExp(`^${copy.nav.admin}`) })).toBeNull();
+    expect(within(dialog).queryByRole('option', { name: new RegExp(`^${copy.nav.admin}`) })).toBeNull();
   });
 
   it('starts a note, through the same prompt the sidebar opens', async () => {
@@ -468,7 +468,136 @@ describe('the commands', () => {
     await openPalette();
     const dialog = screen.getByRole('dialog', { name: copy.palette.label });
     for (const label of [copy.nav.overview, copy.nav.network, copy.nav.tidy, copy.nav.journal, copy.nav.signOut]) {
-      expect(within(dialog).queryByRole('button', { name: new RegExp(`^${label}`) })).toBeNull();
+      expect(within(dialog).queryByRole('option', { name: new RegExp(`^${label}`) })).toBeNull();
     }
+  });
+});
+
+/**
+ * The palette as a dialog, rather than as a list that happens to say it is one.
+ *
+ * `role="dialog" aria-modal="true"` was set and the focus did land in the
+ * field, which is the half that was right. The other half:
+ *
+ *  - nothing held the focus in, so Tab walked out into the page behind a panel
+ *    covering it — and Escape was bound to the field alone, so a Tab into the
+ *    list left no way back out with a keyboard at all
+ *  - nothing gave the focus back: after ⌘K and Escape it was on `body`, and the
+ *    next key went nowhere near where the person had been
+ *  - the rows were plain buttons carrying `data-active`, so the arrow keys
+ *    changed a CSS attribute and a screen reader heard nothing move
+ *
+ * The rows are options in a listbox now and the field owns the active one
+ * through `aria-activedescendant`, which is also what stops the Tab problem at
+ * its source: with the focus staying in the field there is no list to tab into.
+ *
+ * Every test here sends the key and measures what happened to the focus or to
+ * the panel. The Ctrl-N and Ctrl-P aliases are pinned as well — they are a
+ * decision, not an accident, and the reason is on `onKeyDown` in `Palette.tsx`.
+ */
+describe('the palette holds the keyboard', () => {
+  /**
+   * Opens the palette from the header button, so there is something to go back
+   * to. Scoped to the header because the sidebar carries a ⌘K button with the
+   * same accessible name.
+   */
+  async function openFromHeader(): Promise<HTMLElement> {
+    const header = await screen.findByRole('banner');
+    const search = within(header).getByRole('button', { name: copy.shell.searchLabel });
+    await userEvent.click(search);
+    await screen.findByRole('dialog', { name: copy.palette.label });
+    return search;
+  }
+
+  it('lands the focus in the field and gives it back to what opened it', async () => {
+    mount();
+    const search = await openFromHeader();
+    expect(document.activeElement).toBe(box());
+
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: copy.palette.label })).toBeNull());
+    expect(document.activeElement).toBe(search);
+  });
+
+  it('closes on Escape however far into it the keyboard has been walked', async () => {
+    server.notes = [note('Homelab/Proxmox.md')];
+    server.byTitle = [note('Homelab/Proxmox.md')];
+    mount();
+    const search = await openFromHeader();
+    await screen.findByRole('option', { name: /Proxmox/ });
+
+    // This is the failure, exactly: Escape used to be the field's, so a Tab
+    // away from the field was a one-way door.
+    for (let press = 0; press < 6; press += 1) await userEvent.tab();
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: copy.palette.label })).toBeNull());
+    expect(document.activeElement).toBe(search);
+  });
+
+  it('keeps the focus in the field, so there is no list to tab into', async () => {
+    server.notes = [note('Homelab/Proxmox.md')];
+    server.byTitle = [note('Homelab/Proxmox.md')];
+    mount();
+    await openFromHeader();
+    await screen.findByRole('option', { name: /Proxmox/ });
+
+    for (let press = 0; press < 10; press += 1) {
+      await userEvent.tab();
+      expect(document.activeElement, `after ${press + 1} tabs`).toBe(box());
+    }
+  });
+
+  it('says which row is active, and moves that with the arrow keys', async () => {
+    server.byTitle = [note('Homelab/Proxmox.md'), note('Homelab/Backup.md')];
+    renderPalette();
+    fireEvent.change(box(), { target: { value: 'ho' } });
+
+    const list = await screen.findByRole('listbox');
+    const options = await screen.findAllByRole('option');
+    expect(options.length).toBeGreaterThan(1);
+    expect(box()).toHaveAttribute('aria-controls', list.id);
+
+    /** The row the field claims is active, read back through the id it names. */
+    const named = (): HTMLElement | null => {
+      const id = box().getAttribute('aria-activedescendant');
+      return id === null ? null : document.getElementById(id);
+    };
+
+    // Not "an attribute is set": the element the field points at is the one the
+    // list draws as active, and both move together.
+    const active = (): Element | null => list.querySelector('[data-active="true"]');
+    expect(named()).toBe(active());
+    expect(named()).toHaveAttribute('aria-selected', 'true');
+    const first = named();
+
+    fireEvent.keyDown(box(), { key: 'ArrowDown' });
+    expect(named()).not.toBe(first);
+    expect(named()).toBe(active());
+    expect(named()).toHaveAttribute('aria-selected', 'true');
+    expect(first).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('still walks the list with Ctrl-N and Ctrl-P, and still does not advertise them', async () => {
+    server.byTitle = [note('Homelab/Proxmox.md'), note('Homelab/Backup.md')];
+    renderPalette();
+    fireEvent.change(box(), { target: { value: 'ho' } });
+    await screen.findAllByRole('option');
+
+    const named = (): HTMLElement | null => {
+      const id = box().getAttribute('aria-activedescendant');
+      return id === null ? null : document.getElementById(id);
+    };
+    const first = named();
+
+    fireEvent.keyDown(box(), { key: 'n', ctrlKey: true });
+    expect(named()).not.toBe(first);
+    fireEvent.keyDown(box(), { key: 'p', ctrlKey: true });
+    expect(named()).toBe(first);
+
+    // A key that works on one platform and prints on another is not promised.
+    const foot = screen.getByRole('dialog').querySelector('.palette-foot')!;
+    expect(foot.textContent).not.toMatch(/Ctrl|\^/);
   });
 });

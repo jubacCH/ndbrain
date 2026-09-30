@@ -196,7 +196,7 @@ async function openFromPalette(title: string): Promise<void> {
   await screen.findByRole('button', { name: copy.shell.account });
   await user.keyboard('{Control>}k{/Control}');
   const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
-  await user.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
+  await user.click(await within(dialog).findByRole('option', { name: new RegExp(title) }));
   await screen.findByTestId('editor');
 }
 
@@ -204,7 +204,7 @@ async function openFromPalette(title: string): Promise<void> {
 async function switchTo(title: string, path: string): Promise<void> {
   await user.keyboard('{Control>}k{/Control}');
   const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
-  await user.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
+  await user.click(await within(dialog).findByRole('option', { name: new RegExp(title) }));
   await waitFor(() => expect(screen.getByTestId('editor')).toHaveTextContent(path), { timeout: 3000 });
 }
 

@@ -30,11 +30,18 @@ import { useEffect, useRef, type RefObject } from 'react';
 /**
  * What the browser will move the focus to with Tab.
  *
- * `[tabindex="-1"]` is excluded because a container made focusable to be
- * *landed on* is not a stop on the way through. `[hidden]` and `disabled` are
- * the two states that take an element out of the order by attribute rather
- * than by style — style is the browser's business, and the walk below copes
- * with an element that refuses the focus anyway.
+ * `tabindex="-1"` is excluded from every one of them, and that is the part
+ * worth saying out loud: it means "focusable, but not a stop on the way
+ * through", and it is put on elements that are natively focusable precisely to
+ * take them out of the order. The palette's rows are `<button>`s carrying it,
+ * because the field owns the focus and names the active row; matching them as
+ * buttons regardless put them back in the walk and pulled the focus out of the
+ * field on the first Tab.
+ *
+ * `[hidden]` and `disabled` are the two other states that take an element out
+ * of the order by attribute rather than by style. Style is the browser's
+ * business, and the walk below copes with an element that refuses the focus
+ * anyway.
  */
 const FOCUSABLE = [
   'a[href]',
@@ -42,9 +49,9 @@ const FOCUSABLE = [
   'input:not([disabled])',
   'select:not([disabled])',
   'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
+  '[tabindex]',
 ]
-  .map((one) => `${one}:not([hidden])`)
+  .map((one) => `${one}:not([hidden]):not([tabindex="-1"])`)
   .join(',');
 
 /** The tab stops inside one element, in the order Tab visits them. */
