@@ -49,6 +49,11 @@ be terminated by a reverse proxy in front; `NDBRAIN_COOKIE_SECURE=false` is for 
 and nothing else, because the browser will otherwise drop the session cookie. That same flag also
 decides whether `Strict-Transport-Security` is sent, so a plain-HTTP test cannot pin a browser to
 HTTPS for a year — the proxy adds no headers of its own, which is why this one comes from here.
+The reverse proxy in front has to **pass WebSocket upgrades** for `/api/v1/collab`, or live
+editing is unavailable and every browser silently falls back to saving as before. `NDBRAIN_COLLAB=false`
+turns live editing off deliberately, without a code rollback, and is the way back if something
+about it misbehaves.
+
 The remaining settings and their defaults are in `server/src/config.ts`, which is short on purpose.
 
 Every response carries a content security policy composed from the page actually being served:
@@ -123,6 +128,7 @@ flowchart LR
 | `index/watcher.ts` | Picks up edits made outside the server, and reconciles the whole vault every five minutes. |
 | `index/queries.ts` | Every read the UI and the agents make. Each query takes an owner or a share view and filters on it in SQL. |
 | `auth/` | Accounts, sessions, agent keys, shares and note bindings. `shares.ts` is the gate between the caller and the owner. |
+| `collab/` | Live rooms for open notes: one in-memory Yjs document per note, synced with the browsers over `/api/v1/collab`, persisted through `NoteService`. No CRDT state is ever written to disk or to the database — the room is a working copy while the note is open and nothing more. |
 | `http/server.ts` | Thin REST layer: decode, name the caller from the session, call `App`, map errors. Every route obtains its owner and path through one function, `target()`, which runs the permission check. |
 | `mcp/endpoint.ts`, `mcp/tools.ts` | MCP over stateless Streamable HTTP, implemented directly against the protocol so it sits inside Fastify's auth and error handling. |
 | `vault/history.ts` | Reads the git history that `ops/vault-history.sh` maintains. Never writes to it. |
@@ -156,9 +162,31 @@ Two kinds of tables share one file, and they are treated differently.
 
 ### How changes reach the browser
 
-There is no push channel. No WebSocket, no server-sent events: a persistent connection would
-bring reconnect logic, proxy timeouts and a second lifecycle, for a tool with one person and a
-few agents. Instead there are four mechanisms, each for a different kind of change.
+An **open note syncs live** over a WebSocket. Everything else is polled.
+
+While at least one editor has a note open, the server keeps a room for it: one `Y.Doc` with the
+note's text, in memory. Browsers join it at `GET /api/v1/collab?owner=…&path=…` and exchange
+`y-protocols` sync and awareness messages, so text, cursors and names appear in each other's
+editors within a few dozen milliseconds. Every other way a note's content can change — REST, MCP,
+a bulk action, the link rewrite of a rename, an edit made on disk — is routed into the room while
+it exists, as either a transform of the live text or a three-way merge for a writer that started
+from an older version. The room writes the result out through the ordinary `NoteService` path at
+most a second after the last change, so the lock, the index, the edits log, the history sidecar
+and the backup are unchanged.
+
+A room is a tool, not a store. It is filled from the file when the first editor arrives and thrown
+away when the last one leaves, and the `.md` file stays the only truth.
+
+This also makes ndBrain a **single process**. Rooms live in the memory of the one server, like the
+watcher, so it cannot run behind a load balancer with several instances.
+
+A note with no socket runs exactly as it did before: `NDBRAIN_COLLAB=false`, a proxy that does not
+pass upgrades, a note larger than the socket's 8 MiB frame, or a process already holding its limit
+of open rooms all end in the same place — the editor says *Live editing unavailable — saving as
+usual* and saves with a `baseHash`, which the server three-way merges into the room if one is open
+and otherwise handles as it always has, with a conflict copy.
+
+The polled mechanisms remain, each for a different kind of change.
 
 - **Changes you make yourself** invalidate the affected TanStack Query entries explicitly
   (tree, tidy-up, links, graph). Anything else counts as fresh for 30 seconds.
@@ -179,8 +207,10 @@ few agents. Instead there are four mechanisms, each for a different kind of chan
   the question is narrowed instead of the pulse widened: one named note, one fact, no actor and
   no time.
 
-An **open note is never re-read underneath the editor**. Replacing text while somebody types is
-worse than showing text that is a few seconds old. Opening a note always fetches it fresh, and if
+**Without a room**, an open note is never re-read underneath the editor. Replacing text while
+somebody types is worse than showing text that is a few seconds old. (With a room this question
+does not arise: the editor and the room hold the same text, and a change from anywhere arrives as
+an operation at the place it happened rather than as a new copy of the whole note.) Opening a note always fetches it fresh, and if
 someone else changed it in the meantime, the next save does not overwrite their version: the
 `baseHash` no longer matches, and the displaced text is kept as a conflict copy that shows up in
 *Tidy up*. A bar under the header says so **before** that save, so the copy can be avoided rather
@@ -309,6 +339,13 @@ Worth knowing before reading the code, because some of it is conspicuous by its 
 - **No offline notes.** The service worker exists for startup speed and installability. Anything
   under `/api/` never touches the cache in either direction, because serving a cached note would
   be showing somebody text that may have changed with no way for them to tell.
+- **No offline editing beyond a short disconnect.** What is typed while the socket is down is held
+  and sent — into the room when it comes back, or through the ordinary save path if the room was
+  rebuilt meanwhile. Nothing is kept for a tab that is closed and reopened later.
+- **No second server process.** Rooms for open notes live in the memory of the one process, so
+  ndBrain does not run behind a load balancer with several instances.
+- **No live collaboration on anything but note text.** No live tree, no live rename dialog, no
+  comments, no suggestions, and no per-character view of who wrote what.
 - **No history of its own.** The version history and the way back from a delete are read out of
   the git repository that `ops/vault-history.sh` maintains beside each vault on the host. ndBrain
   only reads it: the timer owns every commit, so a git that is broken or missing degrades the

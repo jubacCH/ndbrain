@@ -1,6 +1,12 @@
 # Live collaboration on a note
 
-Status: design approved 2026-09-28, not yet implemented.
+Status: design approved 2026-09-28, implemented 2026-09-30 on `feat/live-collab`, not yet deployed.
+
+Where the implementation departs from this design, and why, is in the commit messages on that
+branch; the three places worth knowing are the origin check (`request.protocol` is undefined on a
+WebSocket upgrade), the per-account socket cap (refused at the HTTP layer, and counted as a
+reservation rather than off the connection set) and the permission re-check (coalesced, because
+`node:sqlite` is synchronous).
 
 ## Why
 
