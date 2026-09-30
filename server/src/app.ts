@@ -215,7 +215,8 @@ export class App {
     if (baseHash === contentHash(live)) return live;
     if (this.#history === null) return null;
     try {
-      for (const version of (await this.#history.versions(owner, room.path)).slice(0, 20)) {
+      const { versions } = await this.#history.versions(owner, room.path);
+      for (const version of versions.slice(0, 20)) {
         const text = await this.#history.contentAt(owner, room.path, version.id);
         if (contentHash(text) === baseHash) return text;
       }

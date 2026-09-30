@@ -268,6 +268,30 @@ export class ShareService {
     this.#db = db;
   }
 
+  readonly #listeners = new Set<() => void>();
+
+  /**
+   * Told after anything that can change who may reach what; see
+   * `collab/socket.ts`, which closes or downgrades live sockets on it.
+   */
+  onChange(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  }
+
+  #changed(): void {
+    for (const listener of this.#listeners) {
+      try {
+        listener();
+      } catch {
+        // A listener is an observer. The mutation has already happened and
+        // stands; one broken observer must not stop the others being told.
+      }
+    }
+  }
+
   /**
    * Grants (or re-grants) access to a region of `owner`'s vault.
    *
@@ -313,6 +337,7 @@ export class ShareService {
         canWrite ? 1 : 0,
         String(existing['id']),
       );
+      this.#changed();
       return { ...toShare(existing), canWrite };
     }
 
@@ -332,6 +357,7 @@ export class ShareService {
 
     const share = this.get(id);
     if (share === undefined) throw new NdbrainError('share vanished immediately after creation');
+    this.#changed();
     return share;
   }
 
@@ -352,6 +378,7 @@ export class ShareService {
     const share = this.get(id);
     if (share === undefined) throw new UnknownShareError('no such share');
     this.#db.run('DELETE FROM shares WHERE id = ?', id);
+    this.#changed();
   }
 
   /** What this owner has shared out — for a space, its members. */
@@ -551,6 +578,7 @@ export class ShareService {
         from,
       );
     });
+    this.#changed();
   }
 
   /** The distinct bindings of the note shares on `notePath`; empty when there are none. */
@@ -598,11 +626,13 @@ export class ShareService {
       notePath,
       file,
     );
+    this.#changed();
   }
 
   /** Withdraws every note share on `notePath`. */
   dropNote(owner: string, notePath: string): void {
     this.#db.run("DELETE FROM shares WHERE owner = ? AND kind = 'note' AND prefix = ?", owner, notePath);
+    this.#changed();
   }
 
   /**
@@ -644,6 +674,7 @@ export class ShareService {
         }
       }
     });
+    this.#changed();
   }
 
   /** Withdraws folder shares on `dir` and anything below it. */
@@ -656,5 +687,6 @@ export class ShareService {
       owner,
       ...match.params,
     );
+    this.#changed();
   }
 }

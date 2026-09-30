@@ -75,6 +75,30 @@ export class UserService {
     this.#vault = vault;
   }
 
+  readonly #listeners = new Set<() => void>();
+
+  /**
+   * Told after anything that can change who may reach what; see
+   * `collab/socket.ts`, which closes or downgrades live sockets on it.
+   */
+  onChange(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  }
+
+  #changed(): void {
+    for (const listener of this.#listeners) {
+      try {
+        listener();
+      } catch {
+        // A listener is an observer. The mutation has already happened and
+        // stands; one broken observer must not stop the others being told.
+      }
+    }
+  }
+
   count(): number {
     const row = this.#db.get<{ n: number }>('SELECT COUNT(*) AS n FROM users');
     return Number(row?.n ?? 0);
@@ -222,12 +246,14 @@ export class UserService {
     // Changing a password ends every session: that is the whole point of doing it
     // after a suspected compromise.
     this.#db.run('DELETE FROM sessions WHERE user_id = ?', id);
+    this.#changed();
   }
 
   setDisabled(id: string, disabled: boolean): void {
     if (this.get(id) === undefined) throw new UnknownUserError('no such user');
     this.#db.run('UPDATE users SET disabled_at = ? WHERE id = ?', disabled ? Date.now() : null, id);
     if (disabled) this.#db.run('DELETE FROM sessions WHERE user_id = ?', id);
+    this.#changed();
   }
 
   /**
@@ -280,6 +306,30 @@ export class SessionService {
     this.#db = db;
   }
 
+  readonly #listeners = new Set<() => void>();
+
+  /**
+   * Told after anything that can change who may reach what; see
+   * `collab/socket.ts`, which closes or downgrades live sockets on it.
+   */
+  onChange(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  }
+
+  #changed(): void {
+    for (const listener of this.#listeners) {
+      try {
+        listener();
+      } catch {
+        // A listener is an observer. The mutation has already happened and
+        // stands; one broken observer must not stop the others being told.
+      }
+    }
+  }
+
   /** Returns the raw token; only its hash is stored. */
   create(userId: string, now = Date.now()): { token: string; expiresAt: number } {
     const token = randomBytes(32).toString('base64url');
@@ -323,10 +373,12 @@ export class SessionService {
 
   destroy(token: string): void {
     this.#db.run('DELETE FROM sessions WHERE token_hash = ?', tokenHash(token));
+    this.#changed();
   }
 
   destroyAllFor(userId: string): void {
     this.#db.run('DELETE FROM sessions WHERE user_id = ?', userId);
+    this.#changed();
   }
 
   /**
