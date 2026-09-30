@@ -87,6 +87,13 @@ export function contentSecurityPolicy(scriptHashes: readonly string[] = []): str
     "font-src 'self'",
     // Every request the app makes is same-origin; there is no CORS setup and no
     // API base URL for exactly that reason.
+    //
+    // This also covers the live-collaboration WebSocket. `'self'` matches a
+    // `ws:`/`wss:` connection back to the document's own origin, so
+    // `/api/v1/collab` needs nothing of its own here — but narrowing this to an
+    // explicit host list later would have to name the socket's scheme too, or
+    // live editing would fail in the browser with nothing on the server to say
+    // why. No test here can catch that; only a real browser can.
     "connect-src 'self'",
     "worker-src 'self'",
     "manifest-src 'self'",
