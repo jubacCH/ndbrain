@@ -32,6 +32,8 @@ import { DeletedNotes } from '../notes/deleted.js';
 import type { PutOptions } from '../notes/service.js';
 import { SessionService, UnknownUserError, UserService, type User } from '../auth/users.js';
 import { registerMcpEndpoint } from '../mcp/endpoint.js';
+import { registerCollab } from '../collab/socket.js';
+import type { RoomRegistry } from '../collab/rooms.js';
 import type { Config } from '../config.js';
 import type { Database } from '../db/database.js';
 import type { ReconcileState } from '../index/watcher.js';
@@ -45,8 +47,9 @@ import { LoginThrottle } from './throttle.js';
 import { ZipFile } from 'yazl';
 import type { ZodType } from 'zod';
 import * as S from '../../../shared/schema.js';
+import { SESSION_COOKIE } from './cookie.js';
 
-export const SESSION_COOKIE = 'ndbrain_session';
+export { SESSION_COOKIE } from './cookie.js';
 
 /**
  * The bytes of an upload, or `null` if this body cannot faithfully become bytes.
@@ -81,6 +84,11 @@ export interface ServerDeps {
   shares: ShareService;
   settings: SettingsService;
   history: History;
+  /**
+   * Live rooms. `null` or absent means no socket route is registered and every
+   * browser saves the way it did before collaboration existed.
+   */
+  rooms?: RoomRegistry | null;
   config: Config;
   throttle?: LoginThrottle;
   /**
@@ -364,6 +372,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       .type('application/json; charset=utf-8')
       .send({ code: problem.code, message: problem.message });
   });
+
+  // ---- live collaboration -------------------------------------------------
+  //
+  // After the session gate, so the socket's upgrade request arrives already
+  // authenticated, and before the routes, so the plugin's `injectWS` exists by
+  // the time anything asks. No registry means no route: that is what
+  // `NDBRAIN_COLLAB=false` does, and the browser then finds nothing to upgrade
+  // to and saves the old way.
+  if (config.collab && deps.rooms !== undefined && deps.rooms !== null) {
+    await registerCollab(fastify, { app, rooms: deps.rooms, shares, sessions, users, config });
+  }
 
   // ---- the web UI ---------------------------------------------------------
   //

@@ -75,6 +75,7 @@ async function main(): Promise<void> {
     shares: runtime.shares,
     settings: runtime.settings,
     history: runtime.history,
+    rooms: runtime.rooms,
     config,
     watcher,
   });

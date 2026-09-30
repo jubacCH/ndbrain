@@ -95,6 +95,7 @@ export async function createRuntime(config: Config, options: RuntimeOptions = {}
         persist: (owner, notePath, text, baseHash, actors) =>
           app.persistFromRoom(owner, notePath, text, baseHash, actors),
         conflictCopy: (owner, notePath, text, actor) => app.conflictCopyFromRoom(owner, notePath, text, actor),
+        maxRooms: config.collabMaxRooms,
         log: (error) => console.error('collab room:', error),
       })
     : null;
