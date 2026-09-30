@@ -243,7 +243,7 @@ async function openFromPalette(title: string): Promise<void> {
   await screen.findByRole('button', { name: copy.shell.account });
   await user.keyboard('{Control>}k{/Control}');
   const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
-  await user.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
+  await user.click(await within(dialog).findByRole('option', { name: new RegExp(title) }));
   await screen.findByTestId('editor');
 }
 

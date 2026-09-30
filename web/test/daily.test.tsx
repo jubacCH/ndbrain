@@ -385,7 +385,7 @@ describe('opening today from the shell', () => {
 
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
     const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
-    await userEvent.type(within(dialog).getByRole('textbox'), 'today');
+    await userEvent.type(within(dialog).getByRole('combobox'), 'today');
     await userEvent.keyboard('{Enter}');
 
     expect(await screen.findByTestId('editor')).toHaveAttribute('data-path', '50_Journal/2026/09/2026-09-17.md');
@@ -401,7 +401,7 @@ describe('opening today from the shell', () => {
 
     // Standing in Anna's note, and with Anna's day in view, today is still Julian's.
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
-    await userEvent.click(await screen.findByRole('button', { name: /Plan/ }));
+    await userEvent.click(await screen.findByRole('option', { name: /Plan/ }));
     await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-owner', 'anna'));
 
     await userEvent.click(todayButton());
@@ -429,7 +429,7 @@ describe('opening today from the shell', () => {
     server.contents.set('anna 50_Journal/2026/09/2026-09-17.md', 'Annas Tag');
     await renderApp();
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
-    await userEvent.click(await screen.findByRole('button', { name: /2026-09-17/ }));
+    await userEvent.click(await screen.findByRole('option', { name: /2026-09-17/ }));
     await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-owner', 'anna'));
 
     await userEvent.click(screen.getByRole('button', { name: 'follow tomorrow' }));

@@ -227,8 +227,6 @@ export const copy = {
    * sure?" is a question nobody can answer without that.
    */
   ask: {
-    newNoteName: 'Name for the new note (use / for a folder)',
-    newNoteIn: (space: string) => `Name for the new note in ${space} (use / for a folder)`,
     newFolderName: 'Name for the new folder (use / to nest)',
     renameFolder: 'Rename or move this folder (new path)',
     moveTo: (count: number) => `Move ${count} notes to (empty = top of the vault)`,
@@ -314,7 +312,6 @@ export const copy = {
   errors: {
     serverQuiet: 'The server is not answering right now.',
     noteGone: 'That note is gone.',
-    noWriteHere: (space: string) => `You cannot write there in ${space}. Pick a folder you may write in.`,
     saveFailed: 'Could not save. Your text stays in the editor.',
     noteMovedWhileSaving:
       'Not saved: this note was renamed, moved or deleted while you were writing. Your text stays in the editor — copy it before you open another note.',
@@ -645,6 +642,58 @@ export const copy = {
     confirmWithdraw: (who: string, title: string) => `Withdraw ${who}’s access to “${title}”?`,
     grantFailed: 'Could not share the note.',
     withdrawFailed: 'Could not withdraw that share.',
+  },
+
+  /*
+   * The dialog behind "New note" — see `web/src/NewNoteDialog.tsx`.
+   *
+   * This is the first thing the product offers a new account, right behind the
+   * tree's own first-run line, so it says what will happen before it happens
+   * rather than afterwards. A `window.prompt` was its predecessor, and the one
+   * instruction it managed to give — "use / for a folder" — is still true and
+   * still offered; it is a sentence about what the name is doing now, rather
+   * than the only way to reach a folder at all.
+   */
+  newNote: {
+    /** In your own vault, where there is nothing else to say. */
+    title: 'New note',
+    /** In a space, where whose vault it lands in is the thing worth naming. */
+    titleIn: (space: string) => `New note in ${space}`,
+    close: 'Close',
+    name: 'Name',
+    folder: 'Folder',
+    root: 'Top of the vault',
+    /** Before the path the note will be written to, which is shown as code. */
+    becomes: 'Will be written to',
+    /** Stands in for that path while the name field is empty. */
+    noName: 'needs a name',
+    submit: 'Start the note',
+    /** How a name reaches a folder that is not in the list yet. */
+    slashNests: 'A / in the name puts the note in a folder below the one picked.',
+    /** Said when the name does that, naming the folder that will come into being. */
+    makesFolder: (folder: string) => `“${folder}” does not exist yet and is made with the note.`,
+    /**
+     * The server's own rule, said before the request rather than after it.
+     *
+     * `assertLinkableName` in `server/src/vault/paths.ts` refuses these four
+     * characters, because `markdown/parse.ts` cannot match them inside a
+     * `[[wikilink]]` — so a note named with one is a note nothing can ever link
+     * to, which in a tool built on links is a trap rather than a preference.
+     */
+    unlinkable: 'A note name cannot contain [ ] | or #, because no [[wikilink]] could point at it.',
+    /** Something is already at that path; said here, so nothing is sent. */
+    taken: (path: string) => `“${path}” is already there. Pick another name to start a new note.`,
+    /**
+     * A shape the vault cannot hold, said before the request.
+     *
+     * `normalizeVaultPath` on the server refuses an absolute path, an upward
+     * step and a segment beginning with a dot — the last because a dotted entry
+     * is invisible to every listing this vault does and to the watcher, `.git`
+     * included. It is also the only way a name could reach out of the folder
+     * that was picked, which is what makes it worth catching here.
+     */
+    badPath: 'A name cannot begin with a dot or a slash, and cannot step upwards with “..”.',
+    failed: 'The note could not be started.',
   },
 
   /* The dialog behind "Rename or move…" on one note — see `web/src/RenameDialog.tsx`. */

@@ -508,7 +508,7 @@ describe('the shell, signed in', () => {
     await screen.findByRole('button', { name: copy.shell.account });
     await userEvent.keyboard('{Control>}k{/Control}');
     const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
-    await userEvent.click(await within(dialog).findByRole('button', { name: new RegExp(title) }));
+    await userEvent.click(await within(dialog).findByRole('option', { name: new RegExp(title) }));
     await screen.findByTestId('editor');
   }
 
