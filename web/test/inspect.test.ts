@@ -92,19 +92,44 @@ describe('whyConnected', () => {
 });
 
 describe('summarize', () => {
+  /**
+   * The fastest of several readings, not one.
+   *
+   * The promise here is about how much work `summarize` does, and the only
+   * instrument to hand is a wall clock — so the reading has to survive the
+   * machine it runs on. A single cold call competes with JIT warm-up, GC and
+   * whatever else the host is doing: measured on an idle machine these cases
+   * take 0.008 to 0.66 ms against a ceiling of 50, and this test still failed
+   * once in three consecutive full runs. It was timing the laptop.
+   *
+   * A burst of load lands on some readings and not on all of them, so the
+   * minimum is the undisturbed one. The ceiling stays where it was, which is
+   * roughly seventy-five times the slowest real case — generous on purpose,
+   * because what it has to catch is the early exit going missing, and reading
+   * all of a 40 000-character line is quadratic: seconds, not milliseconds.
+   * A ceiling tight enough to measure a few per cent would measure the host
+   * instead.
+   */
+  const fastest = (run: () => void): number => {
+    run();
+    let best = Infinity;
+    for (let i = 0; i < 5; i += 1) {
+      const at = performance.now();
+      run();
+      best = Math.min(best, performance.now() - at);
+    }
+    return best;
+  };
+
   it('reads a pathological line only as far as the summary reaches', () => {
     for (const body of ['['.repeat(40_000), '[['.repeat(20_000), `**${'_'.repeat(40_000)}`, `${'word '.repeat(8_000)}`]) {
-      const started = performance.now();
-      const summary = summarize(`# Title\n\n${body}`);
-      const took = performance.now() - started;
-      expect(took).toBeLessThan(50);
-      expect(summary.length).toBeLessThanOrEqual(241);
+      const text = `# Title\n\n${body}`;
+      expect(fastest(() => summarize(text))).toBeLessThan(50);
+      expect(summarize(text).length).toBeLessThanOrEqual(241);
     }
     // And many short lines in one paragraph stop early too.
     const many = Array.from({ length: 20_000 }, () => '[x').join('\n');
-    const started = performance.now();
-    summarize(many);
-    expect(performance.now() - started).toBeLessThan(50);
+    expect(fastest(() => summarize(many))).toBeLessThan(50);
   });
 
   it('skips frontmatter, headings and the blockquote header, and returns the first paragraph', () => {
