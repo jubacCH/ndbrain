@@ -231,6 +231,13 @@ call is checked twice, against the owner's vault boundary and against the key's 
 secret is shown once and stored only as a SHA-256 hash, and every tool call is logged, so the
 owner can see what their agents actually did.
 
+A key also runs out. A year by default, choosable per key when it is made (`--days`, or
+`--forever` for something unattended like a monthly job), and the keys that existed before this
+kept no deadline rather than being given one retroactively. An expired key is refused exactly as
+an unknown one is, so nothing about the answer says a real key was presented — the admin view and
+the server log are where the deadline is visible, and the log names the key a fortnight ahead
+together with the command that replaces it.
+
 The tools are `search_notes`, `get_note`, `list_notes`, `vault_map`, `get_links`, `list_tasks`,
 `list_findings`, `create_note`, `append_note`, `edit_note`, `rename_note` and `delete_note`. An
 agent that can only ever add makes tidying work it cannot take part in, so it can clear up after

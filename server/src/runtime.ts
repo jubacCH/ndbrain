@@ -10,7 +10,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { App } from './app.js';
-import { ApiKeyService } from './auth/keys.js';
+import { ApiKeyService, type ApiKey } from './auth/keys.js';
 import { NoteBindings, noteLifecycle } from './auth/noteBindings.js';
 import { ShareService } from './auth/shares.js';
 import { SettingsService } from './auth/settings.js';
@@ -53,6 +53,14 @@ export interface Runtime {
 export interface RuntimeOptions {
   /** A file in the vault that could not be indexed; see `IndexerOptions`. */
   onSkipped?: (owner: string, notePath: string, error: unknown) => void;
+  /**
+   * Agent keys about to stop working, reported on start and once a day after.
+   *
+   * On start as well as on the timer, because a service that runs for months
+   * restarts rarely and a warning that only the timer emits is a warning that
+   * arrives at three in the morning and nowhere else.
+   */
+  onExpiringKeys?: (keys: ApiKey[]) => void;
 }
 
 export async function createRuntime(config: Config, options: RuntimeOptions = {}): Promise<Runtime> {
@@ -88,6 +96,12 @@ export async function createRuntime(config: Config, options: RuntimeOptions = {}
   const sweep = (): void => {
     sessions.purgeExpired();
     keys.purgeLog();
+
+    // Not a sweep: nothing is deleted here. It shares the timer because "once a
+    // day, and also at start" is exactly the cadence a fortnight's notice needs,
+    // and a second timer for one read would be a second thing to keep unref'd.
+    const expiring = keys.expiringSoon();
+    if (expiring.length > 0) options.onExpiringKeys?.(expiring);
   };
   sweep();
   const sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS);

@@ -550,6 +550,8 @@ export const ApiKey = z.object({
   canWrite: z.boolean(),
   createdAt: Timestamp,
   lastUsedAt: Timestamp.nullable(),
+  /** When it stops working; null for a key made without a deadline. */
+  expiresAt: Timestamp.nullable(),
   revoked: z.boolean(),
 });
 
@@ -561,8 +563,28 @@ export const CreateKeyRequest = z
     name: z.string().min(1).max(64),
     scope: z.string().max(1024).optional(),
     canWrite: z.boolean().optional(),
+    /**
+     * How long the key lasts. Left out it takes the default lifetime; `null`
+     * means no deadline, for the job that runs once a month.
+     *
+     * Three-valued rather than a zero meaning "never", because a request that
+     * says `null` said something and a request that says `0` has to be looked
+     * up. Ten years is the ceiling: past that the number is decoration.
+     */
+    expiresInDays: z.number().int().min(1).max(3650).nullable().optional(),
   })
   .strict();
+
+/**
+ * How far ahead a key running out is called out.
+ *
+ * Here rather than once per side, because both sides act on it: the server's
+ * daily log line names the keys inside this window and the admin table switches
+ * from a date to a countdown at the same edge. Two `14`s in two files is one
+ * that drifts, and the drift would show as a screen that says nothing while the
+ * log is already warning.
+ */
+export const KEY_EXPIRY_WARNING_DAYS = 14;
 
 /** The one response that carries a secret; it is never retrievable again. */
 export const CreatedKeyResponse = ApiKey.extend({ secret: z.string() });

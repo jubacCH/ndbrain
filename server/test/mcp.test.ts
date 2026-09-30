@@ -206,6 +206,38 @@ describe('authentication', () => {
     expect((await rpc(secret, 'ping')).status).toBe(401);
   });
 
+  it('answers an expired key exactly as one that never existed', async () => {
+    // The whole point of an expiry is that it is a refusal, and a refusal here
+    // looks like absence — see the head of `mcp/tools.ts`. A body or a header
+    // that differed would tell whoever presented the string that they had found
+    // a real key, only a late one.
+    const expired = runtime.keys.create(
+      'julian',
+      'abgelaufen',
+      { expiresInDays: 1 },
+      Date.now() - 10 * 24 * 60 * 60 * 1000,
+    ).secret;
+    const madeUp = `ndb_${'0'.repeat(64)}`;
+
+    const ask = async (bearer: string): Promise<Record<string, unknown>> => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/mcp',
+        headers: { authorization: `Bearer ${bearer}` },
+        payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      });
+      const { date, ...headers } = response.headers;
+      void date;
+      return { statusCode: response.statusCode, body: response.body, headers };
+    };
+
+    const wasValid = await ask(expired);
+    const neverWas = await ask(madeUp);
+
+    expect(wasValid['statusCode']).toBe(401);
+    expect(wasValid).toEqual(neverWas);
+  });
+
   it('records when a key was last used', async () => {
     const { key, secret } = runtime.keys.create('julian', 'benutzt');
     expect(runtime.keys.get(key.id)?.lastUsedAt).toBeNull();

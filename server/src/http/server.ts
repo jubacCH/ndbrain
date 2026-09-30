@@ -1311,10 +1311,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * The secret comes back in this response and nowhere else, ever — only its
    * SHA-256 is stored. That is the whole security model of the thing, so the
    * response says so and the interface has to make it impossible to miss.
+   *
+   * `expiresInDays` is left out by most callers, and the service then applies
+   * the default lifetime. Deliberately not defaulted here: a default written in
+   * the route is a default the CLI does not have, and two places that both
+   * decide how long a key lasts is how they come to disagree.
    */
   fastify.post('/api/v1/admin/keys', async (request, reply) => {
     requireAdmin(request);
-    const { owner, name, scope, canWrite } = body(request, S.CreateKeyRequest);
+    const { owner, name, scope, canWrite, expiresInDays } = body(request, S.CreateKeyRequest);
 
     if (users.get(owner) === undefined) {
       return reply.code(404).send({ code: 'unknown_user', message: 'no such account' });
@@ -1322,6 +1327,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
     const created = keys.create(owner, name, {
       ...(scope === undefined ? {} : { scope }),
+      ...(expiresInDays === undefined ? {} : { expiresInDays }),
       canWrite: canWrite ?? false,
     });
     // Flattened: the service hands back { key, secret }, and the secret belongs

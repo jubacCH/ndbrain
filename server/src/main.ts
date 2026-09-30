@@ -33,6 +33,32 @@ async function main(): Promise<void> {
           'It stays on disk and out of search until it is renamed.',
       );
     },
+    /**
+     * Said plainly, and with what to do about it.
+     *
+     * The failure this is here to prevent is an agent getting a 401 one morning
+     * with nothing anywhere to explain it, so the line names the key, the
+     * account and the day, and the command that renews it — because the person
+     * reading it at that point is looking for the command, not for the reason.
+     */
+    onExpiringKeys: (keys) => {
+      for (const key of keys) {
+        // `expiringSoon` only ever returns keys that have a deadline; this
+        // narrows the type rather than covering a case that can occur.
+        if (key.expiresAt === null) continue;
+
+        const day = new Date(key.expiresAt).toISOString().slice(0, 10);
+        const days = Math.max(0, Math.ceil((key.expiresAt - Date.now()) / 86_400_000));
+        warn(
+          `agent key "${key.name}" (${key.id}) for ${key.owner} expires on ${day}, ` +
+            `in ${days} day${days === 1 ? '' : 's'} — whatever uses it will start getting 401 ` +
+            'then, with no other sign. Make its replacement with: ' +
+            `ndbrain-user key create ${key.owner} "${key.name}"` +
+            `${key.canWrite ? ' --write' : ''}${key.scope === '' ? '' : ` --scope ${key.scope}`}` +
+            `, then: ndbrain-user key revoke ${key.id}`,
+        );
+      }
+    },
   });
 
   // Built before the server and started after it: the health endpoint has to be
