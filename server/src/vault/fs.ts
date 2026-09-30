@@ -439,6 +439,59 @@ export class Vault {
       return false;
     }
   }
+
+  /**
+   * The folders with nothing whatsoever in them — the tidy view's sixth finding.
+   *
+   * What replaced the pruning `removeDirIfEmpty` describes. "Nothing
+   * whatsoever" counts hidden entries too, unlike every other listing here,
+   * and counts a subfolder as something: what comes back is exactly the set of
+   * folders `removeDirIfEmpty` will succeed on, so the finding can never offer
+   * an action that then fails. A `.DS_Store` an rsync brought along keeps a
+   * folder off this list, and rightly — `rmdir` refuses it as surely as it
+   * refuses a note.
+   *
+   * A prepared chain therefore surfaces one level at a time, deepest first: of
+   * `Projekte/2026/Q1` only `Q1` is empty while it is in there, and removing it
+   * makes `2026` the next answer. A folder at a time, which is the shape of the
+   * removal it leads to.
+   *
+   * The vault root is never reported: an empty vault is a new vault, not an
+   * untidy one, and it is the one directory nothing may offer to remove.
+   *
+   * Read off the filesystem, because the index is built from notes and an empty
+   * folder has none — the same reason the tree reads its folders from disk.
+   */
+  async listEmptyDirs(owner: string): Promise<string[]> {
+    const root = this.rootFor(owner);
+    const out: string[] = [];
+
+    const walk = async (dir: string, prefix: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+
+      if (entries.length === 0) {
+        if (prefix !== '') out.push(prefix);
+        return;
+      }
+
+      for (const entry of entries) {
+        if (isHidden(entry.name) || !entry.isDirectory()) continue;
+        await walk(
+          path.join(dir, entry.name),
+          prefix === '' ? entry.name : `${prefix}/${entry.name}`,
+        );
+      }
+    };
+
+    await walk(root, '');
+    out.sort((a, b) => a.localeCompare(b));
+    return out;
+  }
 }
 
 async function realpathOrSelf(target: string): Promise<string> {

@@ -44,8 +44,9 @@ function tidy(overrides: Partial<Tidy> = {}): Tidy {
     stale: [],
     conflicts: [],
     missing: [],
+    emptyFolders: [],
     truncated: false,
-    totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0 },
+    totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0, emptyFolders: 0 },
     ...overrides,
   };
 }
@@ -81,7 +82,7 @@ describe('narrowing to one finding', () => {
         data={tidy({
           orphans: [note('Allein.md'), note('Einsam.md')],
           deadLinks: [{ owner: 'julian', source: 'Kaputt.md', targetRaw: 'Nirgends', targetPath: null, heading: null, alias: null, offset: 0 }],
-          totals: { orphans: 2, untagged: 0, deadLinks: 1, stale: 0, conflicts: 0, missing: 0 },
+          totals: { orphans: 2, untagged: 0, deadLinks: 1, stale: 0, conflicts: 0, missing: 0, emptyFolders: 0 },
         })}
         selected={selected}
         busy={false}
@@ -196,7 +197,7 @@ describe('"select all"', () => {
           { owner: 'julian', path: 'Verirrt.md', title: 'Verirrt', size: 1, mtimeMs: 1 },
         ],
         conflicts: [conflict()],
-        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 1, missing: 0 },
+        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 1, missing: 0, emptyFolders: 0 },
       }),
     });
 
@@ -217,7 +218,7 @@ describe('"select all"', () => {
       data: tidy({
         orphans: [{ owner: 'julian', path: 'Verirrt.md', title: 'Verirrt', size: 1, mtimeMs: 1 }],
         conflicts: [conflict()],
-        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 1, missing: 0 },
+        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 1, missing: 0, emptyFolders: 0 },
       }),
       selected: new Set(['Verirrt.md', 'Projekt/Plan (Konflikt 2026-09-11 10.58).md']),
     });
@@ -234,7 +235,7 @@ describe('a truncated answer', () => {
       data: tidy({
         conflicts: [conflict()],
         truncated: true,
-        totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 5, missing: 0 },
+        totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 5, missing: 0, emptyFolders: 0 },
       }),
     });
 
@@ -269,7 +270,7 @@ describe('asked for, never written', () => {
   const pricing = tidy({
     deadLinks: [link('Services.md', 'Pricing'), link('Offer.md', 'Pricing')],
     missing: [{ owner: 'julian', name: 'Pricing', asked: ['Offer.md', 'Services.md'] }],
-    totals: { orphans: 0, untagged: 0, deadLinks: 2, stale: 0, conflicts: 0, missing: 1 },
+    totals: { orphans: 0, untagged: 0, deadLinks: 2, stale: 0, conflicts: 0, missing: 1, emptyFolders: 0 },
   });
 
   it('names the gap, counts the notes that ask, and lists every one of them', () => {
@@ -301,7 +302,7 @@ describe('asked for, never written', () => {
     renderTidy({
       data: tidy({
         deadLinks: [link('Services.md', 'Pricing')],
-        totals: { orphans: 0, untagged: 0, deadLinks: 1, stale: 0, conflicts: 0, missing: 0 },
+        totals: { orphans: 0, untagged: 0, deadLinks: 1, stale: 0, conflicts: 0, missing: 0, emptyFolders: 0 },
       }),
     });
 
@@ -356,7 +357,7 @@ describe('opening a finding without a mouse', () => {
     return renderTidy({
       data: tidy({
         orphans: [orphan],
-        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0 },
+        totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0, emptyFolders: 0 },
       }),
     });
   }
@@ -395,5 +396,99 @@ describe('opening a finding without a mouse', () => {
 
     await user.click(screen.getByRole('button', { name: 'Lose Notiz' }));
     expect(onOpen.mock.calls).toEqual([['Inbox/Lose Notiz.md']]);
+  });
+});
+
+/**
+ * Empty folders — the sixth finding, and the one that used to be a deletion.
+ *
+ * Every delete and every move used to prune the folders it had emptied, and
+ * that removed structure somebody had prepared along with the leftovers. So the
+ * folder stays and is listed here instead, which makes two things load-bearing:
+ * it has to count as a finding (a vault whose only untidiness is four empty
+ * folders must not read as clean), and it must not pretend to be a note — no
+ * checkbox, no bulk action, because "delete the selected notes" is not what
+ * removing a folder is.
+ */
+describe('empty folders', () => {
+  const prepared = tidy({
+    emptyFolders: ['Projekte/2026/Q1'],
+    totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0, emptyFolders: 1 },
+  });
+
+  it('names the folder and offers to remove it', async () => {
+    const user = userEvent.setup();
+    const onDeleteFolder = vi.fn();
+    renderTidy({ data: prepared, onDeleteFolder });
+
+    const section = screen.getByRole('region', { name: copy.tidy.emptyFolders.title });
+    expect(within(section).getByText('Projekte/2026/Q1')).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', { name: copy.tidy.emptyFolders.deleteNamed('Projekte/2026/Q1') }),
+    );
+    expect(onDeleteFolder.mock.calls).toEqual([['Projekte/2026/Q1']]);
+  });
+
+  it('counts as a finding, so a vault of empty folders does not read as clean', () => {
+    renderTidy({ data: prepared });
+
+    expect(screen.getByText(/^1 finding/)).toBeInTheDocument();
+    expect(screen.queryByText(copy.tidy.clean)).toBeNull();
+  });
+
+  /**
+   * A folder is not a note. The bulk bar deletes notes by path, and a folder
+   * path handed to it would be refused by the server — the section keeps its own
+   * button and stays out of the selection entirely.
+   */
+  it('is not selectable and adds nothing to the bulk selection', () => {
+    const { onToggleAll } = renderTidy({ data: prepared });
+
+    const section = screen.getByRole('region', { name: copy.tidy.emptyFolders.title });
+    expect(within(section).queryByRole('checkbox')).toBeNull();
+    expect(onToggleAll).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The bar moves, tags and deletes notes. A folder goes through its own
+   * button, so a vault whose only finding is a folder must not be given three
+   * disabled controls that do not fit it.
+   */
+  it('shows no bulk bar when it is the only finding', () => {
+    renderTidy({ data: prepared });
+
+    expect(screen.queryByRole('button', { name: copy.tidy.delete })).toBeNull();
+    expect(screen.queryByText(copy.tidy.nothingSelected)).toBeNull();
+  });
+
+  it('is absent altogether when every folder holds something', () => {
+    renderTidy({ data: tidy() });
+
+    expect(screen.queryByRole('region', { name: copy.tidy.emptyFolders.title })).toBeNull();
+  });
+
+  it('stays out of sight while another finding is being worked through', async () => {
+    const user = userEvent.setup();
+    renderTidy({
+      data: tidy({
+        ...prepared,
+        orphans: [{ owner: 'julian', path: 'Verirrt.md', title: 'Verirrt', size: 1, mtimeMs: 1 }],
+        totals: { ...prepared.totals, orphans: 1 },
+      }),
+      health: { notes: 10, tagsInUse: false },
+    });
+
+    await user.click(screen.getByRole('button', { name: /^Show the 1 orphaned/ }));
+    expect(screen.queryByRole('region', { name: copy.tidy.emptyFolders.title })).toBeNull();
+  });
+
+  /** No handler wired: the list still says what it found, minus the button. */
+  it('lists the folder even where nothing can act on it', () => {
+    renderTidy({ data: prepared });
+
+    const section = screen.getByRole('region', { name: copy.tidy.emptyFolders.title });
+    expect(within(section).getByText('Projekte/2026/Q1')).toBeInTheDocument();
+    expect(within(section).queryByRole('button')).toBeNull();
   });
 });

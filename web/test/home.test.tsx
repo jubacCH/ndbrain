@@ -282,8 +282,9 @@ function tidy(): Tidy {
     stale: [row('Alt.md', 'Alt')],
     conflicts: [],
     missing: [],
+    emptyFolders: [],
     truncated: false,
-    totals: { orphans: 1, untagged: 1, deadLinks: 1, stale: 1, conflicts: 0, missing: 0 },
+    totals: { orphans: 1, untagged: 1, deadLinks: 1, stale: 1, conflicts: 0, missing: 0, emptyFolders: 0 },
   };
 }
 

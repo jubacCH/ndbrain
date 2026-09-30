@@ -191,6 +191,15 @@ export const TidyResponse = z.object({
   stale: z.array(NoteRow),
   conflicts: z.array(ConflictRow),
   missing: z.array(MissingNote),
+  /**
+   * Folders with nothing whatsoever in them, as vault-relative paths.
+   *
+   * Paths and not rows: there is no note behind one, so there is no title,
+   * no size and no last-touched to carry — and the owner is the caller, this
+   * answer being their own vault only. What used to happen to such a folder was
+   * that it got deleted; see the server's `App.emptyFolders`.
+   */
+  emptyFolders: z.array(z.string()),
   /** True when any list was capped. Shown, never swallowed. */
   truncated: z.boolean(),
   /** The real counts, so a capped list still reports what it stands for. */
@@ -201,6 +210,7 @@ export const TidyResponse = z.object({
     stale: z.number(),
     conflicts: z.number(),
     missing: z.number(),
+    emptyFolders: z.number(),
   }),
 });
 

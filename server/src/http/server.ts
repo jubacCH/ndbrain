@@ -1627,6 +1627,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // and the list can never disagree about what counts as a finding.
     const untagged = app.queries.untaggedFindings(owner);
     const conflicts = app.queries.conflictCopies(owner);
+    // Off the filesystem rather than out of the index — an empty folder has no
+    // note to be derived from. It is the one finding here that is not about a
+    // note at all, and it is here because it used to be a deletion: see
+    // `App.emptyFolders`.
+    const emptyFolders = await app.emptyFolders(owner);
     // Grouped from the whole dead-link list, above the cap. "Four notes ask for
     // this name" counted off a truncated page would be a smaller number handed
     // over as if it were the answer — and this is the one number in the reply
@@ -1640,13 +1645,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       stale: stale.slice(0, limit),
       conflicts: conflicts.slice(0, limit),
       missing: missing.slice(0, limit),
+      emptyFolders: emptyFolders.slice(0, limit),
       truncated:
         orphans.length > limit ||
         untagged.length > limit ||
         deadLinks.length > limit ||
         stale.length > limit ||
         conflicts.length > limit ||
-        missing.length > limit,
+        missing.length > limit ||
+        emptyFolders.length > limit,
       /** The real totals, so a capped list can still report what it stands for. */
       totals: {
         orphans: orphans.length,
@@ -1655,6 +1662,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         stale: stale.length,
         conflicts: conflicts.length,
         missing: missing.length,
+        emptyFolders: emptyFolders.length,
       },
     };
   });
