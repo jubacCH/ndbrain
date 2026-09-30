@@ -30,6 +30,14 @@
  * year may be finished rather than neglected, and a score that falls simply
  * because time passes would be a streak by another name.
  *
+ * Nor is "empty folder", the finding that replaced the automatic pruning of
+ * emptied folders. Two reasons, and the first is arithmetic: every share here
+ * is findings over *notes*, and a folder is not a note — there is no
+ * denominator it belongs to. The second is the same one as above: a folder
+ * somebody prepared for next quarter is not less healthy than one with notes
+ * in it, and a number that drops for having laid out a structure would be
+ * telling somebody off for using the feature.
+ *
  * The counts come from the caller's own vault only — the same findings the tidy
  * view lists — and so must the note count they are divided by.
  */

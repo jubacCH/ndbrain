@@ -565,7 +565,6 @@ export class App {
     }
 
     await this.notes.vault.deleteNote(owner, canonical);
-    await this.notes.vault.pruneEmptyDirs(owner, canonical);
   }
 
   async deleteNote(owner: string, notePath: string, actor?: string, options: Authorized = {}): Promise<void> {
@@ -1069,6 +1068,30 @@ export class App {
       throw new NotAFileError('the folder is not empty');
     }
     this.shares.dropFolder(owner, canonical);
+  }
+
+  /**
+   * The empty folders in one vault, as a tidy-up finding.
+   *
+   * This is what a deletion turned into. Every delete and every move used to
+   * prune the folders it had left empty, which removed prepared structure along
+   * with the leftovers — the two are indistinguishable on disk, and the vault
+   * has to survive being copied to another machine, so a marker file that could
+   * tell them apart was the wrong price. What is left is the thing this product
+   * is: it shows what stands out and the person decides.
+   *
+   * Own vault only, like every other finding: "untidy" is a verdict on how
+   * somebody keeps their notes, and a guest is not handed a list of folders to
+   * delete in a vault that is not theirs. It takes an owner rather than a view
+   * for exactly that reason — there is no shape of this answer that spans one.
+   *
+   * Not part of the health score. That number is findings divided by notes, and
+   * an empty folder is not a note; more to the point, a folder somebody
+   * prepared is not less healthy than one with notes in it — the same argument
+   * that keeps "untouched" out (see `healthScore.ts`).
+   */
+  async emptyFolders(owner: string): Promise<string[]> {
+    return this.notes.vault.listEmptyDirs(owner);
   }
 
   /**

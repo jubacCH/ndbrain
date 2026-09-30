@@ -60,8 +60,9 @@ function tidy(overrides: Partial<Tidy> = {}): Tidy {
     stale: [],
     conflicts: [],
     missing: [],
+    emptyFolders: [],
     truncated: false,
-    totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0 },
+    totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0, emptyFolders: 0 },
     ...overrides,
   };
 }
@@ -93,7 +94,7 @@ describe('narrowing the findings to one', () => {
     const user = userEvent.setup();
     const data = tidy({
       orphans: [note('Lose.md')],
-      totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0 },
+      totals: { orphans: 1, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0, emptyFolders: 0 },
     });
     render(<TidyView {...tidyProps(data)} health={{ notes: 10, tagsInUse: false }} />);
 
@@ -114,7 +115,7 @@ describe('narrowing the findings to one', () => {
           tidy({
             truncated: true,
             orphans: [note('Lose.md')],
-            totals: { orphans: 40, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0 },
+            totals: { orphans: 40, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0, emptyFolders: 0 },
           }),
         )}
       />,

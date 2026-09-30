@@ -645,7 +645,6 @@ export class NoteService {
       options.authorize?.();
       await this.#vault.deleteNote(owner, canonical);
       this.#lifecycle.removed(owner, canonical);
-      await this.#vault.pruneEmptyDirs(owner, canonical);
     });
   }
 
@@ -687,7 +686,6 @@ export class NoteService {
       // A rename may change what identifies the file (the change time, where a
       // filesystem has no birth time); the shares follow the file, not the stamp.
       await this.#lifecycle.rebind(owner, target, confirmed);
-      await this.#vault.pruneEmptyDirs(owner, source);
       return this.getNote(owner, target);
     };
 

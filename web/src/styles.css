@@ -6358,6 +6358,15 @@ ul.inspector-links,
   scroll-margin-top: var(--s-4);
 }
 
+/* Empty folders. The same distance from the findings table as the two sections
+   below, and no state colour on the row: an empty folder is not a defect —
+   preparing a structure before there are notes for it is what "New folder" is
+   for — so it is listed, not marked. The only colour in it is on the button,
+   which is destructive and says so. */
+.empty-folders {
+  margin-top: var(--s-6);
+}
+
 /* "Asked for, never written". Deliberately quiet: no pill, no state colour, no
    count that lights up. These are not findings against a note — nothing here is
    wrong — and drawing them like the findings above would read as a reproach. */

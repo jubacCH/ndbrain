@@ -491,19 +491,23 @@ export const TOOLS: ToolDefinition[] = [
   /**
    * The tidying half of the librarian, for an agent rather than for the eye.
    *
-   * **Which findings, and why these three.** The tidy view knows five. Three of
+   * **Which findings, and why these three.** The tidy view knows six. Three of
    * them name a defect an agent can actually repair with the tools it already
    * has: a dead link is fixed by correcting the `[[…]]` or writing the note it
    * names, an orphan by linking it from wherever it belongs, an untagged note
-   * by adding the tag the rest of the vault uses. The other two are not work,
+   * by adding the tag the rest of the vault uses. The other three are not work,
    * they are judgement. "Untouched for 90 days" is a number a person reads
    * against what the note is for — last spring's journal is not neglected — and
    * an agent that goes off "refreshing" old notes is doing the one thing it
    * must not do unasked. A conflict copy asks which of two versions of
    * somebody's own writing survives; that is a decision to put in front of the
-   * person, not a chore to hand to a key. Offering either would have been a
-   * number in a list, and a number an agent feels obliged to act on is worse
-   * than no number.
+   * person, not a chore to hand to a key. An empty folder is most often a
+   * structure somebody laid out on purpose, and the one action behind it is a
+   * delete — an agent removing folders because a list named them is exactly the
+   * mistake the automatic pruning used to make by itself, which is why that
+   * pruning is gone and this is a finding at all. Offering any of them would
+   * have been a number in a list, and a number an agent feels obliged to act on
+   * is worse than no number.
    *
    * `untaggedFindings` rather than `untagged`, so a vault that has never used a
    * tag is not reported as sixty defects — the same rule the overview and the

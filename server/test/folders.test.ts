@@ -257,6 +257,98 @@ describe('deleting a folder', () => {
   });
 });
 
+/**
+ * A folder outlives the notes that happened to be in it.
+ *
+ * Deleting or moving the last note out of a folder used to delete the folder,
+ * and every folder above it that was left empty by it. The intention was that a
+ * vault should not silt up with folders that only recall that a note used to be
+ * there — but nothing on disk tells such a folder apart from one somebody laid
+ * out on purpose, so it removed both. Whoever prepared `Projekte/2026/Q1` and
+ * then moved the last note out of it lost all three folders, which is this tool
+ * undoing the feature `createFolder` exists for.
+ *
+ * Guessing better was tried and dropped: the only way to tell the two apart is
+ * to write a marker into the vault, and a vault is a folder of Markdown that
+ * has to survive being copied to another machine — tool metadata scattered
+ * through it is a worse price than the problem. So nothing is deleted behind
+ * anybody's back any more. An empty folder is reported instead, in the tidy
+ * view, beside every other thing that stands out about a vault; see
+ * `emptyFolders` in `queries`-land and `tidy.test.ts`.
+ */
+describe('a folder outlives the notes in it', () => {
+  it('keeps the whole chain when the last note moves out of it', async () => {
+    await runtime.app.createFolder('julian', 'Projekte/2026/Q1');
+    await runtime.app.createNote('julian', 'Projekte/2026/Q1/Plan.md', '# Plan\n');
+
+    await runtime.app.renameNote('julian', 'Projekte/2026/Q1/Plan.md', 'Plan.md', {
+      view: 'julian',
+      actor: 'julian',
+    });
+
+    expect(await runtime.app.notes.listDirs('julian')).toEqual([
+      'Projekte',
+      'Projekte/2026',
+      'Projekte/2026/Q1',
+    ]);
+  });
+
+  it('keeps it when the last note in it is deleted', async () => {
+    await runtime.app.createFolder('julian', 'Archiv/2024');
+    await runtime.app.createNote('julian', 'Archiv/2024/Alt.md', 'x');
+
+    await runtime.app.deleteNote('julian', 'Archiv/2024/Alt.md');
+
+    expect(await runtime.app.notes.listDirs('julian')).toContain('Archiv/2024');
+  });
+
+  /**
+   * The same now goes for a folder nobody prepared, which is the behaviour that
+   * was given up on purpose: `Inbox` here came into being because a note was
+   * saved into it, and it stays behind empty. Deleting it is one click in the
+   * tidy view, and it is the person's click.
+   */
+  it('keeps a folder that only ever held that one note', async () => {
+    await runtime.app.createNote('julian', 'Inbox/Schnell.md', 'x');
+
+    await runtime.app.deleteNote('julian', 'Inbox/Schnell.md');
+
+    expect(await runtime.app.notes.listDirs('julian')).toEqual(['Inbox']);
+  });
+
+  /** rsync, Finder, a shell on the host: somebody made that folder on purpose too. */
+  it('keeps a folder made outside ndBrain', async () => {
+    await fs.mkdir(path.join(dataDir, 'vaults', 'julian', 'Extern/Unterordner'), {
+      recursive: true,
+    });
+    await runtime.app.createNote('julian', 'Extern/Unterordner/Notiz.md', 'x');
+
+    await runtime.app.deleteNote('julian', 'Extern/Unterordner/Notiz.md');
+
+    expect(await runtime.app.notes.listDirs('julian')).toContain('Extern/Unterordner');
+  });
+
+  /**
+   * The one place that still removes folders on its own, and it stays: a folder
+   * rename rebuilds the whole tree under the new name, so leaving the old one
+   * behind would show the same structure twice and give every link two homes.
+   * That is not a guess about intent — the folder was moved, by request.
+   */
+  it('still leaves nothing of the old tree behind when a folder is renamed', async () => {
+    await runtime.app.createNote('julian', 'Homelab/Netz/VLANs.md', '# VLANs\n');
+    await runtime.app.createFolder('julian', 'Homelab/Leer');
+
+    await runtime.app.renameFolder('julian', 'Homelab', 'Infrastruktur', {
+      view: 'julian',
+      actor: 'julian',
+    });
+
+    const dirs = await runtime.app.notes.listDirs('julian');
+    expect(dirs.filter((dir) => dir.startsWith('Homelab'))).toEqual([]);
+    expect(dirs).toEqual(['Infrastruktur', 'Infrastruktur/Leer', 'Infrastruktur/Netz']);
+  });
+});
+
 describe('the tenant boundary still holds', () => {
   it('does not let one user touch another vault through a folder call', async () => {
     await runtime.users.create('ramona', 'ihr gutes passwort');

@@ -829,6 +829,41 @@ function Shell({
   );
 
   /**
+   * Removes one empty folder, from the tidy view's finding.
+   *
+   * The whole of what replaced the automatic pruning: a folder that goes empty
+   * stays, the view says so, and this is the person acting on it. Confirmed
+   * first — a folder is not a note and does not come back through Recently
+   * deleted — though there is nothing in it to lose, so the question says that
+   * rather than warning about data.
+   *
+   * No `settle()` before it, unlike the note operations: nothing that could be
+   * in flight writes into an empty folder, and if something does land there
+   * between the listing and the click, the server refuses the delete because
+   * the folder is no longer empty. That refusal is the right answer and it is
+   * the server's to give.
+   */
+  const removeEmptyFolder = useCallback(
+    async (dir: string): Promise<void> => {
+      if (!window.confirm(copy.ask.deleteFolder(dir))) return;
+
+      setBulkBusy(true);
+      try {
+        await api.deleteFolder(dir);
+        // The tree shows folders off the filesystem, and the finding comes from
+        // the same walk — both are stale the moment one goes.
+        invalidate.afterStructure(client);
+        setError(null);
+      } catch (caught) {
+        setError(caught instanceof ApiError ? caught.message : copy.errors.deleteFolderFailed);
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [client],
+  );
+
+  /**
    * The admin writes.
    *
    * Each one invalidates the two admin queries rather than patching state: the
@@ -2372,6 +2407,7 @@ function Shell({
                   }
                   onOpen={(path) => void openNote(user.id, path)}
                   onBulk={(action) => void runBulk(action)}
+                  onDeleteFolder={(dir) => void removeEmptyFolder(dir)}
                   after={<RecentlyDeleted self={user.id} onOpen={(owner, path) => void openNote(owner, path)} />}
                 />
               )}

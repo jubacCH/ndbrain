@@ -49,6 +49,7 @@ export function TidyView({
   onKeepSelected,
   onOpen,
   onBulk,
+  onDeleteFolder,
   busy,
   tags,
   dirs,
@@ -68,6 +69,13 @@ export function TidyView({
   onKeepSelected?: (paths: string[]) => void;
   onOpen: (path: string) => void;
   onBulk: (action: 'move' | 'tag' | 'delete') => void;
+  /**
+   * Removes one empty folder. Its own handler rather than the bulk bar: a
+   * folder is not a note, and "delete the selected notes" is not what removing
+   * it is. Left out, the folders are listed without a button — a finding is
+   * worth stating even where nothing here can act on it.
+   */
+  onDeleteFolder?: (path: string) => void;
   busy: boolean;
   tags: Array<{ tag: string; count: number }>;
   dirs: string[];
@@ -141,13 +149,32 @@ export function TidyView({
   // They still count toward "how many findings", "select all" and the bulk
   // bar, so every one of those stays honest about them rather than only about
   // the four findings that happen to fit the shared row shape.
-  const total = rows.length + data.conflicts.length;
+  //
+  // Empty folders count too, and for the same reason: a vault whose only
+  // untidiness is four folders nobody filled must not read as clean. They are
+  // not in the selection, though — the bulk bar acts on notes by path, and a
+  // folder is not one. "Asked for, never written" is the third section and is
+  // counted by neither, because it *is* the broken links, regrouped.
+  const total = rows.length + data.conflicts.length + data.emptyFolders.length;
+  /**
+   * How many of those the bulk bar can actually act on.
+   *
+   * The bar moves, tags and deletes notes by path. An empty folder has no note
+   * behind it and goes through its own button, so counting it here would put a
+   * bar with three disabled buttons under a vault whose only finding is a
+   * folder — controls that cannot be used, over a finding they do not fit.
+   */
+  const selectable = rows.length + data.conflicts.length;
   const shownRows = focus === null ? rows : rows.filter((r) => r.key === focus);
   const shownConflicts = focus === null || focus === 'conflicts' ? data.conflicts : [];
   // The missing names are the broken links regrouped, so they follow the broken
   // links when the view is narrowed. Narrowed to the orphans, they would be a
   // second subject on a screen that is meant to hold one.
   const shownMissing = focus === null || focus === 'broken' ? data.missing : [];
+  // No finding to narrow to of their own — the health cards name the four that
+  // make up the score, and this is not one of them — so they are shown with
+  // everything or not at all, never beside a finding somebody is working on.
+  const shownEmptyFolders = focus === null ? data.emptyFolders : [];
   const allPaths = [...new Set([...shownRows.map((r) => r.path), ...shownConflicts.map((c) => c.path)])];
   const allSelected = allPaths.length > 0 && selected.size === allPaths.length;
   const selectAll = (): void => onToggleAll(allPaths);
@@ -213,7 +240,7 @@ export function TidyView({
         bar, not a second one, so it must not depend on the four findings
         below it having found anything.
       */}
-      {total > 0 && (
+      {selectable > 0 && (
         <div className="bulkbar" data-active={selected.size > 0}>
           <span className="bulkcount">
             {selected.size === 0 ? copy.tidy.nothingSelected : copy.tidy.selected(selected.size)}
@@ -320,6 +347,10 @@ export function TidyView({
           onSelectAll={selectAll}
           onOpen={onOpen}
         />
+      )}
+
+      {shownEmptyFolders.length > 0 && (
+        <EmptyFoldersSection folders={shownEmptyFolders} onDelete={onDeleteFolder} />
       )}
 
       {shownMissing.length > 0 && <MissingSection missing={shownMissing} onOpen={onOpen} />}
@@ -573,6 +604,78 @@ function ConflictSection({
                     )}
                   </td>
                   <td className="n">{ago(c.mtimeMs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Empty folders — the finding that used to be a deletion.
+ *
+ * Every delete and every move used to prune the folders it had left empty,
+ * walking up from the note. It could not tell a folder somebody had laid out
+ * from one that only ever held the note which just left — nothing on disk says
+ * which is which — so it removed both, and whoever prepared `Projekte/2026/Q1`
+ * lost all three folders by moving a note. Telling them apart needed a marker
+ * file in the vault, and a vault has to survive being copied to another
+ * machine; so the folder stays, and this section is what happens instead.
+ *
+ * **The wording states what is the case and stops there.** An empty folder is
+ * not a defect: preparing a structure before there are notes for it is the
+ * reason "New folder" exists. So it is listed, not judged, and the delete is
+ * offered rather than urged — the same register as the conflict copies above,
+ * which say what was kept and leave the choice.
+ *
+ * Its own delete button, not the bulk bar: that bar deletes notes by path, and
+ * a folder handed to it would be refused by the server. One folder at a time is
+ * also the truth of the operation — the server removes a folder only when it is
+ * empty, so a parent full of empty folders goes after its children, and the
+ * list says so by only ever naming what can go now.
+ */
+function EmptyFoldersSection({
+  folders,
+  onDelete,
+}: {
+  folders: string[];
+  /** Absent where the shell wires none: the finding is still worth stating. */
+  onDelete: ((path: string) => void) | undefined;
+}): React.JSX.Element {
+  return (
+    <section className="empty-folders" aria-label={copy.tidy.emptyFolders.title}>
+      <h3 className="h-big" style={{ fontSize: 'var(--t-md)' }}>{copy.tidy.emptyFolders.title}</h3>
+      <p className="h-sub">{copy.tidy.emptyFolders.hint}</p>
+      <div className="tablewrap">
+        <div className="tablescroll">
+          <table>
+            <thead>
+              <tr>
+                <th>{copy.tidy.emptyFolders.folder}</th>
+                <th className="n">
+                  <span className="sr-only">{copy.tidy.emptyFolders.delete}</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {folders.map((folder) => (
+                <tr key={folder}>
+                  <td className="pth">{folder}</td>
+                  <td className="n">
+                    {onDelete !== undefined && (
+                      <button
+                        type="button"
+                        className="btn btn-danger"
+                        aria-label={copy.tidy.emptyFolders.deleteNamed(folder)}
+                        onClick={() => onDelete(folder)}
+                      >
+                        {copy.tidy.emptyFolders.delete}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

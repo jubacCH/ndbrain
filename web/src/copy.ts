@@ -237,6 +237,10 @@ export const copy = {
     deleteNotes: (count: number) => `Delete ${count} notes?`,
     deleteFile: (name: string) => `Delete “${name}”? This cannot be undone.`,
     deleteNote: (name: string) => `Delete “${name}”?`,
+    /* Says it is empty, because that is the whole reason it may go and the one
+       thing worth checking before it does. No "cannot be undone": there is
+       nothing in it to lose, and recreating it is one click. */
+    deleteFolder: (path: string) => `Delete the empty folder “${path}”?`,
     /**
      * What a delete leaves to bring back, from the server's preview. Empty when
      * the preview could not be had: better to say nothing than something untrue.
@@ -339,6 +343,10 @@ export const copy = {
     replaceFailed: 'Could not replace that file.',
     deleteFileFailed: 'Could not delete that file.',
     deleteNoteFailed: 'Could not delete that note.',
+    /* Names the likeliest reason rather than only the failure: between the
+       listing and the click, something may have been put in the folder — by
+       another tab, by an rsync, by Obsidian. */
+    deleteFolderFailed: 'Could not delete that folder — something may have been put in it since.',
     importFailed: (count: number, first: string) => `Could not import ${count}: ${first}`,
     /**
      * The one that was half-translated. Whole here, so it cannot happen again.
@@ -457,6 +465,26 @@ export const copy = {
       /** The heading over the notes behind one name: the sources for the count. */
       from: 'Asked for in',
       openNamed: (title: string) => `Open ${title}`,
+    },
+
+    /**
+     * Empty folders — the finding that used to be a deletion.
+     *
+     * Every delete and every move used to prune the folders it had emptied,
+     * which took prepared structure with it. So the wording states what is the
+     * case and nothing else: this folder has nothing in it. It does not say it
+     * should go, because a folder laid out for next quarter is exactly as
+     * likely as a leftover, and only the person knows which this is.
+     */
+    emptyFolders: {
+      title: 'Empty folders',
+      hint:
+        'Folders with nothing in them. Preparing a structure before there are notes for it is ' +
+        'perfectly normal — these are listed, not judged, and nothing removes them on its own.',
+      /** Column head over the paths. */
+      folder: 'Folder',
+      delete: 'Delete',
+      deleteNamed: (path: string) => `Delete the empty folder ${path}`,
     },
   },
 

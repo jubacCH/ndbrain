@@ -91,6 +91,9 @@ const server = vi.hoisted(() => ({
   /** What the delete preview answers; null makes it fail. */
   preview: null as { restorable: number; unsaved: number; notYours: number; unknown: number; history: 'none' | 'empty' | 'ready' | 'broken' } | null,
   previews: [] as Array<[string, string[]]>,
+  /** Empty folders the tidy view will report, and the ones it asked to remove. */
+  emptyFolders: [] as string[],
+  deletedFolders: [] as string[],
 }));
 
 vi.mock('../src/api', async (original) => {
@@ -111,8 +114,9 @@ vi.mock('../src/api', async (original) => {
       stale: [],
       conflicts: [],
       missing: [],
+      emptyFolders: server.emptyFolders,
       truncated: false,
-      totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0 },
+      totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0, emptyFolders: server.emptyFolders.length },
     }),
     shares: async () => ({ granted: [], received: server.received }),
     tags: async () => ({ tags: [] }),
@@ -184,6 +188,11 @@ vi.mock('../src/api', async (original) => {
       server.previews.push([owner, paths]);
       if (server.preview === null) throw new real.ApiError(500, 'internal', 'no');
       return server.preview;
+    },
+    deleteFolder: async (path: string) => {
+      server.deletedFolders.push(path);
+      server.emptyFolders = server.emptyFolders.filter((dir) => dir !== path);
+      return {};
     },
     deleteNote: async (owner: string, path: string) => {
       server.log.push(`delete-start ${path}`);
@@ -259,6 +268,8 @@ beforeEach(() => {
   // Two notes link to the plan, one of them twice; the plan links to itself.
   server.backlinks = new Map([[PLAN, [{ source: 'Index.md' }, { source: 'Index.md' }, { source: 'Projects/Log.md' }, { source: PLAN }]]]);
   server.deleted = [];
+  server.emptyFolders = [];
+  server.deletedFolders = [];
   server.written = [];
   server.calls = { tree: 0, graph: 0, links: 0 };
   server.linksDelayMs = 0;
@@ -587,6 +598,55 @@ describe('a bulk delete from Tidy up', () => {
     expect(confirm).toHaveBeenCalledWith(
       `${copy.ask.deleteNotes(1)} No version of it has been saved yet, so it cannot be restored.`,
     );
+  });
+});
+
+/**
+ * The empty-folder finding, which is the one thing in this view that does not
+ * delete a note.
+ *
+ * It replaced the automatic pruning of emptied folders — that deleted prepared
+ * structure nobody had named — so the click that removes one has to reach the
+ * folder endpoint, not the note one, and it has to ask first. A folder does not
+ * come back through Recently deleted.
+ */
+describe('an empty folder from Tidy up', () => {
+  it('asks, removes the folder, and takes the finding off the list', async () => {
+    server.emptyFolders = ['Projekte/2026/Q1'];
+    mount();
+    await user.click(await screen.findByRole('button', { name: copy.nav.tidy }));
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: copy.tidy.emptyFolders.deleteNamed('Projekte/2026/Q1'),
+      }),
+    );
+
+    expect(confirm).toHaveBeenCalledWith(copy.ask.deleteFolder('Projekte/2026/Q1'));
+    await waitFor(() => expect(server.deletedFolders).toEqual(['Projekte/2026/Q1']));
+    // Not a note delete, whatever the view it was clicked in.
+    expect(server.deleted).toEqual([]);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', {
+          name: copy.tidy.emptyFolders.deleteNamed('Projekte/2026/Q1'),
+        }),
+      ).toBeNull(),
+    );
+  });
+
+  it('leaves the folder alone when the question is declined', async () => {
+    confirm.mockReturnValue(false);
+    server.emptyFolders = ['Leer'];
+    mount();
+    await user.click(await screen.findByRole('button', { name: copy.nav.tidy }));
+
+    await user.click(
+      await screen.findByRole('button', { name: copy.tidy.emptyFolders.deleteNamed('Leer') }),
+    );
+
+    expect(confirm).toHaveBeenCalled();
+    expect(server.deletedFolders).toEqual([]);
   });
 });
 
