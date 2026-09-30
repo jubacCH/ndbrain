@@ -65,6 +65,9 @@ const server = vi.hoisted(() => ({
   writes: [] as Array<{ path: string; content: string; base: string | undefined }>,
   /** How many times the version of a note was asked for, by path. */
   versionCalls: new Map<string, number>(),
+  /** How many times the pulse asked. Counted separately from the version, so
+      a test can say which of the two timers stopped. */
+  pulseCalls: 0,
   /** Whether the version endpoint fails, as it does for a note that went away. */
   versionFails: false,
   /** How long the version endpoint takes, for the answer that arrives too late. */
@@ -91,7 +94,10 @@ vi.mock('../src/api', async (original) => {
     }),
     shares: async () => ({ granted: [], received: server.received }),
     tags: async () => ({ tags: [] }),
-    pulse: async () => ({ events: [], now: 1 }),
+    pulse: async () => {
+      server.pulseCalls += 1;
+      return { events: [], now: 1 };
+    },
     propKeys: async () => ({ props: [] }),
     history: async () => ({ available: false, versions: [] }),
     graph: async () => ({ nodes: [], edges: [] }),
@@ -203,6 +209,7 @@ beforeEach(() => {
   ]);
   server.writes = [];
   server.versionCalls = new Map();
+  server.pulseCalls = 0;
   server.versionFails = false;
   server.versionDelayMs = 0;
 });
@@ -482,5 +489,34 @@ describe('taking their version instead', () => {
     expect(server.writes).toEqual([]);
     expect(window.__ndbrainPending).toBeNull();
     await waitFor(() => expect(warned()).toBeNull());
+  });
+});
+
+describe('the pulse, while the tab is hidden', () => {
+  it('stops asking too, which its own docstring already argued for', async () => {
+    // The pulse runs on the note view as well, to light up the neighbourhood
+    // column. Its docstring reasons that polling "for something nobody is
+    // looking at" keeps the server busy — but "background" there meant another
+    // view, not a hidden tab, and the effect only checked the view. A window
+    // left open behind another one went on asking every two seconds.
+    //
+    // Told apart from the version poll by which call arrives: both timers live
+    // in the same file and a total request count could not say which stopped.
+    mount();
+    await openFromPalette('Plan');
+    await advance(2100);
+    expect(server.pulseCalls).toBeGreaterThan(0);
+
+    await hidden(true);
+    const askedBefore = server.pulseCalls;
+    await advance(6000);
+
+    expect(server.pulseCalls).toBe(askedBefore);
+
+    // And it picks up again, rather than staying quiet until the next view
+    // change — a tab somebody comes back to is a tab somebody is looking at.
+    await hidden(false);
+    await advance(2100);
+    expect(server.pulseCalls).toBeGreaterThan(askedBefore);
   });
 });

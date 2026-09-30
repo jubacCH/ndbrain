@@ -1291,10 +1291,16 @@ function Shell({
    * the server busy for something nobody is looking at, and the events would be
    * missed on return anyway — they run through as a pulse rather than piling up
    * as a list.
+   *
+   * "Nobody is looking at" used to mean only the view, so a window left open
+   * behind another one went on asking every two seconds for a pulse that would
+   * animate nothing. `visible` is a dependency rather than a check inside the
+   * tick, so a hidden tab has no timer at all and a returning one asks at once.
    */
   useEffect(() => {
     // While writing too: the neighbourhood in the right column lights up with it.
     if (view !== 'brain' && view !== 'note') return;
+    if (!visible) return;
 
     let alive = true;
     const tick = (): void => {
@@ -1319,7 +1325,7 @@ function Shell({
     // The interval is in the dependencies, so changing it on the settings page
     // restarts the poll at the new rate rather than taking effect on the next
     // view switch.
-  }, [view, user.id, prefs.pulseMs]);
+  }, [view, user.id, prefs.pulseMs, visible]);
 
   /**
    * The open note's version: is the file still the one this screen was filled
