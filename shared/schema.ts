@@ -73,6 +73,21 @@ export const OpenNote = z.object({
   canWrite: z.boolean(),
 });
 
+/**
+ * A note's version on its own, without the note.
+ *
+ * What the editor polls while a note is open, to learn that the file is no
+ * longer the one it loaded *before* its next save displaces somebody's
+ * paragraph into a conflict copy. Deliberately the whole of the reply: the
+ * question is "is this still the text I started from", and a stamp, a size or a
+ * title beside the answer would be a stream of somebody's activity rather than
+ * one fact about one note.
+ */
+export const NoteVersionResponse = z.object({
+  /** The same opaque token `Note.hash` carries; see there. */
+  hash: z.string(),
+});
+
 export const SearchHit = NoteRow.extend({
   snippet: z.string(),
 });

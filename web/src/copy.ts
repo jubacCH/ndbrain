@@ -151,6 +151,29 @@ export const copy = {
     failed: 'Save failed',
   },
 
+  /**
+   * The open note is no longer the file it was filled from.
+   *
+   * Said in the same words as `errors.conflict`, which is the same event after
+   * the fact — one of them warns, the other reports, and somebody who reads
+   * both should not have to work out that they are about the same thing. Both
+   * avoid naming a person: the tab is told that the file changed, never who
+   * changed it or when, because that would be a report on somebody's working
+   * hours and a share is not consent to being watched.
+   *
+   * Two sentences and one control, deliberately. The second sentence is what
+   * makes this a warning rather than a notice — nothing here is broken, and the
+   * outcome of carrying on is a file beside the note rather than a lost
+   * paragraph. `loseTyped` is asked before the one action that does throw work
+   * away, and only when there is work to throw.
+   */
+  staleNote: {
+    said: 'Somebody else has changed this note since you opened it.',
+    whenSaving: 'Saving keeps your version and puts theirs alongside it as a conflict copy.',
+    load: 'Load their version',
+    loseTyped: 'Load their version? What you have typed here has not been saved yet and will be lost.',
+  },
+
   note: {
     none: 'No note open',
     /** Around a key shown as a keycap; the key itself is `paletteKey`. */

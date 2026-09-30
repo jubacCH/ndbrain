@@ -137,7 +137,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   }
 
   /**
-   * `target` for a read of a note's content, by somebody else than its owner.
+   * `target` for a look at a note's own file, by somebody else than its owner.
    *
    * A note share names one file. If that file was replaced behind ndBrain's
    * back and the watcher has not said so yet, the share is withdrawn here,
@@ -150,8 +150,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * query, and the difference told a stranger which of the owner's paths are
    * shared with somebody. For the grantee herself the confirmation costs what
    * it costs and reveals only what she already holds.
+   *
+   * `need` is what the route asks for afterwards. The note's own content needs
+   * `read`; its version — see `/version/*` — needs `write`, because being told
+   * that a file changed is only of use to somebody who could overwrite it, and
+   * the confirmation above is worth making for either.
    */
-  async function readTarget(request: FastifyRequest): Promise<{ owner: string; path: string }> {
+  async function readTarget(
+    request: FastifyRequest,
+    need: Need = 'read',
+  ): Promise<{ owner: string; path: string }> {
     const caller = requireUser(request).id;
     const path = notePathOf(request);
     const owner = ownerOf(request, caller);
@@ -166,7 +174,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         await app.noteChanged(owner, canonical);
       }
     }
-    return target(request, 'read');
+    return target(request, need);
   }
 
   const fastify = Fastify({
@@ -494,6 +502,47 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       owner,
       canWrite: shares.allows(caller, owner, path, 'write'),
     };
+  });
+
+  /**
+   * Which version of a note is on disk right now — and nothing else.
+   *
+   * The editor polls this while a note is open, so that "somebody else has
+   * changed this since you opened it" can be said *before* the next save
+   * displaces their paragraph into a conflict copy. The copy was already made;
+   * this is the half that gives somebody the chance not to need it.
+   *
+   * **Why not the pulse.** `Queries.pulse` deliberately answers for the
+   * caller's own vault only, and its reasoning holds: when somebody works, how
+   * often and on what is information about that person, and a share is not
+   * consent to being watched. That is also exactly why it cannot answer this —
+   * the case the warning exists for is a note in *somebody else's* vault or in
+   * a space. So the question is narrowed instead of the pulse being widened.
+   * This answers one fact about one named note: whether the file still holds
+   * the text the asker was handed. It names no actor, no time and no other
+   * path, it is only ever asked about a note the caller already has open, and
+   * the same fact is already obtainable by reading that note again through the
+   * route above. Nothing is written down here either — a REST read logs
+   * nothing — so polling it cannot itself become a record of when somebody
+   * worked.
+   *
+   * **Write access, on a GET.** Unusual and deliberate: the warning is only of
+   * use to somebody who could overwrite the file, and a read-only reader
+   * polling a hash would be watching the owner edit. Narrowing it costs the
+   * reader nothing, since re-opening the note is their remedy either way.
+   * Refusal is `target`'s ordinary 404, so read-only, unshared and absent are
+   * one answer — see `Queries.deadLinks` for what an endpoint that tells them
+   * apart becomes.
+   *
+   * **Read, not looked up.** The index carries a hash of its own, and a query
+   * would be cheaper on paper — but it is a cache the watcher fills a quarter
+   * of a second late at best and five minutes late when an event is lost, and
+   * `node:sqlite` is synchronous, so a two-second poll would take the event
+   * loop with it. Reading one small file does not.
+   */
+  fastify.get('/api/v1/version/*', async (request) => {
+    const { owner, path } = await readTarget(request, 'write');
+    return { hash: await app.notes.noteVersion(owner, path) };
   });
 
   fastify.put('/api/v1/notes/*', async (request, reply) => {

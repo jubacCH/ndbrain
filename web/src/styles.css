@@ -4612,6 +4612,19 @@ kbd,
   color: var(--text-2);
 }
 
+/* The note that has moved on under the editor: the offline bar's slot and its
+   look, since the two answer the same kind of question. The control goes to the
+   far end so it is not read as the end of the sentence, and the row centres
+   rather than sitting on the baseline, which a button in it would break. */
+.stalebar {
+  align-items: center;
+}
+
+.stalebar .btn {
+  margin-left: auto;
+  flex: none;
+}
+
 .trouble {
   display: flex;
   flex-wrap: wrap;

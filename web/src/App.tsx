@@ -153,6 +153,25 @@ function useMedia(query: string): boolean {
   return matches;
 }
 
+/**
+ * Whether this tab is the one being looked at.
+ *
+ * For the polls: a tab in the background is asking the server questions nobody
+ * is there to read the answers to. Subscribed rather than read once, so the
+ * effects that depend on it are torn down when the tab is hidden and built
+ * again — with their first request going out at once — when it comes back.
+ */
+function useVisible(): boolean {
+  const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
+  useEffect(() => {
+    const onChange = (): void => setVisible(document.visibilityState !== 'hidden');
+    onChange();
+    document.addEventListener('visibilitychange', onChange);
+    return () => document.removeEventListener('visibilitychange', onChange);
+  }, []);
+  return visible;
+}
+
 /** The same width at which `styles.css` turns the sidebar into a drawer. */
 const DRAWER_QUERY = '(max-width: 820px)';
 
@@ -336,6 +355,7 @@ function Shell({
   const revealSeq = useRef(0);
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
   const narrow = useMedia(DRAWER_QUERY);
+  const visible = useVisible();
   const systemDark = useMedia('(prefers-color-scheme: dark)');
   /** Which theme is on screen, whatever chose it — the header button flips from here. */
   const dark = isDark(prefs.theme, systemDark);
@@ -376,12 +396,14 @@ function Shell({
     openNow,
     setOpenRef,
     saveState,
+    stale,
     deletingKeys,
     hasPending,
     scheduleSave,
     flush,
     settle,
     opened,
+    sawVersion,
     closed,
     forget,
     discard,
@@ -699,15 +721,22 @@ function Shell({
   }, [notes, prefs.startView, openNote, user.id]);
 
   /**
-   * Reloads the open note after a restore.
+   * Builds the editor again from what the server holds right now.
    *
-   * The editor holds the old text and rebuilds only when (owner, path, readOnly)
-   * change — which is right while typing and wrong here, since the file on the
-   * server has just been replaced underneath it. Dropping the cached note and
-   * re-opening is what makes the restored text appear rather than sitting one
-   * save away from being overwritten again.
+   * The editor holds the text it was built from and rebuilds only when
+   * (owner, path, readOnly) change — which is right while typing and wrong in
+   * the two places that call this, where the file on the server is the truth
+   * and what is on screen is not: a version has just been restored over it, or
+   * somebody else's write has moved it on and the person has said they want
+   * that version rather than their own.
+   *
+   * `discard` first, and that is the whole reason this needs asking about
+   * before it is called: unsaved text goes, because the point is to stop this
+   * tab's version from being written. `setOpenRef(null)` between the two is
+   * what unmounts the editor, so the reopen builds a new one instead of leaving
+   * the old document on screen under fresh data.
    */
-  const reopenAfterRestore = useCallback(async (): Promise<void> => {
+  const reloadOpenNote = useCallback(async (): Promise<void> => {
     if (openRef === null) return;
     discard();
 
@@ -716,6 +745,18 @@ function Shell({
     await openNote(openRef.owner, openRef.path);
     invalidate.afterStructure(client);
   }, [openRef, client, openNote, discard]);
+
+  /**
+   * Takes the server's version of the open note, having said what that costs.
+   *
+   * Asked only when there is something to lose. A note with nothing unsaved in
+   * it loses nothing by being read again, and a question with "nothing will
+   * happen" as both answers teaches people to click through questions.
+   */
+  const loadTheirVersion = useCallback((): void => {
+    if (hasPending() && !window.confirm(copy.staleNote.loseTyped)) return;
+    void reloadOpenNote();
+  }, [hasPending, reloadOpenNote]);
 
   /**
    * Stores a pasted or dropped file beside the open note.
@@ -1250,10 +1291,16 @@ function Shell({
    * the server busy for something nobody is looking at, and the events would be
    * missed on return anyway — they run through as a pulse rather than piling up
    * as a list.
+   *
+   * "Nobody is looking at" used to mean only the view, so a window left open
+   * behind another one went on asking every two seconds for a pulse that would
+   * animate nothing. `visible` is a dependency rather than a check inside the
+   * tick, so a hidden tab has no timer at all and a returning one asks at once.
    */
   useEffect(() => {
     // While writing too: the neighbourhood in the right column lights up with it.
     if (view !== 'brain' && view !== 'note') return;
+    if (!visible) return;
 
     let alive = true;
     const tick = (): void => {
@@ -1278,7 +1325,61 @@ function Shell({
     // The interval is in the dependencies, so changing it on the settings page
     // restarts the poll at the new rate rather than taking effect on the next
     // view switch.
-  }, [view, user.id, prefs.pulseMs]);
+  }, [view, user.id, prefs.pulseMs, visible]);
+
+  /**
+   * The open note's version: is the file still the one this screen was filled
+   * from?
+   *
+   * The half of the concurrent-editing decision that was missing. A save that
+   * displaces a version nobody here had seen already keeps that version as a
+   * conflict copy — but you found out afterwards, from a file called
+   * `… (Konflikt …)` sitting beside your note. This is what makes it possible
+   * to know beforehand.
+   *
+   * **Its own request rather than the pulse above.** The pulse answers for the
+   * caller's own vault only, and deliberately: when somebody works, how often
+   * and on what is information about that person, and sharing a folder is not
+   * consent to being watched. Widening it would break exactly that, and the
+   * case this warning exists for — a note shared *for writing*, in somebody
+   * else's vault or in a space — is the case the pulse cannot cover. So the
+   * question is narrowed instead: one named note the person already has open,
+   * one fact about its file, no actor and no time. See the endpoint in
+   * `server/src/http/server.ts` for the rest of that reasoning.
+   *
+   * **And it stops.** Only while a note is open, only while this tab is the
+   * one being looked at, and only where the server said the note may be
+   * written — a read-only reader has nothing to displace, and polling a hash
+   * they cannot act on would be watching the owner type. `visible` is a
+   * dependency rather than a check inside the tick, so a hidden tab has no
+   * timer at all and a tab coming back asks at once.
+   *
+   * A failed request is silence, never "unchanged": the connection going away
+   * has its own bar, and a poll that quietly reset the warning would take it
+   * off the screen at the moment it is least able to know.
+   */
+  useEffect(() => {
+    if (view !== 'note' || openRef === null || !visible) return;
+    if (noteQuery.data?.canWrite !== true) return;
+
+    const { owner, path } = openRef;
+    let alive = true;
+    const tick = (): void => {
+      api
+        .noteVersion(owner, path)
+        .then(({ hash }) => {
+          if (alive) sawVersion(owner, path, hash);
+        })
+        .catch(() => undefined);
+    };
+
+    tick();
+    const timer = window.setInterval(tick, prefs.pulseMs);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [view, openRef, visible, noteQuery.data?.canWrite, prefs.pulseMs, sawVersion]);
 
   /**
    * The open note's neighbourhood: itself and whatever links to or from it.
@@ -1996,6 +2097,13 @@ function Shell({
 
         {!online && <OfflineBar />}
 
+        {/* Under the header, in the slot the offline bar uses and drawn like it:
+            the two answer the same kind of question — "why is what I am looking
+            at not quite what I think it is" — and something that is about the
+            whole note belongs where the eye already is rather than in a corner.
+            Only in the note view, where there is a note it can be about. */}
+        {view === 'note' && open !== null && stale && <StaleNoteBar onLoad={loadTheirVersion} />}
+
         <div className="stage">
           {/* `tabIndex={-1}` so the skip link can actually land here: without
               it the browser moves the document position and leaves the focus
@@ -2372,7 +2480,7 @@ function Shell({
                   note={{ owner: open.owner, path: open.note.path }}
                   self={user.id}
                   canCreate={open.canWrite}
-                  onRestored={() => void reopenAfterRestore()}
+                  onRestored={() => void reloadOpenNote()}
                   onOpen={(owner, path) => void openNote(owner, path)}
                   onCreate={(target) => void createFromDeadLink(target)}
                 />
@@ -2468,6 +2576,31 @@ function topLevelDirs(notes: NoteRow[]): string[] {
     if (first !== undefined && first !== note.path) dirs.add(first);
   }
   return [...dirs].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * The open note is no longer the file it was filled from.
+ *
+ * `role="status"` and not `role="alert"`: nothing is broken and nothing is
+ * lost, whatever happens next — the worst outcome of carrying on is a second
+ * file beside this one. A note somebody changed on their own second device is
+ * the common case, and a bar that shouts at them for it is a bar they learn to
+ * ignore. It says what is true, says what saving will do about it, and offers
+ * the one other thing that can be done.
+ *
+ * Not dismissible. There would be nothing to dismiss: it goes by itself the
+ * moment the next save makes the file this tab's, and while it is up it is
+ * still true.
+ */
+function StaleNoteBar({ onLoad }: { onLoad: () => void }): React.JSX.Element {
+  return (
+    <div className="offlinebar stalebar" role="status">
+      <strong>{copy.staleNote.said}</strong> <span>{copy.staleNote.whenSaving}</span>
+      <button type="button" className="btn" onClick={onLoad}>
+        {copy.staleNote.load}
+      </button>
+    </div>
+  );
 }
 
 function SaveIndicator({ state }: { state: SaveState }): React.JSX.Element {
