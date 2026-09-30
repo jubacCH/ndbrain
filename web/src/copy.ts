@@ -1061,6 +1061,22 @@ export const copy = {
     mayWrite: 'May write, not only read',
     revoked: 'revoked',
     revoke: 'Revoke',
+
+    /* Expiry. The column says the date; the pills say what to do about it. */
+    expires: 'Expires',
+    /** A key from before expiry existed, or one made for a job that outlives one. */
+    noExpiry: 'no expiry',
+    expired: 'expired',
+    /** Said in days, not as a date, because a date needs arithmetic to act on. */
+    expiresIn: (days: number) => (days === 1 ? 'tomorrow' : `in ${days} days`),
+    lifetime: 'Lasts',
+    lifetimeYear: 'A year',
+    lifetimeQuarter: 'Three months',
+    lifetimeMonth: 'A month',
+    lifetimeForever: 'Until revoked',
+    lifetimeExplain:
+      'A key nobody renews outlives whatever it was for. Pick “until revoked” only for something ' +
+      'unattended, like a job that runs once a month.',
     confirmRevoke: (name: string) => `Revoke “${name}”? Anything using it stops working immediately.`,
     keyRevoked: (name: string) => `“${name}” revoked.`,
     newKey: 'New key',
