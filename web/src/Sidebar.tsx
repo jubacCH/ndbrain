@@ -15,12 +15,19 @@
  *
  * On a phone the sidebar is a drawer instead, and folding does not apply: the
  * drawer is already out of the way until it is asked for.
+ *
+ * Open, that drawer is a dialog and is marked as one — it lies over the page
+ * rather than beside it, so the page behind it is not somewhere to go while it
+ * is there. `drawer` says which of the two this is; everything that follows
+ * from it is in `modal.ts`, and `Menu.tsx` is where the same three obligations
+ * were first written out by hand.
  */
 
 import { useRef, type ReactNode } from 'react';
 
 import { refKey, type NoteRow } from './api';
 import { copy } from './copy';
+import { useModalFocus } from './modal';
 import {
   BrainIcon,
   CalendarIcon,
@@ -69,6 +76,14 @@ export interface SidebarProps {
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onShowView: (view: NavView) => void;
+  /**
+   * Whether the sidebar is on screen as an open drawer over the page — a
+   * narrow window with the drawer out, and nothing else. Beside the page it is
+   * a landmark and must stay one: a `role="dialog"` on the desktop sidebar
+   * would take the navigation region away from a screen reader and trap the
+   * keyboard in a panel nobody opened.
+   */
+  drawer?: boolean;
   /** Closes the drawer on a phone. */
   onClose: () => void;
   filter: string;
@@ -99,6 +114,7 @@ export function Sidebar({
   collapsed,
   onToggleCollapsed,
   onShowView,
+  drawer = false,
   onClose,
   filter,
   onFilter,
@@ -116,6 +132,7 @@ export function Sidebar({
   onTodayNote,
 }: SidebarProps): React.JSX.Element {
   const filterInput = useRef<HTMLInputElement>(null);
+  const box = useRef<HTMLElement>(null);
 
   /** Folded, the filter is a button that unfolds the sidebar and puts the caret in it. */
   const openFilter = (): void => {
@@ -123,8 +140,27 @@ export function Sidebar({
     window.setTimeout(() => filterInput.current?.focus(), 0);
   };
 
+  /*
+   * The focus goes onto the panel itself rather than onto its first control,
+   * which is why the element carries `tabIndex={-1}` while it is a drawer. A
+   * screen reader then reads the panel's name before its contents, and the
+   * first Tab goes to the first control instead of skipping it — and there is
+   * no need to guess which control is first, which the folded-sidebar buttons
+   * make a guess: they are `display: none` at this width and CSS is not
+   * readable from here.
+   */
+  useModalFocus(drawer, box, onClose);
+
   return (
-    <nav className="nav" aria-label={copy.nav.label} data-collapsed={collapsed}>
+    <nav
+      ref={box}
+      className="nav"
+      aria-label={copy.nav.label}
+      data-collapsed={collapsed}
+      role={drawer ? 'dialog' : undefined}
+      aria-modal={drawer ? true : undefined}
+      tabIndex={drawer ? -1 : undefined}
+    >
       {/*
         Everything at once rather than one thing at a time. Tabs are a mode
         switch: they hide most of the tool behind a click. Something that stays

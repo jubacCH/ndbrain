@@ -974,7 +974,11 @@ function Shell({
     [settle, openNote, client, user.id, forget, openNow],
   );
 
+  // Both doors to these dialogs run through a row in the tree, which on a phone
+  // is inside the open drawer — and the drawer is itself a modal panel. The one
+  // that was just asked for keeps the keyboard; see `openPalette`.
   const openRename = useCallback((owner: string, path: string, title: string): void => {
+    setDrawerOpen(false);
     setRenameTarget({ owner, path, title });
   }, []);
 
@@ -1107,6 +1111,7 @@ function Shell({
   );
 
   const openShare = useCallback((owner: string, path: string, title: string): void => {
+    setDrawerOpen(false);
     setShareTarget({ owner, path, title });
   }, []);
 
@@ -1238,6 +1243,10 @@ function Shell({
    */
   const openPalette = useCallback((): void => {
     fullscreenRef.current?.leave();
+    // The drawer is a modal panel too, and two of them at once is one of them
+    // holding the keyboard while the other has the caret. The palette is the
+    // one that was just asked for, so the drawer goes.
+    setDrawerOpen(false);
     setPaletteOpen(true);
   }, []);
   const paletteOpenRef = useRef(paletteOpen);
@@ -1911,6 +1920,14 @@ function Shell({
   // drawer, and a folded drawer would be a drawer with nothing in it.
   const collapsed = prefs.sidebarCollapsed && !narrow;
 
+  /*
+   * Whether the sidebar is on screen as a panel over the page rather than as a
+   * column beside it. `drawerOpen` alone is not the same thing: it stays true
+   * across a window being widened, and the desktop sidebar must not become a
+   * dialog because a phone-sized moment left the flag set.
+   */
+  const drawerShown = narrow && drawerOpen;
+
   return (
     <OwnersContext.Provider value={owners}>
     <div
@@ -1950,6 +1967,7 @@ function Shell({
         view={view}
         arriving={arriving}
         collapsed={collapsed}
+        drawer={drawerShown}
         onToggleCollapsed={() => setPrefs((current) => ({ ...current, sidebarCollapsed: !current.sidebarCollapsed }))}
         onShowView={(next) => {
           setDrawerOpen(false);
@@ -2024,7 +2042,15 @@ function Shell({
         }
       />
 
-      <div className="work">
+      {/*
+        Out of reach behind the open drawer. The trap in `modal.ts` is what
+        actually holds a keyboard, and has to be — `inert` is a statement to the
+        browser and to a screen reader, and the one thing here jsdom does not
+        implement. Both, because they answer to different readers: `inert` also
+        takes the page out of a screen reader's virtual cursor, which no amount
+        of Tab handling does.
+      */}
+      <div className="work" inert={drawerShown || undefined}>
         <Topbar
           title={heading.title}
           subtitle={heading.subtitle}
