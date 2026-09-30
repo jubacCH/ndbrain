@@ -162,6 +162,32 @@ export class VaultWatcher {
       },
     });
 
+    // Files only. `addDir` and `unlinkDir` are deliberately not subscribed to,
+    // and the gap that leaves is worth writing down rather than guessing at
+    // later:
+    //
+    // - The index is built from notes. A directory event carries no note, so
+    //   there is nothing for the indexer to do with one.
+    // - Folders in the tree and in the file browser do not come from the index
+    //   at all: `Vault.listDirs` and `Vault.listAll` walk the filesystem on
+    //   every request, which is why an empty folder survives a full rebuild. So
+    //   a folder created or removed from outside is already visible in the next
+    //   answer, without any event and without waiting for a sweep.
+    // - A folder renamed from outside reaches us as its children's own `unlink`
+    //   and `add` events, which the handlers above index within one debounce
+    //   window — the notes are what move, and the notes are what is watched.
+    // - Watching a directory that appeared after start-up does not depend on
+    //   subscribing to `addDir`: chokidar arms new subdirectories as it
+    //   discovers them regardless of which events anybody listens for.
+    //   Measured with this configuration on macOS: a note written into a folder
+    //   created after `ready` arrives as an ordinary `add`, and renaming that
+    //   folder arrives as `unlink` plus `add` for the note inside it.
+    //
+    // What is therefore not noticed until the next `reconcile` is an *empty*
+    // folder appearing or disappearing — and nothing the person sees depends on
+    // that, because the two places folders are shown read the disk. A handler
+    // would buy latency for a question nobody asks the index. If folders ever
+    // do get derived from the index, this is the paragraph to come back to.
     this.#watcher
       .on('add', (file) => this.#queue(file, false))
       .on('change', (file) => this.#queue(file, false))
