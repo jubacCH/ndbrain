@@ -582,3 +582,74 @@ describe('with a history the server cannot read', () => {
     });
   });
 });
+
+/**
+ * The half of the damage that gets past the state probe.
+ *
+ * `state` reads the commit at HEAD and nothing else, so a repository missing
+ * only the tree that commit points at still answers `ready` — and every
+ * per-note read then fails, because a path can only be looked up through a
+ * tree. This is the fixture that actually exercises the two places `DeletedNotes`
+ * has to catch for itself; with a repository broken any harder, `state` reports
+ * `broken` first and those lines are never reached.
+ *
+ * It is not a contrived shape. A partially fetched or partially restored
+ * repository, and a disk that lost one object, look exactly like this.
+ */
+describe('with a history that reads at the top and not below it', () => {
+  /** Removes the loose object for HEAD's root tree, leaving the commit intact. */
+  async function dropRootTree(owner: string): Promise<void> {
+    const cwd = vaultDir(owner);
+    const tree = (await run('git', ['rev-parse', 'HEAD^{tree}'], { cwd })).stdout.trim();
+    await fs.rm(path.join(cwd, '.git', 'objects', tree.slice(0, 2), tree.slice(2)), { force: true });
+  }
+
+  beforeEach(async () => {
+    await initRepo('julian');
+    await h.runtime.app.createNote('julian', 'Plan.md', 'Vor dem Löschen.\n', 'julian');
+    await commit('julian');
+  });
+
+  it('is ready at the top and still reports the note as unreadable', async () => {
+    await del('julian', 'julian', 'Plan.md');
+    await dropRootTree('julian');
+
+    // The state probe is satisfied, which is the whole reason the per-note
+    // paths need their own answer rather than relying on it.
+    expect(await h.runtime.history.state('julian')).toBe('ready');
+
+    const [row] = (await list('julian')).body.notes;
+    expect(row).toMatchObject({ path: 'Plan.md', restore: 'broken', savedAt: null });
+  });
+
+  it('refuses the restore rather than claiming no version holds the note', async () => {
+    await del('julian', 'julian', 'Plan.md');
+    await dropRootTree('julian');
+
+    const refused = await restore('julian', 'julian', 'Plan.md');
+    expect(refused.status).toBe(503);
+    expect(refused.body.code).toBe('history_unreadable');
+  });
+
+  it('does not promise the delete question a way back it could not find', async () => {
+    await dropRootTree('julian');
+
+    const reply = await h.as('julian', {
+      method: 'POST',
+      url: '/api/v1/deleted/preview',
+      payload: { owner: 'julian', paths: ['Plan.md'] },
+    });
+
+    // The confirmation still has to appear — refusing to answer would leave the
+    // question with nothing to say about the way back at all — and it has to
+    // say the way back is unknown rather than that there is none.
+    expect(reply.status).toBe(200);
+    expect(reply.body).toEqual({
+      restorable: 0,
+      unsaved: 0,
+      notYours: 0,
+      unknown: 1,
+      history: 'broken',
+    });
+  });
+});

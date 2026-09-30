@@ -150,6 +150,21 @@ describe('the inspector', () => {
     expect(screen.queryByRole('heading', { name: copy.inspector.activity })).toBeNull();
   });
 
+  it('keeps the activity section to say the history could not be read', async () => {
+    // Leaving the section out is right for a note nobody has edited and wrong
+    // here: the card would quietly drop the one thing worth knowing, and this
+    // is the same emptiness the panel next to it has to explain.
+    vi.mocked(api.history).mockResolvedValue({ state: 'broken', versions: [] });
+    wrap(<Inspector index={index} picked={VEEAM} onPick={vi.fn()} onOpen={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: copy.inspector.activity })).toBeInTheDocument(),
+    );
+    expect(screen.getByText(copy.history.unreadable)).toBeInTheDocument();
+    // And no version rows, because there are none to show.
+    expect(screen.queryByText(copy.inspector.changed)).toBeNull();
+  });
+
   it('shows markup written as entities as the characters it spells, never as an element', async () => {
     vi.mocked(api.getNote).mockResolvedValue(
       note('# Backup to Azure\n\nBefore &lt;img src=x onerror="window.__pwnedEntity=1"&gt; and &#60;script&#62;alert(1)&#60;/script&#62; after.'),

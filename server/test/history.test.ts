@@ -515,3 +515,87 @@ describe('a sidecar that cannot be read', () => {
     }
   });
 });
+
+/**
+ * One object gone, and everything above it still fine.
+ *
+ * The listing works, the version is there with its timestamp and subject, and
+ * only the bytes are missing. This is the state where a `catch` that answers
+ * "the note did not exist at that version" does the most damage: the version
+ * is visibly in the list, so the reader is told this particular one is gone —
+ * and since a restore reads the same object, it is told twice.
+ *
+ * A lost loose object is the plainest corruption there is; the same shape comes
+ * out of an interrupted fetch or a repository half copied off a failing disk.
+ * It is also the only way to reach two of the decisions in `history.ts`, since
+ * anything broken harder is caught by the listing before them.
+ */
+describe('a sidecar missing only the bytes of a version', () => {
+  let id: string;
+
+  /** Removes the loose object for the note's content at HEAD, and nothing else. */
+  async function dropBlob(owner: string, notePath: string): Promise<void> {
+    const cwd = path.join(dataDir, 'vaults', owner);
+    const blob = (await run('git', ['rev-parse', `HEAD:${notePath}`], { cwd })).stdout.trim();
+    await fs.rm(path.join(cwd, '.git', 'objects', blob.slice(0, 2), blob.slice(2)), { force: true });
+  }
+
+  beforeEach(async () => {
+    await initRepo('julian');
+    await runtime.app.createNote('julian', 'Notiz.md', 'Fassung eins.\n');
+    await commit('julian', 'Vault-Stand · 1 geändert');
+    const listed = S.HistoryResponse.parse(
+      (await server.inject({ url: '/api/v1/history/Notiz.md', headers: { cookie } })).json(),
+    );
+    id = listed.versions[0]!.id;
+    await dropBlob('julian', 'Notiz.md');
+  });
+
+  it('still lists the version, because the commit and the tree are readable', async () => {
+    const listed = S.HistoryResponse.parse(
+      (await server.inject({ url: '/api/v1/history/Notiz.md', headers: { cookie } })).json(),
+    );
+
+    // Not `broken`: the listing genuinely succeeded, and calling it broken here
+    // would be the same overreach in the other direction.
+    expect(listed.state).toBe('ready');
+    expect(listed.versions).toHaveLength(1);
+  });
+
+  it('refuses the read as unreadable rather than as a version the note never had', async () => {
+    const response = await server.inject({
+      url: `/api/v1/history/Notiz.md?version=${id}`,
+      headers: { cookie },
+    });
+
+    // git says "bad object", not "does not exist in <commit>" — and only the
+    // second means the note was not in that commit. The version is right there
+    // in the list above, so "the note did not exist at that version" would be
+    // flatly contradicted by the panel showing it.
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ code: 'history_unreadable' });
+  });
+
+  it('refuses a restore of it for the same reason', async () => {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/v1/history/restore',
+      headers: { cookie },
+      payload: { owner: 'julian', path: 'Notiz.md', version: id },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ code: 'history_unreadable' });
+  });
+
+  it('does not take the missing bytes for a commit that recorded a deletion', async () => {
+    // `cat-file -e` exits 1 with nothing on stderr here, while a path genuinely
+    // absent from a commit exits 128 and says "does not exist in" — which is
+    // why the reason is read rather than the exit status. Taking this for a
+    // deletion would walk past the one version there is and answer "no saved
+    // version holds this note".
+    await expect(runtime.history.lastVersionBefore('julian', 'Notiz.md', Date.now())).rejects.toThrow(
+      HistoryUnreadableError,
+    );
+  });
+});
