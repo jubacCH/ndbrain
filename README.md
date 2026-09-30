@@ -46,8 +46,15 @@ with no arguments for the rest — passwords, agent keys, spaces, reindex.
 The vault and the index live on the host (`/srv/ndbrain/vaults` and `/srv/ndbrain/index` in
 `docker-compose.yml`), so removing the container can never take notes with it. TLS is expected to
 be terminated by a reverse proxy in front; `NDBRAIN_COOKIE_SECURE=false` is for a plain-HTTP test
-and nothing else, because the browser will otherwise drop the session cookie. The remaining
-settings and their defaults are in `server/src/config.ts`, which is short on purpose.
+and nothing else, because the browser will otherwise drop the session cookie. That same flag also
+decides whether `Strict-Transport-Security` is sent, so a plain-HTTP test cannot pin a browser to
+HTTPS for a year — the proxy adds no headers of its own, which is why this one comes from here.
+The remaining settings and their defaults are in `server/src/config.ts`, which is short on purpose.
+
+Every response carries a content security policy composed from the page actually being served:
+the theme bootstrap in `web/index.html` is allowed by digest, so `script-src` needs no
+`'unsafe-inline'`. Change that inline script and the digest follows by itself; see
+`server/src/http/csp.ts` for what each directive is there for.
 
 ## Layout
 

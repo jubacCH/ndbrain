@@ -16,7 +16,8 @@
  * nothing to operate on.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import nodePath from 'node:path';
 
 import cookiePlugin from '@fastify/cookie';
 import staticPlugin from '@fastify/static';
@@ -35,6 +36,7 @@ import type { Config } from '../config.js';
 import type { Database } from '../db/database.js';
 import type { ReconcileState } from '../index/watcher.js';
 import { missingNotes } from '../index/queries.js';
+import { contentSecurityPolicy, HSTS, inlineScriptHashes } from './csp.js';
 import { HealthProbe } from './health.js';
 import { toProblem } from './errors.js';
 import { NoteNotFoundError } from '../errors.js';
@@ -204,12 +206,71 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     done(null, payload);
   });
 
+  /**
+   * The content security policy, composed once from the page being served.
+   *
+   * Read at start-up rather than per request: the file does not change while the
+   * process runs — a deploy replaces the image — and hashing it on every reply
+   * would put a synchronous read in front of every response.
+   *
+   * With no web root there is no inline script to allow, so the policy is the
+   * strict one; see `csp.ts`. A web root whose `index.html` cannot be read is
+   * said out loud, because the consequence is subtle: the page would still load
+   * from `'self'`, only its theme bootstrap would be blocked, and a white flash
+   * on a dark phone is not something anybody traces back to a header.
+   */
+  const pageFile =
+    config.webRoot === undefined ? undefined : nodePath.join(config.webRoot, 'index.html');
+  let scriptHashes: string[] = [];
+  if (pageFile !== undefined) {
+    try {
+      scriptHashes = inlineScriptHashes(readFileSync(pageFile, 'utf8'));
+    } catch (error) {
+      fastify.log.warn(
+        { err: error, pageFile },
+        'could not read the page to hash its inline scripts — the content security ' +
+          'policy will block them, which shows up as the theme not applying before ' +
+          'the first paint',
+      );
+    }
+  }
+  const policy = contentSecurityPolicy(scriptHashes);
+
   fastify.addHook('onSend', async (request, reply) => {
     // A notes server has no business being framed, sniffed or used as a referrer
     // source for a URL that contains a note name.
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Referrer-Policy', 'no-referrer');
+
+    // Only where a route has not already said something stricter: the file
+    // download answers with `default-src 'none'; sandbox`, and overwriting that
+    // with the page's policy would let a served file load from this origin.
+    if (reply.getHeader('content-security-policy') === undefined) {
+      reply.header('Content-Security-Policy', policy);
+    }
+
+    /**
+     * HSTS, and why this server sends it at all.
+     *
+     * TLS is terminated by the reverse proxy, not here, so the header could just
+     * as well be added there — and if it were, this would be duplicated work.
+     * It is not: the proxy forwards what the application sends and adds nothing
+     * of its own, so a header that only the proxy could set is a header nobody
+     * sets. Sending it from here also means it cannot be lost by a proxy being
+     * reconfigured or replaced, which is the usual way such a header disappears.
+     *
+     * Gated on `cookieSecure` rather than on the request's scheme. That flag is
+     * already the operator's statement about whether there is TLS in front —
+     * `NDBRAIN_COOKIE_SECURE=false` is documented as the plain-HTTP test case —
+     * and pinning a browser to HTTPS for a year from a server reached over
+     * `http://` is how that test turns into a lockout. A scheme check would
+     * depend on `X-Forwarded-Proto` arriving, and a header that quietly stops
+     * being sent when a proxy stops setting one is worse than an explicit flag.
+     */
+    if (config.cookieSecure) {
+      reply.header('Strict-Transport-Security', HSTS);
+    }
 
     // Nothing behind the session gate may be cached. Two reasons, and the second
     // is the one that bit: vault contents are private, and they are mutable —
