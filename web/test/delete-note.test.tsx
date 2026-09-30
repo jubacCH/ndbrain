@@ -444,7 +444,11 @@ describe("deleting from the note's header", () => {
       confirm.mockReturnValue(false);
       mount();
       await openFromPalette('Plan');
-      expect(screen.getByTestId('editor')).toHaveAttribute('data-locked', 'false');
+      // Waited for, not asserted straight away: a freshly opened note is also
+      // locked while the live connection is still being decided, and in this
+      // environment there is no socket to decide it, so the editor frees
+      // itself a tick later once the provider has given up on one.
+      await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-locked', 'false'));
 
       // Cancelled: locked while asking, free again afterwards.
       server.linksDelayMs = 300;

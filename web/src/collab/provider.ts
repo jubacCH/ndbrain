@@ -60,13 +60,19 @@ interface Events {
 /**
  * How many failed attempts before the editor is told to save the old way.
  *
- * Hangs on what a failure means: a proxy that does not pass upgrades, a kill
- * switch, or a note too large fails the same way every time, and the person is
- * waiting to type. Two attempts is enough to ride out a server restart that
- * happens to land on the first one, and short enough that nobody watches a
- * locked editor.
+ * Hangs on what somebody is waiting for. The editor stays locked while this is
+ * undecided — typing into a document that has not met the room yet would be an
+ * insert concurrent with the room's own text — so every extra attempt is time
+ * spent looking at a note that cannot be typed in.
+ *
+ * One attempt, and only for a socket that never opened at all. That case is a
+ * proxy which does not pass upgrades, the kill switch, or a route that is not
+ * there, and none of those are mended by asking again; being wrong about it
+ * costs one note saved the way it always was, and the next note opened tries
+ * afresh. A socket that *was* live and dropped is the other case entirely and
+ * retries with backoff for as long as the note stays open.
  */
-const FAILED_ATTEMPTS_BEFORE_FALLBACK = 2;
+const FAILED_ATTEMPTS_BEFORE_FALLBACK = 1;
 const FIRST_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 10_000;
 

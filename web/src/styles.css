@@ -430,6 +430,82 @@ input {
   background: var(--crit-dot);
 }
 
+/* ---- live collaboration -------------------------------------------------
+ *
+ * The presence row replaces the save indicator while a note is live, so it
+ * takes the same place in the header: pushed right, the same small type, the
+ * same muted tone for the status word.
+ *
+ * The marks carry a colour the server derived from the account, which is why
+ * `background` is an inline style here and only the shape is in the sheet. The
+ * ink is dark and fixed rather than a token: the palette those colours come
+ * from is a light one in both themes, so light text on it would be the
+ * unreadable combination.
+ */
+.presence {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--font);
+  font-size: var(--t-sm);
+}
+
+.presence-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #0b1418;
+  flex: none;
+}
+
+.presence-status {
+  color: var(--text-3);
+}
+
+.presence-offline {
+  color: var(--warn-dot);
+}
+
+/* Somebody else's caret and their name beside it, drawn by
+ * `y-codemirror.next`. The class names are that library's; the colour on each
+ * one is an inline style it sets from the peer's awareness state. */
+.cm-ySelectionCaret {
+  position: relative;
+  border-left: 1px solid;
+  border-right: 1px solid;
+  margin-inline: -1px;
+  box-sizing: border-box;
+}
+
+.cm-ySelectionInfo {
+  position: absolute;
+  top: -1.05em;
+  left: -1px;
+  padding: 1px 4px;
+  font-family: var(--font);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: normal;
+  white-space: nowrap;
+  color: #0b1418;
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* The name shows when the caret moves and fades again, so a still cursor does
+ * not sit on top of the line above it for the rest of the session. */
+.cm-ySelectionCaret:hover > .cm-ySelectionInfo,
+.cm-ySelectionCaretDot:hover > .cm-ySelectionInfo {
+  opacity: 1;
+}
+
 .pane {
   flex: 1;
   overflow-y: auto;
