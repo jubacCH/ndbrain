@@ -6,11 +6,67 @@ services:
     restart: unless-stopped
     # Reap zombies from the healthcheck's short-lived node processes.
     init: true
+
+    # ---- what the container is allowed to do ---------------------------------
+    #
+    # The Dockerfile already drops to `node` (uid 1000). These three lines are
+    # about what that user may still reach, and each one was checked against
+    # what the application actually does rather than pasted from a checklist.
+    #
+    # `cap_drop: ALL` — nothing here wants a capability. The listener is on
+    # 3000, above the privileged range, so not even CAP_NET_BIND_SERVICE; git
+    # only ever reads; the `chown` that hands `/data` to `node` happens at build
+    # time, not at start.
+    #
+    # `no-new-privileges` — no setuid binary is used to step up. tini execs the
+    # process directly and there is no gosu or su-exec in the image.
+    #
+    # `read_only` — see the note on the writes below, which is the part worth
+    # reading before changing any of this.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+
+    # Nothing was found that writes outside the two mounts, and this is the list
+    # of what was looked for:
+    #
+    #  - **Atomic note and attachment writes** put their temporary file next to
+    #    the target (`vault/fs.ts`), because rename is only atomic within one
+    #    filesystem. So they land in the vault mount, never in /tmp.
+    #  - **SQLite** puts `-wal` and `-shm` beside the database and needs the
+    #    *directory* writable, not just the file. That is `/data/index`, a bind
+    #    mount.
+    #  - **The export** streams the zip into the response (yazl, `addFile`
+    #    taking paths) rather than building it on disk first.
+    #  - **git** is the only subprocess (`vault/history.ts`) and every
+    #    invocation is a read: `rev-parse`, `cat-file -e`, `ls-tree`, `log`,
+    #    `show`. The sidecar's commits are made by the host timer, not in here.
+    #    It reads `$HOME/.gitconfig` if there is one and copes without.
+    #  - **Logging** goes to stdout and is the host's json-file driver's problem.
+    #  - **The healthcheck** is `node -e fetch(...)`, which writes nothing.
+    #  - **`NDBRAIN_DATA_DIR=/data`** is only ever written *through*: the
+    #    start-up `mkdir` is `recursive` over directories the image already
+    #    created, so it is a no-op, and every real write goes into
+    #    `/data/vaults/<owner>` or `/data/index`.
+    #  - `os.tmpdir()`, `mkdtemp` and a literal `/tmp` appear nowhere in
+    #    `server/src`.
+    #
+    # The tmpfs is therefore belt and braces rather than a requirement: Node and
+    # git both have paths that reach for a temporary directory, and 16 MB that
+    # vanishes on restart is cheaper than finding out which one does.
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+
     ports:
       - '3000:3000'
     volumes:
       # The vault is the truth and lives on the host, so `docker rm` can never
       # take notes with it. The index sits beside it and is rebuildable.
+      #
+      # Both stay writable under `read_only: true`, which applies to the root
+      # filesystem and not to anything mounted into it.
       - /srv/ndbrain/vaults:/data/vaults
       - /srv/ndbrain/index:/data/index
     environment:
