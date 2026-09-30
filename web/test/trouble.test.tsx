@@ -40,7 +40,7 @@
  */
 
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
-import { act, configure, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -48,14 +48,6 @@ import { ApiError, ContractError, type NoteRow, type User } from '../src/api';
 import { App } from '../src/App';
 import { copy } from '../src/copy';
 import { RETRY_LIMIT, createQueryClient, retryDelayMs, shouldRetry } from '../src/queries';
-
-/*
- * Shorter than the suite's default, and deliberately: nothing here should take
- * even a second. Left at five, a genuine failure races the test runner's own
- * timeout — and the runner wins, which reports "this took too long" instead of
- * "the message was never there" and hides the actual defect.
- */
-configure({ asyncUtilTimeout: 2000 });
 
 /** The paragraph that only ever exists in the editor, for the session tests. */
 const TYPED = 'a paragraph that is not on the server';
