@@ -163,7 +163,7 @@ export function ContextPanel({
               <HistoryPanel
                 owner={ref.owner}
                 path={ref.path}
-                available={historyQuery.data?.available ?? false}
+                state={historyQuery.data?.state ?? 'none'}
                 versions={historyQuery.data?.versions ?? []}
                 canWrite={canCreate}
                 onRestored={onRestored}

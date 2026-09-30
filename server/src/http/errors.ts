@@ -16,6 +16,7 @@ import { ZodError } from 'zod';
 
 import {
   CaseCollisionError,
+  HistoryUnreadableError,
   InvalidPathError,
   InvalidUserError,
   NotAFileError,
@@ -59,6 +60,14 @@ export function toProblem(error: unknown): HttpProblem {
   }
   if (error instanceof NothingToRestoreError) {
     return { status: 409, code: 'nothing_to_restore', message: error.message };
+  }
+  // Not a 500, so it never reaches the "unhandled error" branch of the error
+  // handler — the operator's line about it comes from `History` itself, which
+  // is the only place that knows what git actually said. Not a 404 either: a
+  // version the client was just handed does not stop existing because the
+  // sidecar broke, and answering "no such version" is how this stayed invisible.
+  if (error instanceof HistoryUnreadableError) {
+    return { status: 503, code: 'history_unreadable', message: error.message };
   }
   if (error instanceof TaskChangedError) {
     return { status: 409, code: 'task_changed', message: error.message };

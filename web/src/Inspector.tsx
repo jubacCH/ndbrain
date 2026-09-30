@@ -132,7 +132,11 @@ export function Inspector({
 
   const kind = noteKind(node.folder, node.title);
   const type = kind.kind === 'folder' ? kind.label : copy.network.card.kind[kind.kind];
-  const versions = history.data?.available === true ? history.data.versions.slice(0, VERSIONS) : [];
+  const versions = history.data?.state === 'ready' ? history.data.versions.slice(0, VERSIONS) : [];
+  // The activity list is hidden when there is nothing to show, which is right
+  // for a note nobody has edited and wrong for a sidecar that cannot be read:
+  // the card would quietly leave out the one thing worth knowing.
+  const historyBroken = history.data?.state === 'broken';
   const total = links.outgoing.length + links.incoming.length;
 
   const onKey = (event: React.KeyboardEvent): void => {
@@ -249,6 +253,13 @@ export function Inspector({
             </>
           )}
         </div>
+
+        {historyBroken && (
+          <div className="inspector-section">
+            <h3>{copy.inspector.activity}</h3>
+            <p className="inspector-quiet">{copy.history.unreadable}</p>
+          </div>
+        )}
 
         {versions.length > 0 && (
           <div className="inspector-section">

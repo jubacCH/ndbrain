@@ -74,7 +74,7 @@ function wrap(ui: React.ReactElement) {
 beforeEach(() => {
   vi.spyOn(api, 'getNote').mockResolvedValue(note(CONTENT));
   vi.spyOn(api, 'history').mockResolvedValue({
-    available: true,
+    state: 'ready',
     versions: [
       { id: 'a1', at: Date.now() - 3 * 3_600_000, subject: 'Vault-Stand · 1 geändert', size: 10 },
       { id: 'b2', at: Date.now() - 4 * DAY, subject: 'Vault-Stand · 2 geändert', size: 9 },
@@ -141,7 +141,7 @@ describe('the inspector', () => {
     expect(screen.getAllByText(copy.inspector.changed)).toHaveLength(2);
     first.unmount();
 
-    vi.mocked(api.history).mockResolvedValue({ available: false, versions: [] });
+    vi.mocked(api.history).mockResolvedValue({ state: 'none', versions: [] });
     wrap(<Inspector index={index} picked={VEEAM} onPick={vi.fn()} onOpen={vi.fn()} />);
     await waitFor(() => expect(api.history).toHaveBeenCalledWith(O, '10_Projects/13_Kunden/Veeam.md'));
     // Let the answer land before asserting on its absence.

@@ -221,11 +221,32 @@ export const copy = {
      * the preview could not be had: better to say nothing than something untrue.
      */
     afterDelete: (
-      preview: { restorable: number; unsaved: number; notYours: number; history: boolean } | null,
+      preview: {
+        restorable: number;
+        unsaved: number;
+        notYours: number;
+        unknown: number;
+        history: 'none' | 'empty' | 'ready' | 'broken';
+      } | null,
     ): string => {
       if (preview === null) return '';
-      const total = preview.restorable + preview.unsaved + preview.notYours;
+      const total = preview.restorable + preview.unsaved + preview.notYours + preview.unknown;
       const one = total === 1;
+
+      /* Asked first, because a sentence about what can come back is the wrong
+         thing to lead with when part of the answer is missing. A broken sidecar
+         used to land in the `!history` branch below and say "this server keeps
+         no history, so it cannot be restored" — a promise of loss, made about
+         notes whose versions are very likely all still there. */
+      if (preview.unknown > 0) {
+        if (preview.unknown === total) {
+          return one
+            ? 'The history could not be read, so whether it can be brought back is unknown.'
+            : 'The history could not be read, so whether they can be brought back is unknown.';
+        }
+        return `${preview.restorable} can be restored from Tidy up for 30 days; for ${preview.unknown} the history could not be read.`;
+      }
+
       if (preview.restorable === total) {
         return one
           ? 'Its last saved version can be restored from Tidy up for 30 days.'
@@ -235,7 +256,7 @@ export const copy = {
         return one ? 'You will not be able to restore it.' : 'You will not be able to restore them.';
       }
       if (preview.restorable === 0 && preview.notYours === 0) {
-        if (!preview.history) {
+        if (preview.history === 'none') {
           return one
             ? 'This server keeps no history, so it cannot be restored.'
             : 'This server keeps no history, so they cannot be restored.';
@@ -438,6 +459,10 @@ export const copy = {
       'no-history': 'This server keeps no history, so it cannot be restored.',
       'no-commit': 'The history has not saved anything yet, so there is no version to restore.',
       'no-version': 'It was deleted before a version of it was saved, so there is nothing to restore.',
+      /* Not "cannot be restored", which is what the other three say and what
+         this one was reported as. It may well be restorable; nothing could look. */
+      broken:
+        'The history for this vault could not be read, so whether it can be restored is unknown. Try again later, or ask the administrator to check the server log.',
     },
     confirm: (title: string) =>
       `Restore “${title}” with its last saved version? Shares it had do not come back — share it again if needed.`,
@@ -969,6 +994,17 @@ export const copy = {
     title: 'History',
     none: 'No earlier versions recorded yet.',
     noSidecar: 'No history is being recorded for this vault.',
+    /**
+     * The state that used to be `none`, and is the opposite news.
+     *
+     * "No history is being recorded" says the feature was never switched on;
+     * this says it was, and cannot be read right now. It promises nothing about
+     * what is in there, because nothing could be read to find out — and it
+     * points at the server rather than at the note, so the person reading it
+     * knows this is not a fact about their writing.
+     */
+    unreadable:
+      'The history for this vault could not be read, so earlier versions cannot be listed. Nothing has been lost — this is a problem on the server, and the administrator has been told in the log.',
     loading: 'Loading…',
     loadFailed: 'Could not read that version.',
     today: 'Today',

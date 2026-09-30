@@ -90,7 +90,10 @@ describe('the history of a shared note', () => {
     const old = owner.body.versions[2].id as string;
 
     const before = await h.as('ramona', { url: '/api/v1/history/Projekt/Plan.md?owner=julian' });
-    expect(before.body).toEqual({ available: true, versions: [] });
+    // The sidecar is fine — `ready` — and this grantee simply may not see back
+    // that far. An empty list for a reason that is about the share, not about
+    // the server, and the state has to keep saying so.
+    expect(before.body).toEqual({ state: 'ready', versions: [] });
 
     await h.runtime.app.putNote('julian', 'Projekt/Plan.md', '# Plan\n\nder neue Plan, weiter\n', 'julian');
     await commit('julian', 'Stand 4', Date.now() + HOUR);

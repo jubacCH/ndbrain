@@ -26,7 +26,7 @@ import type { App, BulkResult } from '../app.js';
 import type { ApiKeyService } from '../auth/keys.js';
 import { InvalidShareError, type Need, type Share, type ShareService } from '../auth/shares.js';
 import type { SettingsService } from '../auth/settings.js';
-import type { History, Version } from '../vault/history.js';
+import type { History, HistoryView } from '../vault/history.js';
 import { DeletedNotes } from '../notes/deleted.js';
 import type { PutOptions } from '../notes/service.js';
 import { SessionService, UnknownUserError, UserService, type User } from '../auth/users.js';
@@ -37,7 +37,7 @@ import type { ReconcileState } from '../index/watcher.js';
 import { missingNotes } from '../index/queries.js';
 import { HealthProbe } from './health.js';
 import { toProblem } from './errors.js';
-import { NoteNotFoundError } from '../errors.js';
+import { HistoryUnreadableError, NoteNotFoundError } from '../errors.js';
 import { isNotePath, normalizeVaultPath } from '../vault/paths.js';
 import { LoginThrottle } from './throttle.js';
 import { ZipFile } from 'yazl';
@@ -180,6 +180,29 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // Behind the reverse proxy, so that rate limiting and logs see the real
     // client address rather than the proxy's.
     trustProxy: true,
+  });
+
+  /**
+   * A broken sidecar has to be visible without opening a note.
+   *
+   * The whole failure this guards against is a silent one: an operator whose
+   * history stopped working weeks ago found out by clicking a note and noticing
+   * the list was short. So `History` says it here instead, with a fixed marker
+   * to grep for and git's own first line as the reason — and at most once a
+   * minute per vault, because otherwise the line that matters scrolls away
+   * under the hundred identical ones behind it.
+   *
+   * Installed here rather than passed to `createRuntime`, for the reason
+   * `main.ts` gives about its own warnings: the runtime is built before the
+   * server that owns the logger. Doing it in `buildServer` also means the test
+   * harness exercises this wiring rather than one of its own.
+   */
+  history.reportTo(({ owner, reason }) => {
+    fastify.log.warn(
+      { account: owner, git: reason },
+      'history unreadable: the vault has a sidecar repository that could not be read — ' +
+        'earlier versions of notes in it cannot be listed or restored until this is fixed',
+    );
   });
 
   await fastify.register(cookiePlugin);
@@ -1058,13 +1081,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * share on this note is not a key to that one. A version outside the window
    * reads exactly like one that was never there.
    */
-  async function visibleVersions(caller: string, owner: string, path: string): Promise<Version[]> {
+  async function visibleVersions(caller: string, owner: string, path: string): Promise<HistoryView> {
     const from = shares.pastVisibleFrom(caller, owner, path);
-    return (await history.versions(owner, path)).filter((version) => version.at >= from);
+    const view = await history.versions(owner, path);
+    return { state: view.state, versions: view.versions.filter((version) => version.at >= from) };
   }
 
   async function visibleContentAt(caller: string, owner: string, path: string, version: string): Promise<string> {
-    if (!(await visibleVersions(caller, owner, path)).some((known) => known.id === version)) {
+    const view = await visibleVersions(caller, owner, path);
+    // A list that could not be fetched cannot be used to refuse a version id.
+    if (view.state === 'broken') throw new HistoryUnreadableError('the history could not be read');
+    if (!view.versions.some((known) => known.id === version)) {
       throw new NoteNotFoundError('no such version of this note');
     }
     return history.contentAt(owner, path, version);
@@ -1080,10 +1107,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       return { content: await visibleContentAt(caller, owner, path, query.version) };
     }
 
-    return {
-      available: await history.available(owner),
-      versions: await visibleVersions(caller, owner, path),
-    };
+    // The state comes out of the same `git log` the versions do, so this is one
+    // subprocess rather than the two it used to take — the separate
+    // `history.available` probe is gone, and with it the question of what to
+    // do when the probe and the listing disagree.
+    return visibleVersions(caller, owner, path);
   });
 
   fastify.post('/api/v1/history/restore', async (request) => {
