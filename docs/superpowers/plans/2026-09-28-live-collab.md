@@ -1,5 +1,16 @@
 # Live Collaboration Implementation Plan
 
+> **Executed. The checkboxes below were never ticked and never matched the branch** — they are
+> left as written so this file still reads as the plan it was, not as a progress report. The code
+> on `feat/live-collab` is the truth about what exists; the commit messages are the truth about
+> where it departed from this plan, and `docs/superpowers/specs/2026-09-28-live-collab-design.md`
+> names the three departures worth knowing. Do not read an empty box here as work outstanding.
+>
+> Two things in this plan do not work as written and were changed: the origin check cannot use
+> `request.protocol` (it is `undefined` on a WebSocket upgrade, so the check as drafted refuses
+> every connection), and the editor test in Task 9 imports an `undo` that `y-codemirror.next`
+> does not export.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Several people, one person's several tabs, and agents edit the same note at the same time, seeing each other's text, cursors and names live, while the `.md` file stays the only truth.
