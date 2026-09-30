@@ -50,6 +50,7 @@ export type {
   User,
   Version,
   DeletedNote,
+  HistoryState,
   RestoreState,
 } from '../../shared/schema';
 

@@ -18,17 +18,37 @@
  * another restore. That is worth saying in the interface, because "restore" in
  * most tools means "lose everything after this point", and somebody hesitating
  * over that button deserves to know it does not mean that here.
+ *
+ * **An empty list has to say which kind of empty it is.** This panel took a
+ * boolean and had two things to say with it: the history is off, or there is
+ * nothing in it yet. A vault whose repository was corrupt, unreadable or too
+ * slow to answer fell into the second, so the panel told somebody their note
+ * had never been changed while its whole history sat unreachable on disk. It
+ * takes the server's `state` now, and `broken` gets a sentence of its own that
+ * promises nothing.
  */
 
 import { useState } from 'react';
 
-import { api, type Version } from './api';
+import { ApiError, api, type HistoryState, type Version } from './api';
 import { copy } from './copy';
+
+/**
+ * The server's one code for "the sidecar could not be read".
+ *
+ * Read off the error rather than guessed from the status, so that a failure to
+ * reach the repository never reports itself as this version being gone. Both
+ * of the messages below used to say "could not", which is true and says nothing
+ * about whether trying again in a minute is worth it.
+ */
+function unreadable(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'history_unreadable';
+}
 
 export interface HistoryProps {
   owner: string;
   path: string;
-  available: boolean;
+  state: HistoryState;
   versions: Version[];
   canWrite: boolean;
   onRestored: () => void;
@@ -50,7 +70,7 @@ function when(at: number, now = Date.now()): string {
 export function HistoryPanel({
   owner,
   path,
-  available,
+  state,
   versions,
   canWrite,
   onRestored,
@@ -66,8 +86,8 @@ export function HistoryPanel({
     setError(null);
     try {
       setContent(await api.versionContent(owner, path, version.id));
-    } catch {
-      setError(copy.history.loadFailed);
+    } catch (caught) {
+      setError(unreadable(caught) ? copy.history.unreadable : copy.history.loadFailed);
     }
   };
 
@@ -81,14 +101,27 @@ export function HistoryPanel({
       setOpen(null);
       setContent(null);
       onRestored();
-    } catch {
-      setError(copy.history.restoreFailed);
+    } catch (caught) {
+      setError(unreadable(caught) ? copy.history.unreadable : copy.history.restoreFailed);
     } finally {
       setBusy(false);
     }
   };
 
-  if (!available) {
+  // Said as its own thing, in its own class, and never as a count of nought.
+  // "No earlier versions recorded yet" is a fact about the note; this is an
+  // admission about the server, and the difference decides whether somebody
+  // goes looking for their text or gives up on it.
+  if (state === 'broken') {
+    return (
+      <section className="hist">
+        <h4>{copy.history.title}</h4>
+        <p className="setbad">{copy.history.unreadable}</p>
+      </section>
+    );
+  }
+
+  if (state === 'none') {
     return (
       <section className="hist">
         <h4>{copy.history.title}</h4>

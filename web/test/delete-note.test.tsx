@@ -89,7 +89,7 @@ const server = vi.hoisted(() => ({
   /** The order requests started and ended in. */
   log: [] as string[],
   /** What the delete preview answers; null makes it fail. */
-  preview: null as { restorable: number; unsaved: number; notYours: number; history: boolean } | null,
+  preview: null as { restorable: number; unsaved: number; notYours: number; unknown: number; history: 'none' | 'empty' | 'ready' | 'broken' } | null,
   previews: [] as Array<[string, string[]]>,
 }));
 
@@ -269,7 +269,7 @@ beforeEach(() => {
   server.versions = new Map([[PLAN, 111], ['Loose.md', 222]]);
   server.writes = [];
   server.log = [];
-  server.preview = { restorable: 1, unsaved: 0, notYours: 0, history: true };
+  server.preview = { restorable: 1, unsaved: 0, notYours: 0, unknown: 0, history: 'ready' };
   server.previews = [];
 });
 
@@ -313,7 +313,7 @@ function storedRecents(): string {
   return window.localStorage.getItem(recentsKey('julian')) ?? '';
 }
 
-const RESTORABLE = copy.ask.afterDelete({ restorable: 1, unsaved: 0, notYours: 0, history: true });
+const RESTORABLE = copy.ask.afterDelete({ restorable: 1, unsaved: 0, notYours: 0, unknown: 0, history: 'ready' });
 
 /** The question for a note whose last saved version can be restored. */
 function ask(title: string): string {
@@ -546,7 +546,7 @@ describe('what the question says about the way back', () => {
   });
 
   it('says a note cannot come back where the host keeps no history', async () => {
-    server.preview = { restorable: 0, unsaved: 1, notYours: 0, history: false };
+    server.preview = { restorable: 0, unsaved: 1, notYours: 0, unknown: 0, history: 'none' };
     await deleteLoose();
     expect(confirm).toHaveBeenCalledWith(
       `${copy.ask.deleteNote('Loose')} This server keeps no history, so it cannot be restored.`,
@@ -554,7 +554,7 @@ describe('what the question says about the way back', () => {
   });
 
   it('says a note cannot come back when no version of it was saved yet', async () => {
-    server.preview = { restorable: 0, unsaved: 1, notYours: 0, history: true };
+    server.preview = { restorable: 0, unsaved: 1, notYours: 0, unknown: 0, history: 'ready' };
     await deleteLoose();
     expect(confirm).toHaveBeenCalledWith(
       `${copy.ask.deleteNote('Loose')} No version of it has been saved yet, so it cannot be restored.`,
@@ -562,7 +562,7 @@ describe('what the question says about the way back', () => {
   });
 
   it('tells somebody who could not restore it so', async () => {
-    server.preview = { restorable: 0, unsaved: 0, notYours: 1, history: false };
+    server.preview = { restorable: 0, unsaved: 0, notYours: 1, unknown: 0, history: 'none' };
     await deleteLoose();
     expect(confirm).toHaveBeenCalledWith(`${copy.ask.deleteNote('Loose')} You will not be able to restore it.`);
   });
@@ -576,7 +576,7 @@ describe('what the question says about the way back', () => {
 
 describe('a bulk delete from Tidy up', () => {
   it('asks the server about the selection and says how many can come back', async () => {
-    server.preview = { restorable: 0, unsaved: 1, notYours: 0, history: true };
+    server.preview = { restorable: 0, unsaved: 1, notYours: 0, unknown: 0, history: 'ready' };
     mount();
     await user.click(await screen.findByRole('button', { name: copy.nav.tidy }));
     await user.click(await screen.findByRole('checkbox', { name: copy.tidy.select('Loose') }));

@@ -92,3 +92,16 @@ export function startupMessage(error: unknown): string {
  * anybody else the note does not exist.
  */
 export class NothingToRestoreError extends NdbrainError {}
+
+/**
+ * The history could not be read, so nothing is claimed about what is in it.
+ *
+ * Its own class, and deliberately not a `NothingToRestoreError`: the two used
+ * to be the same answer, which is how a corrupt sidecar, a missing git and a
+ * repository the container may not read all came out as "this note was never
+ * changed". A caller has to be able to tell "there is nothing to go back to"
+ * from "I could not look", because only one of the two is somebody's fault and
+ * fixable. Mapped to a 503 — the feature is temporarily not there, the request
+ * was fine, and retrying is the right instinct.
+ */
+export class HistoryUnreadableError extends NdbrainError {}

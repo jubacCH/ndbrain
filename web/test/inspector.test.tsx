@@ -74,7 +74,7 @@ function wrap(ui: React.ReactElement) {
 beforeEach(() => {
   vi.spyOn(api, 'getNote').mockResolvedValue(note(CONTENT));
   vi.spyOn(api, 'history').mockResolvedValue({
-    available: true,
+    state: 'ready',
     versions: [
       { id: 'a1', at: Date.now() - 3 * 3_600_000, subject: 'Vault-Stand · 1 geändert', size: 10 },
       { id: 'b2', at: Date.now() - 4 * DAY, subject: 'Vault-Stand · 2 geändert', size: 9 },
@@ -141,13 +141,28 @@ describe('the inspector', () => {
     expect(screen.getAllByText(copy.inspector.changed)).toHaveLength(2);
     first.unmount();
 
-    vi.mocked(api.history).mockResolvedValue({ available: false, versions: [] });
+    vi.mocked(api.history).mockResolvedValue({ state: 'none', versions: [] });
     wrap(<Inspector index={index} picked={VEEAM} onPick={vi.fn()} onOpen={vi.fn()} />);
     await waitFor(() => expect(api.history).toHaveBeenCalledWith(O, '10_Projects/13_Kunden/Veeam.md'));
     // Let the answer land before asserting on its absence.
     await vi.mocked(api.history).mock.results.at(-1)!.value;
     await waitFor(() => expect(document.querySelector('.inspector-summary, .inspector-section .inspector-quiet')).not.toBeNull());
     expect(screen.queryByRole('heading', { name: copy.inspector.activity })).toBeNull();
+  });
+
+  it('keeps the activity section to say the history could not be read', async () => {
+    // Leaving the section out is right for a note nobody has edited and wrong
+    // here: the card would quietly drop the one thing worth knowing, and this
+    // is the same emptiness the panel next to it has to explain.
+    vi.mocked(api.history).mockResolvedValue({ state: 'broken', versions: [] });
+    wrap(<Inspector index={index} picked={VEEAM} onPick={vi.fn()} onOpen={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: copy.inspector.activity })).toBeInTheDocument(),
+    );
+    expect(screen.getByText(copy.history.unreadable)).toBeInTheDocument();
+    // And no version rows, because there are none to show.
+    expect(screen.queryByText(copy.inspector.changed)).toBeNull();
   });
 
   it('shows markup written as entities as the characters it spells, never as an element', async () => {

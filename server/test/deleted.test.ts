@@ -177,13 +177,13 @@ describe('with a history on the host', () => {
     await commit('julian');
     await del('julian', 'julian', 'Plan.md');
     await commit('julian');
-    const [first] = await h.runtime.history.versions('julian', 'Plan.md');
+    const [first] = (await h.runtime.history.versions('julian', 'Plan.md')).versions;
     await h.runtime.app.createNote('julian', 'Plan.md', 'Nie gesichert.\n', 'julian');
     await del('julian', 'julian', 'Plan.md');
 
     const [row] = (await list('julian')).body.notes;
     expect(row.restore).toBe('ready');
-    const versions = await h.runtime.history.versions('julian', 'Plan.md');
+    const { versions } = await h.runtime.history.versions('julian', 'Plan.md');
     expect(versions[0]?.id).toBe(first?.id);
     expect(row.savedAt).toBe(versions[1]?.at);
     const restored = await restore('julian', 'julian', 'Plan.md');
@@ -463,7 +463,8 @@ describe('the delete preview', () => {
       restorable: 1,
       unsaved: 1,
       notYours: 0,
-      history: true,
+      unknown: 0,
+      history: 'ready',
     });
   });
 
@@ -473,7 +474,8 @@ describe('the delete preview', () => {
       restorable: 0,
       unsaved: 1,
       notYours: 0,
-      history: false,
+      unknown: 0,
+      history: 'none',
     });
   });
 
@@ -487,7 +489,167 @@ describe('the delete preview', () => {
       restorable: 0,
       unsaved: 0,
       notYours: 1,
-      history: false,
+      unknown: 0,
+      history: 'none',
+    });
+  });
+});
+
+/**
+ * A history that is there and cannot be read.
+ *
+ * Kept apart from "no history on the host" above on purpose, because that is
+ * the confusion being fixed: both used to answer `no-history`, so a vault whose
+ * repository had broken was told "this server keeps no history, so it cannot be
+ * restored" — a flat statement of loss about notes whose versions were sitting
+ * right there. The copy for `broken` promises nothing instead, and the restore
+ * refuses with a different code so a client can tell "gone" from "come back".
+ */
+describe('with a history the server cannot read', () => {
+  /** A repository git will not accept: the object store is gone. */
+  async function breakRepo(owner: string): Promise<void> {
+    await fs.rm(path.join(vaultDir(owner), '.git', 'objects'), { recursive: true, force: true });
+  }
+
+  async function preview(user: string, owner: string, paths: string[]) {
+    const reply = await h.as(user, { method: 'POST', url: '/api/v1/deleted/preview', payload: { owner, paths } });
+    expect(reply.status).toBe(200);
+    return reply.body;
+  }
+
+  it('says the way back is unknown rather than that there is none', async () => {
+    await initRepo('julian');
+    await h.runtime.app.createNote('julian', 'Plan.md', 'Vor dem Löschen.\n', 'julian');
+    await commit('julian');
+    await del('julian', 'julian', 'Plan.md');
+    await breakRepo('julian');
+
+    const [row] = (await list('julian')).body.notes;
+    expect(row).toMatchObject({ path: 'Plan.md', restore: 'broken', savedAt: null });
+  });
+
+  it('refuses the restore as unreadable, not as nothing to restore', async () => {
+    await initRepo('julian');
+    await h.runtime.app.createNote('julian', 'Plan.md', 'Vor dem Löschen.\n', 'julian');
+    await commit('julian');
+    await del('julian', 'julian', 'Plan.md');
+    await breakRepo('julian');
+
+    const refused = await restore('julian', 'julian', 'Plan.md');
+    // 409 `nothing_to_restore` is the answer for a note no saved version holds,
+    // and it is final. This one is worth trying again once somebody has fixed
+    // the repository, and the status says so.
+    expect(refused.status).toBe(503);
+    expect(refused.body.code).toBe('history_unreadable');
+  });
+
+  it('one unreadable vault does not hide the deleted notes in the others', async () => {
+    // The list spans every vault the caller can restore in, so a throw would
+    // take the working ones down with the broken one.
+    await initRepo('julian');
+    await h.runtime.users.createSpace('familie', 'Familie');
+    await initRepo('familie');
+    h.runtime.shares.grant('familie', { kind: 'folder', path: 'Ferien' }, 'julian', true);
+    await h.runtime.app.createNote('familie', 'Ferien/Plan.md', 'geteilt\n', 'julian');
+    await commit('familie');
+    await h.runtime.app.createNote('julian', 'Eigen.md', 'meins\n', 'julian');
+    await commit('julian');
+    await del('julian', 'familie', 'Ferien/Plan.md');
+    await del('julian', 'julian', 'Eigen.md');
+    await breakRepo('julian');
+
+    const rows = (await list('julian')).body.notes as Array<{ path: string; restore: string }>;
+    const byPath = new Map(rows.map((row) => [row.path, row.restore]));
+    expect(byPath.get('Eigen.md')).toBe('broken');
+    expect(byPath.get('Ferien/Plan.md')).toBe('ready');
+  });
+
+  it('counts the notes it could not look up separately in the delete question', async () => {
+    await initRepo('julian');
+    await h.runtime.app.createNote('julian', 'Eins.md', 'a\n', 'julian');
+    await h.runtime.app.createNote('julian', 'Zwei.md', 'b\n', 'julian');
+    await commit('julian');
+    await breakRepo('julian');
+
+    // Not `unsaved`, which the confirmation renders as "no version of them has
+    // been saved yet" — a claim nothing here is in a position to make.
+    expect(await preview('julian', 'julian', ['Eins.md', 'Zwei.md'])).toEqual({
+      restorable: 0,
+      unsaved: 0,
+      notYours: 0,
+      unknown: 2,
+      history: 'broken',
+    });
+  });
+});
+
+/**
+ * The half of the damage that gets past the state probe.
+ *
+ * `state` reads the commit at HEAD and nothing else, so a repository missing
+ * only the tree that commit points at still answers `ready` — and every
+ * per-note read then fails, because a path can only be looked up through a
+ * tree. This is the fixture that actually exercises the two places `DeletedNotes`
+ * has to catch for itself; with a repository broken any harder, `state` reports
+ * `broken` first and those lines are never reached.
+ *
+ * It is not a contrived shape. A partially fetched or partially restored
+ * repository, and a disk that lost one object, look exactly like this.
+ */
+describe('with a history that reads at the top and not below it', () => {
+  /** Removes the loose object for HEAD's root tree, leaving the commit intact. */
+  async function dropRootTree(owner: string): Promise<void> {
+    const cwd = vaultDir(owner);
+    const tree = (await run('git', ['rev-parse', 'HEAD^{tree}'], { cwd })).stdout.trim();
+    await fs.rm(path.join(cwd, '.git', 'objects', tree.slice(0, 2), tree.slice(2)), { force: true });
+  }
+
+  beforeEach(async () => {
+    await initRepo('julian');
+    await h.runtime.app.createNote('julian', 'Plan.md', 'Vor dem Löschen.\n', 'julian');
+    await commit('julian');
+  });
+
+  it('is ready at the top and still reports the note as unreadable', async () => {
+    await del('julian', 'julian', 'Plan.md');
+    await dropRootTree('julian');
+
+    // The state probe is satisfied, which is the whole reason the per-note
+    // paths need their own answer rather than relying on it.
+    expect(await h.runtime.history.state('julian')).toBe('ready');
+
+    const [row] = (await list('julian')).body.notes;
+    expect(row).toMatchObject({ path: 'Plan.md', restore: 'broken', savedAt: null });
+  });
+
+  it('refuses the restore rather than claiming no version holds the note', async () => {
+    await del('julian', 'julian', 'Plan.md');
+    await dropRootTree('julian');
+
+    const refused = await restore('julian', 'julian', 'Plan.md');
+    expect(refused.status).toBe(503);
+    expect(refused.body.code).toBe('history_unreadable');
+  });
+
+  it('does not promise the delete question a way back it could not find', async () => {
+    await dropRootTree('julian');
+
+    const reply = await h.as('julian', {
+      method: 'POST',
+      url: '/api/v1/deleted/preview',
+      payload: { owner: 'julian', paths: ['Plan.md'] },
+    });
+
+    // The confirmation still has to appear — refusing to answer would leave the
+    // question with nothing to say about the way back at all — and it has to
+    // say the way back is unknown rather than that there is none.
+    expect(reply.status).toBe(200);
+    expect(reply.body).toEqual({
+      restorable: 0,
+      unsaved: 0,
+      notYours: 0,
+      unknown: 1,
+      history: 'broken',
     });
   });
 });

@@ -191,13 +191,13 @@ describe('a note that cannot be restored', () => {
 
 describe('the delete question', () => {
   it('counts what a bulk delete can and cannot bring back', () => {
-    expect(copy.ask.afterDelete({ restorable: 3, unsaved: 0, notYours: 0, history: true })).toBe(
+    expect(copy.ask.afterDelete({ restorable: 3, unsaved: 0, notYours: 0, unknown: 0, history: 'ready' })).toBe(
       'Their last saved versions can be restored from Tidy up for 30 days.',
     );
-    expect(copy.ask.afterDelete({ restorable: 2, unsaved: 1, notYours: 0, history: true })).toBe(
+    expect(copy.ask.afterDelete({ restorable: 2, unsaved: 1, notYours: 0, unknown: 0, history: 'ready' })).toBe(
       '2 can be restored from Tidy up for 30 days, 1 cannot.',
     );
-    expect(copy.ask.afterDelete({ restorable: 0, unsaved: 4, notYours: 0, history: false })).toBe(
+    expect(copy.ask.afterDelete({ restorable: 0, unsaved: 4, notYours: 0, unknown: 0, history: 'none' })).toBe(
       'This server keeps no history, so they cannot be restored.',
     );
     expect(copy.ask.afterDelete(null)).toBe('');

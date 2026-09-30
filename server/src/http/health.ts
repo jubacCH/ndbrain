@@ -28,7 +28,13 @@ import type { History } from '../vault/history.js';
 export interface HealthChecks {
   database: 'ok' | 'unreachable';
   vault: 'ok' | 'unwritable';
-  history: 'ok' | 'unavailable';
+  /**
+   * `unavailable`: no sidecar is set up, which is a configuration and may be
+   * deliberate. `broken`: one is set up and cannot be read, which is not.
+   * Keeping them apart is the point — they were one word, and so a host whose
+   * history had stopped working looked exactly like a host that never had any.
+   */
+  history: 'ok' | 'unavailable' | 'broken';
   /** `unwatched`: reconciliation is configured, but nothing is running it. */
   reconcile: ReconcileState | 'unwatched';
 }
@@ -75,10 +81,15 @@ export class HealthProbe {
     // fail. Degraded is deliberately still a 200 — an index falling behind is
     // something the operator has to fix, but taking the server out of a load
     // balancer over it would turn a stale search result into an outage.
+    //
+    // A broken history is degraded for the same reason, and `unavailable` is
+    // not: a host without a sidecar is a host somebody chose not to give one,
+    // while a sidecar that is there and unreadable is a way back that has
+    // stopped working and nobody has been told.
     const status =
       database !== 'ok' || vault !== 'ok'
         ? 'failing'
-        : reconcile === 'stale' || reconcile === 'unwatched'
+        : reconcile === 'stale' || reconcile === 'unwatched' || history === 'broken'
           ? 'degraded'
           : 'ok';
 
@@ -127,15 +138,26 @@ export class HealthProbe {
    *
    * Asked of one account rather than all of them: the question is whether the
    * host's history timer is set up at all, which is the same answer for every
-   * vault, and asking once keeps this to a single subprocess.
+   * vault, and asking once keeps this to two subprocesses a minute.
+   *
+   * `History.state` rather than the old `available`, which asked only whether
+   * git saw *a* repository from inside the vault and answered yes for a vault
+   * that merely sat inside one — a case where no note's history is reachable
+   * and no deleted note can be brought back. The check now says `ok` for
+   * exactly the states a restore can be built on.
    */
   async #historyProbe(): Promise<HealthChecks['history']> {
     try {
       const first = this.#deps.users.list()[0];
       if (first === undefined) return 'unavailable';
-      return (await this.#deps.history.available(first.id)) ? 'ok' : 'unavailable';
+      const state = await this.#deps.history.state(first.id);
+      if (state === 'broken') return 'broken';
+      return state === 'none' ? 'unavailable' : 'ok';
     } catch {
-      return 'unavailable';
+      // `state` is written not to throw. If it found a way to anyway, that is
+      // itself a defect, and reporting it as "not configured" is the mistake
+      // this whole change is about.
+      return 'broken';
     }
   }
 

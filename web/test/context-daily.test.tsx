@@ -24,7 +24,7 @@ function link(source: string, targetRaw: string, targetPath: string | null, alia
 
 function renderPanel(path: string, outgoing: LinkRow[], owner = 'julian', canCreate = true) {
   vi.spyOn(api, 'links').mockResolvedValue({ backlinks: [], outgoing });
-  vi.spyOn(api, 'history').mockResolvedValue({ available: false, versions: [] });
+  vi.spyOn(api, 'history').mockResolvedValue({ state: 'none', versions: [] });
   const onCreate = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
