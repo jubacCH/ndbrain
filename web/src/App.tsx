@@ -101,6 +101,8 @@ import {
   useOnline,
 } from './queries';
 import { useNoteBuffer, type SaveState } from './useNoteBuffer';
+import { Presence } from './collab/Presence';
+import { useCollab } from './collab/useCollab';
 
 export interface Filters {
   tag?: string;
@@ -419,6 +421,52 @@ function Shell({
     saveDelayMs: prefs.saveDelayMs,
     onError: setError,
   });
+
+  /**
+   * The live room for the open note, when there is one.
+   *
+   * There is no setting here on purpose: whether a note can be edited live is
+   * the server's answer, not a preference. With `NDBRAIN_COLLAB=false` no
+   * socket route exists, the upgrade fails, and the provider reports
+   * `unavailable` — which is the same path a blocked proxy or a note too large
+   * for the socket takes, and it ends in today's save behaviour either way.
+   */
+  const collab = useCollab(openRef, true, {
+    onMoved: (movedOwner, movedPath) => {
+      setOpenRef({ owner: movedOwner, path: movedPath });
+      pushRecent(user.id, movedOwner, movedPath);
+      setRecents(loadRecents(user.id));
+      invalidate.afterStructure(client);
+      setError(copy.collab.moved(movedPath));
+    },
+    onDeleted: (by) => {
+      // `discard` as well as `closed`: pending text for a note that no longer
+      // exists has nowhere to go, and writing it would recreate the note.
+      discard();
+      closed();
+      if (viewNow.current === 'note') setView('overview');
+      invalidate.afterStructure(client);
+      // Said only when somebody else did it. This tab's own delete already
+      // says what it did, and the room tells every peer including the one
+      // that asked for the delete.
+      if (by !== user.id) setError(copy.collab.deleted(by));
+    },
+    onGone: () => {
+      // Refused or missing, which are the same answer: the note is simply not
+      // reachable any more. Told in the same words a withdrawn share is.
+      discard();
+      closed();
+      if (viewNow.current === 'note') setView('overview');
+    },
+  });
+  /**
+   * Live means: a room, synced, and this tab holding the shared text.
+   *
+   * Only then does the editor take its document from the room rather than
+   * from the REST read, and only then does typing stop going through
+   * `scheduleSave` — the room persists on its own.
+   */
+  const live = collab.provider !== null && collab.synced && collab.status !== 'unavailable';
 
   useEffect(() => {
     applyPrefs(prefs);
@@ -2126,7 +2174,20 @@ function Shell({
                     {ownerLabel(owners, open.owner)} · {open.canWrite ? copy.note.canWrite : copy.note.readOnly}
                   </span>
                 )}
-                <SaveIndicator state={saveState} />
+                {/* The presence row takes the save indicator's place while a
+                    note is live: the room is what saves it, so "Saved" would
+                    be answering a question nobody asked. Without a room the
+                    indicator stays, with a word about why. */}
+                {live || collab.status === 'offline' ? (
+                  <Presence peers={collab.peers} status={collab.status} />
+                ) : (
+                  <>
+                    <SaveIndicator state={saveState} />
+                    {collab.status === 'unavailable' && openRef !== null && (
+                      <span className="presence-status">{copy.collab.unavailable}</span>
+                    )}
+                  </>
+                )}
                 {/* Rename and move, and delete, where the server said this note
                     may be written; share where the caller may hand it on (their
                     own, or a space's as administrator). A note read through a
@@ -2223,13 +2284,32 @@ function Shell({
                     owner={open.owner}
                     path={open.note.path}
                     initialContent={open.note.content}
-                    readOnly={!open.canWrite}
+                    // In a room the document is the room's, and so is the
+                    // right to write in it: a share downgraded mid-session
+                    // says so on the socket before the REST answer catches up.
+                    collab={
+                      live ? { text: collab.provider!.text, awareness: collab.provider!.awareness } : null
+                    }
+                    readOnly={live ? !collab.canWrite : !open.canWrite}
                     // Locked, not rebuilt, while its delete is in flight: typing
                     // then would be text with nowhere to go.
-                    locked={deletingKeys.has(refKey(open.owner, open.note.path))}
+                    //
+                    // Locked during the first sync too. The REST text is on
+                    // screen at once so the note can be read, but typing into
+                    // it before the room has answered would be an insert into
+                    // a document that has never met the room — concurrent with
+                    // the room's own text, and Yjs would settle the order by
+                    // client id rather than by what was meant.
+                    locked={
+                      deletingKeys.has(refKey(open.owner, open.note.path)) || collab.status === 'connecting'
+                    }
                     tags={registryQuery.data ?? null}
                     line={jumpLine ?? undefined}
-                    onChange={(content) => scheduleSave(open.owner, open.note.path, content)}
+                    // In a room the room persists; `scheduleSave` would be a
+                    // second writer for the same text.
+                    onChange={(content) => {
+                      if (!live) scheduleSave(open.owner, open.note.path, content);
+                    }}
                     onAttach={attachFile}
                     vimMode={prefs.vimMode}
                     vimLeaveInsert={prefs.vimLeaveInsert}

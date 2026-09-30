@@ -243,3 +243,20 @@ function intoSection(source: string, text: string, section: string, eol: string)
   lines.splice(at + 1, 0, '', ...text.split(/\r?\n/));
   return lines.join(eol);
 }
+
+/**
+ * Replaces `find` when it occurs exactly once; otherwise says how often it did.
+ *
+ * Spliced by offset rather than with `String.replace`, which reads `$&` and
+ * friends in the replacement as patterns even for a plain-string search.
+ */
+export function replaceOnce(
+  source: string,
+  find: string,
+  replace: string,
+): { ok: true; content: string } | { ok: false; occurrences: number } {
+  const occurrences = find === '' ? 0 : source.split(find).length - 1;
+  if (occurrences !== 1) return { ok: false, occurrences };
+  const at = source.indexOf(find);
+  return { ok: true, content: source.slice(0, at) + replace + source.slice(at + find.length) };
+}

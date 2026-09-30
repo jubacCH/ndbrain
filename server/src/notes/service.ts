@@ -593,11 +593,35 @@ export class NoteService {
     if (!displaced) return null;
 
     const copyPath = await this.#freeConflictPath(owner, canonical, new Date());
-    await this.#vault.writeNote(owner, copyPath, current.content);
-    // A new note like any other: whatever was once shared under that name is
-    // not this copy's to inherit.
-    this.#lifecycle.created(owner, copyPath);
+    await this.#writeCopy(owner, copyPath, current.content);
     return copyPath;
+  }
+
+  /**
+   * Writes `content` beside the note as a conflict copy and answers its path.
+   *
+   * For a live room whose merge could not place a stale writer's text: the text
+   * is kept the same way a displaced version always has been.
+   */
+  async writeConflictCopy(owner: string, notePath: string, content: string): Promise<string> {
+    const canonical = this.#assertNotePath(notePath);
+    return this.#locks.run(lockKey(owner, canonical), async () => {
+      const copyPath = await this.#freeConflictPath(owner, canonical, new Date());
+      await this.#writeCopy(owner, copyPath, content);
+      return copyPath;
+    });
+  }
+
+  /**
+   * The two lines every conflict copy is written with: the file, then the
+   * lifecycle telling it a new note has appeared.
+   *
+   * A new note like any other: whatever was once shared under that name is
+   * not this copy's to inherit.
+   */
+  async #writeCopy(owner: string, copyPath: string, content: string): Promise<void> {
+    await this.#vault.writeNote(owner, copyPath, content);
+    this.#lifecycle.created(owner, copyPath);
   }
 
   /**

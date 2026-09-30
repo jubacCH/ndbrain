@@ -52,7 +52,10 @@ export default defineConfig({
     // `npm run dev` talks to a server started separately, so the API is on
     // another port during development but same-origin in production.
     proxy: {
-      '/api': { target: 'http://127.0.0.1:3000', changeOrigin: false },
+      // `ws: true` for /api/v1/collab: without it the dev proxy answers the
+      // upgrade with a 404 and the editor falls back to saving the old way,
+      // which looks exactly like the feature not working.
+      '/api': { target: 'http://127.0.0.1:3000', changeOrigin: false, ws: true },
     },
   },
 });

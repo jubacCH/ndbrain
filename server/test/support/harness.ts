@@ -34,6 +34,8 @@ export interface Harness {
   as(user: string, options: { method?: string; url: string; payload?: unknown }): Promise<Reply>;
   /** One MCP tool call with an agent key; the text of the result. */
   tool(secret: string, name: string, args?: Record<string, unknown>): Promise<Reply>;
+  /** The `name=value` cookie `login` stored, for a request `as` cannot make. */
+  cookieOf(user: string): string;
   close(): Promise<void>;
 }
 
@@ -86,6 +88,7 @@ export async function startHarness(
     shares: runtime.shares,
     settings: runtime.settings,
     history: runtime.history,
+    rooms: runtime.rooms,
     config,
     throttle: deps.throttle ?? new LoginThrottle({ limit: 1000 }),
     ...(deps.logStream === undefined ? {} : { logStream: deps.logStream }),
@@ -119,6 +122,9 @@ export async function startHarness(
       }
       return toReply(await server.inject(injection));
     },
+    cookieOf(user) {
+      return cookies[user] ?? '';
+    },
     async tool(secret, name, args = {}) {
       const response = await server.inject({
         method: 'POST',
@@ -130,6 +136,7 @@ export async function startHarness(
     },
     async close() {
       await server.close();
+      await runtime.rooms?.closeAll();
       runtime.close();
       await fs.rm(dataDir, { recursive: true, force: true });
     },

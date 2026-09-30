@@ -29,6 +29,9 @@ import { drawSelection, EditorView, highlightActiveLine, keymap } from '@codemir
 import type { Extension } from '@codemirror/state';
 import { GFM } from '@lezer/markdown';
 import { useEffect, useRef } from 'react';
+import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
+import type { Awareness } from 'y-protocols/awareness';
+import * as Y from 'yjs';
 
 import { tagContext } from './editor/commands';
 import { completion } from './editor/completion';
@@ -103,6 +106,18 @@ export interface EditorProps {
    */
   vimMode?: boolean;
   vimLeaveInsert?: LeaveInsert;
+  /**
+   * The live room for this note, once it has synced. `null` or absent is
+   * today's mode.
+   *
+   * The document then comes from `text` rather than from `initialContent`, and
+   * changing that is a rebuild for the same reason changing `readOnly` is: the
+   * editor's document is a different object. That is safe here because the
+   * prop only appears once the first sync is done, and the room holds
+   * everything typed before then — which is nothing, because the editor is
+   * locked until it arrives.
+   */
+  collab?: { text: Y.Text; awareness: Awareness } | null;
 }
 
 export interface NoteExtensions {
@@ -121,6 +136,15 @@ export interface NoteExtensions {
    * rebuilding the editor would throw away unsaved text. Left out, vim is off.
    */
   vim?: VimSettings;
+  /**
+   * A live room.
+   *
+   * The document then comes from the shared text rather than from a string,
+   * and undo is Yjs's, scoped to this tab's own operations: ⌘Z must never take
+   * back what somebody else typed. Live preview, tables, completion and vim
+   * are untouched, because they sit on CodeMirror state only.
+   */
+  collab?: { text: Y.Text; awareness: Awareness; undo: Y.UndoManager };
 }
 
 /**
@@ -139,13 +163,32 @@ export function noteExtensions({
   tags,
   onChange,
   vim,
+  collab,
 }: NoteExtensions): Extension[] {
   return [
+    /**
+     * The file's own line endings, kept as characters.
+     *
+     * Without this CodeMirror splits the document on `\r\n` as well as `\n`
+     * and joins it back with `\n`, so a note written with CRLF comes out of
+     * the editor one character per line shorter than it went in. That is a
+     * changed file on its own; with a room it is worse, because every offset
+     * `y-codemirror.next` maps between the view and the shared text would be
+     * off by one per line and an edit would land somewhere else entirely.
+     *
+     * Set for both modes, not only the live one: the promise that the document
+     * is the file byte for byte is older than collaboration, and having the
+     * two modes disagree about it would be a second bug rather than a fix.
+     */
+    EditorState.lineSeparator.of('\n'),
     // First, and before every keymap: vim answers a key press with a DOM event
     // handler, and in Normal mode it has to see the key before `indentWithTab`
     // and the default bindings do.
     vimEditing(vim ?? VIM_OFF),
-    history(),
+    // A room brings its own history, scoped to this tab; see `collab`.
+    ...(collab === undefined
+      ? [history()]
+      : [yCollab(collab.text, collab.awareness, { undoManager: collab.undo })]),
     drawSelection(),
     highlightActiveLine(),
     indentOnInput(),
@@ -162,7 +205,7 @@ export function noteExtensions({
       ...closeBracketsKeymap,
       ...formatKeymap,
       ...searchKeymap,
-      ...historyKeymap,
+      ...(collab === undefined ? historyKeymap : yUndoManagerKeymap),
       // Tab indents, Shift-Tab outdents. Left unbound it belongs to the
       // browser and moves the focus out of the note, which is the accessible
       // default and the wrong one here: this is a text editor, and a nested
@@ -220,6 +263,7 @@ export function Editor({
   onAttach,
   vimMode = false,
   vimLeaveInsert = 'Escape',
+  collab = null,
 }: EditorProps): React.JSX.Element {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -247,8 +291,14 @@ export function Editor({
   useEffect(() => {
     if (host.current === null) return;
 
+    // One undo manager per editor, because undo is per tab: it is built here
+    // rather than passed in so that it lives and dies with the view it serves.
+    const live = collab === null ? undefined : { ...collab, undo: new Y.UndoManager(collab.text) };
+
     const state = EditorState.create({
-      doc: initialContent,
+      // From the shared text when there is one: `initialContent` is the REST
+      // read, which is a second, older copy of the same note.
+      doc: live === undefined ? initialContent : live.text.toString(),
       // The lock goes first: `readOnly` and `editable` take the first value
       // given, and `noteExtensions` gives one of its own.
       extensions: [
@@ -261,6 +311,7 @@ export function Editor({
           tags: () => tagsRef.current,
           onChange: (content) => onChangeRef.current(content),
           vim: vimRef.current,
+          ...(live === undefined ? {} : { collab: live }),
         }),
       ],
     });
@@ -272,11 +323,13 @@ export function Editor({
     return () => {
       instance.destroy();
       view.current = null;
+      live?.undo.destroy();
     };
-    // Rebuilt only when the open note changes — not when its content changes,
-    // which would fight the person typing.
+    // Rebuilt only when the open note changes, or when the room's shared text
+    // arrives or goes — not when its content changes, which would fight the
+    // person typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner, path, readOnly]);
+  }, [owner, path, readOnly, collab?.text]);
 
   // Reconfigured in place, so the document and the cursor stay as they are.
   useEffect(() => {

@@ -11,7 +11,7 @@
 import type { Indexer } from './index/indexer.js';
 import { Queries, toView, type NoteRow, type Viewable } from './index/queries.js';
 import { inScope, shareTarget, type Share, type ShareKind, type ShareService } from './auth/shares.js';
-import { addTag, removeTag } from './markdown/edit.js';
+import { addTag, appended, removeTag, replaceOnce } from './markdown/edit.js';
 import { toggleTask as applyTaskToggle, type TaskExpectation } from './markdown/tasks.js';
 import { proposeFor, type TopicProposal } from './notes/topics.js';
 import { parseNote } from './markdown/parse.js';
@@ -24,7 +24,7 @@ import type {
   PutResult,
   RenameOptions,
 } from './notes/service.js';
-import { NoteBindings } from './auth/noteBindings.js';
+import { NoteBindings, contentHash } from './auth/noteBindings.js';
 import type { Database } from './db/database.js';
 import type { VaultFile } from './vault/fs.js';
 import {
@@ -36,6 +36,9 @@ import {
   noteTitle,
 } from './vault/paths.js';
 import { InvalidPathError, NotAFileError, NoteNotFoundError, TaskChangedError } from './errors.js';
+import type { By, Persisted, Room } from './collab/room.js';
+import type { RoomRegistry } from './collab/rooms.js';
+import type { History } from './vault/history.js';
 
 export interface RenameResult {
   note: Note;
@@ -94,6 +97,13 @@ function reasonFor(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown error';
 }
 
+/** `editNote`'s refusal: the text to replace did not occur exactly once. */
+export class EditNotUniqueError extends Error {
+  constructor(readonly occurrences: number) {
+    super(occurrences === 0 ? 'that text does not appear in the note' : `that text appears ${occurrences} times`);
+  }
+}
+
 export class App {
   readonly notes: NoteService;
   readonly indexer: Indexer;
@@ -111,6 +121,147 @@ export class App {
     this.shares = shares;
     this.queries = new Queries(db);
     this.bindings = new NoteBindings(shares, notes.vault);
+  }
+
+  #rooms: RoomRegistry | null = null;
+  #history: History | null = null;
+
+  /**
+   * Live rooms, when collaboration is on.
+   *
+   * Attached after construction because the registry's own dependencies are
+   * methods of this object — the room persists through `persistFromRoom`.
+   */
+  attachCollab(rooms: RoomRegistry, history: History | null): void {
+    this.#rooms = rooms;
+    this.#history = history;
+  }
+
+  get rooms(): RoomRegistry | null {
+    return this.#rooms;
+  }
+
+  #room(owner: string, notePath: string): Room | undefined {
+    if (this.#rooms === null) return undefined;
+    try {
+      return this.#rooms.get(owner, normalizeVaultPath(notePath));
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The checks a write makes, for a change that goes into a room instead of the file. */
+  async #authorizeLive(owner: string, notePath: string, authorize?: () => void): Promise<void> {
+    await this.notes.withLock(owner, notePath, async () => {
+      await this.bindings.confirm(owner, notePath);
+      authorize?.();
+    });
+  }
+
+  /**
+   * A read-modify-write, against the live text when a room is open and against
+   * the file otherwise. The one shape every "change this note" operation takes.
+   */
+  async #change(
+    owner: string,
+    notePath: string,
+    fn: (content: string) => string,
+    actor: string | undefined,
+    options: Authorized & { agent?: boolean } = {},
+  ): Promise<PutResult> {
+    const room = this.#room(owner, notePath);
+    if (room !== undefined) {
+      await this.#authorizeLive(owner, room.path, options.authorize);
+      room.transform(fn, { actor: actor ?? owner, agent: options.agent === true });
+      return { note: room.note(), created: false };
+    }
+    const note = await this.readAuthorized(owner, notePath, options.authorize);
+    const content = fn(note.content);
+    if (content === note.content) return { note, created: false };
+    const write: PutOptions = { baseHash: note.hash };
+    if (options.authorize !== undefined) write.authorize = options.authorize;
+    return this.updateNote(owner, notePath, content, actor, write);
+  }
+
+  /** A whole text for a note whose room is open: overwrite, merge or keep aside. */
+  async #intoRoom(
+    room: Room,
+    owner: string,
+    content: string,
+    actor: string | undefined,
+    options: PutOptions & { agent?: boolean },
+  ): Promise<PutResult> {
+    await this.#authorizeLive(owner, room.path, options.authorize);
+    const by: By = { actor: actor ?? owner, agent: options.agent === true };
+
+    // No base at all is today's plain overwrite (a restore, an owner's own
+    // write): the new text replaces the live one, as a change everybody sees.
+    if (options.baseHash === undefined && options.baseMtimeMs === undefined) {
+      room.transform(() => content, by);
+      return { note: room.note(), created: false };
+    }
+
+    const base = options.baseHash === undefined ? null : await this.#baseText(owner, room, options.baseHash);
+    const { conflictCopy } = base === null ? await room.keepAsConflict(content, by) : await room.merge(base, content, by);
+    const result: PutResult = { note: room.note(), created: false };
+    if (conflictCopy !== undefined) result.conflictCopy = conflictCopy;
+    return result;
+  }
+
+  /** The text a writer started from, by its hash: the room's, the file's, or history's. */
+  async #baseText(owner: string, room: Room, baseHash: string): Promise<string | null> {
+    if (baseHash === room.lastPersisted.hash) return room.lastPersisted.text;
+    const live = room.text.toString();
+    if (baseHash === contentHash(live)) return live;
+    if (this.#history === null) return null;
+    try {
+      const { versions } = await this.#history.versions(owner, room.path);
+      for (const version of versions.slice(0, 20)) {
+        const text = await this.#history.contentAt(owner, room.path, version.id);
+        if (contentHash(text) === baseHash) return text;
+      }
+    } catch {
+      // No history is "base unknown", which keeps the text aside rather than losing it.
+    }
+    return null;
+  }
+
+  async loadForRoom(owner: string, notePath: string): Promise<Persisted> {
+    const note = await this.notes.getNote(owner, notePath);
+    return { text: note.content, hash: note.hash };
+  }
+
+  async readDiskForRoom(owner: string, notePath: string): Promise<Persisted | null> {
+    try {
+      return await this.loadForRoom(owner, notePath);
+    } catch (error) {
+      if (error instanceof NoteNotFoundError) return null;
+      throw error;
+    }
+  }
+
+  /** A room writing its text: the write path, the index, one log row per actor. */
+  async persistFromRoom(
+    owner: string,
+    notePath: string,
+    text: string,
+    baseHash: string,
+    actors: string[],
+  ): Promise<Persisted> {
+    const result = await this.notes.updateNote(owner, notePath, text, { baseHash });
+    await this.indexer.indexNote(owner, result.note.path);
+    for (const actor of actors.length === 0 ? [owner] : actors) {
+      this.#recordEdit(owner, result.note.path, 'update', actor);
+    }
+    await this.#recordConflictCopy(owner, result, actors[0]);
+    return { text: result.note.content, hash: result.note.hash };
+  }
+
+  async conflictCopyFromRoom(owner: string, notePath: string, text: string, actor: string): Promise<string> {
+    const copy = await this.notes.writeConflictCopy(owner, notePath, text);
+    await this.indexer.indexNote(owner, copy);
+    this.#recordEdit(owner, copy, 'create', actor);
+    return copy;
   }
 
   /* ---- shares -----------------------------------------------------------
@@ -162,6 +313,7 @@ export class App {
    */
   noteVanished(owner: string, notePath: string): void {
     this.shares.dropNote(owner, notePath);
+    this.#room(owner, notePath)?.closeDeleted(owner);
   }
 
   /**
@@ -170,6 +322,10 @@ export class App {
    * same name, only the file can say; see `NoteBindings.confirm`.
    */
   async noteChanged(owner: string, notePath: string): Promise<void> {
+    const room = this.#room(owner, notePath);
+    // `flush` reads the disk, merges a foreign change, and persists; the
+    // room's own writes find the same hash and do nothing.
+    if (room !== undefined) await room.flush();
     if (this.shares.noteBindings(owner, notePath).length === 0) return;
     await this.notes.withLock(owner, notePath, () => this.bindings.confirm(owner, notePath));
   }
@@ -222,9 +378,13 @@ export class App {
     notePath: string,
     content: string,
     actor?: string,
-    options: PutOptions = {},
+    options: PutOptions & { agent?: boolean } = {},
   ): Promise<PutResult> {
-    const result = await this.notes.updateNote(owner, notePath, content, options);
+    const room = this.#room(owner, notePath);
+    if (room !== undefined) return this.#intoRoom(room, owner, content, actor, options);
+
+    const { agent: _agent, ...write } = options;
+    const result = await this.notes.updateNote(owner, notePath, content, write);
     await this.indexer.indexNote(owner, result.note.path);
     this.#recordEdit(owner, result.note.path, 'update', actor);
     await this.#recordConflictCopy(owner, result, actor);
@@ -277,9 +437,15 @@ export class App {
     notePath: string,
     addition: string,
     actor?: string,
-    options: AppendOptions = {},
+    options: AppendOptions & { agent?: boolean } = {},
   ): Promise<PutResult> {
-    const result = await this.notes.appendNote(owner, notePath, addition, options);
+    const room = this.#room(owner, notePath);
+    if (room !== undefined) {
+      return this.#change(owner, notePath, (live) => appended(live, addition, options.section), actor, options);
+    }
+
+    const { agent: _agent, ...write } = options;
+    const result = await this.notes.appendNote(owner, notePath, addition, write);
     await this.indexer.indexNote(owner, result.note.path);
     this.#recordEdit(owner, result.note.path, result.created ? 'create' : 'update', actor);
     return result;
@@ -291,9 +457,13 @@ export class App {
     notePath: string,
     content: string,
     actor?: string,
-    options: PutOptions = {},
+    options: PutOptions & { agent?: boolean } = {},
   ): Promise<PutResult> {
-    const result = await this.notes.putNote(owner, notePath, content, options);
+    const room = this.#room(owner, notePath);
+    if (room !== undefined) return this.#intoRoom(room, owner, content, actor, options);
+
+    const { agent: _agent, ...write } = options;
+    const result = await this.notes.putNote(owner, notePath, content, write);
     await this.indexer.indexNote(owner, result.note.path);
     this.#recordEdit(owner, result.note.path, result.created ? 'create' : 'update', actor);
     await this.#recordConflictCopy(owner, result, actor);
@@ -312,11 +482,13 @@ export class App {
    * `edit_note` already applies to MCP edits, applied here to the one write
    * this view is allowed to make.
    *
-   * Goes through `updateNote` like every other write — this is not a second
-   * write path, only a second way of computing the next `content` before
-   * handing it to the one that exists. `baseHash` is set from the same read the
-   * toggle was checked against, so a write landing in the gap between that read
-   * and this one still produces a conflict copy instead of overwriting it.
+   * Goes through `#change`, which is `updateNote` with a base when no room is
+   * open — this is not a second write path, only a second way of computing the
+   * next `content` before handing it to the one that exists. With no room open
+   * that base is the same read the toggle was checked against, so a write
+   * landing in the gap between that read and this one still produces a
+   * conflict copy instead of overwriting it; with a room open the toggle is
+   * checked and applied against the live text instead.
    */
   async toggleTask(
     owner: string,
@@ -327,27 +499,21 @@ export class App {
     actor?: string,
     options: Authorized = {},
   ): Promise<PutResult> {
-    // Read the way the write path reads: this answer is made of the file's
-    // content — the note in a 200, and the 409 that says the expected task is
-    // not on that line, which asks the file a yes/no question about its text.
-    const note = await this.readAuthorized(owner, notePath, options.authorize);
-    const result = applyTaskToggle(note.content, line, expected, done);
-
-    if (!result.ok) {
-      throw new TaskChangedError(
-        'that task has changed since the list was loaded — reload the task list and try again',
-      );
-    }
-
-    // Already in the requested state: nothing to write, and writing anyway
-    // would bump the note's modified time for a change that never happened.
-    if (result.content === note.content) {
-      return { note, created: false };
-    }
-
-    const write: PutOptions = { baseHash: note.hash };
-    if (options.authorize !== undefined) write.authorize = options.authorize;
-    return this.updateNote(owner, notePath, result.content, actor, write);
+    return this.#change(
+      owner,
+      notePath,
+      (content) => {
+        const result = applyTaskToggle(content, line, expected, done);
+        if (!result.ok) {
+          throw new TaskChangedError(
+            'that task has changed since the list was loaded — reload the task list and try again',
+          );
+        }
+        return result.content;
+      },
+      actor,
+      options,
+    );
   }
 
   /**
@@ -366,6 +532,55 @@ export class App {
       authorize?.();
       return this.notes.getNote(owner, notePath);
     });
+  }
+
+  /**
+   * Replaces one exact piece of text — MCP `edit_note`.
+   *
+   * Counted against the live text when a room is open, so an agent edits what
+   * people are looking at, not what the file held a second ago.
+   *
+   * With no room open, deliberately not `#change`: an edit replaces a span it
+   * located in a particular version of the text, and `#change`'s read is
+   * locked — right for `toggleTask` and the bulk actions, which re-derive
+   * their edit from the fresh read they hold the lock for. Locking this one
+   * would hold the note's lock across a read whose result is used *after* the
+   * lock is released, and a save landing in that now-unreachable gap would
+   * queue behind its own would-be reader — the deadlock
+   * `concurrency.test.ts` pins. The gap is what makes `baseHash` load-bearing
+   * here: a save landing in it is kept as a conflict copy, exactly as before
+   * this task, rather than merged or silently overwritten.
+   */
+  async editNote(
+    owner: string,
+    notePath: string,
+    find: string,
+    replace: string,
+    actor: string,
+    options: Authorized & { agent?: boolean } = {},
+  ): Promise<PutResult> {
+    const room = this.#room(owner, notePath);
+    if (room !== undefined) {
+      return this.#change(
+        owner,
+        notePath,
+        (content) => {
+          const result = replaceOnce(content, find, replace);
+          if (result.ok) return result.content;
+          throw new EditNotUniqueError(result.occurrences);
+        },
+        actor,
+        options,
+      );
+    }
+
+    const note = await this.notes.getNote(owner, notePath);
+    const result = replaceOnce(note.content, find, replace);
+    if (!result.ok) throw new EditNotUniqueError(result.occurrences);
+
+    const write: PutOptions = { baseHash: note.hash };
+    if (options.authorize !== undefined) write.authorize = options.authorize;
+    return this.updateNote(owner, notePath, result.content, actor, write);
   }
 
   /* ---- topics -------------------------------------------------------------
@@ -401,13 +616,19 @@ export class App {
     for (const proposal of await this.topicProposals(owner)) {
       if (!wanted.has(proposal.path)) continue;
 
-      const note = await this.notes.getNote(owner, proposal.path);
-      let content = note.content;
-      for (const tag of proposal.proposed) content = addTag(content, tag);
-      if (content === note.content) continue;
-
-      await this.putNote(owner, proposal.path, content, actor);
-      done.push({ path: proposal.path, added: proposal.proposed });
+      let changed = false;
+      await this.#change(
+        owner,
+        proposal.path,
+        (content) => {
+          let next = content;
+          for (const tag of proposal.proposed) next = addTag(next, tag);
+          changed = next !== content;
+          return next;
+        },
+        actor,
+      );
+      if (changed) done.push({ path: proposal.path, added: proposal.proposed });
     }
     return done;
   }
@@ -568,7 +789,11 @@ export class App {
   }
 
   async deleteNote(owner: string, notePath: string, actor?: string, options: Authorized = {}): Promise<void> {
+    const room = this.#room(owner, notePath);
+    // The last text goes to the file first, so Recently deleted holds it.
+    await room?.flush();
     await this.notes.deleteNote(owner, notePath, options);
+    room?.closeDeleted(actor ?? owner);
     const canonical = normalizeVaultPath(notePath);
     this.indexer.removeNote(owner, canonical);
     this.indexer.resolveLinks(owner);
@@ -675,7 +900,10 @@ export class App {
     const move: RenameOptions = {};
     if (authorizeSource !== undefined) move.authorizeSource = authorizeSource;
     if (authorizeTarget !== undefined) move.authorizeTarget = authorizeTarget;
+    // Whatever the room holds goes to the file first, so the move carries it.
+    await this.#room(owner, source)?.flush();
     const note = await this.notes.renameNote(owner, source, target, move);
+    this.#rooms?.rekey(owner, source, target);
 
     const updated: string[] = [];
     for (const referrer of referrers) {
@@ -702,35 +930,30 @@ export class App {
     };
   }
 
-  /** Rewrites links in one note. Returns whether anything changed. */
+  /**
+   * Rewrites links in one note. Against the live text when a room is open for
+   * it, so a rename lands where the room's own writes do; against the file
+   * otherwise. Returns whether anything changed.
+   */
   async #rewriteLinksIn(
     owner: string,
     notePath: string,
     oldTarget: string,
     newTarget: string,
   ): Promise<boolean> {
-    const note = await this.notes.getNote(owner, notePath);
-    const parsed = parseNote(note.content);
-
-    const replacements = parsed.wikilinks
-      .filter((link) => pointsAt(link.target, oldTarget))
-      .map((link) => ({
-        offset: link.offset,
-        length: link.raw.length,
-        text: buildWikilink(link.target, newTarget, link.heading, link.alias),
-      }))
-      .sort((a, b) => b.offset - a.offset); // back to front keeps earlier offsets valid
-
-    if (replacements.length === 0) return false;
-
-    let content = note.content;
-    for (const replacement of replacements) {
-      content =
-        content.slice(0, replacement.offset) +
-        replacement.text +
-        content.slice(replacement.offset + replacement.length);
+    const room = this.#room(owner, notePath);
+    if (room !== undefined) {
+      let changed = false;
+      room.transform((live) => {
+        const next = rewriteLinks(live, oldTarget, newTarget);
+        changed = next !== null;
+        return next ?? live;
+      }, { actor: owner });
+      return changed;
     }
-
+    const note = await this.notes.getNote(owner, notePath);
+    const content = rewriteLinks(note.content, oldTarget, newTarget);
+    if (content === null) return false;
     await this.notes.updateNote(owner, notePath, content);
     return true;
   }
@@ -829,14 +1052,16 @@ export class App {
   ): Promise<BulkResult> {
     return this.#overSelection(paths, async (notePath) => {
       const gate = authorize === undefined ? undefined : (): void => authorize(notePath);
-      const note = await this.readAuthorized(owner, notePath, gate);
-      const updated = addTag(note.content, tag);
-
       // Unchanged means the tag was already there. Writing anyway would bump the
-      // modification date and make an untouched note look edited.
-      if (updated !== note.content) {
-        await this.updateNote(owner, notePath, updated, actor, gate === undefined ? {} : { authorize: gate });
-      }
+      // modification date and make an untouched note look edited — `#change`
+      // already leaves an unmodified `content` unwritten.
+      await this.#change(
+        owner,
+        notePath,
+        (content) => addTag(content, tag),
+        actor,
+        gate === undefined ? {} : { authorize: gate },
+      );
       return notePath;
     });
   }
@@ -850,11 +1075,13 @@ export class App {
   ): Promise<BulkResult> {
     return this.#overSelection(paths, async (notePath) => {
       const gate = authorize === undefined ? undefined : (): void => authorize(notePath);
-      const note = await this.readAuthorized(owner, notePath, gate);
-      const updated = removeTag(note.content, tag);
-      if (updated !== note.content) {
-        await this.updateNote(owner, notePath, updated, actor, gate === undefined ? {} : { authorize: gate });
-      }
+      await this.#change(
+        owner,
+        notePath,
+        (content) => removeTag(content, tag),
+        actor,
+        gate === undefined ? {} : { authorize: gate },
+      );
       return notePath;
     });
   }
@@ -1151,6 +1378,37 @@ function visibleIn(viewable: Viewable, owner: string, paths: string[]): string[]
   return paths.filter((notePath) =>
     view.some((scope) => scope.owner === owner && inScope(scope, notePath)),
   );
+}
+
+/**
+ * The replacements `#rewriteLinksIn` applies, computed against whatever text
+ * it is handed — the live text or the file, the caller decides which.
+ *
+ * `null` when nothing points at `oldTarget`: distinct from the empty string,
+ * which is a legitimate rewrite of a note whose content happened to become
+ * empty, and distinct from "no change" in a room's `transform`, which reads
+ * `null` as "keep the text as it was".
+ */
+function rewriteLinks(content: string, oldTarget: string, newTarget: string): string | null {
+  const parsed = parseNote(content);
+
+  const replacements = parsed.wikilinks
+    .filter((link) => pointsAt(link.target, oldTarget))
+    .map((link) => ({
+      offset: link.offset,
+      length: link.raw.length,
+      text: buildWikilink(link.target, newTarget, link.heading, link.alias),
+    }))
+    .sort((a, b) => b.offset - a.offset); // back to front keeps earlier offsets valid
+
+  if (replacements.length === 0) return null;
+
+  let next = content;
+  for (const replacement of replacements) {
+    next =
+      next.slice(0, replacement.offset) + replacement.text + next.slice(replacement.offset + replacement.length);
+  }
+  return next;
 }
 
 /** True if a link target, as written, refers to `notePath`. */

@@ -152,6 +152,24 @@ export const copy = {
   },
 
   /**
+   * Live editing: what the connection is doing, and what happens to the text
+   * when it is not doing it.
+   *
+   * `offline` promises rather than warns on purpose. What was typed while
+   * disconnected is held and sent, either into the room when it comes back or
+   * through the ordinary save if the room is gone, so the words people need
+   * are "it will go", not "something may be wrong".
+   */
+  collab: {
+    live: 'Live',
+    offline: 'Offline — your changes will be sent',
+    connecting: 'Connecting…',
+    unavailable: 'Live editing unavailable — saving as usual',
+    moved: (path: string) => `This note was moved to ${path}`,
+    deleted: (by: string) => `This note was deleted by ${by}`,
+  },
+
+  /**
    * The open note is no longer the file it was filled from.
    *
    * Said in the same words as `errors.conflict`, which is the same event after
