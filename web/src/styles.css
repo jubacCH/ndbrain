@@ -2501,15 +2501,31 @@ tbody tr[data-selected='true']:hover td {
 
 /* One knob for the whole interface.
  *
- * Everything else is sized in rem or em, so scaling this one value scales the
- * type, the spacing that hangs off it and the controls together — rather than
- * leaving big text crammed into boxes built for small text. */
-:root {
-  --text-scale: 1;
+ * The type tokens above and the measurements that hang off them are sized in
+ * rem or em, so scaling this one value scales the type, that spacing and the
+ * controls together — rather than leaving big text crammed into boxes built
+ * for small text.
+ *
+ * On `html`, and that is the whole point: `rem` resolves against the root
+ * element. Declared on `body`, as this was, the knob moved the body's own text
+ * and left every `--t-*` token resolving against the browser's untouched 16px
+ * root — so 150% type still drew 11.5px labels. The stylesheet's own `rem`
+ * values are what makes the setting mean anything, and they can only see the
+ * root.
+ *
+ * The px measurements that remain (the `--s-*` spacing steps, the radii, the
+ * canvas labels the network draws in Javascript) do not follow, by nature: a
+ * pixel is a pixel. Large type therefore sits in slightly tighter padding than
+ * small type rather than in a proportionally larger box. */
+html {
+  font-size: calc(15.5px * var(--text-scale));
 }
 
 body {
-  font-size: calc(15.5px * var(--text-scale));
+  /* Inherits the scaled root rather than repeating it — and has to say so,
+     because the base rule further up pins `body` to an absolute 15px, which
+     would otherwise win here and strand everything that inherits from it. */
+  font-size: 1rem;
   line-height: 1.58;
   letter-spacing: -0.005em;
 }

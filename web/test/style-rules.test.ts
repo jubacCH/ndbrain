@@ -177,3 +177,63 @@ describe('the skip link', () => {
     expect(focused).toMatch(/top:|left:|transform:/);
   });
 });
+
+/**
+ * Where the text-size knob hangs, which decides whether it does anything.
+ *
+ * `--text-scale` is the one setting the whole interface is meant to follow, and
+ * every size token is written in `rem` so that it does. But `rem` resolves
+ * against the root element, never against `body` — so a scale declared on
+ * `body` moved the body's own text and left every token that hangs off it at
+ * the browser's unscaled 16px root. Somebody who set the type to 150% still got
+ * 11.5px labels, because `--t-xs: 0.72rem` had never heard of the setting.
+ *
+ * jsdom lays nothing out, so there is no computed pixel to measure here. What
+ * is checkable is the thing that was wrong: which selector carries the
+ * declaration, that `body` still follows it rather than pinning itself to a
+ * pixel again, and that the tokens the knob is meant to reach are relative in
+ * the first place. Those three are the mechanism; a browser is needed only to
+ * admire the result.
+ */
+describe('the text-size knob', () => {
+  /** Every rule whose body sets a font-size built from `--text-scale`. */
+  const scaled = rules(css).filter(([, body]) => /font-size:[^;]*var\(--text-scale\)/.test(body));
+
+  it('is declared on the root element, so every rem follows it', () => {
+    expect(scaled.length).toBeGreaterThan(0);
+    for (const [selectors] of scaled) {
+      for (const selector of selectors.split(',').map((one) => one.trim())) {
+        // `rem` is the root element's font size. Anywhere else the knob turns
+        // and the tokens do not move.
+        expect(selector, selector).toMatch(/^(html|:root)$/);
+      }
+    }
+  });
+
+  it('carries the body along in a relative unit, not back to a pixel', () => {
+    const body = rules(css)
+      .filter(([selectors]) => selectors.split(',').some((one) => one.trim() === 'body'))
+      .map(([, declarations]) => declarations)
+      .join(';');
+    const sizes = [...body.matchAll(/font-size:\s*([^;]+)/g)].map((match) => match[1]!.trim());
+
+    expect(sizes.length).toBeGreaterThan(0);
+    // The last declaration is the one that wins, and it has to be relative: an
+    // absolute font-size on `body` strands everything inheriting from it while
+    // the tokens around it scale.
+    expect(sizes[sizes.length - 1]).toMatch(/(rem|em|%|inherit)/);
+  });
+
+  it('turns tokens that are written in rem, or it reaches nothing', () => {
+    // `:root` is declared several times over — palette, spacing, type — so the
+    // tokens are looked for across all of them.
+    const root = rules(css)
+      .filter(([selectors]) => selectors.trim() === ':root')
+      .map(([, body]) => body)
+      .join(';');
+    const tokens = [...root.matchAll(/--t-(xs|sm|md|base|lg|xl):\s*([^;]+)/g)];
+
+    expect(tokens.length).toBe(6);
+    for (const [, name, value] of tokens) expect(value!.trim(), `--t-${name}`).toMatch(/rem$/);
+  });
+});
