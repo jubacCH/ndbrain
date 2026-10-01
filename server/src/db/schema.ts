@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -466,6 +466,41 @@ const MIGRATIONS: Array<(db: Database) => void> = [
       WHEN NEW.login_name = ''
       BEGIN
         UPDATE users SET login_name = NEW.id WHERE id = NEW.id;
+      END;
+    `);
+  },
+
+  // v14 -> v15: an identifier that was never anybody's name
+  //
+  // `id` is readable because it is a directory name, and readable is the one
+  // thing an identifier should not be: every readable name is a name somebody
+  // eventually wants changed. So each account also gets one that was never
+  // chosen and never means anything — thirty-two hex characters out of
+  // `randomblob`, behind `acc_` so that a value found in a log or a path says
+  // what kind of thing it is.
+  //
+  // Nothing hangs off it yet. This migration only puts it there and guarantees
+  // it is unique; what points at it is a later step, because moving every
+  // foreign key and every vault directory is a different kind of change from
+  // adding a column.
+  //
+  // `randomblob` is evaluated once per row rather than once per statement, so
+  // the backfill below gives four accounts four different identifiers — which
+  // the unique index would otherwise refuse, loudly, at exactly the right
+  // moment.
+  (db) => {
+    db.exec("ALTER TABLE users ADD COLUMN guid TEXT NOT NULL DEFAULT '';");
+    db.exec("UPDATE users SET guid = 'acc_' || lower(hex(randomblob(16)));");
+    db.exec('CREATE UNIQUE INDEX users_guid ON users (guid);');
+
+    // The same mine as `login_name`, defused the same way — and here the
+    // trigger can produce the value itself, so a row written by hand gets a
+    // real identifier rather than one somebody had to think of.
+    db.exec(`
+      CREATE TRIGGER users_guid_default AFTER INSERT ON users
+      WHEN NEW.guid = ''
+      BEGIN
+        UPDATE users SET guid = 'acc_' || lower(hex(randomblob(16))) WHERE id = NEW.id;
       END;
     `);
   },

@@ -258,6 +258,53 @@ describe('nobody can lock everybody out', () => {
   });
 });
 
+describe('the account identifier', () => {
+  /**
+   * Readable names are the ones somebody eventually wants changed, so the thing
+   * that identifies an account is one nobody chose. It belongs to whoever
+   * administers the server.
+   */
+  it('is on the administrator’s listing', async () => {
+    const listed = await server.inject({ url: '/api/v1/admin/users', headers: { cookie: adminCookie } });
+    const { users: rows } = S.AdminUsersResponse.parse(listed.json());
+
+    for (const row of rows) expect(row.guid).toMatch(/^acc_[0-9a-f]{32}$/);
+    expect(new Set(rows.map((row) => row.guid)).size).toBe(rows.length);
+  });
+
+  /**
+   * And on no other route. `/api/v1/auth/me` is what every signed-in page reads
+   * about itself, and an account is addressed by its display name everywhere a
+   * person can see.
+   */
+  it('reaches nobody through the routes an ordinary account can call', async () => {
+    const me = await server.inject({ url: '/api/v1/auth/me', headers: { cookie: plainCookie } });
+    expect(me.statusCode).toBe(200);
+    expect(JSON.stringify(me.json())).not.toContain('acc_');
+
+    const renamed = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/ramona',
+      headers: { cookie: adminCookie },
+      payload: { displayName: 'Ramona B.' },
+    });
+    expect(JSON.stringify(renamed.json())).not.toContain('acc_');
+  });
+
+  it('does not change when everything readable about the account does', async () => {
+    const before = runtime.users.get('ramona')?.guid;
+
+    await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/ramona',
+      headers: { cookie: adminCookie },
+      payload: { displayName: 'Ramona Bachmann', loginName: 'ramona-b' },
+    });
+
+    expect(runtime.users.get('ramona')?.guid).toBe(before);
+  });
+});
+
 describe('renaming an account', () => {
   /**
    * The label, not the account. A space could already be renamed and a person

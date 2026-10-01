@@ -4584,6 +4584,16 @@ kbd,
    in Tidy up draw from them. What is gone is the tally that used to sit in the
    sidebar's footer. */
 
+/* The account identifier in the administrator's table. Small and quiet: it is
+   read when something is being looked up by hand, not while reading the list. */
+.adminguid {
+  display: block;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  user-select: all;
+  word-break: break-all;
+}
+
 .nav-make {
   display: flex;
   gap: 2px;

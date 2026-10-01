@@ -1267,6 +1267,8 @@ export const copy = {
     newLoginFor: (id: string) => `Sign-in name for ${id}`,
     /** Shown only where a rename has moved the login off the folder's name. */
     vaultFolder: (id: string) => `vault: ${id}`,
+    guidWhy:
+      'This account’s identifier. Random, unique, and never changes — what other records point at, so that every name a person sees can be changed freely. Shown here and nowhere else.',
     vaultFolderWhy:
       'The folder this account’s notes live in. It keeps the name the account was made with, so that renaming the login moves nothing on disk.',
     saveName: 'Save',

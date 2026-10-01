@@ -105,6 +105,11 @@ export function AdminView(props: AdminProps): React.JSX.Element {
                       {copy.admin.vaultFolder(user.id)}
                     </span>
                   )}
+                  {/* The identifier, on this screen and on no other. Selectable
+                      rather than offered with a copy button: it is wanted when
+                      something is being looked up by hand, which is already a
+                      terminal and a paste. */}
+                  <code className="adminguid" title={copy.admin.guidWhy}>{user.guid}</code>
                   {user.role === 'admin' && <span className="pill p-tag">{copy.admin.admin}</span>}
                   {user.disabled && <span className="pill p-crit">{copy.admin.disabled}</span>}
                 </td>

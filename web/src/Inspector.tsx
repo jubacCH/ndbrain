@@ -179,7 +179,7 @@ export function Inspector({
             owner !== self && (
               <>
                 <dt>{copy.inspector.vault}</dt>
-                <dd className="inspector-owner">{owner}</dd>
+                <dd className="inspector-owner">{ownerLabel(owners, owner)}</dd>
               </>
             )
           )}

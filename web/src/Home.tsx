@@ -28,6 +28,7 @@ import { ChevronIcon, ChevronLeftIcon, NetworkIcon, TodayIcon } from './icons';
 import { dayName } from './Journal';
 import { addDays, isoDate, journalPath, localDate, notesPreview, type JournalDate } from './daily';
 import { relativeTime } from './network/relativeTime';
+import { ownerLabel, useOwners } from './owners';
 import { displayPath } from './Tree';
 
 /** How many days the trace covers, today included. */
@@ -393,6 +394,9 @@ function NoteLink({
   hidePrefixes: boolean;
   onOpen: (owner: string, path: string) => void;
 }): React.JSX.Element {
+  // What the vault is called, not what it is keyed by: since the id became a
+  // random identifier, printing it would put `acc_…` on the row.
+  const owners = useOwners();
   const folder = folderOf(note.path, hidePrefixes);
   return (
     <button
@@ -402,7 +406,7 @@ function NoteLink({
       onClick={() => onOpen(note.owner, note.path)}
     >
       <span className="home-note-title">
-        {note.owner !== self && <span className="pill p-info">{note.owner}</span>}
+        {note.owner !== self && <span className="pill p-info">{ownerLabel(owners, note.owner)}</span>}
         {note.title}
       </span>
       <span className="home-note-meta">

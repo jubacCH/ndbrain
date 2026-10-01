@@ -33,6 +33,15 @@ export interface User {
    */
   id: string;
   /**
+   * The identifier that was never anybody's name.
+   *
+   * Random, unique, and meaningless on purpose: every readable name is a name
+   * somebody eventually wants changed, so the thing other rows will point at is
+   * one nobody chose. Shown to an administrator and to nobody else — it is how
+   * an account is identified, not how it is addressed.
+   */
+  guid: string;
+  /**
    * What somebody types at the login. Starts as a copy of the id and is free to
    * change afterwards — which is the whole point of it being a separate column:
    * renaming the id would be a directory move and a rewrite of every foreign
@@ -67,6 +76,7 @@ function tokenHash(token: string): string {
 function toUser(row: Record<string, unknown>): User {
   return {
     id: String(row['id']),
+    guid: String(row['guid'] ?? ''),
     // Falls back to the id, for a row read by a build whose migration has not
     // run — the two were the same thing until v14.
     loginName: String(row['login_name'] ?? row['id']),

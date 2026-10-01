@@ -120,6 +120,70 @@ describe('a row written without a login', () => {
   });
 });
 
+/**
+ * The v15 migration: an identifier that was never anybody's name.
+ *
+ * `id` is readable because it is a directory name, and readable is the one
+ * thing an identifier should not be — every readable name is a name somebody
+ * eventually wants changed. So each account also carries one that was never
+ * chosen and never means anything.
+ */
+describe('the account identifier', () => {
+  const insert = (id: string): void =>
+    db.run(
+      `INSERT INTO users (id, display_name, password_hash, role, created_at, disabled_at)
+       VALUES (?, ?, 'x', 'user', 1, NULL)`,
+      id,
+      id,
+    );
+
+  it('is different for every account that already existed', () => {
+    migrate(db, 14);
+    db.run(
+      `INSERT INTO users (id, login_name, display_name, password_hash, role, created_at, disabled_at)
+       VALUES ('julian', 'julian', 'J', 'x', 'user', 1, NULL)`,
+    );
+    db.run(
+      `INSERT INTO users (id, login_name, display_name, password_hash, role, created_at, disabled_at)
+       VALUES ('ramona', 'ramona', 'R', 'x', 'user', 1, NULL)`,
+    );
+
+    migrate(db);
+
+    const guids = db.all('SELECT guid FROM users ORDER BY id').map((row) => String(row['guid']));
+    // `randomblob` is evaluated per row and not per statement. If it were not,
+    // the backfill would hand two accounts one identifier — and the unique
+    // index would stop it, which is the point of asserting it here rather than
+    // trusting the documentation.
+    expect(new Set(guids).size).toBe(2);
+    for (const guid of guids) expect(guid).toMatch(/^acc_[0-9a-f]{32}$/);
+  });
+
+  it('is given to a row written without one', () => {
+    migrate(db);
+    insert('julian');
+    insert('ramona');
+
+    const guids = db.all('SELECT guid FROM users ORDER BY id').map((row) => String(row['guid']));
+    expect(new Set(guids).size).toBe(2);
+    for (const guid of guids) expect(guid).toMatch(/^acc_[0-9a-f]{32}$/);
+  });
+
+  it('survives a rename of everything that is readable', async () => {
+    migrate(db);
+    const vault = new Vault(path.join(dir));
+    const users = new UserService(db, vault);
+    await users.create('ramona', 'ihr gutes passwort');
+    const first = users.get('ramona')?.guid;
+
+    users.setLoginName('ramona', 'ramona-b');
+    users.setDisplayName('ramona', 'Ramona Bachmann');
+
+    expect(users.get('ramona')?.guid).toBe(first);
+    expect(first).toMatch(/^acc_[0-9a-f]{32}$/);
+  });
+});
+
 describe('renaming the login', () => {
   async function service(): Promise<UserService> {
     migrate(db);

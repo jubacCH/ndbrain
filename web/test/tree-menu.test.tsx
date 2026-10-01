@@ -247,7 +247,9 @@ describe('the menu on a space’s header', () => {
 
   it('does not open on a vault shared for reading', () => {
     renderTree();
-    expect(rightClick(screen.getByRole('heading', { name: /anna/ }))).toBeNull();
+    // By her display name: every owner is labelled by what they are called,
+    // now that the account id is a random identifier.
+    expect(rightClick(screen.getByRole('heading', { name: /Anna/ }))).toBeNull();
   });
 });
 

@@ -1380,6 +1380,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       // password reset for an account that has no password.
       users: users.list().filter((user) => user.kind === 'person').map((user) => ({
         id: user.id,
+        // Only here. `publicUser` below, which is what every other route
+        // answers with, deliberately does not carry it.
+        guid: user.guid,
         loginName: user.loginName,
         displayName: user.displayName,
         role: user.role,
@@ -1922,6 +1925,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   return fastify;
 }
 
+/**
+ * What a route may say about an account to the person it belongs to.
+ *
+ * Written as a pick of three named fields rather than as a spread with the
+ * secrets removed: a field added to `User` then has to be named here before it
+ * can leave the server, which is the way round that fails safely. `guid` is the
+ * first one that tests it — it is for whoever administers the server and
+ * appears on the administrator's listing alone.
+ */
 function publicUser(user: User): Pick<User, 'id' | 'displayName' | 'role'> {
   return { id: user.id, displayName: user.displayName, role: user.role };
 }

@@ -1624,9 +1624,12 @@ function Shell({
   const revokeShare = async (share: Share): Promise<void> => {
     const own = share.owner === user.id;
     const what = copy.ask.shareExtent(share.prefix);
+    // Both sides by what they are called, not by what they are keyed by: the
+    // ids are random identifiers, and a question naming one is a question
+    // nobody can answer.
     const question = own
-      ? copy.ask.withdrawShare(share.grantee, what)
-      : copy.ask.giveUpShare(share.owner, what);
+      ? copy.ask.withdrawShare(ownerLabel(owners, share.grantee), what)
+      : copy.ask.giveUpShare(ownerLabel(owners, share.owner), what);
     if (!window.confirm(question)) return;
 
     setShareBusy(true);

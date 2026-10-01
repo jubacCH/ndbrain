@@ -23,8 +23,8 @@ import { copy } from '../src/copy';
 import type { AdminUser } from '../src/api';
 
 const USERS: AdminUser[] = [
-  { id: 'julian', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
-  { id: 'ramona', loginName: 'ramona', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 3 },
+  { id: 'julian', guid: 'acc_julianjulianjulianjulianjulianju', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
+  { id: 'ramona', guid: 'acc_ramonaramonaramonaramonaramonara', loginName: 'ramona', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 3 },
 ];
 
 function renderAdmin(over: Partial<AdminProps> = {}) {
@@ -151,8 +151,8 @@ describe('the control', () => {
   it('shows the vault’s folder once it stops matching the login', () => {
     renderAdmin({
       users: [
-        { id: 'julian', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 1 },
-        { id: 'ramona', loginName: 'ramona-b', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 0 },
+        { id: 'julian', guid: 'acc_julianjulianjulianjulianjulianju', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 1 },
+        { id: 'ramona', guid: 'acc_ramonaramonaramonaramonaramonara', loginName: 'ramona-b', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 0 },
       ],
     });
 
@@ -183,6 +183,24 @@ describe('the control', () => {
 
     const again = await openRename('ramona');
     expect(within(again).getByLabelText(copy.admin.newNameFor('ramona'))).toHaveValue('Ramona');
+  });
+});
+
+describe('the identifier', () => {
+  /**
+   * The thing that makes renaming free: every name on this row can change, and
+   * this one cannot. It is on the administrator's screen and on no other.
+   */
+  it('is shown beside the account, and is not one of the names', async () => {
+    renderAdmin();
+    const row = rowOf('ramona');
+    const guid = USERS[1]!.guid;
+
+    expect(within(row).getByText(guid)).toBeInTheDocument();
+
+    await openRename('ramona');
+    const fields = within(rowOf('ramona')).getAllByRole('textbox');
+    for (const field of fields) expect(field).not.toHaveValue(guid);
   });
 });
 

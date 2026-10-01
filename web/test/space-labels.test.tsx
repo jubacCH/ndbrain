@@ -57,10 +57,27 @@ afterEach(() => {
 });
 
 describe('the owner label', () => {
-  it('is a space’s display name and a person’s account name', () => {
+  /**
+   * The display name, for a person as much as for a space.
+   *
+   * It used to answer differently for the two, on the grounds that a person's
+   * account name was what the sharing screens showed. That expired when the
+   * account id became a random identifier: "a folder name nobody chose to read"
+   * is now true of every owner, and a row labelled `acc_0f3a…` names nobody.
+   */
+  it('is the display name, whoever the owner is', () => {
     expect(ownerLabel(DIRECTORY, 'familie')).toBe('Familie');
-    expect(ownerLabel(DIRECTORY, 'anna')).toBe('anna');
+    expect(ownerLabel(DIRECTORY, 'anna')).toBe('Anna');
+  });
+
+  /**
+   * And the id where there is nothing else — a share from an account that has
+   * since gone, a component rendered without the provider. Showing it is better
+   * than showing nothing, even though nobody chose it to be read.
+   */
+  it('falls back to the id for an owner it has never heard of', () => {
     expect(ownerLabel(DIRECTORY, 'unbekannt')).toBe('unbekannt');
+    expect(ownerLabel(ownerDirectory([{ id: 'x', kind: 'person', displayName: '' }]), 'x')).toBe('x');
   });
 });
 

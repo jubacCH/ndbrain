@@ -84,7 +84,11 @@ describe('a space in the tree', () => {
     const heads = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
     expect(heads[0]).toMatch(/^Familie/);
     expect(heads[1]).toMatch(/^Verein/);
-    expect(heads[2]).toMatch(/^anna/);
+    // By her display name, as a space is. It used to be her account name, on
+    // the grounds that this is what the sharing screens show — and that
+    // reasoning expired when the account id became a random identifier: "a
+    // folder name nobody chose to read" is now true of every owner.
+    expect(heads[2]).toMatch(/^Anna/);
     // The account name of the space is nowhere on screen.
     expect(screen.queryByText('familie')).toBeNull();
   });
