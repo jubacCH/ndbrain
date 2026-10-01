@@ -1,0 +1,81 @@
+# ndBrain, from the published image.
+#
+# Everything you need to run it: put this in an empty directory and
+#
+#   docker compose up -d
+#   docker compose exec ndbrain ndbrain-user create <name> --admin
+#
+# The second line is not optional and there is no way around it. ndBrain has no
+# self-registration, deliberately: an account comes into existence only through
+# `ndbrain-user`, which reads the password from stdin rather than from an
+# argument that would be left behind in `ps` and in a shell history.
+#
+# Your notes end up in `./data/vaults/<account>` as ordinary Markdown files, and
+# `./data/index` holds a cache that can be thrown away and rebuilt from them.
+# That is the promise the whole project is arranged around: the files are the
+# truth. Back up `./data` and you have backed up everything that matters —
+# though `./data/index/ndbrain.db` also holds the accounts, the shares and the
+# agent keys, and *those* are not derivable from the files.
+#
+# The repository's own `docker-compose.yml` is a different file for a different
+# job: it builds the image from source and mounts absolute host paths. Use this
+# one unless you are working on ndBrain itself.
+
+services:
+  ndbrain:
+    image: ghcr.io/jubacch/ndbrain:latest
+    container_name: ndbrain
+    restart: unless-stopped
+    init: true
+
+    # Nothing in here needs a capability, a new privilege or a writable root.
+    # It is a notes server exposed to a network; the cost of saying so is three
+    # lines and the benefit is that a bug in it has nowhere to go.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      # Small on purpose, and it is a real limit rather than a formality:
+      # anything that wants a temporary file of any size has to be told not to.
+      # See `migrate` in `server/src/db/schema.ts` for the one thing that did.
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+
+    ports:
+      # Behind a reverse proxy that terminates TLS, so this is bound to
+      # localhost. Publish it more widely only if you know what sits in front.
+      - '127.0.0.1:3000:3000'
+
+    volumes:
+      # Relative to this file, so the whole installation is one directory you
+      # can move, copy or back up. They stay writable under `read_only: true`,
+      # which applies to the root filesystem and not to what is mounted into it.
+      - ./data/vaults:/data/vaults
+      - ./data/index:/data/index
+
+    environment:
+      TZ: Europe/Zurich
+
+      # **The one setting to get right.** The session cookie is `Secure`, so a
+      # browser silently drops it over plain HTTP: the login answers 200, the
+      # cookie never arrives, and everything after it is a 401 with no
+      # explanation. Set this to false only for a test on `http://localhost`.
+      #
+      # It also decides whether `Strict-Transport-Security` is sent, so a
+      # plain-HTTP test cannot pin a browser to HTTPS for a year by accident.
+      NDBRAIN_COOKIE_SECURE: 'true'
+
+      NDBRAIN_LOG_LEVEL: info
+
+      # Live editing between two open tabs. It needs the reverse proxy in front
+      # to pass WebSocket upgrades for `/api/v1/collab`; without that every
+      # browser quietly falls back to saving the way it always did. Set to
+      # 'false' to turn it off without a rollback.
+      NDBRAIN_COLLAB: 'true'
+
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'

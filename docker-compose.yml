@@ -53,9 +53,17 @@ services:
     #  - `os.tmpdir()`, `mkdtemp` and a literal `/tmp` appear nowhere in
     #    `server/src`.
     #
-    # The tmpfs is therefore belt and braces rather than a requirement: Node and
-    # git both have paths that reach for a temporary directory, and 16 MB that
-    # vanishes on restart is cheaper than finding out which one does.
+    # The tmpfs was described here as belt and braces rather than a requirement.
+    # It is a requirement, and finding that out cost an outage: with
+    # `read_only: true` this is the only writable place outside the two volumes,
+    # so anything that reaches for a temporary file gets sixteen megabytes and
+    # no more. A database migration that rewrote six hundred thousand rows
+    # inside one transaction asked SQLite for a statement journal, did not fit,
+    # and failed with "database or disk is full" while the disk had ten
+    # gigabytes free. See `migrate` in `server/src/db/schema.ts`.
+    #
+    # Left small. The limit is doing its job; what was missing was anything
+    # that knew about it.
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
 

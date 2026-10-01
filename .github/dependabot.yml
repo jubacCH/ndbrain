@@ -1,0 +1,50 @@
+# Keeps the dependencies moving, slowly and in groups.
+#
+# Weekly rather than daily, and grouped rather than one pull request per
+# package: this is a project one person maintains, and a queue of forty
+# single-line updates is a queue nobody reads. Grouped, it is one pull request
+# a week that CI has already run the whole suite against.
+#
+# Major versions are separate on purpose. A grouped minor bump that CI passes
+# can be merged on the strength of that; a major one is a change to read.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /desktop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # The workflows pin actions by major tag; this is what moves them when one
+  # goes stale, which is otherwise noticed only when a run starts warning.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly

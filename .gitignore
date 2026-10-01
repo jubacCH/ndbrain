@@ -22,5 +22,10 @@ vaults/
 .DS_Store
 Thumbs.db
 
+# Working state of the agent tooling, including whole worktrees. Excluded in
+# `.git/info/exclude` on the machine this was built on, which is local to that
+# clone — here so it holds for everybody.
+.claude/
+
 # Per-instance deployment tweaks; never the same on two machines.
 docker-compose.override.yml

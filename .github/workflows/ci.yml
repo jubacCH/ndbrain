@@ -1,0 +1,95 @@
+# Runs the tests on every push and every pull request.
+#
+# There were none until now, which is a gap with two different shapes. For
+# somebody sending a patch it means nothing tells them whether they broke
+# something — the project has around two and a half thousand tests and no way
+# for a stranger to run them against their change. For the person deploying it
+# means the only gate between "green on my machine" and "running on the server"
+# is memory.
+#
+# Node 24 because that is what the image ships (`Dockerfile`). Testing on a
+# version other than the one that runs in production is testing something else:
+# `node:sqlite` is the database and it is young enough that its behaviour
+# differs between releases.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Called by `release.yml` before it publishes anything: an image built from a
+  # commit nothing verified is worse than no image, because somebody else runs
+  # it. Without this trigger that call is simply refused.
+  workflow_call:
+
+# A second push to the same branch makes the first run pointless. The one on
+# `main` is allowed to finish, because it is what a release is cut from.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - run: npm run typecheck
+        working-directory: server
+      - run: npm test
+        working-directory: server
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: web
+      - run: npm run typecheck
+        working-directory: web
+      - run: npm test
+        working-directory: web
+      # The build is a check and not only a step towards one: it runs
+      # `scripts/check-csp.mjs`, which reads the built bundle and fails if
+      # anything in it evaluates a string. The policy in `server/src/http/csp.ts`
+      # promises that, and the promise drifted once already when a dependency
+      # changed its mind.
+      - run: npm run build
+        working-directory: web
+
+  desktop:
+    name: desktop (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('desktop/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+      # On macOS because that is the only platform this is built for: it uses
+      # the Keychain and switches the Dock activation policy. Two of its three
+      # crates would compile anywhere, and splitting the job to save a few
+      # minutes would mean the half that holds the window and the tray is the
+      # half nothing runs.
+      - run: cargo test
+        working-directory: desktop

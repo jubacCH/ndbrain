@@ -1,5 +1,8 @@
 # ndBrain
 
+[![CI](https://github.com/jubacCH/ndbrain/actions/workflows/ci.yml/badge.svg)](https://github.com/jubacCH/ndbrain/actions/workflows/ci.yml)
+[![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)
+
 A self-hosted notes server that is a **librarian, not a better editor**.
 
 Notes are plain Markdown files in a folder. The server indexes them, resolves `[[wikilinks]]`,
@@ -32,19 +35,48 @@ into this repository as `ops/`.
 
 ## Running it
 
-The container image builds from this repository and carries no native dependency.
-
 ```bash
+mkdir ndbrain && cd ndbrain
+curl -O https://raw.githubusercontent.com/jubacCH/ndbrain/main/docs/install/compose.yaml
 docker compose up -d
-docker compose exec ndbrain ndbrain-user create julian --admin
+docker compose exec ndbrain ndbrain-user create <your-name> --admin
 ```
 
-There is no self-registration: `ndbrain-user` is the only way an account comes into existence,
-and it reads passwords from stdin rather than from an argument that would land in `ps`. Run it
-with no arguments for the rest — passwords, agent keys, spaces, reindex.
+That is the whole installation. The image is published for `linux/amd64` and `linux/arm64`;
+there is no native dependency anywhere in it, because SQLite comes from Node itself.
 
-The vault and the index live on the host (`/srv/ndbrain/vaults` and `/srv/ndbrain/index` in
-`docker-compose.yml`), so removing the container can never take notes with it. TLS is expected to
+**The second command is not optional.** There is no self-registration, deliberately:
+`ndbrain-user` is the only way an account comes into existence, and it reads the password from
+stdin rather than from an argument that would be left behind in `ps` and in a shell history. Run
+it with no arguments for the rest — passwords, agent keys, spaces, reindex.
+
+Your notes land in `./data/vaults/<account>` as ordinary Markdown files and stay there; the
+container holds nothing. `./data/index` is a cache that can be deleted and rebuilt from them —
+except for `ndbrain.db`, which also holds the accounts, the shares and the agent keys, and those
+are not derivable from anything. **Back up `./data`.**
+
+### What it needs
+
+Docker, a reverse proxy in front that terminates TLS, and not much else. One instance with a
+hundred and thirty notes uses about ninety megabytes of database and a few hundred of memory. The
+image is around two hundred megabytes.
+
+Building from source instead needs Node 24 and about two gigabytes of free disk for the build
+cache — `docker-compose.yml` in this repository is that path, and it mounts absolute host paths
+rather than a local directory.
+
+### Upgrading
+
+Pull the new image and start it. The database migrates itself on the way up, in a transaction per
+step, and refuses to start rather than run against a schema it does not understand.
+
+**Take a copy of `./data/index/ndbrain.db` first** — with `sqlite3 … ".backup"` rather than `cp`,
+which on an open WAL gives a file that is repaired on opening or does not open at all. The vault
+is files and needs nothing special.
+
+### Settings
+
+TLS is expected to
 be terminated by a reverse proxy in front; `NDBRAIN_COOKIE_SECURE=false` is for a plain-HTTP test
 and nothing else, because the browser will otherwise drop the session cookie. That same flag also
 decides whether `Strict-Transport-Security` is sent, so a plain-HTTP test cannot pin a browser to
