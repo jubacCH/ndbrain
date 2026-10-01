@@ -388,6 +388,47 @@ describe('in the shell', () => {
     expect(await screen.findByRole('heading', { level: 1, name: copy.nav.search })).toBeInTheDocument();
     await waitFor(() => expect(server.searches.some((s) => s.q === 'azure')).toBe(true));
   });
+
+  /**
+   * The search view's own race, which is not the palette's.
+   *
+   * The palette debounces and had a test for answers arriving out of order; this
+   * field does not debounce at all — every keystroke is a request — and the guard
+   * is a sequence number in `runSearch`. Two separate mechanisms, and only one of
+   * them was covered.
+   *
+   * The failure it prevents is quiet and plausible: a slow answer for "prox"
+   * landing after a fast one for "proxmox" leaves the wrong results sitting under
+   * the right query, and nothing on screen says so.
+   */
+  it('keeps the newer results when a slower answer lands after them', async () => {
+    mount();
+    await openPalette();
+    fireEvent.change(box(), { target: { value: 'pro' } });
+    await userEvent.click(await screen.findByRole('option', { name: new RegExp(copy.palette.searchAll('pro')) }));
+    await screen.findByRole('heading', { level: 1, name: copy.nav.search });
+
+    const field = screen.getByRole('searchbox', { name: copy.search.label });
+    const asked = async (value: string): Promise<Pending> => {
+      const before = server.searches.length;
+      fireEvent.change(field, { target: { value } });
+      await waitFor(() => expect(server.searches.length).toBe(before + 1));
+      return server.searches[server.searches.length - 1]!;
+    };
+
+    const older = await asked('prox');
+    const newer = await asked('proxmox');
+
+    // Out of order on purpose: the newer request answers first, the older one
+    // afterwards, which is exactly what a loaded server produces.
+    await answer(newer, [hit('Fresh.md', 'the [proxmox] cluster')]);
+    await answer(older, [hit('Stale.md', 'a [prox] tip')]);
+
+    // The hit shows up as a title and inside its excerpt, so the count is not
+    // the point — which of the two answers is on screen is.
+    expect(await screen.findAllByText(/Fresh/)).not.toHaveLength(0);
+    expect(screen.queryAllByText(/Stale/)).toHaveLength(0);
+  });
 });
 
 /**
