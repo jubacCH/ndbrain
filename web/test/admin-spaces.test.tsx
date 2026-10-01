@@ -19,9 +19,9 @@ import { api, type AdminSpace, type AdminUser, type Share } from '../src/api';
 import { copy } from '../src/copy';
 
 const USERS: AdminUser[] = [
-  { id: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
-  { id: 'anna', displayName: 'Anna', role: 'user', disabled: false, createdAt: 0, notes: 3 },
-  { id: 'otto', displayName: 'Otto', role: 'user', disabled: true, createdAt: 0, notes: 0 },
+  { id: 'julian', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
+  { id: 'anna', loginName: 'anna', displayName: 'Anna', role: 'user', disabled: false, createdAt: 0, notes: 3 },
+  { id: 'otto', loginName: 'otto', displayName: 'Otto', role: 'user', disabled: true, createdAt: 0, notes: 0 },
 ];
 
 const SPACES: AdminSpace[] = [

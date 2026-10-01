@@ -23,8 +23,8 @@ import { copy } from '../src/copy';
 import type { AdminUser } from '../src/api';
 
 const USERS: AdminUser[] = [
-  { id: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
-  { id: 'ramona', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 3 },
+  { id: 'julian', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
+  { id: 'ramona', loginName: 'ramona', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 3 },
 ];
 
 function renderAdmin(over: Partial<AdminProps> = {}) {
@@ -104,8 +104,61 @@ describe('the control', () => {
     await userEvent.type(field, '  Ramona Bachmann  ');
     await userEvent.click(within(row).getByRole('button', { name: copy.admin.saveName }));
 
-    expect(onRenameUser).toHaveBeenCalledWith('ramona', 'Ramona Bachmann');
+    // Only what changed: a request that resends an unchanged login can be
+    // refused on the uniqueness of the name it already has.
+    expect(onRenameUser).toHaveBeenCalledWith('ramona', { displayName: 'Ramona Bachmann' });
     expect(within(rowOf('ramona')).queryByRole('button', { name: copy.admin.saveName })).toBeNull();
+  });
+
+  /**
+   * The point of the whole arrangement: this is the name somebody types, and
+   * changing it writes one row. The id underneath is the vault's directory and
+   * the key every share, session and agent key hangs off, so it does not move.
+   */
+  it('changes the sign-in name, and says so separately from the display name', async () => {
+    const { onRenameUser } = renderAdmin();
+    const row = await openRename('ramona');
+
+    const login = within(row).getByLabelText(copy.admin.newLoginFor('ramona'));
+    await userEvent.clear(login);
+    await userEvent.type(login, 'ramona-b');
+    await userEvent.click(within(row).getByRole('button', { name: copy.admin.saveName }));
+
+    expect(onRenameUser).toHaveBeenCalledWith('ramona', { loginName: 'ramona-b' });
+  });
+
+  it('sends both when both were changed', async () => {
+    const { onRenameUser } = renderAdmin();
+    const row = await openRename('ramona');
+
+    await userEvent.type(within(row).getByLabelText(copy.admin.newNameFor('ramona')), ' B.');
+    await userEvent.type(within(row).getByLabelText(copy.admin.newLoginFor('ramona')), '-b');
+    await userEvent.click(within(row).getByRole('button', { name: copy.admin.saveName }));
+
+    expect(onRenameUser).toHaveBeenCalledWith('ramona', {
+      displayName: 'Ramona B.',
+      loginName: 'ramona-b',
+    });
+  });
+
+  /**
+   * The cost of not moving anything, made visible.
+   *
+   * After a rename the folder on disk still carries the name the account was
+   * made with. Somebody who meets that in a backup and not on this screen would
+   * reasonably think something had gone wrong.
+   */
+  it('shows the vault’s folder once it stops matching the login', () => {
+    renderAdmin({
+      users: [
+        { id: 'julian', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 1 },
+        { id: 'ramona', loginName: 'ramona-b', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 0 },
+      ],
+    });
+
+    expect(within(rowOf('ramona-b')).getByText(copy.admin.vaultFolder('ramona'))).toBeInTheDocument();
+    // And not where they still agree, which is every account until one is renamed.
+    expect(within(rowOf('julian')).queryByText(copy.admin.vaultFolder('julian'))).toBeNull();
   });
 
   it('sends nothing on a cancel', async () => {
@@ -138,15 +191,22 @@ describe('what it does not touch', () => {
    * The id is the vault's folder on disk. Offering it here would be a field
    * whose save is refused, which is worse than not offering it.
    */
-  it('offers no way to edit the sign-in name', async () => {
+  /**
+   * Two fields, and the id is neither of them.
+   *
+   * The id is the vault's directory name and the key every foreign key hangs
+   * off, in a schema with no `ON UPDATE CASCADE`. Offering it here would be a
+   * field whose save is a migration.
+   */
+  it('offers the display name and the login, and no way to edit the id', async () => {
     renderAdmin();
     const row = await openRename('ramona');
 
     const fields = within(row).getAllByRole('textbox');
-    expect(fields).toHaveLength(1);
-    expect(fields[0]).toHaveAccessibleName(copy.admin.newNameFor('ramona'));
-    // And the id is still on screen, as a label rather than as a control.
-    expect(within(row).getByText('ramona')).toBeInTheDocument();
+    expect(fields.map((field) => field.getAttribute('aria-label'))).toEqual([
+      copy.admin.newNameFor('ramona'),
+      copy.admin.newLoginFor('ramona'),
+    ]);
   });
 
   it('is offered on the administrator’s own row too, unlike disabling', async () => {

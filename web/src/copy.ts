@@ -1264,6 +1264,11 @@ export const copy = {
     /** The display name only. The sign-in name is the folder — see `idIsPermanent`. */
     rename: 'Rename',
     newNameFor: (id: string) => `Display name for ${id}`,
+    newLoginFor: (id: string) => `Sign-in name for ${id}`,
+    /** Shown only where a rename has moved the login off the folder's name. */
+    vaultFolder: (id: string) => `vault: ${id}`,
+    vaultFolderWhy:
+      'The folder this account’s notes live in. It keeps the name the account was made with, so that renaming the login moves nothing on disk.',
     saveName: 'Save',
     renamed: (id: string) => `${id} renamed.`,
     disable: 'Disable',

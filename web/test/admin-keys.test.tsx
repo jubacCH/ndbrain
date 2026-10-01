@@ -25,7 +25,7 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 5, 15, 12);
 
 const USERS: AdminUser[] = [
-  { id: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
+  { id: 'julian', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
 ];
 
 function key(name: string, expiresAt: number | null, revoked = false): ApiKey {

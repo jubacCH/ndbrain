@@ -31,7 +31,10 @@ export interface AdminProps {
   onResetPassword: (id: string, password: string) => Promise<void>;
   onSetDisabled: (id: string, disabled: boolean) => Promise<void>;
   /** Changes an account's display name. The id is the vault's folder and stays. */
-  onRenameUser: (id: string, displayName: string) => Promise<void>;
+  onRenameUser: (
+    id: string,
+    fields: { displayName?: string; loginName?: string },
+  ) => Promise<void>;
   onCreateKey: (
     owner: string,
     name: string,
@@ -91,7 +94,17 @@ export function AdminView(props: AdminProps): React.JSX.Element {
               <tr key={user.id} data-disabled={user.disabled}>
                 <td>
                   <span className="adminname">{user.displayName}</span>
-                  <span className="adminid">{user.id}</span>
+                  <span className="adminid">{user.loginName}</span>
+                  {/* Only where the two have come apart. The id is the vault's
+                      directory and does not move when the login is changed, so
+                      somebody looking at the disk after a rename finds a folder
+                      under the old name — said here rather than discovered in a
+                      backup. */}
+                  {user.loginName !== user.id && (
+                    <span className="adminid" title={copy.admin.vaultFolderWhy}>
+                      {copy.admin.vaultFolder(user.id)}
+                    </span>
+                  )}
                   {user.role === 'admin' && <span className="pill p-tag">{copy.admin.admin}</span>}
                   {user.disabled && <span className="pill p-crit">{copy.admin.disabled}</span>}
                 </td>
@@ -101,8 +114,8 @@ export function AdminView(props: AdminProps): React.JSX.Element {
                   <Rename
                     user={user}
                     busy={busy}
-                    onRename={(displayName) =>
-                      guard(() => props.onRenameUser(user.id, displayName), copy.admin.renamed(user.id))
+                    onRename={(fields) =>
+                      guard(() => props.onRenameUser(user.id, fields), copy.admin.renamed(user.loginName))
                     }
                   />
                   <ResetPassword
@@ -220,45 +233,65 @@ function Rename({
 }: {
   user: AdminUser;
   busy: boolean;
-  onRename: (displayName: string) => Promise<void>;
+  onRename: (fields: { displayName?: string; loginName?: string }) => Promise<void>;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const [value, setValue] = useState(user.displayName);
+  const [shown, setShown] = useState(user.displayName);
+  const [login, setLogin] = useState(user.loginName);
+
+  const start = (): void => {
+    // From what they are now, every time it is opened: a stale draft from a
+    // cancelled edit is a rename nobody meant to make.
+    setShown(user.displayName);
+    setLogin(user.loginName);
+    setOpen(true);
+  };
 
   if (!open) {
     return (
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => {
-          // From what it is now, every time it is opened: a stale draft from a
-          // cancelled edit is a rename nobody meant to make.
-          setValue(user.displayName);
-          setOpen(true);
-        }}
-      >
+      <button type="button" disabled={busy} onClick={start}>
         {copy.admin.rename}
       </button>
     );
   }
+
+  const nextShown = shown.trim();
+  const nextLogin = login.trim();
+  const changed = nextShown !== user.displayName || nextLogin !== user.loginName;
+  const ready = !busy && changed && nextShown !== '' && nextLogin !== '';
 
   return (
     <form
       className="inlineform"
       onSubmit={(event) => {
         event.preventDefault();
-        void onRename(value.trim()).then(() => setOpen(false));
+        if (!ready) return;
+        // Only what actually changed. A request that resends an unchanged login
+        // is a request that can fail on the uniqueness of the name it already
+        // has, which is a refusal nobody could make sense of.
+        void onRename({
+          ...(nextShown === user.displayName ? {} : { displayName: nextShown }),
+          ...(nextLogin === user.loginName ? {} : { loginName: nextLogin }),
+        }).then(() => setOpen(false));
       }}
     >
       <input
-        aria-label={copy.admin.newNameFor(user.id)}
-        placeholder={copy.admin.newNameFor(user.id)}
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
+        aria-label={copy.admin.newNameFor(user.loginName)}
+        placeholder={copy.admin.newNameFor(user.loginName)}
+        value={shown}
+        onChange={(event) => setShown(event.target.value)}
         autoComplete="off"
         required
       />
-      <button type="submit" disabled={busy || value.trim() === '' || value.trim() === user.displayName}>
+      <input
+        aria-label={copy.admin.newLoginFor(user.loginName)}
+        placeholder={copy.admin.newLoginFor(user.loginName)}
+        value={login}
+        onChange={(event) => setLogin(event.target.value)}
+        autoComplete="off"
+        required
+      />
+      <button type="submit" disabled={!ready}>
         {copy.admin.saveName}
       </button>
       <button type="button" onClick={() => setOpen(false)}>

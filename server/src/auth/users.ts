@@ -27,7 +27,18 @@ export type Role = 'admin' | 'user';
 export type AccountKind = 'person' | 'space';
 
 export interface User {
+  /**
+   * The vault's directory name and the key every share, session and agent key
+   * hangs off. Written once, when the account is made, and never again.
+   */
   id: string;
+  /**
+   * What somebody types at the login. Starts as a copy of the id and is free to
+   * change afterwards — which is the whole point of it being a separate column:
+   * renaming the id would be a directory move and a rewrite of every foreign
+   * key in a schema that has no `ON UPDATE CASCADE`.
+   */
+  loginName: string;
   displayName: string;
   role: Role;
   kind: AccountKind;
@@ -56,6 +67,9 @@ function tokenHash(token: string): string {
 function toUser(row: Record<string, unknown>): User {
   return {
     id: String(row['id']),
+    // Falls back to the id, for a row read by a build whose migration has not
+    // run — the two were the same thing until v14.
+    loginName: String(row['login_name'] ?? row['id']),
     displayName: String(row['display_name']),
     role: String(row['role']) === 'admin' ? 'admin' : 'user',
     // Anything but an explicit person is treated as a space: the kind that can
@@ -124,11 +138,42 @@ export class UserService {
    * interface, the API and the command line, which all create through this
    * service. Ids that already exist stay as they are.
    */
-  #assertNameFree(id: string): void {
+  #assertNameFree(id: string, exceptFor?: string): void {
     // `lower` folds ASCII only, which is all an id may contain (`assertUserId`).
-    if (this.#db.get('SELECT id FROM users WHERE lower(id) = lower(?)', id) !== undefined) {
-      throw new UserExistsError('a user with that name already exists');
-    }
+    //
+    // Both columns, because both are names somebody could be asked to type and
+    // a new account whose id is somebody else's login would be two accounts
+    // answering to one word. `exceptFor` is the account doing the asking, so
+    // that renaming a login to itself in a different case is not a clash with
+    // itself.
+    const clash = this.#db.get(
+      'SELECT id FROM users WHERE (lower(id) = lower(?) OR lower(login_name) = lower(?)) AND id <> ?',
+      id,
+      id,
+      exceptFor ?? '',
+    );
+    if (clash !== undefined) throw new UserExistsError('a user with that name already exists');
+  }
+
+  /**
+   * Changes what somebody signs in with.
+   *
+   * The id underneath does not move, so neither does the vault, nor a share,
+   * nor a session, nor an agent key. The cost of that is the one thing this
+   * cannot hide: after a rename the directory on disk is still called what the
+   * account was called when it was made. The interface says so where the two
+   * differ rather than letting somebody find out from a backup.
+   */
+  setLoginName(id: string, loginName: string): User {
+    assertUserId(loginName);
+    if (this.get(id) === undefined) throw new UnknownUserError(`no such user: ${id}`);
+    this.#assertNameFree(loginName, id);
+
+    this.#db.run('UPDATE users SET login_name = ? WHERE id = ?', loginName, id);
+
+    const user = this.get(id);
+    if (user === undefined) throw new NdbrainError('user vanished while being renamed');
+    return user;
   }
 
   /**
@@ -170,8 +215,12 @@ export class UserService {
     const hash = await hashPassword(password);
     this.#assertNameFree(id);
     this.#insertAccount(
-      `INSERT INTO users (id, display_name, password_hash, role, created_at, disabled_at)
-       VALUES (?, ?, ?, ?, ?, NULL)`,
+      // `login_name` starts as the id and is free afterwards. Named rather than
+      // left to the column's default, which is the empty string — and the
+      // unique index on it would then let exactly one account exist.
+      `INSERT INTO users (id, login_name, display_name, password_hash, role, created_at, disabled_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+      id,
       id,
       options.displayName ?? id,
       hash,
@@ -201,8 +250,9 @@ export class UserService {
 
     const name = displayName === undefined ? id : checkedDisplayName(displayName);
     this.#insertAccount(
-      `INSERT INTO users (id, display_name, password_hash, role, kind, created_at, disabled_at)
-       VALUES (?, ?, '!space', 'user', 'space', ?, NULL)`,
+      `INSERT INTO users (id, login_name, display_name, password_hash, role, kind, created_at, disabled_at)
+       VALUES (?, ?, ?, '!space', 'user', 'space', ?, NULL)`,
+      id,
       id,
       name,
       Date.now(),
@@ -263,7 +313,17 @@ export class UserService {
    * response time does not reveal which account names are real.
    */
   async authenticate(id: string, password: string): Promise<User | null> {
-    const row = this.#db.get('SELECT * FROM users WHERE id = ?', id);
+    // By the login name, which is what somebody types, and by the id as well,
+    // which is what it was until v14 — so a password manager filled in years
+    // ago goes on working after a rename rather than failing with the one
+    // message this route is allowed to give.
+    //
+    // Both exact, not folded. `spaces.test.ts` pins that a login resolves no
+    // name of another case, and the unique indexes on `lower(id)` and
+    // `lower(login_name)` are what make that safe rather than a gap: no two
+    // accounts can differ by case, so an exact match is the only match there
+    // could have been.
+    const row = this.#db.get('SELECT * FROM users WHERE login_name = ? OR id = ?', id, id);
     const user = row ? toUser(row) : undefined;
     // A space is compared against the dummy hash, exactly like a name that does
     // not exist, and refused whatever came back: same work, same answer, so

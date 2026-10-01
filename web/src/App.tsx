@@ -2352,8 +2352,8 @@ function Shell({
                   onSetDisabled={(id, disabled) =>
                     adminAct(() => api.adminSetDisabled(id, disabled)).then(() => undefined)
                   }
-                  onRenameUser={(id, displayName) =>
-                    adminAct(() => api.renameUser(id, displayName)).then(() => undefined)
+                  onRenameUser={(id, fields) =>
+                    adminAct(() => api.renameUser(id, fields)).then(() => undefined)
                   }
                   onCreateKey={(owner, name, scope, canWrite, expiresInDays) =>
                     adminAct(() => api.createKey(owner, name, scope, canWrite, expiresInDays))

@@ -1380,6 +1380,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       // password reset for an account that has no password.
       users: users.list().filter((user) => user.kind === 'person').map((user) => ({
         id: user.id,
+        loginName: user.loginName,
         displayName: user.displayName,
         role: user.role,
         disabled: user.disabled,
@@ -1432,11 +1433,20 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   fastify.patch('/api/v1/admin/users/:id', async (request) => {
     requireAdmin(request);
     const { id } = request.params as { id: string };
-    const { displayName } = body(request, S.AdminProfileRequest);
+    const { displayName, loginName } = body(request, S.AdminProfileRequest);
 
-    // `setDisplayName` refuses an id that is not there rather than updating
-    // nothing and reporting success; the error carries up as a 404.
-    return { user: publicUser(users.setDisplayName(id, displayName)) };
+    // Both refuse an id that is not there rather than updating nothing and
+    // reporting success; the error carries up as a 404.
+    let user = users.get(id);
+    if (user === undefined) throw new UnknownUserError(`no such user: ${id}`);
+
+    // The login first. If it is taken, nothing has been written yet — whereas
+    // the other order would leave a display name changed by a request that
+    // failed.
+    if (loginName !== undefined) user = users.setLoginName(id, loginName);
+    if (displayName !== undefined) user = users.setDisplayName(id, displayName);
+
+    return { user: publicUser(user) };
   });
 
   fastify.post('/api/v1/admin/users/:id/disabled', async (request, reply) => {

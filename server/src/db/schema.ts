@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -109,7 +109,9 @@ const MIGRATIONS: Array<(db: Database) => void> = [
     db.exec(`
       CREATE TABLE users (
         -- Doubles as the vault directory name, so it is restricted to the same
-        -- character set that paths.ts enforces.
+        -- character set that paths.ts enforces. Never written again after the
+        -- account is made: see the v13 -> v14 migration, which moved the login
+        -- off it precisely so that this can stay still.
         id            TEXT PRIMARY KEY,
         display_name  TEXT NOT NULL,
         password_hash TEXT NOT NULL,
@@ -419,6 +421,53 @@ const MIGRATIONS: Array<(db: Database) => void> = [
   // gets when nobody chooses.
   (db) => {
     db.exec('ALTER TABLE api_keys ADD COLUMN expires_at INTEGER;');
+  },
+
+  // v13 -> v14: what somebody signs in with stops being what the row is keyed by
+  //
+  // The id was three things at once: the primary key every share, session and
+  // agent key hangs off, the vault's directory name, and the word typed at the
+  // login. The first two have to be stable — one is a foreign key with no
+  // `ON UPDATE CASCADE` anywhere in this schema, the other is a directory with
+  // a git repository inside it — and the third is the one somebody wants to
+  // change, because it was typed in a hurry or is spelled wrong or belonged to
+  // a person who has since married.
+  //
+  // So the third moves out. `login_name` starts as a copy of the id and is free
+  // afterwards; `id` is never written again. Nothing else in the database
+  // changes, nothing on disk moves, and no open room or session is disturbed —
+  // which is the whole reason to do it this way rather than to make the id
+  // itself renameable.
+  //
+  // Unique on `lower(login_name)` for the same reason `users_id_lower` exists:
+  // a login that differs only in case is two accounts to the database and one
+  // to the person typing it.
+  (db) => {
+    db.exec("ALTER TABLE users ADD COLUMN login_name TEXT NOT NULL DEFAULT '';");
+    db.exec('UPDATE users SET login_name = id;');
+    db.exec('CREATE UNIQUE INDEX users_login_lower ON users (lower(login_name));');
+
+    // The default is a mine, and the trigger defuses it.
+    //
+    // `ALTER TABLE ADD COLUMN NOT NULL` has to name a default, and the only
+    // one available is the empty string — so an insert that does not mention
+    // `login_name` gets one, and the unique index above then permits exactly
+    // one such row in the whole table. The second one fails with "UNIQUE
+    // constraint failed: users_login_lower", which says nothing at all about
+    // the column somebody forgot.
+    //
+    // Rather than make that failure louder, this makes it impossible: a row
+    // written without a login gets its id, which is what every row that existed
+    // before this migration got and is the only sensible answer. Direct SQL —
+    // a repair by hand, a test standing in for an older release — therefore
+    // behaves like the service does.
+    db.exec(`
+      CREATE TRIGGER users_login_default AFTER INSERT ON users
+      WHEN NEW.login_name = ''
+      BEGIN
+        UPDATE users SET login_name = NEW.id WHERE id = NEW.id;
+      END;
+    `);
   },
 ];
 

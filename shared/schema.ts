@@ -536,7 +536,10 @@ export const DeletePreviewResponse = z.object({
 /* ---- administration ------------------------------------------------------ */
 
 export const AdminUser = z.object({
+  /** The vault's directory name. Never changes; shown where it differs. */
   id: z.string(),
+  /** What this account signs in with. */
+  loginName: z.string(),
   displayName: z.string(),
   role: z.enum(['admin', 'user']),
   disabled: z.boolean(),
@@ -696,7 +699,19 @@ export const ProfileRequest = z.object({ displayName: z.string().min(1).max(64) 
  * session of that account and a request that did three things would have to say
  * which of them caused that.
  */
-export const AdminProfileRequest = z.object({ displayName: z.string().min(1).max(64) }).strict();
+export const AdminProfileRequest = z
+  .object({
+    displayName: z.string().min(1).max(64).optional(),
+    /**
+     * What the account signs in with. Not its id, which is the vault's
+     * directory name and stays — see the v13 -> v14 migration.
+     */
+    loginName: UserId.optional(),
+  })
+  .strict()
+  .refine((body) => body.displayName !== undefined || body.loginName !== undefined, {
+    message: 'name one of displayName or loginName',
+  });
 
 export const ChangePasswordRequest = z
   .object({

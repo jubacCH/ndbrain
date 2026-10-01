@@ -314,6 +314,101 @@ describe('renaming an account', () => {
     expect(missing.statusCode).toBe(404);
   });
 
+  /**
+   * The point of the whole arrangement: the login moves, the id does not.
+   *
+   * The id is the vault's directory name and the key every share, session and
+   * agent key hangs off, in a schema with no `ON UPDATE CASCADE` anywhere. So
+   * what somebody types at the login is a column of its own, and changing it
+   * writes one row — no directory moves, no foreign key is touched, no open
+   * room or session is disturbed.
+   */
+  it('changes what an account signs in with, and leaves its id alone', async () => {
+    const renamed = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/ramona',
+      headers: { cookie: adminCookie },
+      payload: { loginName: 'ramona-b' },
+    });
+
+    expect(renamed.statusCode).toBe(200);
+    const after = runtime.users.get('ramona');
+    expect(after?.loginName).toBe('ramona-b');
+    expect(after?.id).toBe('ramona');
+
+    // And the new name is the one that signs in, while the old one does not.
+    expect(await runtime.users.authenticate('ramona-b', 'ihr gutes passwort')).not.toBeNull();
+  });
+
+  /**
+   * A login filled in by a password manager years ago goes on working.
+   *
+   * The id *was* the login until v14, and the account is still that row — so
+   * refusing it would be this change taking something away from everybody who
+   * never renamed anything.
+   */
+  it('still accepts the id at the login after a rename', async () => {
+    runtime.users.setLoginName('ramona', 'ramona-b');
+    expect(await runtime.users.authenticate('ramona', 'ihr gutes passwort')).not.toBeNull();
+  });
+
+  it('refuses a login another account already answers to', async () => {
+    const taken = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/ramona',
+      headers: { cookie: adminCookie },
+      payload: { loginName: 'julian' },
+    });
+
+    // The code, not merely a failure: the unique index would stop this too, as
+    // a driver error naming an index, which is neither an answer a caller can
+    // act on nor anything that should reach a client. `#assertNameFree` is what
+    // turns it into one, and asserting "some error" would not notice it going.
+    expect(taken.statusCode).toBe(409);
+    expect(taken.json()).toMatchObject({ code: 'user_exists' });
+    expect(runtime.users.get('ramona')?.loginName).toBe('ramona');
+  });
+
+  /**
+   * Asked of the service rather than of the route, deliberately.
+   *
+   * The route's schema refuses this shape first, so a test through HTTP passes
+   * whether or not the service checks at all — and the service is also reached
+   * from the CLI, which has no schema in front of it.
+   */
+  it('refuses a login that could not be a directory name, in the service itself', () => {
+    expect(() => runtime.users.setLoginName('ramona', '../anderswo')).toThrow();
+    expect(() => runtime.users.setLoginName('ramona', 'mit leerzeichen')).toThrow();
+    expect(runtime.users.get('ramona')?.loginName).toBe('ramona');
+  });
+
+  it('refuses a login that could not be a directory name', async () => {
+    const bad = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/ramona',
+      headers: { cookie: adminCookie },
+      payload: { loginName: '../anderswo' },
+    });
+
+    expect(bad.statusCode).toBeGreaterThanOrEqual(400);
+    expect(runtime.users.get('ramona')?.loginName).toBe('ramona');
+  });
+
+  /**
+   * A request that changes nothing is a request that said nothing, and saying
+   * so is cheaper than letting somebody wonder which of two fields was ignored.
+   */
+  it('refuses a body that names neither', async () => {
+    const empty = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/ramona',
+      headers: { cookie: adminCookie },
+      payload: {},
+    });
+
+    expect(empty.statusCode).toBe(400);
+  });
+
   it('refuses an empty name', async () => {
     const empty = await server.inject({
       method: 'PATCH',

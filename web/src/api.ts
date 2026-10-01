@@ -658,10 +658,10 @@ export const api = {
     }),
 
   /** The display name of any account. The id is the vault's folder and stays. */
-  renameUser: (id: string, displayName: string) =>
+  renameUser: (id: string, fields: { displayName?: string; loginName?: string }) =>
     request(`/api/v1/admin/users/${encodeURIComponent(id)}`, S.MeResponse, {
       method: 'PATCH',
-      body: JSON.stringify({ displayName }),
+      body: JSON.stringify(fields),
     }),
 
   adminKeys: (owner: string) =>
