@@ -1882,22 +1882,6 @@ function Shell({
             onRetry={() => askAgain(keys.tree)}
           />
         }
-        health={
-          tidy === null
-            ? null
-            : {
-                orphans: tidy.totals.orphans,
-                // Withheld while nothing is tagged — see Queries.tagsInUse. Read
-                // from the tag list rather than from the overview: it answers the
-                // same question, and it is already loaded and far cheaper.
-                untagged: tags.length > 0 ? tidy.totals.untagged : null,
-                broken: tidy.totals.deadLinks,
-              }
-        }
-        onHealth={() => {
-          setDrawerOpen(false);
-          void showView('tidy');
-        }}
         onNewNote={() => startNote(user.id, null)}
         onNewFolder={() => void createFolder()}
         onSettings={() => {

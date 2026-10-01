@@ -2657,7 +2657,6 @@ thead th {
 
 /* Numbers keep tabular figures — there equal width genuinely contributes,
    without the typeface having to change. */
-.nav-health b,
 .finding-n,
 .big,
 td.n,
@@ -4563,42 +4562,6 @@ kbd,
   border-top: 1px solid var(--line);
 }
 
-.nav-health {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px var(--s-2);
-  padding: 0;
-  border: 0;
-}
-
-.nav-health button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-xs);
-  color: var(--text-2);
-  padding: 2px var(--s-1);
-  border-radius: var(--r-sm);
-  white-space: nowrap;
-}
-
-.nav-health button:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.nav-health b {
-  font-weight: var(--w-strong);
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
 .dot {
   display: inline-block;
   flex: none;
@@ -4617,17 +4580,18 @@ kbd,
   box-shadow: 0 0 6px color-mix(in srgb, var(--warn-dot) 55%, transparent);
 }
 
-/* A zero is not news: the point stays, the glow does not. */
-.nav-health button[data-zero='true'] .dot {
-  box-shadow: none;
-  opacity: 0.5;
-}
+/* The dots themselves stay: the tree's ticks, the save point and the findings
+   in Tidy up draw from them. What is gone is the tally that used to sit in the
+   sidebar's footer. */
 
 .nav-make {
   display: flex;
   gap: 2px;
   padding: 0;
-  flex: none;
+  /* Takes the row, now that nothing shares it. The actions sit where actions
+     sit, at the start, rather than pushed to the far edge by a column of
+     counts that is no longer there. */
+  flex: 1;
 }
 
 .iconbtn {
@@ -4694,18 +4658,6 @@ kbd,
   flex-direction: column;
   align-items: center;
   padding-inline: 0;
-}
-
-.nav[data-collapsed='true'] .nav-health {
-  flex-direction: column;
-  align-items: center;
-  gap: var(--s-1);
-}
-
-.nav[data-collapsed='true'] .nav-health button {
-  width: 30px;
-  height: 24px;
-  justify-content: center;
 }
 
 .nav[data-collapsed='true'] .nav-make {

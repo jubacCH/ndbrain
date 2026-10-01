@@ -66,13 +66,6 @@ export const copy = {
     filterLabel: 'Filter the tree by name',
     clearFilter: 'Clear filter',
     recent: 'Recent',
-    orphaned: 'orphaned',
-    untagged: 'untagged',
-    broken: 'broken',
-    /** The health dots in the footer, named in full for a folded sidebar and a screen reader. */
-    orphanedCount: (n: number) => `${n} orphaned ${n === 1 ? 'note' : 'notes'}`,
-    untaggedCount: (n: number) => `${n} untagged ${n === 1 ? 'note' : 'notes'}`,
-    brokenCount: (n: number) => `${n} broken ${n === 1 ? 'link' : 'links'}`,
     tagline: 'My Second Brain',
     collapse: 'Collapse sidebar',
     expand: 'Expand sidebar',

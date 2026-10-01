@@ -60,13 +60,6 @@ const ENTRIES: Array<{ view: NavView; label: string; icon: ReactNode }> = [
   { view: 'search', label: copy.nav.search, icon: <SearchIcon /> },
 ];
 
-export interface Health {
-  orphans: number;
-  /** Null where nothing in the vault is tagged, which makes the count meaningless. */
-  untagged: number | null;
-  broken: number;
-}
-
 export interface SidebarProps {
   name: string;
   /** The view on screen; `note` and the account pages match no entry. */
@@ -96,8 +89,6 @@ export interface SidebarProps {
   onOpen: (owner: string, path: string) => void;
   /** The folder tree, rendered by the shell, which owns its state. */
   tree: ReactNode;
-  health: Health | null;
-  onHealth: () => void;
   onNewNote: () => void;
   onNewFolder: () => void;
   onSettings: () => void;
@@ -123,8 +114,6 @@ export function Sidebar({
   current,
   onOpen,
   tree,
-  health,
-  onHealth,
   onNewNote,
   onNewFolder,
   onSettings,
@@ -323,38 +312,6 @@ export function Sidebar({
       {collapsed && <div className="nav-spacer" />}
 
       <div className="nav-foot">
-        {health !== null && (
-          <div className="nav-health">
-            <HealthDot
-              kind="crit"
-              label={copy.nav.orphaned}
-              count={health.orphans}
-              full={copy.nav.orphanedCount(health.orphans)}
-              collapsed={collapsed}
-              onClick={onHealth}
-            />
-            {/* Withheld while nothing is tagged — see Queries.tagsInUse. */}
-            {health.untagged !== null && (
-              <HealthDot
-                kind="warn"
-                label={copy.nav.untagged}
-                count={health.untagged}
-                full={copy.nav.untaggedCount(health.untagged)}
-                collapsed={collapsed}
-                onClick={onHealth}
-              />
-            )}
-            <HealthDot
-              kind="crit"
-              label={copy.nav.broken}
-              count={health.broken}
-              full={copy.nav.brokenCount(health.broken)}
-              collapsed={collapsed}
-              onClick={onHealth}
-            />
-          </div>
-        )}
-
         {/*
           The create actions and the settings. Icons because the row is theirs
           alone; each still carries its name twice over — aria-label for a
@@ -396,35 +353,3 @@ export function Sidebar({
   );
 }
 
-function HealthDot({
-  kind,
-  label,
-  count,
-  full,
-  collapsed,
-  onClick,
-}: {
-  kind: 'crit' | 'warn';
-  label: string;
-  count: number;
-  full: string;
-  collapsed: boolean;
-  onClick: () => void;
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={full}
-      aria-label={full}
-      data-zero={count === 0}
-    >
-      <i className={`dot dot-${kind}`} />
-      {!collapsed && (
-        <>
-          <span className="nav-health-label">{label}</span> <b>{count}</b>
-        </>
-      )}
-    </button>
-  );
-}

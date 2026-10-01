@@ -256,7 +256,6 @@ function renderSidebar(props: Partial<SidebarProps> = {}) {
       recents={[note('Backup to Azure.md'), note('Migora.md')]}
       current={{ owner: 'julian', path: 'Backup to Azure.md' }}
       tree={<div data-testid="tree" />}
-      health={{ orphans: 13, untagged: 7, broken: 21 }}
       {...handlers}
       {...props}
     />,
@@ -309,18 +308,16 @@ describe('the sidebar', () => {
     expect(screen.queryByText(copy.nav.recent)).toBeNull();
   });
 
-  it('names the health counts in full and sends them to tidy', async () => {
-    const { onHealth } = renderSidebar();
-    await userEvent.click(screen.getByRole('button', { name: copy.nav.brokenCount(21) }));
-    expect(screen.getByRole('button', { name: copy.nav.orphanedCount(13) })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: copy.nav.untaggedCount(7) })).toBeInTheDocument();
-    expect(onHealth).toHaveBeenCalledTimes(1);
-  });
-
-  it('withholds the untagged count where nothing is tagged', () => {
-    renderSidebar({ health: { orphans: 1, untagged: null, broken: 0 } });
-    expect(screen.queryByRole('button', { name: /untagged/ })).toBeNull();
-    expect(screen.getByRole('button', { name: copy.nav.brokenCount(0) })).toBeInTheDocument();
+  /**
+   * The footer carried three counts — orphaned, untagged, broken links — as a
+   * shortcut into Tidy up. They are gone: the owner does not want a running
+   * tally of what is wrong with their vault under their folders, and Tidy up is
+   * an entry in the navigation above, so nothing became unreachable.
+   */
+  it('keeps no tally of findings under the tree', () => {
+    renderSidebar();
+    expect(screen.queryByText(/orphaned|untagged|broken/i)).toBeNull();
+    expect(document.querySelector('.nav-health')).toBeNull();
   });
 
   it('opens settings from the gear, and offers new note and new folder', async () => {
@@ -346,7 +343,6 @@ describe('the sidebar', () => {
       expect(button).toHaveAttribute('title', label);
     }
     expect(screen.queryByTestId('tree')).toBeNull();
-    expect(screen.getByRole('button', { name: copy.nav.orphanedCount(13) })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: copy.nav.tidy }));
     expect(onShowView).toHaveBeenCalledWith('tidy');
