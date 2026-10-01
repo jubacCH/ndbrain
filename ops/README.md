@@ -21,6 +21,13 @@ Betreiber, nicht der Compiler, und der Bestand war schon so.
 Die Units heissen wie die Skripte (`ndbrain-history`, `ndbrain-db-snapshot` auf
 CT 132, `ndbrain-backup` auf prxmx01).
 
+Auf CT 132 zeigen die Units **direkt in den Checkout** (`/opt/ndbrain/ops/…`)
+statt auf eine Kopie daneben. Vorher lag neben dem Repository ein zweites
+`/opt/ndbrain/vault-history.sh`, und ein `git pull` fasste es nicht an: die
+Datei, die der Dienst ausführte, konnte beliebig alt sein, ohne dass irgendwo
+ein Unterschied zu sehen war. Auf prxmx01 liegt kein Checkout, dort bleibt es
+bei der Kopie.
+
 ## Warum es zieht und nicht schiebt
 
 CT 132 ist das System, das aus dem Internet erreichbar ist. Es hat von dort aus

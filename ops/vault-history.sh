@@ -82,6 +82,25 @@ for vault in "$VAULTS"/*/; do
     echo "Repository für $owner angelegt"
   fi
 
+  # Dasselbe "dubious ownership" noch einmal, aus der anderen Richtung — und
+  # diese Hälfte fehlte. Oben gibt sich dieses Skript die Ausnahme selbst, weil
+  # es als root über Notizen von uid 1000 läuft. Das .git, das es dabei anlegt,
+  # gehört aber root, und die Anwendung liest dasselbe Repository als uid 1000:
+  # sie bekommt genau denselben Abbruch, nur ohne Ausnahme. Für sie sah das aus
+  # wie ein defektes Repository, und jedes neu angelegte Konto bekam im Verlauf
+  # eine rote Meldung statt einer leeren Liste.
+  #
+  # Bei jedem Lauf geprüft und nicht nur beim Anlegen, damit die Vaults, die es
+  # schon falsch haben, beim nächsten Tick von selbst richtig werden.
+  want=$(stat -c '%u:%g' "$path")
+  if [ "$(stat -c '%u:%g' "$path/.git")" != "$want" ]; then
+    if chown -R "$want" "$path/.git"; then
+      echo "$owner: .git gehört jetzt $want, die Anwendung kann die Historie lesen"
+    else
+      echo "$owner: .git konnte nicht auf $want gesetzt werden" >&2
+    fi
+  fi
+
   if ! vgit "$path" add -A; then
     echo "$owner: konnte Änderungen nicht vormerken" >&2
     continue

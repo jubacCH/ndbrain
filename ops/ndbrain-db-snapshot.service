@@ -1,7 +1,7 @@
 [Unit]
 Description=ndBrain: Tagesstand der Datenbank sichern
-Documentation=file:/opt/ndbrain/db-snapshot.sh
+Documentation=file:/opt/ndbrain/ops/db-snapshot.sh
 
 [Service]
 Type=oneshot
-ExecStart=/opt/ndbrain/db-snapshot.sh
+ExecStart=/opt/ndbrain/ops/db-snapshot.sh
