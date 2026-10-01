@@ -133,3 +133,88 @@ export class ImageWidget extends WidgetType {
     return wrap;
   }
 }
+
+/**
+ * The frontmatter block, standing in for itself while nobody is editing it.
+ *
+ * Every note in this vault opens with five or so lines of YAML, and most carry a
+ * blockquote header underneath repeating part of it. Together they filled the
+ * first fifth of the editor before the first sentence — administration, set at
+ * the size of writing.
+ *
+ * What the summary shows is what somebody actually looks for: the tags, and when
+ * the note was last touched. The rest stays one keystroke away, because the
+ * block reveals itself the moment the cursor enters it — the same rule every
+ * other line in live preview follows.
+ *
+ * It renders what it was given rather than parsing YAML properly. A real parser
+ * would be a second opinion about a file format the server already reads, and
+ * the cost of being wrong here is a summary that says less than it could, not a
+ * note that breaks: the document is never modified, only covered.
+ */
+export class FrontmatterWidget extends WidgetType {
+  constructor(
+    readonly tags: readonly string[],
+    readonly updated: string,
+    readonly fields: number,
+  ) {
+    super();
+  }
+
+  override eq(other: WidgetType): boolean {
+    return (
+      other instanceof FrontmatterWidget &&
+      other.updated === this.updated &&
+      other.fields === this.fields &&
+      other.tags.length === this.tags.length &&
+      other.tags.every((tag, i) => tag === this.tags[i])
+    );
+  }
+
+  /**
+   * Clicks reach the editor rather than stopping at the bar.
+   *
+   * Widgets swallow events by default, which would leave the folded block with
+   * no way in but the arrow keys — and the way in is the whole contract: put the
+   * cursor there and it opens. A button saying so would be a second mechanism
+   * for what the rest of live preview does without one.
+   */
+  override ignoreEvent(): boolean {
+    return false;
+  }
+
+  override toDOM(): HTMLElement {
+    const bar = document.createElement('div');
+    bar.className = 'cm-frontmatter-bar';
+    // Said out loud, because the block it replaces is not visible to say it
+    // itself: without this a screen reader meets a row of tags with no account
+    // of where they came from or how to reach the rest.
+    bar.setAttribute('role', 'group');
+    bar.setAttribute('aria-label', copy.editor.frontmatterLabel(this.fields));
+
+    for (const tag of this.tags) {
+      const pill = document.createElement('span');
+      pill.className = 'cm-frontmatter-tag';
+      pill.textContent = tag;
+      bar.append(pill);
+    }
+
+    if (this.updated !== '') {
+      const when = document.createElement('span');
+      when.className = 'cm-frontmatter-when';
+      when.textContent = this.updated;
+      bar.append(when);
+    }
+
+    // Nothing to show is still worth a mark: an empty bar would read as a
+    // rendering fault rather than as a note whose frontmatter carries no tags.
+    if (this.tags.length === 0 && this.updated === '') {
+      const empty = document.createElement('span');
+      empty.className = 'cm-frontmatter-when';
+      empty.textContent = copy.editor.frontmatterPlain(this.fields);
+      bar.append(empty);
+    }
+
+    return bar;
+  }
+}

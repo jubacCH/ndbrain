@@ -2679,8 +2679,10 @@ td.n,
 
 /* The frontmatter block sat at the top of every note as a grey monospace slab —
  * the first and loudest element on screen, although the same information appears
- * one line below already set as readable prose. It stays editable but steps
- * back: no fill, the interface font, dimmed. */
+ * one line below already set as readable prose. Dimming it was the first half:
+ * it steps back here, and is folded into a summary entirely while the cursor is
+ * elsewhere (see `FrontmatterWidget`). These rules are what it looks like once
+ * somebody puts the cursor in it to edit. */
 .cm-editor .cm-block-frontmatter {
   background: transparent !important;
   font-family: var(--font) !important;
@@ -2689,7 +2691,7 @@ td.n,
   opacity: 0.75;
 }
 
-/* ⌘K ist die letzte Monospace-Stelle ausserhalb von Code. */
+/* ⌘K is the last monospace left outside code. */
 .bar-k {
   font-family: var(--font) !important;
 }
@@ -2699,6 +2701,40 @@ td.n,
 .cm-editor .cm-block-frontmatter * {
   font-weight: var(--w-normal) !important;
   color: inherit !important;
+}
+
+/* The folded summary that stands in for the block.
+ *
+ * Deliberately quiet: it is the answer to "what is this note filed as", not a
+ * heading. One line, aligned with the text it sits above, and dim enough that
+ * the first thing read on the page is the note's own first sentence — which is
+ * the whole point of folding it.
+ *
+ * It carries no affordance saying "click me". The way in is the way into every
+ * other folded thing in this editor: put the cursor there. A button would be a
+ * second mechanism for something the rest of live preview does without one. */
+.cm-editor .cm-frontmatter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0 0 var(--s-3);
+  font-size: var(--t-xs);
+  color: var(--ink-3);
+  cursor: text;
+}
+
+.cm-editor .cm-frontmatter-tag {
+  padding: 0.1em 0.5em;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.cm-editor .cm-frontmatter-when {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ===================== NAVIGATION THAT ORIENTS =====================

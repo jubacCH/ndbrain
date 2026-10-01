@@ -37,6 +37,7 @@ import { tagContext } from './editor/commands';
 import { completion } from './editor/completion';
 import { formatKeymap } from './editor/format';
 import { embedContext, livePreview } from './editor/livePreview';
+import { contentStart, frontmatter } from './editor/frontmatterView';
 import { tables } from './editor/tableView';
 import { markdownTheme } from './editor/theme';
 import { VIM_OFF, setVimEditing, vimEditing, type VimSettings } from './editor/vim';
@@ -233,6 +234,9 @@ export function noteExtensions({
     // Tables are the one element that stays drawn while it is being written in,
     // so this is a state field rather than part of live preview's view plugin.
     tables(),
+    // The frontmatter fold, a state field for the same reason: it replaces line
+    // breaks, which a view plugin may not do.
+    frontmatter(),
     // Which note this is, so an embed can be turned into a URL against the
     // folder the note lives in.
     embedContext.of({ owner, dir: path.slice(0, Math.max(0, path.lastIndexOf('/'))) }),
@@ -295,10 +299,15 @@ export function Editor({
     // rather than passed in so that it lives and dies with the view it serves.
     const live = collab === null ? undefined : { ...collab, undo: new Y.UndoManager(collab.text) };
 
+    const text = live === undefined ? initialContent : live.text.toString();
     const state = EditorState.create({
       // From the shared text when there is one: `initialContent` is the REST
       // read, which is a second, older copy of the same note.
-      doc: live === undefined ? initialContent : live.text.toString(),
+      doc: text,
+      // Past the frontmatter. Left at the default the caret opens inside the
+      // YAML block, which unfolds it on every single open and puts the cursor
+      // in the bookkeeping rather than in the writing.
+      selection: { anchor: contentStart(text) },
       // The lock goes first: `readOnly` and `editable` take the first value
       // given, and `noteExtensions` gives one of its own.
       extensions: [

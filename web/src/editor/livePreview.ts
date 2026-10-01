@@ -26,6 +26,7 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 
+import { frontmatterEnd } from './frontmatterView';
 import { tableBlocks } from './tableView';
 import { BulletWidget, CheckboxWidget, ImageWidget, RuleWidget } from './widgets';
 
@@ -96,22 +97,6 @@ function activeLines(state: EditorState): Set<number> {
     for (let n = first; n <= last; n++) lines.add(n);
   }
   return lines;
-}
-
-/**
- * The YAML block at the top of a note, if there is one.
- *
- * Detected by shape rather than by the parser: the Markdown grammar in use has
- * no frontmatter rule, and adding one to the parser would change how the whole
- * document tokenises for the sake of two delimiter lines.
- */
-function frontmatterEnd(state: EditorState): number | null {
-  if (state.doc.lines < 2 || state.doc.line(1).text.trim() !== '---') return null;
-  for (let n = 2; n <= state.doc.lines; n++) {
-    const line = state.doc.line(n);
-    if (line.text.trim() === '---') return line.to;
-  }
-  return null;
 }
 
 function within(spans: ReadonlyArray<readonly [number, number]>, pos: number): boolean {
@@ -384,6 +369,14 @@ export function buildDecorations(
   }
 
   // --- frontmatter --------------------------------------------------------
+  //
+  // Folded while nobody is in it, which is the rule the rest of live preview
+  // follows: markup on the line you are on, effect everywhere else. It was the
+  // one block that only ever got the first half — tinted and left as raw YAML,
+  // filling the first fifth of the editor on every note in the vault.
+  // Tinted here, folded in `./frontmatterView` — a decoration that replaces line
+  // breaks cannot come from a view plugin, so the fold needs a state field of
+  // its own. What is left here is what the block looks like while it is open.
   const fmEnd = frontmatterEnd(state);
   if (fmEnd !== null) decorateLines(0, fmEnd, LINE_DECORATIONS.frontmatter);
 

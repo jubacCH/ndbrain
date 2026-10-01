@@ -219,6 +219,17 @@ export const copy = {
     taskDone: 'done',
     taskOpen: 'open',
 
+    /* The folded frontmatter. Named by what it hides and how much, because the
+       bar replaces lines a screen reader can otherwise no longer reach — and
+       the way back in is the same as everywhere in live preview: put the cursor
+       there. */
+    frontmatterLabel: (fields: number) =>
+      `Note properties, ${fields} ${fields === 1 ? 'field' : 'fields'} — select to edit`,
+    /* When the block holds nothing worth summarising. An empty bar would read
+       as a rendering fault rather than as a note without tags. */
+    frontmatterPlain: (fields: number) =>
+      `${fields} ${fields === 1 ? 'property' : 'properties'}`,
+
     /**
      * The mode line under a note in vim mode.
      *
