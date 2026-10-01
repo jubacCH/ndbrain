@@ -117,3 +117,34 @@ fn claims_a_dock_icon_only_while_there_is_a_window_to_come_back_to() {
     assert_eq!(presence_for(true), Presence::Dock);
     assert_eq!(presence_for(false), Presence::MenuBarOnly);
 }
+
+/* ---- the window is in front when the application opens ------------------ */
+
+/// The first show happens at `RunEvent::Ready`, not at the end of `setup`.
+///
+/// An activation asked for during `setup` arrives before macOS considers the
+/// application started, and is dropped. The window then opens *behind* whatever
+/// the person was working in, and only a click on the Dock icon brings it
+/// forward — which looks like an application that did not start.
+///
+/// Nothing but launching the built bundle shows this. Under `cargo run` the
+/// terminal is already the active application, so the window comes up in front
+/// by accident and every test passes. It was found by installing the app and
+/// opening it, and this is here so it is not quietly undone: reading the source
+/// is a poor test, but the alternative is a running WebView and a window server.
+#[test]
+fn shows_the_window_once_the_application_is_ready() {
+    let source = include_str!("../src/lib.rs");
+
+    let setup_shows = source
+        .split("RunEvent::Ready")
+        .next()
+        .expect("the source")
+        .contains("show_main(&handle)");
+    assert!(!setup_shows, "`show_main` is back in `setup`; the window will open behind other applications");
+
+    assert!(
+        source.contains("RunEvent::Ready => show_main(app)"),
+        "nothing shows the window when the application becomes ready"
+    );
+}

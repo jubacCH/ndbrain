@@ -805,8 +805,6 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            show_main(&handle);
-
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -866,6 +864,15 @@ pub fn run() {
                 }
             }
             tauri::RunEvent::Exit => save_frame(app),
+            // First light. The window is shown here rather than at the end of
+            // `setup`, because an activation asked for there arrives before
+            // macOS considers the application started and is simply dropped:
+            // the window opened behind whatever the person was working in, and
+            // only a click on the Dock icon brought it forward. Nothing but
+            // launching the built application shows this — in `cargo run` the
+            // terminal is already the active application, so the window came up
+            // in front by accident.
+            tauri::RunEvent::Ready => show_main(app),
             // The Dock icon, clicked. A `Regular` application that answered
             // nothing here would bounce its icon and show nothing.
             #[cfg(target_os = "macos")]
