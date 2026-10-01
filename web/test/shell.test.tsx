@@ -79,6 +79,16 @@ const server = vi.hoisted(() => ({
   sharedWritable: false,
   /** Every admin call the shell made, by name. */
   adminCalls: [] as string[],
+  /** What the file browser lists, and what the shell did to it. */
+  files: [] as Array<{ owner: string; path: string; size: number; mtimeMs: number; isNote: boolean }>,
+  dirs: [] as string[],
+  /** One entry per upload, in the order the shell made them. */
+  uploads: [] as string[],
+  deletes: [] as string[],
+  /** Names whose upload fails, so a partial failure can be checked. */
+  uploadFails: [] as string[],
+  /** When set, an upload only finishes once this resolves — for ordering. */
+  uploadGate: null as Promise<void> | null,
 }));
 
 vi.mock('../src/api', async (original) => {
@@ -164,6 +174,20 @@ vi.mock('../src/api', async (original) => {
   }
   Object.assign(fake, {
     quickFind: async () => ({ notes: seen() }),
+    files: async () => ({ files: server.files, dirs: server.dirs, truncated: false }),
+    uploadFile: async (_owner: string, path: string) => {
+      server.uploads.push(path);
+      if (server.uploadGate !== null) await server.uploadGate;
+      const name = path.slice(path.lastIndexOf('/') + 1);
+      if (server.uploadFails.includes(name)) throw new real.ApiError(413, 'too_large', 'too large');
+      return { path, size: 1 };
+    },
+    deleteFile: async (owner: string, path: string) => {
+      server.deletes.push(path);
+      server.files = server.files.filter((f) => f.path !== path);
+      server.notes = server.notes.filter((n) => !(n.owner === owner && n.path === path));
+      return {};
+    },
     getNote: async (owner: string, path: string) => {
       const row = seen().find((n) => n.owner === owner && n.path === path);
       if (server.failOpen || row === undefined) throw new real.ApiError(404, 'not_found', 'gone');
@@ -860,4 +884,135 @@ describe('the shell, signed in', () => {
     expect(await screen.findByRole('button', { name: copy.shell.account })).toBeInTheDocument();
     expect(screen.getAllByText('anna').length).toBeGreaterThan(0);
   });
+});
+
+/**
+ * What the shell does to a file, as opposed to what the browser offers.
+ *
+ * `FilesView` has twenty tests and every one of them hands it a `vi.fn()`: they
+ * check that a click reaches a callback, never what the callback then does. The
+ * three handlers in `Shell` had no test at all — `api.uploadFile` and
+ * `api.deleteFile` appeared nowhere in the suite — and they are where the
+ * interesting decisions are: uploads run one at a time, a partial failure is
+ * reported rather than swallowed, and a deleted file that happens to be the open
+ * note has to take the editor with it.
+ */
+describe('the shell acting on files', () => {
+  function fileRow(path: string, isNote = path.endsWith('.md')) {
+    return { owner: 'julian', path, size: 10, mtimeMs: 0, isNote };
+  }
+
+  let client: QueryClient | null = null;
+
+  async function openFiles(): Promise<void> {
+    server.signedIn = { id: 'julian', displayName: 'Julian', role: 'user' };
+    server.failOpen = false;
+    server.notes = [note('Willkommen.md')];
+    server.files = [fileRow('Willkommen.md'), fileRow('rack.png')];
+    server.dirs = [];
+    server.uploads = [];
+    server.deletes = [];
+    server.uploadFails = [];
+    server.uploadGate = null;
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <App />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('button', { name: copy.shell.account });
+    await userEvent.keyboard('{Control>}k{/Control}');
+    const dialog = await screen.findByRole('dialog', { name: copy.palette.label });
+    await userEvent.click(await within(dialog).findByRole('option', { name: new RegExp(copy.nav.files) }));
+  }
+
+  afterEach(() => {
+    client?.clear();
+    client = null;
+  });
+
+  /** The hidden multi-file input behind “Import files…”. */
+  function importInput(): HTMLInputElement {
+    const input = document.querySelector<HTMLInputElement>('input[type="file"][multiple]');
+    if (input === null) throw new Error('no import input on screen');
+    return input;
+  }
+
+  it('lists what the vault holds', async () => {
+    await openFiles();
+    expect(await screen.findByText('rack.png')).toBeInTheDocument();
+  });
+
+  it('uploads one file at a time rather than firing them all at once', async () => {
+    await openFiles();
+    await screen.findByText('rack.png');
+
+    let release = (): void => {};
+    server.uploadGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await userEvent.upload(importInput(), [
+      new File(['a'], 'eins.md', { type: 'text/markdown' }),
+      new File(['b'], 'zwei.md', { type: 'text/markdown' }),
+    ]);
+
+    // The first is in flight and the second has not been sent. A vault import
+    // can be hundreds of files, and firing them together buys nothing on a
+    // single-user server while making one failure indistinguishable from the
+    // rest.
+    expect(server.uploads).toEqual(['eins.md']);
+
+    release();
+    await waitFor(() => expect(server.uploads).toEqual(['eins.md', 'zwei.md']));
+  });
+
+  it('reports a partial failure instead of finishing quietly', async () => {
+    await openFiles();
+    await screen.findByText('rack.png');
+    server.uploadFails = ['zwei.md'];
+
+    await userEvent.upload(importInput(), [
+      new File(['a'], 'eins.md', { type: 'text/markdown' }),
+      new File(['b'], 'zwei.md', { type: 'text/markdown' }),
+    ]);
+
+    // Both were attempted — one bad file does not end the import — and the one
+    // that failed is named, because "could not import 1" of two hundred is not
+    // something anybody can act on.
+    await waitFor(() => expect(server.uploads).toEqual(['eins.md', 'zwei.md']));
+
+    // Twice on purpose, and worth pinning: once where it can be read and once in
+    // the live region, so somebody on a screen reader is told an import failed
+    // rather than left with a list that silently lacks a file.
+    const said = await screen.findAllByText(new RegExp(copy.errors.importFailed(1, 'zwei.md')));
+    expect(said).toHaveLength(2);
+    expect(said.some((node) => node.closest('[role="status"]') !== null)).toBe(true);
+  });
+
+  it('asks before deleting a file and does nothing when the answer is no', async () => {
+    await openFiles();
+    await screen.findByText('rack.png');
+    const asked = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    const row = screen.getByText('rack.png').closest('tr')!;
+    await userEvent.click(within(row).getByRole('button', { name: copy.files.delete }));
+
+    expect(asked).toHaveBeenCalledWith(copy.ask.deleteFile('rack.png'));
+    expect(server.deletes).toEqual([]);
+  });
+
+  /**
+   * Not tested here, and the reason is worth writing down.
+   *
+   * `removeFile` ends with "the open note may be the one just deleted" and calls
+   * `setOpenRef(null)`. That effect cannot be observed from the file view at all:
+   * the editor is not rendered there either way, and the sidebar's `aria-current`
+   * hangs off `view === 'note' && open !== null`, so it is already absent.
+   *
+   * A first attempt at this test passed with the line removed — it was measuring
+   * the navigation, not the handler. Rather than contrive an observation, the
+   * promise is left to a test on the hook once this state moves out of `Shell`,
+   * where the open reference is an input and an output rather than a detail.
+   */
 });
