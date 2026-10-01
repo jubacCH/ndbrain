@@ -153,6 +153,16 @@ export interface TreeProps {
    * was asked for.
    */
   onNewFolderIn?: (owner: string, parent: string) => void;
+  /**
+   * The folders the server knows about, which is not the same as the folders
+   * the notes imply: a folder with nothing in it exists on disk and in no
+   * note's path. Without these, a folder somebody has just made is not a row
+   * until the first note lands in it.
+   *
+   * Optional, so a caller that has not loaded the tree reply yet — or a test —
+   * gets the folders the notes imply and nothing missing.
+   */
+  dirs?: readonly { owner: string; path: string }[];
 }
 
 interface Folder {
@@ -162,14 +172,20 @@ interface Folder {
   notes: NoteRow[];
 }
 
-function buildTree(notes: NoteRow[]): Folder {
+/**
+ * The folders of one vault and the notes in them.
+ *
+ * `dirs` is what makes an **empty** folder exist here at all. The tree used to
+ * be built from the notes alone, so a folder with nothing in it was not a row —
+ * which was invisible while folders could only be made by putting a note
+ * somewhere, and became a plain defect the moment "New folder here" existed:
+ * the folder was made, the server had it, and the tree showed nothing at all.
+ */
+function buildTree(notes: NoteRow[], dirs: readonly string[] = []): Folder {
   const root: Folder = { name: '', path: '', folders: [], notes: [] };
 
-  for (const note of notes) {
-    const segments = note.path.split('/');
-    const fileName = segments.pop();
-    if (fileName === undefined) continue;
-
+  /** Walks to a folder, making each step that is not there yet. */
+  const reach = (segments: string[]): Folder => {
     let folder = root;
     let prefix = '';
     for (const segment of segments) {
@@ -181,7 +197,18 @@ function buildTree(notes: NoteRow[]): Folder {
       }
       folder = next;
     }
-    folder.notes.push(note);
+    return folder;
+  };
+
+  // Before the notes, so an empty folder is there whatever else arrives.
+  for (const dir of dirs) if (dir !== '') reach(dir.split('/'));
+
+  for (const note of notes) {
+    const segments = note.path.split('/');
+    const fileName = segments.pop();
+    if (fileName === undefined) continue;
+
+    reach(segments).notes.push(note);
   }
 
   // Sorted on the real name, so a vault that uses numeric prefixes keeps the
@@ -360,6 +387,7 @@ export function Tree({
   mayShareNote,
   onNewNoteIn,
   onNewFolderIn,
+  dirs,
 }: TreeProps): React.JSX.Element {
   const box = useRef<HTMLDivElement>(null);
   const owners = useOwners();
@@ -539,6 +567,18 @@ export function Tree({
     setMenu(null);
     if (refocus) menuFrom.current?.focus();
   }, []);
+
+  /** The server's folder rows, by vault. */
+  const dirsByOwner = useMemo(() => {
+    const out = new Map<string, string[]>();
+    for (const dir of dirs ?? []) {
+      const list = out.get(dir.owner);
+      if (list === undefined) out.set(dir.owner, [dir.path]);
+      else list.push(dir.path);
+    }
+    return out;
+  }, [dirs]);
+  const dirsOf = (owner: string): string[] => dirsByOwner.get(owner) ?? [];
 
   const toggle = (key: string): void => {
     setOpen((previous) => {
@@ -841,7 +881,7 @@ export function Tree({
               )
             ) : (
               <ul className="tree" role="none">
-                {renderFolder(owner, buildTree(rows), 1)}
+                {renderFolder(owner, buildTree(rows, dirsOf(owner)), 1)}
               </ul>
             )}
           </section>

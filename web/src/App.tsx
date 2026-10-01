@@ -1884,6 +1884,7 @@ function Shell({
         tree={
           <Tree
             notes={notes}
+            dirs={treeQuery.data?.dirs ?? []}
             self={user.id}
             received={received}
             selected={open === null ? null : { owner: open.owner, path: open.note.path }}

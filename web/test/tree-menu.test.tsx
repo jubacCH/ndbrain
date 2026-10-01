@@ -193,6 +193,45 @@ describe('the menu on a folder', () => {
   });
 });
 
+/**
+ * A folder with nothing in it.
+ *
+ * The tree was built from the notes alone, so a folder existed here only once
+ * something was filed in it. That was invisible while the only way to make one
+ * was to file a note; it became a plain defect the moment "New folder here"
+ * existed — the folder was made, the server had it, and the tree showed nothing,
+ * which looks exactly like a menu entry that does not work.
+ */
+describe('a folder the server knows about and no note mentions', () => {
+  it('is a row of its own', () => {
+    renderTree({ dirs: [{ owner: 'verein', path: 'Archiv' }] });
+    expect(screen.getByRole('treeitem', { name: /Archiv/ })).toBeInTheDocument();
+  });
+
+  it('carries the menu like any other folder, so it can be filled', async () => {
+    const onNewNoteIn = vi.fn();
+    renderTree({ dirs: [{ owner: 'verein', path: 'Archiv' }], onNewNoteIn });
+    const menu = rightClick(screen.getByRole('treeitem', { name: /Archiv/ }));
+
+    await userEvent.click(within(menu!).getByRole('menuitem', { name: copy.tree.menu.newNote }));
+    expect(onNewNoteIn).toHaveBeenCalledWith('verein', 'Archiv');
+  });
+
+  it('nests, so a folder made two deep is not a row called “a/b”', () => {
+    renderTree({ dirs: [{ owner: 'verein', path: 'Archiv/2026' }] });
+    const outer = screen.getByRole('treeitem', { name: /Archiv/ });
+
+    expect(outer).toHaveAttribute('aria-level', '1');
+    expect(screen.queryByRole('treeitem', { name: 'Archiv/2026' })).toBeNull();
+  });
+
+  it('does not invent one in a vault it was not listed for', () => {
+    renderTree({ dirs: [{ owner: 'verein', path: 'Archiv' }] });
+    const own = screen.getAllByRole('treeitem').filter((row) => row.getAttribute('data-folder') === 'Archiv');
+    expect(own).toHaveLength(0);
+  });
+});
+
 describe('the menu on a space’s header', () => {
   it('starts a note and a folder at the top of that vault', async () => {
     const onNewNoteIn = vi.fn();
