@@ -89,6 +89,14 @@ const server = vi.hoisted(() => ({
   uploadFails: [] as string[],
   /** When set, an upload only finishes once this resolves — for ordering. */
   uploadGate: null as Promise<void> | null,
+  /** Rows the tidy view lists as orphans, which are selectable. */
+  orphans: [] as NoteRow[],
+  /** Every bulk request the shell made. */
+  bulks: [] as Array<{ action: string; paths: string[]; dir?: string; tag?: string }>,
+  /** What `deletePreview` answers, so the confirmation text can be checked. */
+  preview: null as
+    | { restorable: number; unsaved: number; notYours: number; unknown: number; history: 'none' | 'empty' | 'ready' | 'broken' }
+    | null,
 }));
 
 vi.mock('../src/api', async (original) => {
@@ -140,15 +148,32 @@ vi.mock('../src/api', async (original) => {
       return [];
     },
     tidy: async () => ({
-      orphans: [],
+      orphans: server.orphans,
       untagged: [],
       deadLinks: [],
       stale: [],
       conflicts: [],
       missing: [],
+      emptyFolders: [],
       truncated: false,
-      totals: { orphans: 0, untagged: 0, deadLinks: 0, stale: 0, conflicts: 0, missing: 0 },
+      totals: {
+        orphans: server.orphans.length,
+        untagged: 0,
+        deadLinks: 0,
+        stale: 0,
+        conflicts: 0,
+        missing: 0,
+        emptyFolders: 0,
+      },
     }),
+    deletePreview: async () =>
+      server.preview ?? { restorable: 0, unsaved: 0, notYours: 0, unknown: 0, history: 'none' as const },
+    bulk: async (_owner: string, action: string, paths: string[], extra: { dir?: string; tag?: string } = {}) => {
+      server.bulks.push({ action, paths, ...extra });
+      // `ok` holds the final paths, which a move changes; the shell only counts
+      // them, so echoing the input is enough here.
+      return { ok: paths, failed: [] };
+    },
     shares: async () => ({ granted: [], received: [] }),
     tags: async () => ({ tags: [] }),
     pulse: async () => ({ events: [], now: 1 }),
@@ -914,6 +939,9 @@ describe('the shell acting on files', () => {
     server.deletes = [];
     server.uploadFails = [];
     server.uploadGate = null;
+    server.orphans = [];
+    server.bulks = [];
+    server.preview = null;
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
@@ -1015,4 +1043,110 @@ describe('the shell acting on files', () => {
    * promise is left to a test on the hook once this state moves out of `Shell`,
    * where the open reference is an input and an output rather than a detail.
    */
+});
+
+/**
+ * The bulk bar, which acts on a selection the tidy view made.
+ *
+ * `api.bulk` appeared nowhere in the suite, so none of this was covered: not the
+ * questions it asks before acting, not the preview that tells somebody what a
+ * delete will break, and not that a cancelled question leaves the vault alone.
+ * `Views.tsx` has its own tests and they stop at the callback, as the file
+ * browser's did.
+ */
+describe('acting on a selection', () => {
+  function row(path: string): NoteRow {
+    return { owner: 'julian', path, title: path.replace(/\.md$/, ''), size: 1, mtimeMs: 0 };
+  }
+
+  let client: QueryClient | null = null;
+
+  /** Signs in, opens Tidy up, and selects the one orphan listed. */
+  async function selectOrphan(): Promise<void> {
+    server.signedIn = { id: 'julian', displayName: 'Julian', role: 'user' };
+    server.failOpen = false;
+    server.notes = [row('Verwaist.md')];
+    server.orphans = [row('Verwaist.md')];
+    server.bulks = [];
+    server.preview = null;
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <App />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('button', { name: copy.shell.account });
+    // Straight through the sidebar: the palette only offers its commands once
+    // something is typed, and this test is not about the palette.
+    await userEvent.click(screen.getByRole('button', { name: copy.nav.tidy }));
+
+    // The title shows up in the tree as well, so the row is found by being a
+    // table row that carries a checkbox — which only the selectable findings do.
+    const cells = await screen.findAllByText('Verwaist');
+    const line = cells.map((node) => node.closest('tr')).find((tr) => tr?.querySelector('input[type="checkbox"]'));
+    if (line === undefined || line === null) throw new Error('no selectable row for the orphan');
+    await userEvent.click(within(line).getByRole('checkbox'));
+  }
+
+  afterEach(() => {
+    client?.clear();
+    client = null;
+  });
+
+  it('asks where to move the selection, and moves nothing when the question is cancelled', async () => {
+    await selectOrphan();
+    const asked = vi.spyOn(window, 'prompt').mockReturnValue(null);
+
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.move) }));
+
+    expect(asked).toHaveBeenCalled();
+    expect(server.bulks).toEqual([]);
+  });
+
+  it('passes the folder that was typed', async () => {
+    await selectOrphan();
+    vi.spyOn(window, 'prompt').mockReturnValue('Archiv/2026');
+
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.move) }));
+
+    await waitFor(() =>
+      expect(server.bulks).toEqual([{ action: 'move', paths: ['Verwaist.md'], dir: 'Archiv/2026' }]),
+    );
+  });
+
+  it('treats a tag of nothing but spaces as no answer at all', async () => {
+    await selectOrphan();
+    // Not the same as cancelling, and it used to be: a tag of blanks would pass
+    // the null check, be trimmed away downstream, and report success for a no-op.
+    vi.spyOn(window, 'prompt').mockReturnValue('   ');
+
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.tag) }));
+
+    expect(server.bulks).toEqual([]);
+  });
+
+  /**
+   * The delete asks with the damage in the question.
+   *
+   * A selection of orphans is the case where this matters least and is easiest to
+   * get wrong: the preview is what turns "delete 1 note?" into a sentence that
+   * says what else stops working.
+   */
+  it('shows what a delete will break before it asks', async () => {
+    await selectOrphan();
+    // One note that can be brought back, which is what makes the sentence worth
+    // putting in front of somebody.
+    server.preview = { restorable: 1, unsaved: 0, notYours: 0, unknown: 0, history: 'ready' as const };
+    const asked = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.delete) }));
+
+    await waitFor(() => expect(asked).toHaveBeenCalled());
+    const question = asked.mock.calls[0]?.[0] ?? '';
+    expect(question).toContain(copy.ask.deleteNotes(1));
+    expect(question).toContain(
+      copy.ask.afterDelete({ restorable: 1, unsaved: 0, notYours: 0, unknown: 0, history: 'ready' }),
+    );
+    expect(server.bulks).toEqual([]);
+  });
 });

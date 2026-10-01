@@ -47,6 +47,20 @@ export default defineConfig({
     // slow-but-correct tests fail. `test/timeouts.test.ts` keeps the two apart.
     testTimeout: 20_000,
     hookTimeout: 20_000,
+    /**
+     * Spies go back after every test, which they did not.
+     *
+     * Five `vi.spyOn(window, …)` calls in `shell.test.tsx` alone, none of them
+     * undone: a `confirm` stubbed in one test stayed stubbed for every test after
+     * it, and `mock.calls[0]` in a later test was somebody else's call. That cost
+     * real time to find, because the test passed on its own and failed in the
+     * file — the same shape as the `matchMedia` flake, one test leaving state for
+     * the next.
+     *
+     * Restoring rather than clearing: `clearMocks` would empty the call lists and
+     * leave the stubs in place, which fixes the counting and keeps the lie.
+     */
+    restoreMocks: true,
   },
   server: {
     // `npm run dev` talks to a server started separately, so the API is on
