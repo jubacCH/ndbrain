@@ -31,6 +31,8 @@ import {
   shiftMonth,
   dailyNoteTemplate,
   NOTES_SECTION,
+  journalPath,
+  parseIsoDate,
 } from '../src/daily';
 import { HomeView } from '../src/Home';
 import { JournalView } from '../src/Journal';
@@ -68,7 +70,9 @@ const server = vi.hoisted(() => ({
   ensureCalls: [] as Array<{ owner: string; path: string; content: string }>,
   /** Plain writes, which a followed link must not fall back to either. */
   putCalls: [] as Array<{ owner: string; path: string }>,
-  /** What the capture field on the start page sent. */
+  /** What the capture field on the start page sent: content and day, nothing else. */
+  captureCalls: [] as Array<{ owner: string; content: string; date: string }>,
+  /** What the shell asked `append` for directly, which capture no longer does. */
   appendCalls: [] as Array<{
     owner: string;
     path: string;
@@ -85,6 +89,22 @@ const server = vi.hoisted(() => ({
 vi.mock('../src/api', async (original) => {
   const real = await original<typeof import('../src/api')>();
   const key = (owner: string, path: string): string => `${owner} ${path}`;
+  /** What an append does to the fake vault, shared by `append` and `capture`. */
+  function appended(owner: string, path: string, content: string, options: { section?: string; ifAbsent?: string }) {
+    const existing = server.contents.get(key(owner, path));
+    const created = existing === undefined;
+    const before = existing ?? options.ifAbsent ?? '';
+    const text = `${before}\n${content}`;
+    server.contents.set(key(owner, path), text);
+    if (created) {
+      server.notes = [...server.notes, { owner, path, title: path.split('/').pop()!.replace(/\.md$/, ''), size: 1, mtimeMs: 1 }];
+    }
+    return {
+      created,
+      note: { path, title: path.split('/').pop()!.replace(/\.md$/, ''), content: text, size: text.length, mtimeMs: 2 },
+    };
+  }
+
   const fake: Record<string, (...args: never[]) => Promise<unknown>> = {
     me: async () => ({ user: server.signedIn }),
     tree: async () => ({ notes: server.notes, dirs: [] }),
@@ -125,6 +145,20 @@ vi.mock('../src/api', async (original) => {
       activity: [],
     }),
     activityDays: async () => ({ days: [] }),
+    capture: async (owner: string, content: string, date: string) => {
+      server.captureCalls.push({ owner, content, date });
+      if (server.appendFails) throw new real.ApiError(503, 'unavailable', 'nope');
+      // The route derives the path, the heading and the template from
+      // `shared/journal.ts`; the fake derives them the same way, so everything
+      // that reads the note afterwards still finds what was written. That those
+      // three are right is the server's test, not this one's.
+      const day = parseIsoDate(date);
+      if (day === null) throw new real.ApiError(400, 'invalid_body', 'date');
+      return appended(owner, journalPath(day), content, {
+        section: NOTES_SECTION,
+        ifAbsent: dailyNoteTemplate(day),
+      });
+    },
     append: async (
       owner: string,
       path: string,
@@ -133,18 +167,7 @@ vi.mock('../src/api', async (original) => {
     ) => {
       server.appendCalls.push({ owner, path, content, ...options });
       if (server.appendFails) throw new real.ApiError(503, 'unavailable', 'nope');
-      const existing = server.contents.get(key(owner, path));
-      const created = existing === undefined;
-      const before = existing ?? options.ifAbsent ?? '';
-      const text = `${before}\n${content}`;
-      server.contents.set(key(owner, path), text);
-      if (created) {
-        server.notes = [...server.notes, { owner, path, title: path.split('/').pop()!.replace(/\.md$/, ''), size: 1, mtimeMs: 1 }];
-      }
-      return {
-        created,
-        note: { path, title: path.split('/').pop()!.replace(/\.md$/, ''), content: text, size: text.length, mtimeMs: 2 },
-      };
+      return appended(owner, path, content, options);
     },
     ensureNote: async (owner: string, path: string, content: string) => {
       server.ensureCalls.push({ owner, path, content });
@@ -187,6 +210,7 @@ beforeEach(() => {
   server.ensureCalls = [];
   server.putCalls = [];
   server.appendCalls = [];
+  server.captureCalls = [];
   server.appendFails = false;
   server.gate = null;
 });
@@ -647,13 +671,15 @@ describe('capturing a thought on the start page', () => {
     await userEvent.type(await screen.findByLabelText(copy.capture.label), 'Ein Gedanke.');
     await userEvent.click(screen.getByRole('button', { name: copy.capture.save }));
 
-    await waitFor(() => expect(server.appendCalls).toHaveLength(1));
-    expect(server.appendCalls[0]).toEqual({
+    // Content and the day on this machine's clock, and nothing else: where that
+    // day's note lives, what heading to write under and what to create it from
+    // are derived server-side from the one copy of them in `shared/journal.ts`.
+    // `server/test/capture.test.ts` is what holds those three.
+    await waitFor(() => expect(server.captureCalls).toHaveLength(1));
+    expect(server.captureCalls[0]).toEqual({
       owner: 'julian',
-      path: '50_Journal/2026/09/2026-09-17.md',
       content: 'Ein Gedanke.',
-      section: NOTES_SECTION,
-      ifAbsent: dailyNoteTemplate({ year: 2026, month: 9, day: 17 }),
+      date: '2026-09-17',
     });
     // Nothing was written whole and nothing was opened: the note stays closed.
     expect(server.putCalls).toEqual([]);
@@ -691,7 +717,7 @@ describe('capturing a thought on the start page', () => {
     server.appendFails = false;
     await userEvent.click(screen.getByRole('button', { name: copy.capture.save }));
     await waitFor(() => expect(field()).toHaveValue(''));
-    expect(server.appendCalls.map((call) => call.content)).toEqual([
+    expect(server.captureCalls.map((call) => call.content)).toEqual([
       'Zu wertvoll zum Verlieren.',
       'Zu wertvoll zum Verlieren.',
     ]);
@@ -703,12 +729,12 @@ describe('capturing a thought on the start page', () => {
 
     const box = await screen.findByLabelText(copy.capture.label);
     await userEvent.type(box, 'Erste Zeile{Enter}Zweite Zeile');
-    expect(server.appendCalls).toEqual([]);
+    expect(server.captureCalls).toEqual([]);
     expect(field()).toHaveValue('Erste Zeile\nZweite Zeile');
 
     await userEvent.keyboard('{Meta>}{Enter}{/Meta}');
-    await waitFor(() => expect(server.appendCalls).toHaveLength(1));
-    expect(server.appendCalls[0]!.content).toBe('Erste Zeile\nZweite Zeile');
+    await waitFor(() => expect(server.captureCalls).toHaveLength(1));
+    expect(server.captureCalls[0]!.content).toBe('Erste Zeile\nZweite Zeile');
   });
 
   it('sends nothing for a field holding only spaces', async () => {
@@ -719,7 +745,7 @@ describe('capturing a thought on the start page', () => {
     await userEvent.click(screen.getByRole('button', { name: copy.capture.save }));
 
     await new Promise((r) => setTimeout(r, 20));
-    expect(server.appendCalls).toEqual([]);
+    expect(server.captureCalls).toEqual([]);
   });
 
   /**

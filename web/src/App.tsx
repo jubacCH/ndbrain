@@ -65,7 +65,6 @@ import {
   journalDays as journalDaysOf,
   journalPath,
   localDate,
-  NOTES_SECTION,
   parseJournalLinkTarget,
   parseJournalPath,
   sameDate,
@@ -733,12 +732,12 @@ function Shell({
     async (thought: string): Promise<void> => {
       await settle();
 
-      const date = localDate(new Date());
-      const path = journalPath(date);
-      const result = await api.append(user.id, path, thought, {
-        section: NOTES_SECTION,
-        ifAbsent: dailyNoteTemplate(date),
-      });
+      // Through `api.capture`, which derives the path, the heading and the
+      // template on the server from the one copy of them. The path comes back in
+      // the answer, so the cache below is invalidated for the note the server
+      // actually wrote rather than for one computed a second time here.
+      const result = await api.capture(user.id, thought, isoDate(localDate(new Date())));
+      const path = result.note.path;
 
       if (result.created) invalidate.afterStructure(client);
       else invalidate.afterEdit(client, user.id, path);

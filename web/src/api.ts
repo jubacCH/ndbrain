@@ -430,6 +430,25 @@ export const api = {
    * `ifAbsent` is what the note is created with if it is not there; without it
    * an absent note is refused.
    */
+  /**
+   * One thought into today's note, without saying where that is.
+   *
+   * The path, the heading and the template are the server's to derive, from the
+   * one copy of them in `shared/journal.ts`. This page could import that module
+   * — it did — but then the same operation existed twice, and `journal.ts` says
+   * in its own header what drift there costs: "every daily note quietly lowering
+   * the health score". The native client cannot import it at all, so the route
+   * had to exist; using it from here is what makes it the only way.
+   *
+   * The date is the caller's: the note somebody expects is the one for the date
+   * on their own clock, and the server runs on the container's.
+   */
+  capture: (owner: string, content: string, date: string) =>
+    request('/api/v1/capture', S.PutNoteResponse, {
+      method: 'POST',
+      body: JSON.stringify({ content, date, owner }),
+    }),
+
   append: (
     owner: string,
     path: string,
