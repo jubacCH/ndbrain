@@ -704,6 +704,33 @@ export const copy = {
    * still offered; it is a sentence about what the name is doing now, rather
    * than the only way to reach a folder at all.
    */
+  /**
+   * Making one folder, from the tree's context menu.
+   *
+   * Its own block rather than words borrowed from `newNote`: the two dialogs
+   * read the same and are not the same, and a shared string is how one of them
+   * quietly starts saying the other's sentence.
+   */
+  newFolder: {
+    title: 'New folder',
+    titleIn: (space: string) => `New folder in ${space}`,
+    close: 'Close',
+    name: 'Name',
+    /** Before the folder it goes inside, which is shown as code. */
+    inside: 'Inside',
+    root: 'Top of the vault',
+    /** Before the path the folder will be made at. */
+    becomes: 'Will be made at',
+    noName: 'needs a name',
+    submit: 'Make the folder',
+    slashNests: 'A / in the name makes the folders above it as well.',
+    taken: (path: string) => `“${path}” is already there.`,
+    /** `normalizeVaultPath` on the server refuses both, so they are said here. */
+    upward: 'A folder name cannot step upwards with . or ..',
+    dotted: 'A folder name cannot begin with a dot.',
+    failed: 'Could not make that folder.',
+  },
+
   newNote: {
     /** In your own vault, where there is nothing else to say. */
     title: 'New note',
@@ -833,6 +860,27 @@ export const copy = {
     shareNoteLabel: (name: string) => `Share ${name}`,
     spaceEmpty: 'Nothing in this space yet.',
     newNoteIn: (space: string) => `New note in ${space}`,
+
+    /**
+     * The right-click menu on a row.
+     *
+     * Every entry here does something the row could already do — renaming was
+     * F2, deleting was Delete, and both were named in `aria-keyshortcuts` and
+     * nowhere a person would look. The menu is the place they are said out
+     * loud; the two creating entries are the only ones that are new, and they
+     * are new because a folder could not be made in a space at all.
+     */
+    menu: {
+      /** Names the row the menu belongs to, for a screen reader. */
+      forNote: (name: string) => `Actions for the note ${name}`,
+      forFolder: (name: string) => `Actions for the folder ${name}`,
+      forVault: (name: string) => `Actions for ${name}`,
+      newNote: 'New note here',
+      newFolder: 'New folder here',
+      rename: 'Rename or move…',
+      share: 'Share…',
+      delete: 'Delete',
+    },
   },
 
   context: {

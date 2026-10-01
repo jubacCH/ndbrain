@@ -52,6 +52,12 @@ export interface NewNoteTarget {
    * calls it anything.
    */
   space: string | null;
+  /**
+   * The folder the note starts in, when the request named one — the row the
+   * context menu was opened on. Left out, the picker falls to its first entry,
+   * which is what the toolbar's "new note" has always done.
+   */
+  folder?: string;
 }
 
 export interface NewNoteDialogProps {
@@ -158,7 +164,13 @@ export function NewNoteDialog({
   // Whatever is offered first, so the select's value is never one of its
   // options by accident — a select showing a folder it is not set to would
   // put the note somewhere else on the first submit.
-  const [folder, setFolder] = useState(() => folderOptions(folders)[0] ?? '');
+  const [folder, setFolder] = useState(() => {
+    const options = folderOptions(folders);
+    // Only if it is one of the offered folders. A folder the caller may not
+    // write is not made writable by having been right-clicked.
+    const asked = target.folder;
+    return (asked !== undefined && options.includes(asked) ? asked : options[0]) ?? '';
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

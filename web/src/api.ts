@@ -486,10 +486,16 @@ export const api = {
   },
 
   // ---- folders ------------------------------------------------------------
-  createFolder: (path: string) =>
+  /**
+   * `owner` left out means the caller's own vault, which is what the route
+   * assumes too. It was never sent, so a folder asked for in a space was made
+   * in the caller's vault instead — the route has taken an owner and checked
+   * the share's write access all along.
+   */
+  createFolder: (path: string, owner?: string) =>
     request('/api/v1/folders', S.CreateFolderResponse, {
       method: 'POST',
-      body: JSON.stringify({ path }),
+      body: JSON.stringify(owner === undefined ? { path } : { path, owner }),
     }),
 
   /** Moves the notes one by one, so the links that pointed into the folder follow. */

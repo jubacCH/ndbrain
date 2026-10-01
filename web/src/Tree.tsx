@@ -37,7 +37,7 @@
  *   resolving against the real name.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { copy } from './copy';
 
 import { refKey, type NoteRow, type Share } from './api';
@@ -45,7 +45,8 @@ import { loadOpenFolders, saveOpenFolders } from './accountStorage';
 import { ChevronIcon, FileIcon, FolderIcon, NewNoteIcon, PencilIcon, ShareIcon, SpaceIcon, TrashIcon } from './icons';
 import { ownerKind, ownerLabel, useOwners } from './owners';
 import type { Trouble as TroubleKind } from './queries';
-import { mayChange } from './rights';
+import { ContextMenu, type MenuItem } from './Menu';
+import { mayChange, mayChangeFolder } from './rights';
 import { Trouble } from './Trouble';
 
 export type Finding = 'crit' | 'warn';
@@ -134,10 +135,24 @@ export interface TreeProps {
   onShareNote?: (owner: string, path: string, title: string) => void;
   mayShareNote?: (owner: string) => boolean;
   /**
-   * Starts a note in a space. Offered on a space's header only where some share
-   * on it carries write access; the path typed is checked again before sending.
+   * Starts a note, in the folder the menu was opened on — `''` for the top of
+   * that vault, which is what a space's header and its "+" mean.
+   *
+   * One property rather than two. It used to be `onCreateIn(owner)`, for the
+   * space header alone, and the context menu would have needed a second way to
+   * say the same thing with a folder attached; two properties that both start a
+   * note is how they come to disagree about which notes may be started.
    */
-  onCreateIn?: (owner: string) => void;
+  onNewNoteIn?: (owner: string, folder: string) => void;
+  /**
+   * Makes a folder inside the one the menu was opened on, `''` for the top.
+   *
+   * Offered wherever the caller may write, **including in a space** — which was
+   * not possible before this existed at all: the client's `createFolder` sent
+   * no owner, so every folder went into the caller's own vault whatever row it
+   * was asked for.
+   */
+  onNewFolderIn?: (owner: string, parent: string) => void;
 }
 
 interface Folder {
@@ -343,7 +358,8 @@ export function Tree({
   onRetry,
   onShareNote,
   mayShareNote,
-  onCreateIn,
+  onNewNoteIn,
+  onNewFolderIn,
 }: TreeProps): React.JSX.Element {
   const box = useRef<HTMLDivElement>(null);
   const owners = useOwners();
@@ -488,6 +504,42 @@ export function Tree({
     if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [revealed, open]);
 
+  /**
+   * The open context menu, and the row it belongs to.
+   *
+   * The row is held in a ref rather than in the state: it is only ever read on
+   * the way out, to hand the focus back, and putting a DOM node in the state
+   * would make every render compare it.
+   */
+  const [menu, setMenu] = useState<{
+    at: { x: number; y: number };
+    label: string;
+    items: MenuItem[];
+  } | null>(null);
+  const menuFrom = useRef<HTMLElement | null>(null);
+
+  const openMenu = (
+    event: React.MouseEvent<HTMLElement>,
+    label: string,
+    items: MenuItem[],
+  ): void => {
+    // Nothing to offer, so the browser's own menu is left alone rather than
+    // replaced by an empty box — on a row the caller may only read, that is
+    // the honest answer.
+    if (items.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    menuFrom.current = event.currentTarget;
+    setMenu({ at: { x: event.clientX, y: event.clientY }, label, items });
+  };
+
+  // Stable, because `ContextMenu` listens on the document for as long as this
+  // does not change.
+  const closeMenu = useCallback((refocus: boolean): void => {
+    setMenu(null);
+    if (refocus) menuFrom.current?.focus();
+  }, []);
+
   const toggle = (key: string): void => {
     setOpen((previous) => {
       const next = new Set(previous);
@@ -529,6 +581,32 @@ export function Tree({
                 .join(' ') || undefined
             }
             onClick={() => onSelect(note.owner, note.path)}
+            onContextMenu={(event) =>
+              openMenu(event, copy.tree.menu.forNote(note.title), [
+                ...(renamable
+                  ? [{
+                      key: 'rename',
+                      label: copy.tree.menu.rename,
+                      onSelect: () => onRenameNote?.(note.owner, note.path, note.title),
+                    }]
+                  : []),
+                ...(shareable
+                  ? [{
+                      key: 'share',
+                      label: copy.tree.menu.share,
+                      onSelect: () => onShareNote?.(note.owner, note.path, note.title),
+                    }]
+                  : []),
+                ...(deletable
+                  ? [{
+                      key: 'delete',
+                      label: copy.tree.menu.delete,
+                      danger: true,
+                      onSelect: () => onDeleteNote?.(note.owner, note.path, note.title),
+                    }]
+                  : []),
+              ])
+            }
           >
             {finding !== undefined && <span className={`st st-${finding}`} />}
             {!showPath && <span className="tw" />}
@@ -594,6 +672,10 @@ export function Tree({
       // A folder move relocates everything under it, so it is offered on your
       // own vault only — the same rule for the pencil and for the key.
       const renamable = owner === self;
+      // Creating is bounded by the share, not by whose vault it is: a space
+      // shared with write access takes a note and a folder like any other.
+      const writeHere = mayChangeFolder(self, received, owner, child.path);
+      const name = displayName(child.name, hidePrefixes);
       return (
         <li key={`d:${key}`} role="none">
           <div className="node-row" role="none">
@@ -607,12 +689,37 @@ export function Tree({
               aria-keyshortcuts={renamable ? 'F2' : undefined}
               onClick={() => toggle(key)}
               aria-expanded={isOpen}
+              onContextMenu={(event) =>
+                openMenu(event, copy.tree.menu.forFolder(name), [
+                  ...(writeHere && onNewNoteIn !== undefined
+                    ? [{
+                        key: 'note',
+                        label: copy.tree.menu.newNote,
+                        onSelect: () => onNewNoteIn(owner, child.path),
+                      }]
+                    : []),
+                  ...(writeHere && onNewFolderIn !== undefined
+                    ? [{
+                        key: 'folder',
+                        label: copy.tree.menu.newFolder,
+                        onSelect: () => onNewFolderIn(owner, child.path),
+                      }]
+                    : []),
+                  ...(renamable
+                    ? [{
+                        key: 'rename',
+                        label: copy.tree.menu.rename,
+                        onSelect: () => onRenameFolder(child.path),
+                      }]
+                    : []),
+                ])
+              }
             >
               <span className="tw" data-open={isOpen}>
                 <ChevronIcon size={12} />
               </span>
               <FolderIcon size={15} className="node-icon" />
-              <span className="nm">{displayName(child.name, hidePrefixes)}</span>
+              <span className="nm">{name}</span>
               {/* Shown only while shut: once it is open you can see them. */}
               {!isOpen && <span className="cnt">{count}</span>}
             </button>
@@ -626,8 +733,8 @@ export function Tree({
                   type="button"
                   className="node-act"
                   tabIndex={-1}
-                  title={copy.tree.renameFolder(displayName(child.name, hidePrefixes))}
-                  aria-label={copy.tree.renameFolderLabel(displayName(child.name, hidePrefixes))}
+                  title={copy.tree.renameFolder(name)}
+                  aria-label={copy.tree.renameFolderLabel(name)}
                   onClick={() => onRenameFolder(child.path)}
                 >
                   <PencilIcon size={14} />
@@ -669,7 +776,19 @@ export function Tree({
               shares something — look like it has an owner problem.
             */}
             {!isOwn && (
-              <h3 className="vault-head">
+              <h3
+                className="vault-head"
+                onContextMenu={(event) =>
+                  openMenu(event, copy.tree.menu.forVault(label), [
+                    ...(writable && onNewNoteIn !== undefined
+                      ? [{ key: 'note', label: copy.tree.menu.newNote, onSelect: () => onNewNoteIn(owner, '') }]
+                      : []),
+                    ...(writable && onNewFolderIn !== undefined
+                      ? [{ key: 'folder', label: copy.tree.menu.newFolder, onSelect: () => onNewFolderIn(owner, '') }]
+                      : []),
+                  ])
+                }
+              >
                 {space && <SpaceIcon size={14} className="vault-icon" />}
                 <span className="vault-owner">{label}</span>
                 {/* Neutral, not coloured: the right is a fact about the folder,
@@ -677,13 +796,13 @@ export function Tree({
                     "something is wrong here" or "this is not yours", and the
                     header itself already carries the second. */}
                 <span className="pill p-tag">{writeLabel(owner, received)}</span>
-                {space && writable && onCreateIn !== undefined && (
+                {space && writable && onNewNoteIn !== undefined && (
                   <button
                     type="button"
                     className="node-act vault-new"
                     title={copy.tree.newNoteIn(label)}
                     aria-label={copy.tree.newNoteIn(label)}
-                    onClick={() => onCreateIn(owner)}
+                    onClick={() => onNewNoteIn(owner, '')}
                   >
                     <NewNoteIcon size={14} />
                   </button>
@@ -728,6 +847,13 @@ export function Tree({
           </section>
         );
       })}
+
+      {/* One menu for the whole tree, not one per row: there is only ever one
+          open, and a row that renders its own would be rebuilt by the tree's
+          own filtering while it stood on screen. */}
+      {menu !== null && (
+        <ContextMenu at={menu.at} label={menu.label} items={menu.items} onClose={closeMenu} />
+      )}
     </div>
   );
 }

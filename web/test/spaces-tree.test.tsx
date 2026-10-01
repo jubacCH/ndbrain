@@ -113,13 +113,15 @@ describe('a space in the tree', () => {
   });
 
   it('is there while still empty, with a way to start its first note where writing is allowed', async () => {
-    const onCreateIn = vi.fn();
-    const { container } = renderTree({ onCreateIn });
+    const onNewNoteIn = vi.fn();
+    const { container } = renderTree({ onNewNoteIn });
     const verein = container.querySelectorAll('section.vault')[2] as HTMLElement;
     expect(within(verein).getByText('Nothing in this space yet.')).toBeInTheDocument();
 
     await userEvent.click(within(verein).getByRole('button', { name: 'New note in Verein' }));
-    expect(onCreateIn).toHaveBeenCalledWith('verein');
+    // The empty string is the top of that vault, which is what this "+" means
+    // and what the context menu says in the same words on a folder below it.
+    expect(onNewNoteIn).toHaveBeenCalledWith('verein', '');
 
     // Familie is readable as a whole and writable only in one note: no new notes.
     expect(screen.queryByRole('button', { name: 'New note in Familie' })).toBeNull();

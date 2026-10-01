@@ -4833,6 +4833,17 @@ kbd,
   left: 0;
 }
 
+/* Opened at the pointer rather than under a button, so it is positioned
+   against the viewport and not against a parent that may be scrolled or
+   clipped — the tree is both. `left` and `top` come from the component, which
+   has already kept them on screen. */
+.menu-at {
+  position: fixed;
+  top: auto;
+  right: auto;
+  min-width: 12rem;
+}
+
 .menu-head {
   margin: 0;
   padding: var(--s-2) var(--s-3);

@@ -51,6 +51,7 @@ import { mayChange, mayChangeFolder, mayShare } from './rights';
 import { OwnersContext, ownerDirectory, ownerKind, ownerLabel } from './owners';
 import { ShareDialog, type ShareTarget } from './ShareDialog';
 import { RenameDialog, vaultFolders, type RenameTarget } from './RenameDialog';
+import { NewFolderDialog, type NewFolderTarget } from './NewFolderDialog';
 import { NewNoteDialog, type NewNoteTarget } from './NewNoteDialog';
 import { SettingsView } from './Settings';
 import { AdminView } from './Admin';
@@ -316,6 +317,7 @@ function Shell({
   const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
   /** The vault the new-note dialog is open on, or null. */
   const [newNote, setNewNote] = useState<NewNoteTarget | null>(null);
+  const [newFolder, setNewFolder] = useState<NewFolderTarget | null>(null);
   const [pulse, setPulse] = useState<PulseEvent[]>([]);
   /** The server's timestamp to ask from next time. */
   const pulseSince = useRef<number | undefined>(undefined);
@@ -916,23 +918,36 @@ function Shell({
    * The drawer goes, for the reason `openPalette` gives: the space's "+" is a
    * tree row, which on a phone is inside it.
    */
-  const startNote = useCallback((owner: string, space: string | null): void => {
+  const startNote = useCallback((owner: string, space: string | null, folder?: string): void => {
     setDrawerOpen(false);
-    setNewNote({ owner, space });
+    setNewNote(folder === undefined ? { owner, space } : { owner, space, folder });
   }, []);
 
-  const createFolder = async (): Promise<void> => {
-    const name = window.prompt(copy.ask.newFolderName);
-    if (name === null || name.trim() === '') return;
-
-    try {
-      await api.createFolder(name.trim());
+  /**
+   * Makes the folder the dialog asked for, in the vault it named.
+   *
+   * It threw away two things when it was a `window.prompt`: the owner, so every
+   * folder landed in the caller's own vault whatever row was asked, and the
+   * refusal, which arrived as a red line at the top of the screen after the
+   * prompt had already closed. The error is re-thrown here so the dialog can
+   * stay open on one and say it where the name is.
+   */
+  const makeFolder = useCallback(
+    async (owner: string, path: string): Promise<void> => {
+      await api.createFolder(path, owner === user.id ? undefined : owner);
       await refreshTree();
       setError(null);
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : copy.errors.createFolderFailed);
-    }
-  };
+    },
+    [user.id, refreshTree],
+  );
+
+  const startFolder = useCallback(
+    (owner: string, parent: string): void => {
+      setDrawerOpen(false);
+      setNewFolder({ owner, space: owner === user.id ? null : ownerLabel(owners, owner), parent });
+    },
+    [user.id, owners],
+  );
 
   /**
    * Renaming a folder moves every note inside it, which is what carries the
@@ -1473,6 +1488,15 @@ function Shell({
   );
 
   /** What that vault already holds, so a clash is named before it is sent. */
+  /** Every folder that vault already holds, for the new-folder dialog's clash check. */
+  const newFolderTaken = useMemo(
+    () =>
+      new Set(
+        newFolder === null ? [] : vaultFolders(notes, treeQuery.data?.dirs ?? [], newFolder.owner),
+      ),
+    [newFolder, notes, treeQuery.data],
+  );
+
   const newNoteTaken = useMemo(
     () =>
       new Set(newNote === null ? [] : notes.filter((row) => row.owner === newNote.owner).map((row) => row.path)),
@@ -1875,7 +1899,10 @@ function Shell({
             onRenameNote={openRename}
             onShareNote={openShare}
             mayShareNote={mayShareNote}
-            onCreateIn={(owner) => startNote(owner, ownerLabel(owners, owner))}
+            onNewNoteIn={(owner, folder) =>
+              startNote(owner, owner === user.id ? null : ownerLabel(owners, owner), folder)
+            }
+            onNewFolderIn={startFolder}
             revealed={revealed}
             onCreateFirst={() => startNote(user.id, null)}
             trouble={treeTrouble}
@@ -1883,7 +1910,7 @@ function Shell({
           />
         }
         onNewNote={() => startNote(user.id, null)}
-        onNewFolder={() => void createFolder()}
+        onNewFolder={() => startFolder(user.id, '')}
         onSettings={() => {
           setDrawerOpen(false);
           void showView('settings');
@@ -2460,6 +2487,15 @@ function Shell({
           taken={newNoteTaken}
           onCreate={(path) => writeNewNote(newNote.owner, path)}
           onClose={() => setNewNote(null)}
+        />
+      )}
+
+      {newFolder !== null && (
+        <NewFolderDialog
+          target={newFolder}
+          taken={newFolderTaken}
+          onCreate={makeFolder}
+          onClose={() => setNewFolder(null)}
         />
       )}
 
