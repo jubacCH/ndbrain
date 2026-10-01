@@ -51,6 +51,7 @@ import { mayChange, mayChangeFolder, mayShare } from './rights';
 import { OwnersContext, ownerDirectory, ownerKind, ownerLabel } from './owners';
 import { ShareDialog, type ShareTarget } from './ShareDialog';
 import { RenameDialog, vaultFolders, type RenameTarget } from './RenameDialog';
+import { BulkDialog } from './BulkDialog';
 import { NewFolderDialog, type NewFolderTarget } from './NewFolderDialog';
 import { NewNoteDialog, type NewNoteTarget } from './NewNoteDialog';
 import { SettingsView } from './Settings';
@@ -1503,6 +1504,12 @@ function Shell({
   );
 
   /** What that vault already holds, so a clash is named before it is sent. */
+  /** The caller's own folders, for the bulk move's picker. */
+  const bulkFolders = useMemo(
+    () => vaultFolders(notes, treeQuery.data?.dirs ?? [], user.id),
+    [notes, treeQuery.data, user.id],
+  );
+
   /** Every folder that vault already holds, for the new-folder dialog's clash check. */
   const newFolderTaken = useMemo(
     () =>
@@ -1563,6 +1570,9 @@ function Shell({
     toggleAll: toggleAllSelected,
     keepSelected,
     runBulk,
+    ask: bulkAsk,
+    answerBulk,
+    cancelBulk,
     applyTopics,
     removeEmptyFolder,
   } = useTidyActions({
@@ -2516,6 +2526,18 @@ function Shell({
           taken={newNoteTaken}
           onCreate={(path) => writeNewNote(newNote.owner, path)}
           onClose={() => setNewNote(null)}
+        />
+      )}
+
+      {/* The two questions a bulk action asks. The folders are the caller's own,
+          because a bulk action only ever touches their vault. */}
+      {bulkAsk !== null && (
+        <BulkDialog
+          ask={bulkAsk}
+          folders={bulkFolders}
+          tags={tags.map((row) => row.tag)}
+          onApply={(extra) => void answerBulk(extra)}
+          onClose={cancelBulk}
         />
       )}
 

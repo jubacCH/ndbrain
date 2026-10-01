@@ -21,12 +21,13 @@
  *  - a delete says what it will break before it asks, which is what turns
  *    "delete 1 note?" into a sentence somebody can answer
  *
- * `window.prompt` for the folder and the tag is inherited, not chosen. The rest
- * of the shell has moved to real dialogs — starting a note did exactly this
- * until recently — and a prompt cannot validate a path, cannot say why one is
- * refused, and does not look like the application. It is left as it was because
- * replacing it is a change to the interface rather than to where this code
- * lives.
+ * The folder and the tag are asked for by `BulkDialog` now, not by
+ * `window.prompt`. A hook renders nothing, so the question is a piece of state
+ * — `ask` — that the view turns into a dialog and answers through `answerBulk`.
+ * What the prompts could not do: check that a tag will be read back as one, and
+ * offer the folders the vault actually has instead of a default named `Archive`
+ * whether or not it existed. The delete keeps its `window.confirm`: it asks a
+ * yes-or-no question, takes no input, and already says what will be lost.
  */
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -34,6 +35,7 @@ import { useCallback, useState } from 'react';
 
 import { ApiError, api } from './api';
 import { copy } from './copy';
+import type { BulkAsk } from './BulkDialog';
 import { invalidate } from './queries';
 
 export interface TidyActionsDeps {
@@ -74,6 +76,17 @@ export interface TidyActions {
    */
   keepSelected: (paths: string[]) => void;
   runBulk: (action: 'move' | 'tag' | 'delete') => Promise<void>;
+  /**
+   * The question a move or a tag has put on screen, for the view to draw.
+   *
+   * A hook renders nothing, so the question lives here and the dialog lives in
+   * the shell. `null` while nothing is being asked, which is nearly always.
+   */
+  ask: BulkAsk | null;
+  /** The dialog's answer. Acts on the paths the question was asked about. */
+  answerBulk: (extra: { tag?: string; dir?: string }) => Promise<void>;
+  /** The dialog was closed. The vault is left alone. */
+  cancelBulk: () => void;
   /** Writes the tags the server proposes for these notes. */
   applyTopics: (paths: string[]) => Promise<void>;
   /** Deletes a folder that has nothing in it, after asking. */
@@ -85,6 +98,14 @@ export function useTidyActions(deps: TidyActionsDeps): TidyActions {
   const client = useQueryClient();
 
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  /**
+   * The question on screen, with the paths it was asked about.
+   *
+   * The paths are held here rather than read from the selection when the answer
+   * comes back: the dialog is open across renders, and a selection that changed
+   * underneath would move notes nobody asked about.
+   */
+  const [ask, setAsk] = useState<{ action: 'move' | 'tag'; paths: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [topicsDone, setTopicsDone] = useState<number | null>(null);
 
@@ -111,27 +132,20 @@ export function useTidyActions(deps: TidyActionsDeps): TidyActions {
     });
   }, []);
 
-  const runBulk = useCallback(
-    async (action: 'move' | 'tag' | 'delete'): Promise<void> => {
-      const paths = [...selection];
-      if (paths.length === 0) return;
-
-      let extra: { tag?: string; dir?: string } = {};
-
-      if (action === 'move') {
-        const dir = window.prompt(copy.ask.moveTo(paths.length), 'Archive');
-        if (dir === null) return;
-        extra = { dir };
-      } else if (action === 'tag') {
-        const tag = window.prompt(copy.ask.tagWith(paths.length));
-        if (tag === null || tag.trim() === '') return;
-        extra = { tag };
-      } else {
-        const preview = await api.deletePreview(userId, paths).catch(() => null);
-        const afterwards = copy.ask.afterDelete(preview);
-        if (!window.confirm(copy.ask.deleteNotes(paths.length) + (afterwards !== '' ? ` ${afterwards}` : ''))) return;
-      }
-
+  /**
+   * The part after the question: the same for all three actions.
+   *
+   * Separated from `runBulk` because two of the three now answer their question
+   * through a dialog, which means this runs on a later turn than the one that
+   * asked — and the paths have to be the ones that were selected when the
+   * question was put, not whatever is selected when it is answered.
+   */
+  const apply = useCallback(
+    async (
+      action: 'move' | 'tag' | 'delete',
+      paths: string[],
+      extra: { tag?: string; dir?: string },
+    ): Promise<void> => {
       // Written first, like every other operation that moves or removes a note
       // under the editor: a save in flight belongs to the path it was typed at,
       // and one that lands after a move re-creates the note there.
@@ -161,8 +175,49 @@ export function useTidyActions(deps: TidyActionsDeps): TidyActions {
         setBusy(false);
       }
     },
-    [selection, userId, settle, refreshTree, refreshOverview, setError],
+    [userId, settle, refreshTree, refreshOverview, setError],
   );
+
+  /**
+   * Starts a bulk action: asks, then acts.
+   *
+   * A delete asks here, because `window.confirm` is a yes-or-no question with
+   * nothing to type into. A move and a tag put their question on screen and
+   * come back through `answerBulk` — with the paths they were asked about, so a
+   * selection that changes while the dialog is open changes nothing about what
+   * was already asked.
+   */
+  const runBulk = useCallback(
+    async (action: 'move' | 'tag' | 'delete'): Promise<void> => {
+      const paths = [...selection];
+      if (paths.length === 0) return;
+
+      if (action !== 'delete') {
+        setAsk({ action, paths });
+        return;
+      }
+
+      const preview = await api.deletePreview(userId, paths).catch(() => null);
+      const afterwards = copy.ask.afterDelete(preview);
+      if (!window.confirm(copy.ask.deleteNotes(paths.length) + (afterwards !== '' ? ` ${afterwards}` : ''))) return;
+
+      await apply('delete', paths, {});
+    },
+    [selection, userId, apply],
+  );
+
+  /** The dialog's answer. Nothing happens if it is answered twice. */
+  const answerBulk = useCallback(
+    async (extra: { tag?: string; dir?: string }): Promise<void> => {
+      const pending = ask;
+      if (pending === null) return;
+      setAsk(null);
+      await apply(pending.action, pending.paths, extra);
+    },
+    [ask, apply],
+  );
+
+  const cancelBulk = useCallback((): void => setAsk(null), []);
 
   const applyTopics = useCallback(
     async (paths: string[]): Promise<void> => {
@@ -203,5 +258,19 @@ export function useTidyActions(deps: TidyActionsDeps): TidyActions {
     [client, setError],
   );
 
-  return { selection, busy, topicsDone, toggle, toggleAll, keepSelected, runBulk, applyTopics, removeEmptyFolder };
+  return {
+    selection,
+    busy,
+    topicsDone,
+    toggle,
+    toggleAll,
+    keepSelected,
+    runBulk,
+    // What is being asked, for the view to render; null while nothing is.
+    ask: ask === null ? null : { kind: ask.action, count: ask.paths.length },
+    answerBulk,
+    cancelBulk,
+    applyTopics,
+    removeEmptyFolder,
+  };
 }

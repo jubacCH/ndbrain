@@ -711,6 +711,32 @@ export const copy = {
    * read the same and are not the same, and a shared string is how one of them
    * quietly starts saying the other's sentence.
    */
+  /**
+   * The two questions a bulk action asks. See `BulkDialog`.
+   *
+   * Its own block and not borrowed from `ask`, which is where the prompts'
+   * wording lived: those were one line each because a prompt is one line, and
+   * these say the things a prompt had no room for.
+   */
+  bulk: {
+    moveTitle: (count: number) => `Move ${count} ${count === 1 ? 'note' : 'notes'}`,
+    tagTitle: (count: number) => `Tag ${count} ${count === 1 ? 'note' : 'notes'}`,
+    close: 'Close',
+    folder: 'Move to',
+    root: 'Top of the vault',
+    tag: 'Tag',
+    move: 'Move them',
+    apply: 'Tag them',
+    /** A folder that is not in the list is still reachable: the move makes it. */
+    movesMake:
+      'Leave it empty for the top of the vault. The vault’s folders are suggested; a folder that is not there yet is made by the move.',
+    upward: 'A folder cannot step upwards with . or ..',
+    dotted: 'A folder cannot begin with a dot.',
+    /** The rule `markdown/parse.ts` reads tags by, said before forty notes carry one that breaks it. */
+    tagRule: 'A tag starts with a letter and holds letters, digits, and _ / or -. The # is optional here.',
+    tagShape: 'Nothing would find that tag: it must start with a letter and hold only letters, digits, and _ / or -.',
+  },
+
   newFolder: {
     title: 'New folder',
     titleIn: (space: string) => `New folder in ${space}`,

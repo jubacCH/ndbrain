@@ -1089,36 +1089,102 @@ describe('acting on a selection', () => {
     client = null;
   });
 
-  it('asks where to move the selection, and moves nothing when the question is cancelled', async () => {
+  /**
+   * The question is a dialog now, not a `window.prompt`.
+   *
+   * Which changes what can be checked and what had to be: a prompt could only
+   * hand back a string, so the folder was typed from memory against a default
+   * named `Archive` whether or not one existed, and a typo made a second folder
+   * rather than being refused.
+   */
+  it('asks where to move the selection, and moves nothing when the question is closed', async () => {
     await selectOrphan();
-    const asked = vi.spyOn(window, 'prompt').mockReturnValue(null);
 
     await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.move) }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(copy.bulk.moveTitle(1))).toBeInTheDocument();
 
-    expect(asked).toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole('button', { name: copy.bulk.close }));
     expect(server.bulks).toEqual([]);
   });
 
-  it('passes the folder that was typed', async () => {
+  /**
+   * A folder that does not exist yet is the move's own feature — it is made by
+   * the move — so the destination stays a field with suggestions rather than
+   * becoming a picker, which would have taken that away.
+   */
+  it('passes a destination that does not exist yet', async () => {
     await selectOrphan();
-    vi.spyOn(window, 'prompt').mockReturnValue('Archiv/2026');
-
     await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.move) }));
+    const dialog = await screen.findByRole('dialog');
+
+    await userEvent.type(within(dialog).getByLabelText(copy.bulk.folder), 'Archiv/2026');
+    await userEvent.click(within(dialog).getByRole('button', { name: copy.bulk.move }));
 
     await waitFor(() =>
       expect(server.bulks).toEqual([{ action: 'move', paths: ['Verwaist.md'], dir: 'Archiv/2026' }]),
     );
   });
 
+  it('moves to the top of the vault on an empty destination', async () => {
+    await selectOrphan();
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.move) }));
+    const dialog = await screen.findByRole('dialog');
+
+    await userEvent.click(within(dialog).getByRole('button', { name: copy.bulk.move }));
+
+    await waitFor(() => expect(server.bulks).toEqual([{ action: 'move', paths: ['Verwaist.md'], dir: '' }]));
+  });
+
+  it('refuses a destination that steps upwards, before anything is sent', async () => {
+    await selectOrphan();
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.move) }));
+    const dialog = await screen.findByRole('dialog');
+
+    await userEvent.type(within(dialog).getByLabelText(copy.bulk.folder), '../anderswo');
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(copy.bulk.upward);
+    expect(within(dialog).getByRole('button', { name: copy.bulk.move })).toBeDisabled();
+    expect(server.bulks).toEqual([]);
+  });
+
+  it('refuses a tag nothing would ever find, and says why', async () => {
+    await selectOrphan();
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.tag) }));
+    const dialog = await screen.findByRole('dialog');
+
+    // Starts with a digit, so `markdown/parse.ts` would never read it back —
+    // and the notes would be written all the same, which is what a prompt did.
+    await userEvent.type(within(dialog).getByLabelText(copy.bulk.tag), '2026');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(copy.bulk.tagShape);
+    expect(within(dialog).getByRole('button', { name: copy.bulk.apply })).toBeDisabled();
+    expect(server.bulks).toEqual([]);
+  });
+
   it('treats a tag of nothing but spaces as no answer at all', async () => {
     await selectOrphan();
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.tag) }));
+    const dialog = await screen.findByRole('dialog');
+
     // Not the same as cancelling, and it used to be: a tag of blanks would pass
     // the null check, be trimmed away downstream, and report success for a no-op.
-    vi.spyOn(window, 'prompt').mockReturnValue('   ');
+    await userEvent.type(within(dialog).getByLabelText(copy.bulk.tag), '   ');
 
-    await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.tag) }));
-
+    expect(within(dialog).getByRole('button', { name: copy.bulk.apply })).toBeDisabled();
     expect(server.bulks).toEqual([]);
+  });
+
+  it('sends a tag without the hash, however it was typed', async () => {
+    await selectOrphan();
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(copy.tidy.tag) }));
+    const dialog = await screen.findByRole('dialog');
+
+    await userEvent.type(within(dialog).getByLabelText(copy.bulk.tag), '#homelab');
+    await userEvent.click(within(dialog).getByRole('button', { name: copy.bulk.apply }));
+
+    await waitFor(() =>
+      expect(server.bulks).toEqual([{ action: 'tag', paths: ['Verwaist.md'], tag: 'homelab' }]),
+    );
   });
 
   /**
