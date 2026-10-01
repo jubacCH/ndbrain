@@ -543,27 +543,6 @@ const MIGRATIONS: Array<(db: Database) => void> = [
     `);
     db.exec('INSERT INTO vault_moves (guid, from_name) SELECT guid, id FROM users;');
 
-    // Temporary files in memory, for the length of this migration.
-    //
-    // Not a tuning knob: without it this migration cannot run on the machine it
-    // is written for. The container has a read-only root filesystem and a
-    // 16 MB `/tmp`, and a single `UPDATE` touching many rows **inside a larger
-    // transaction** makes SQLite open a statement journal — a temporary file,
-    // so that this one statement can be undone without undoing the
-    // transaction. On the live instance `access_log` holds six hundred and
-    // sixty thousand rows, and that journal does not fit in sixteen megabytes.
-    // The failure is `SQLITE_FULL`, which reads as "database or disk is full"
-    // and says nothing about a temporary directory; the disk had ten gigabytes
-    // free at the time.
-    //
-    // Measured in the container, against a copy of the live database: without
-    // this the migration stops at `access_log`, with it the whole of it takes
-    // four seconds. The index tables emptied below need it for the same reason.
-    //
-    // Deliberately not set in `database.ts` for every connection: spilling to
-    // disk is the safer default for a server that runs for months, and this is
-    // one transaction that is known to be bounded.
-    db.exec('PRAGMA temp_store = MEMORY;');
     db.exec('PRAGMA defer_foreign_keys = ON;');
 
     // Both columns of `shares`: a grantee is an account like an owner is.
@@ -636,13 +615,43 @@ export function migrate(db: Database, upTo: number = MIGRATIONS.length): void {
     );
   }
 
-  for (let version = current; version < Math.min(upTo, MIGRATIONS.length); version += 1) {
-    const migration = MIGRATIONS[version];
-    if (!migration) continue;
-    db.transaction(() => {
-      migration(db);
-    });
-    db.userVersion = version + 1;
+  if (current >= Math.min(upTo, MIGRATIONS.length)) return;
+
+  /**
+   * Temporary storage in memory, for the length of the migrations and no longer.
+   *
+   * Not a tuning knob: without it v16 cannot run on the machine it is written
+   * for. The container has a read-only root filesystem and a 16 MB `/tmp`, and
+   * a single `UPDATE` touching many rows **inside a transaction** makes SQLite
+   * open a statement journal — a temporary file, so that one statement can be
+   * undone without undoing the transaction. The live instance's `access_log`
+   * holds six hundred and sixty thousand rows and that journal does not fit.
+   * The error is `SQLITE_FULL`, which reads as "database or disk is full" and
+   * says nothing about a temporary directory; the disk had ten gigabytes free.
+   *
+   * **Here and not inside the migration**, which is where it was first put and
+   * where it did nothing: changing `temp_store` has no effect on temporary
+   * objects that already exist, and by the time a migration's third statement
+   * runs there are some. Measured in the container against a copy of the live
+   * database — inside the transaction it still fails at `access_log`, before it
+   * the whole of v16 takes five seconds.
+   *
+   * Put back afterwards rather than left on. Spilling to disk is the right
+   * default for a server that runs for months; a migration is a bounded piece
+   * of work that happens once.
+   */
+  db.exec('PRAGMA temp_store = MEMORY');
+  try {
+    for (let version = current; version < Math.min(upTo, MIGRATIONS.length); version += 1) {
+      const migration = MIGRATIONS[version];
+      if (!migration) continue;
+      db.transaction(() => {
+        migration(db);
+      });
+      db.userVersion = version + 1;
+    }
+  } finally {
+    db.exec('PRAGMA temp_store = DEFAULT');
   }
 }
 

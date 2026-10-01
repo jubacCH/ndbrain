@@ -131,6 +131,58 @@ describe('the database half', () => {
   });
 });
 
+/**
+ * Where the temporary files of a migration go.
+ *
+ * The container this runs in has a read-only root filesystem and a 16 MB
+ * `/tmp`, and a single `UPDATE` touching many rows inside a transaction makes
+ * SQLite open a statement journal — a temporary file. The live instance's
+ * `access_log` holds six hundred and sixty thousand rows and that journal does
+ * not fit, which arrives as `SQLITE_FULL`: "database or disk is full", with ten
+ * gigabytes free.
+ *
+ * The constrained filesystem cannot be built here, so what is pinned is the
+ * mechanism: the setting is on while the migrations run and off afterwards.
+ * Its first home was inside the migration, where it did nothing — changing
+ * `temp_store` does not affect temporary objects that already exist — so the
+ * *place* is the thing worth a test.
+ */
+describe('where a migration puts its temporary files', () => {
+  const tempStore = (): number => Number(db.get('PRAGMA temp_store')?.['temp_store']);
+
+  it('is memory while they run, and the default again afterwards', () => {
+    let during = -1;
+    const seen = db.all.bind(db);
+    // Caught from inside, by a migration that reads the setting as it goes.
+    db.all = ((sql: string, ...rest: unknown[]) => {
+      if (during === -1) during = tempStore();
+      return seen(sql, ...(rest as []));
+    }) as typeof db.all;
+
+    migrate(db);
+    db.all = seen;
+
+    // 2 is MEMORY; 0 is the default this build does not otherwise change.
+    expect(during).toBe(2);
+    expect(tempStore()).toBe(0);
+  });
+
+  it('puts it back even where a migration throws', () => {
+    migrate(db, 15);
+    // An account, or there is nothing for v16 to rewrite and nothing to fail.
+    db.run(
+      `INSERT INTO users (id, login_name, display_name, password_hash, role, created_at, disabled_at, kind)
+       VALUES ('julian', 'julian', 'J', 'x', 'user', 1, NULL, 'person')`,
+    );
+    // Taking away a table v16 rewrites is the cheapest way to make it throw
+    // where it does its work, rather than before it starts.
+    db.exec('DROP TABLE access_log');
+
+    expect(() => migrate(db)).toThrow();
+    expect(tempStore()).toBe(0);
+  });
+});
+
 describe('the half on disk', () => {
   it('moves the directory and leaves the notes in it', async () => {
     migrate(db, 15);
