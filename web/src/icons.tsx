@@ -38,13 +38,32 @@ function Svg({ size = 18, className, children }: IconProps & { children: ReactNo
   );
 }
 
-/** Two hemispheres with a fissure between them: the product's mark. */
-export function BrainIcon(props: IconProps): React.JSX.Element {
+/**
+ * The product's mark: a brain built out of the double brackets that make a link.
+ *
+ * Two `[[` and two `]]`, rounded until they read as hemispheres with a fissure
+ * between them. Both readings are true at once, which is the point — the earlier
+ * mark was a correct but entirely generic brain, and a node with rays (the
+ * obvious alternative for a linked vault) is Nodeglow's territory.
+ *
+ * `[[` is the one shape nothing else in this toolbox uses: it is the gesture
+ * every connection in the vault is made with.
+ *
+ * The inner pair is dropped below roughly 24px, where two strokes that close
+ * cannot be told apart. `small` is that variant — see `BrainMark` for the
+ * sizes that choose it.
+ */
+export function BrainIcon({ small = false, ...props }: IconProps & { small?: boolean }): React.JSX.Element {
   return (
     <Svg {...props}>
-      <path d="M9.3 3.6a2.6 2.6 0 0 0-4.6 1.2 2.7 2.7 0 0 0-1.9 3.8 2.8 2.8 0 0 0 .5 4.6 2.7 2.7 0 0 0 3.2 3.3 2.4 2.4 0 0 0 2.8.2V3.6Z" />
-      <path d="M10.7 3.6a2.6 2.6 0 0 1 4.6 1.2 2.7 2.7 0 0 1 1.9 3.8 2.8 2.8 0 0 1-.5 4.6 2.7 2.7 0 0 1-3.2 3.3 2.4 2.4 0 0 1-2.8.2V3.6Z" />
-      <path d="M6.2 7.4c.9 0 1.6.6 1.8 1.4M5.4 11.6c1 .2 1.7-.2 2.2-1M13.8 7.4c-.9 0-1.6.6-1.8 1.4M14.6 11.6c-1 .2-1.7-.2-2.2-1M7 14.4c.4-.7 1.1-1 1.8-.9M13 14.4c-.4-.7-1.1-1-1.8-.9" />
+      <path d="M8.8 3.4H6.4A3.4 3.4 0 0 0 3 6.8v6.4a3.4 3.4 0 0 0 3.4 3.4h2.4" />
+      <path d="M11.2 3.4h2.4A3.4 3.4 0 0 1 17 6.8v6.4a3.4 3.4 0 0 1-3.4 3.4h-2.4" />
+      {!small && (
+        <>
+          <path d="M8.8 6.2H8A1.8 1.8 0 0 0 6.2 8v4a1.8 1.8 0 0 0 1.8 1.8h.8" />
+          <path d="M11.2 6.2h.8A1.8 1.8 0 0 1 13.8 8v4a1.8 1.8 0 0 1-1.8 1.8h-.8" />
+        </>
+      )}
     </Svg>
   );
 }

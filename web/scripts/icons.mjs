@@ -1,10 +1,20 @@
 /**
  * Generates the app icons from the logo geometry.
  *
- * Written by hand rather than pulled from an image library: the mark is a
- * rounded square with two bars, which is a handful of rectangles, and adding
- * sharp or resvg would mean a native dependency in a project whose whole
- * install story is "no native dependency".
+ * Written by hand rather than pulled from an image library: adding sharp or
+ * resvg would mean a native dependency in a project whose whole install story
+ * is "no native dependency". The mark is four rounded brackets, which is four
+ * rings with one side left open.
+ *
+ * It draws the same mark as `BrainIcon` in `web/src/icons.tsx` — a brain built
+ * out of the double brackets that make a link — set solid rather than as a
+ * stroke, because an app icon is read at a glance on a dark ground and a hairline
+ * disappears there. The two had silently drifted
+ * apart: this file used to produce a rounded square with two bars while claiming
+ * in a comment to be "matching the logo in the interface", and the menu-bar icon
+ * of the Mac client is derived from the PNG this writes, so it wore the wrong
+ * mark entirely. The coordinates below are the SVG's, divided by its 20-unit
+ * grid, so a change there is a change here.
  *
  * Run: node scripts/icons.mjs
  */
@@ -67,44 +77,60 @@ function render(size, padding) {
 
   const inset = Math.round(size * padding);
   const box = size - inset * 2;
-  const stroke = Math.max(2, Math.round(box * 0.085));
-  const radius = Math.round(box * 0.2);
-  const barHeight = stroke;
-  const barInset = Math.round(box * 0.26);
+  const stroke = Math.max(2, Math.round(box * 0.08));
 
-  const inRoundedFrame = (x, y) => {
-    const left = inset;
-    const top = inset;
-    const right = inset + box - 1;
-    const bottom = inset + box - 1;
+  /** A point of the 20-unit grid the SVG is drawn on, in pixels. */
+  const at = (unit) => inset + (unit / 20) * box;
+
+  /**
+   * On the ring of a rounded rectangle, with one vertical side left open.
+   *
+   * That is what a bracket is: top arm, spine, bottom arm, and nothing facing
+   * the middle. `opens` names the side that is missing — the corners stay, only
+   * the straight run between them goes, which is what keeps `[` from looking
+   * like a broken box.
+   */
+  const onBracket = (x, y, left, top, right, bottom, radius, opens) => {
     if (x < left || x > right || y < top || y > bottom) return false;
 
-    // Corner rounding: reject pixels outside the corner radius.
-    const cx = x < left + radius ? left + radius : x > right - radius ? right - radius : x;
+    // Rounding on the closed side only. A `[` has no right-hand corners to
+    // round — that side is the opening — and rounding both would turn the shape
+    // into a capsule, because the radius is wider than half the bracket.
+    const roundLeft = opens !== 'left';
+    const roundRight = opens !== 'right';
+    const cx =
+      roundLeft && x < left + radius
+        ? left + radius
+        : roundRight && x > right - radius
+          ? right - radius
+          : x;
     const cy = y < top + radius ? top + radius : y > bottom - radius ? bottom - radius : y;
     if ((x - cx) ** 2 + (y - cy) ** 2 > radius ** 2) return false;
 
-    const insideLeft = left + stroke;
-    const insideTop = top + stroke;
-    const insideRight = right - stroke;
-    const insideBottom = bottom - stroke;
-    const outsideInner =
-      x < insideLeft || x > insideRight || y < insideTop || y > insideBottom;
+    // The ring itself: inside the outer shape but not inside the inner one.
+    const inLeft = left + stroke;
+    const inTop = top + stroke;
+    const inRight = right - stroke;
+    const inBottom = bottom - stroke;
+    const onRing = x < inLeft || x > inRight || y < inTop || y > inBottom;
+    if (!onRing) return false;
 
-    if (outsideInner) return true;
-
-    // The two bars, matching the logo in the interface.
-    const barLeft = left + barInset;
-    const barRight = right - barInset;
-    if (x < barLeft || x > barRight) return false;
-
-    const firstBarTop = top + Math.round(box * 0.3);
-    const secondBarTop = top + Math.round(box * 0.55);
-    return (
-      (y >= firstBarTop && y < firstBarTop + barHeight) ||
-      (y >= secondBarTop && y < secondBarTop + barHeight)
-    );
+    // The open side, minus its corners.
+    const straight = y > top + radius && y < bottom - radius;
+    if (opens === 'right' && x > inRight && straight) return false;
+    if (opens === 'left' && x < inLeft && straight) return false;
+    return true;
   };
+
+  const inMark = (x, y) =>
+    // Outer pair: `[` and `]`, rounded until they read as two hemispheres.
+    onBracket(x, y, at(3), at(3.4), at(8.8), at(16.6), (3.4 / 20) * box, 'right') ||
+    onBracket(x, y, at(11.2), at(3.4), at(17), at(16.6), (3.4 / 20) * box, 'left') ||
+    // Inner pair, which is what makes it a double bracket rather than a frame.
+    onBracket(x, y, at(6.2), at(6.2), at(8.8), at(13.8), (1.8 / 20) * box, 'right') ||
+    onBracket(x, y, at(11.2), at(6.2), at(13.8), at(13.8), (1.8 / 20) * box, 'left');
+
+  const inRoundedFrame = inMark;
 
   for (let y = 0; y < size; y += 1) {
     const row = y * stride;
