@@ -43,6 +43,20 @@ ENV NODE_ENV=production \
     NDBRAIN_PORT=3000 \
     NODE_OPTIONS=--disable-warning=ExperimentalWarning
 
+# What this image is, for whoever meets it as a line in a registry listing
+# rather than as a repository. `image.source` is the one that matters: it is
+# what makes a package page link back to the code, so an image somebody pulled
+# can be traced to the commit it was built from.
+#
+# Written here rather than injected by the release workflow, so a locally built
+# image carries them too — an unlabelled image is exactly the one somebody finds
+# on a server in two years and cannot identify.
+LABEL org.opencontainers.image.title="ndBrain" \
+      org.opencontainers.image.description="A self-hosted notes server that is a librarian, not a better editor. Notes are Markdown files; the database is a rebuildable cache." \
+      org.opencontainers.image.source="https://github.com/jubacCH/ndbrain" \
+      org.opencontainers.image.documentation="https://github.com/jubacCH/ndbrain#readme" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
 WORKDIR /app
 COPY --from=server /build/server/dist ./dist
 COPY --from=server /build/server/node_modules ./node_modules

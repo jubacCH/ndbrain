@@ -26,7 +26,11 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/${{ github.repository }}
+  # Written out rather than taken from `${{ github.repository }}`, which yields
+  # `jubacCH/ndbrain`: a registry name must be lowercase, and GHCR refuses the
+  # push rather than folding it. The repository can be renamed; this line then
+  # has to follow, which is cheaper than a release that fails at the last step.
+  IMAGE: ghcr.io/jubacch/ndbrain
 
 jobs:
   verify:
