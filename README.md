@@ -108,6 +108,12 @@ git repository beside it, a database snapshot, and a pull from the backup host. 
 in [ops/README.md](ops/README.md), in German like the scripts themselves, because its reader is
 the operator and not the compiler.
 
+It is **one installation's**, not a product: the paths, hostnames and the two machines in it are
+the author's own, and it is in this repository as a worked example rather than as something to
+run unread. Nothing in `server/` depends on it. What it is worth copying for is the shape — a
+history that lives beside the vault rather than inside the write path, so that git breaking is
+not ndBrain breaking.
+
 ## Architecture
 
 One Node process, one folder of Markdown files, one SQLite file. Everything else is a view of
