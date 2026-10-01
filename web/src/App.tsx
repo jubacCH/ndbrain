@@ -26,7 +26,6 @@ import {
   type SearchHit,
   type GraphData,
   type PulseEvent,
-  type FileRow,
   type Share,
   type ShareKind,
   type TaskRow,
@@ -38,6 +37,7 @@ import { Brain } from './Brain';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { copy } from './copy';
+import { useFilesPane } from './useFilesPane';
 import { discardLegacy, dropRecent, forgetAccount, loadRecents, pushRecent, type Recent } from './accountStorage';
 import { SESSION_SIGNAL_KEY, announceSessionChange, closeSession, openSession } from './session';
 import { applyPrefs, loadPrefs, savePrefs, type Prefs, type Theme } from './prefs';
@@ -85,7 +85,6 @@ import {
   useAdminKeys,
   useAdminSpaces,
   useTopics,
-  useFiles,
   useGraph,
   useNote,
   useOverview,
@@ -364,13 +363,9 @@ function Shell({
   const systemDark = useMedia('(prefers-color-scheme: dark)');
   /** Which theme is on screen, whatever chose it — the header button flips from here. */
   const dark = isDark(prefs.theme, systemDark);
-  const [filesDir, setFilesDir] = useState('');
-  /** Whose files the browser shows: the caller's own vault, or a space's. */
-  const [filesOwner, setFilesOwner] = useState(user.id);
   /** Which account's keys the admin view is showing. */
   const [keyOwner, setKeyOwner] = useState(user.id);
   const [adminBusy, setAdminBusy] = useState(false);
-  const [filesBusy, setFilesBusy] = useState(false);
   const [recents, setRecents] = useState<Recent[]>(() => {
     discardLegacy();
     return loadRecents(user.id);
@@ -474,6 +469,11 @@ function Shell({
   }, [prefs]);
 
   const treeQuery = useTree();
+  /** Which vaults are spaces, and what they are called; from the tree reply. */
+  const owners = useMemo(() => ownerDirectory(treeQuery.data?.owners), [treeQuery.data]);
+  const refreshTree = useCallback(async (): Promise<void> => {
+    invalidate.afterStructure(client);
+  }, [client]);
   const tidyQuery = useTidy();
   // Only while it is on screen. It is the most expensive answer the server gives
   // — `attentionCount` alone walks the notes four times — and nothing outside
@@ -488,7 +488,38 @@ function Shell({
   // The graph feeds both the big network view and the neighbourhood panel beside
   // an open note, so it is wanted in exactly those two places and nowhere else.
   const graphQuery = useGraph(view === 'brain' || view === 'note');
-  const filesQuery = useFiles(view === 'files', filesOwner === user.id ? undefined : filesOwner);
+  /**
+   * The file browser's state, its listing and its three writes, in
+   * `useFilesPane`.
+   *
+   * What it needs from here is shared with every other view — the tree, the
+   * error line, the pending save, which note is open — so those are passed in.
+   * What moved is what nothing else reads: the folder on screen, the vault being
+   * browsed, and whether a transfer is in flight.
+   */
+  const {
+    filesQuery,
+    filesDir,
+    setFilesDir,
+    filesOwner,
+    setFilesOwner,
+    filesBusy,
+    filesVaults,
+    refreshFiles,
+    uploadFiles,
+    replaceFile,
+    removeFile,
+  } = useFilesPane({
+    userId: user.id,
+    active: view === 'files',
+    owners,
+    treeReady: treeQuery.data !== undefined,
+    refreshTree,
+    setError,
+    settle,
+    openRef,
+    setOpenRef,
+  });
   const settingsQuery = useSettings(view === 'settings');
   const topicsQuery = useTopics(view === 'tidy');
   const isAdmin = user.role === 'admin';
@@ -544,8 +575,6 @@ function Shell({
   );
 
   const notes = treeQuery.data?.notes ?? [];
-  /** Which vaults are spaces, and what they are called; from the tree reply. */
-  const owners = useMemo(() => ownerDirectory(treeQuery.data?.owners), [treeQuery.data]);
   /** The days with a daily note, read off the tree: no request of their own. */
   const journalDays = useMemo(() => journalDaysOf(notes, user.id), [notes, user.id]);
   const tidy = tidyQuery.data ?? null;
@@ -578,9 +607,6 @@ function Shell({
   }, [tidy, user.id]);
 
   /** Kept for the handful of places that still ask for everything explicitly. */
-  const refreshTree = useCallback(async (): Promise<void> => {
-    invalidate.afterStructure(client);
-  }, [client]);
 
   const refreshShares = useCallback(async (): Promise<void> => {
     await client.invalidateQueries({ queryKey: keys.shares });
@@ -588,10 +614,6 @@ function Shell({
 
   const refreshOverview = useCallback(async (): Promise<void> => {
     await client.invalidateQueries({ queryKey: keys.overview });
-  }, [client]);
-
-  const refreshFiles = useCallback(async (): Promise<void> => {
-    await client.invalidateQueries({ queryKey: keys.files });
   }, [client]);
 
   useEffect(() => {
@@ -1193,25 +1215,6 @@ function Shell({
     [client, settle, user.id, beginDelete, holdsTextFor, releaseDelete, finishDelete, closed, openNow],
   );
 
-  /**
-   * The vaults the file browser offers: the caller's own, then every space the
-   * caller holds a membership in, by display name. A space that has gone (a
-   * membership withdrawn, the space disabled) sends the browser back home.
-   */
-  const filesVaults = useMemo(
-    () => [
-      { id: user.id, label: user.id, space: false },
-      ...[...owners.values()]
-        .filter((owner) => owner.kind === 'space')
-        .map((owner) => ({ id: owner.id, label: ownerLabel(owners, owner.id), space: true }))
-        .sort((a, b) => a.label.localeCompare(b.label)),
-    ],
-    [owners, user.id],
-  );
-  useEffect(() => {
-    if (treeQuery.data !== undefined && !filesVaults.some((vault) => vault.id === filesOwner)) setFilesOwner(user.id);
-  }, [filesVaults, filesOwner, user.id, treeQuery.data]);
-
   /** Whether the caller may open the share dialog on notes of this vault. */
   const mayShareNote = useCallback(
     (owner: string): boolean => mayShare(user, owner, ownerKind(owners, owner)),
@@ -1490,82 +1493,6 @@ function Shell({
    * deleted, renamed, or un-shared since it was last opened simply drops out of
    * the list instead of sitting there as a row that errors when clicked.
    */
-  /**
-   * Uploads a batch, one request per file.
-   *
-   * Sequential rather than parallel: a vault import can be hundreds of files,
-   * and firing them all at once buys nothing on a single-user server while
-   * making the failure of one indistinguishable from the failure of the rest.
-   */
-  const uploadFiles = useCallback(
-    async (picked: File[], intoDir: string): Promise<void> => {
-      setFilesBusy(true);
-      const failed: string[] = [];
-      try {
-        for (const file of picked) {
-          const target = intoDir === '' ? file.name : `${intoDir}/${file.name}`;
-          try {
-            await api.uploadFile(filesOwner, target, file);
-          } catch (caught) {
-            failed.push(`${file.name}: ${caught instanceof ApiError ? caught.message : 'failed'}`);
-          }
-        }
-        await refreshFiles();
-        // An uploaded note is a note: the tree and the index have to catch up.
-        if (picked.some((file) => file.name.toLowerCase().endsWith('.md'))) await refreshTree();
-        setError(failed.length === 0 ? null : copy.errors.importFailed(failed.length, failed[0] ?? ''));
-      } finally {
-        setFilesBusy(false);
-      }
-    },
-    [refreshFiles, refreshTree, filesOwner],
-  );
-
-  const replaceFile = useCallback(
-    async (path: string, file: File): Promise<void> => {
-      setFilesBusy(true);
-      try {
-        await api.uploadFile(filesOwner, path, file);
-        await refreshFiles();
-        if (path.toLowerCase().endsWith('.md')) await refreshTree();
-        setError(null);
-      } catch (caught) {
-        setError(caught instanceof ApiError ? caught.message : copy.errors.replaceFailed);
-      } finally {
-        setFilesBusy(false);
-      }
-    },
-    [refreshFiles, refreshTree, filesOwner],
-  );
-
-  const removeFile = useCallback(
-    async (file: FileRow): Promise<void> => {
-      const name = file.path.slice(file.path.lastIndexOf('/') + 1);
-      if (!window.confirm(copy.ask.deleteFile(name))) return;
-
-      // A file list holds notes too, and the one being removed can be the one
-      // open in the editor. Saving first means the delete is the last word.
-      await settle();
-
-      setFilesBusy(true);
-      try {
-        await api.deleteFile(filesOwner, file.path);
-        await refreshFiles();
-        if (file.isNote) {
-          await refreshTree();
-          // The open note may be the one just deleted.
-          if (open !== null && open.owner === filesOwner && open.note.path === file.path) setOpenRef(null);
-        }
-        setError(null);
-      } catch (caught) {
-        setError(caught instanceof ApiError ? caught.message : copy.errors.deleteFileFailed);
-      } finally {
-        setFilesBusy(false);
-      }
-    },
-    [refreshFiles, refreshTree, filesOwner, open, setOpenRef],
-  );
-
   /**
    * Writes the one setting that lives on the server.
    *
