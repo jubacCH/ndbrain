@@ -447,14 +447,43 @@ describe('a sidecar that cannot be read', () => {
     });
   });
 
-  it('is broken when git refuses the repository over its ownership', async () => {
-    // The live case: the sidecar belongs to root on the host, the container
-    // runs as uid 1000, and git answers "detected dubious ownership". Nothing
-    // about that resembles "this vault has no history", and it used to be
-    // reported as exactly that.
+  /**
+   * The live case: the sidecar belongs to root on the host, the container runs
+   * as uid 1000, and git answers "detected dubious ownership". Nothing about
+   * that resembles "this vault has no history", and it used to be reported as
+   * exactly that — on the live instance it meant every account but one was told
+   * its history was unreadable when it simply had none yet.
+   *
+   * The condition cannot be built without two users, so this leans on git's own
+   * `GIT_TEST_ASSUME_DIFFERENT_OWNER`. That is a hook, and a hook is a thing
+   * some environment eventually does not honour: this passed on the machine it
+   * was written on and failed on the first CI runner it met, reporting `ready`
+   * because git had raised no objection at all.
+   *
+   * So it asks first. Running the assertions where git has not been persuaded
+   * to refuse would be asserting that a working repository reads as working,
+   * under a name that claims to be about something else — a green test guarding
+   * nothing. Skipping says so out loud instead. The rest of this describe
+   * covers an unreadable sidecar by four other routes that need no hook.
+   */
+  it('is broken when git refuses the repository over its ownership', async (ctx) => {
     const original = process.env['GIT_TEST_ASSUME_DIFFERENT_OWNER'];
     process.env['GIT_TEST_ASSUME_DIFFERENT_OWNER'] = '1';
     try {
+      const refuses = await run('git', ['rev-parse', '--show-toplevel'], {
+        cwd: path.join(dataDir, 'vaults', julian),
+      })
+        .then(() => false)
+        .catch((error: unknown) => /dubious ownership/i.test(String(error)));
+
+      if (!refuses) {
+        ctx.skip(
+          'git here does not honour GIT_TEST_ASSUME_DIFFERENT_OWNER, so the ' +
+            'refusal this is about cannot be produced without a second user',
+        );
+        return;
+      }
+
       expect((await history()).parsed.state).toBe('broken');
       expect(await runtime.history.state(julian)).toBe('broken');
     } finally {
