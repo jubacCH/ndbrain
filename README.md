@@ -423,9 +423,22 @@ cargo build       # an unsigned debug binary
 Rust 1.90 or newer. `cargo test -p ndbrain-capture` is the fast loop — that crate holds the
 decisions and depends on nothing, so it does not compile Tauri.
 
+All of it runs in CI on every push and every pull request. What a change is expected to come with
+— a test that has been watched failing, and then watched failing again with the change taken back
+out — is in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Licence
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 There is no API stability promise while the version is `0.x`. Security boundaries are not covered
 by that caveat: those are treated as requirements, not as work in progress.
+
+## The rest of it
+
+- [CHANGELOG.md](CHANGELOG.md) — what changed between releases, and why upgrading is one-way.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to run the suites, and what a change is expected to
+  come with.
+- [SECURITY.md](SECURITY.md) — where to send a vulnerability, what ndBrain assumes about where it
+  runs, and what it does not protect against.
+- [docs/](docs/) — the design documents behind the larger pieces, kept as they were written.
