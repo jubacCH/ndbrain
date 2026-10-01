@@ -657,6 +657,13 @@ export const api = {
       body: JSON.stringify({ disabled }),
     }),
 
+  /** The display name of any account. The id is the vault's folder and stays. */
+  renameUser: (id: string, displayName: string) =>
+    request(`/api/v1/admin/users/${encodeURIComponent(id)}`, S.MeResponse, {
+      method: 'PATCH',
+      body: JSON.stringify({ displayName }),
+    }),
+
   adminKeys: (owner: string) =>
     request(`/api/v1/admin/keys?owner=${encodeURIComponent(owner)}`, S.AdminKeysResponse),
 

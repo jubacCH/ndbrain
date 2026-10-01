@@ -30,6 +30,8 @@ export interface AdminProps {
   onCreateUser: (id: string, password: string, displayName: string, admin: boolean) => Promise<void>;
   onResetPassword: (id: string, password: string) => Promise<void>;
   onSetDisabled: (id: string, disabled: boolean) => Promise<void>;
+  /** Changes an account's display name. The id is the vault's folder and stays. */
+  onRenameUser: (id: string, displayName: string) => Promise<void>;
   onCreateKey: (
     owner: string,
     name: string,
@@ -98,6 +100,13 @@ export function AdminView(props: AdminProps): React.JSX.Element {
                 <td className="n">{user.keys}</td>
                 <td>{when(user.createdAt)}</td>
                 <td className="n adminrow-actions">
+                  <Rename
+                    user={user}
+                    busy={busy}
+                    onRename={(displayName) =>
+                      guard(() => props.onRenameUser(user.id, displayName), copy.admin.renamed(user.id))
+                    }
+                  />
                   <ResetPassword
                     user={user}
                     busy={busy}
@@ -189,6 +198,71 @@ export function AdminView(props: AdminProps): React.JSX.Element {
         />
       </section>
     </div>
+  );
+}
+
+/**
+ * Changes what an account is called, not which account it is.
+ *
+ * The id beside the name in this table is the vault's folder on disk, so it is
+ * the one thing here that cannot be edited — which is why this control is on
+ * the display name and says so by starting from it rather than from an empty
+ * field. The same shape as the password reset beside it: a button that opens a
+ * field, because a row of permanently open inputs is a table somebody edits by
+ * accident.
+ */
+function Rename({
+  user,
+  busy,
+  onRename,
+}: {
+  user: AdminUser;
+  busy: boolean;
+  onRename: (displayName: string) => Promise<void>;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(user.displayName);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          // From what it is now, every time it is opened: a stale draft from a
+          // cancelled edit is a rename nobody meant to make.
+          setValue(user.displayName);
+          setOpen(true);
+        }}
+      >
+        {copy.admin.rename}
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="inlineform"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onRename(value.trim()).then(() => setOpen(false));
+      }}
+    >
+      <input
+        aria-label={copy.admin.newNameFor(user.id)}
+        placeholder={copy.admin.newNameFor(user.id)}
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        autoComplete="off"
+        required
+      />
+      <button type="submit" disabled={busy || value.trim() === '' || value.trim() === user.displayName}>
+        {copy.admin.saveName}
+      </button>
+      <button type="button" onClick={() => setOpen(false)}>
+        {copy.admin.cancel}
+      </button>
+    </form>
   );
 }
 

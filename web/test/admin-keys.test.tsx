@@ -52,6 +52,7 @@ function renderAdmin(keys: ApiKey[], onCreateKey = vi.fn()) {
     onCreateUser: vi.fn(async () => undefined),
     onResetPassword: vi.fn(async () => undefined),
     onSetDisabled: vi.fn(async () => undefined),
+    onRenameUser: vi.fn(async () => undefined),
     onCreateKey,
     onRevokeKey: vi.fn(async () => undefined),
     onPickOwner: vi.fn(),

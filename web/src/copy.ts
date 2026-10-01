@@ -1235,6 +1235,11 @@ export const copy = {
     newPasswordFor: (id: string) => `New password for ${id}`,
     set: 'Set',
     cancel: 'Cancel',
+    /** The display name only. The sign-in name is the folder — see `idIsPermanent`. */
+    rename: 'Rename',
+    newNameFor: (id: string) => `Display name for ${id}`,
+    saveName: 'Save',
+    renamed: (id: string) => `${id} renamed.`,
     disable: 'Disable',
     enable: 'Enable',
     confirmDisable: (id: string) =>

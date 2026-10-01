@@ -1414,6 +1414,29 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return { ok: true };
   });
 
+  /**
+   * Renames an account — its label, not the account.
+   *
+   * It existed for spaces and not for people, which is the wrong way round: a
+   * space is named once by whoever makes it, and a person is the one whose name
+   * turns out to be spelled wrong, or who marries, or who was created in a
+   * hurry as "neu". Everybody could already change their own; nobody could
+   * change anybody else's.
+   *
+   * No password confirmation, for the reason the self-service route gives: this
+   * changes a label, and asking for a credential to edit a label trains people
+   * to type their password at prompts that do not need it.
+   */
+  fastify.patch('/api/v1/admin/users/:id', async (request) => {
+    requireAdmin(request);
+    const { id } = request.params as { id: string };
+    const { displayName } = body(request, S.AdminProfileRequest);
+
+    // `setDisplayName` refuses an id that is not there rather than updating
+    // nothing and reporting success; the error carries up as a 404.
+    return { user: publicUser(users.setDisplayName(id, displayName)) };
+  });
+
   fastify.post('/api/v1/admin/users/:id/disabled', async (request, reply) => {
     const caller = requireAdmin(request);
     const { id } = request.params as { id: string };

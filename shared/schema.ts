@@ -687,6 +687,18 @@ export const SettingsRequest = UserSettings.partial().strict();
 
 export const ProfileRequest = z.object({ displayName: z.string().min(1).max(64) }).strict();
 
+/**
+ * What an administrator may change about an account that is not theirs.
+ *
+ * The display name and nothing else. The **id** is absent and will stay absent
+ * here: it is the vault's folder name, so changing it is a move on disk and a
+ * rewrite of every row that names an owner, which is not a field in a form.
+ * Password and disabled have their own routes, because each of them ends every
+ * session of that account and a request that did three things would have to say
+ * which of them caused that.
+ */
+export const AdminProfileRequest = z.object({ displayName: z.string().min(1).max(64) }).strict();
+
 export const ChangePasswordRequest = z
   .object({
     /** Required even though the caller holds a session — see the route. */

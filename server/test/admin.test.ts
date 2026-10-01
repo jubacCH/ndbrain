@@ -86,6 +86,7 @@ describe('who may reach any of this', () => {
     { method: 'POST', url: '/api/v1/admin/users', payload: { id: 'neu', password: 'ein gutes passwort' } },
     { method: 'POST', url: '/api/v1/admin/users/ramona/password', payload: { password: 'ein gutes passwort' } },
     { method: 'POST', url: '/api/v1/admin/users/ramona/disabled', payload: { disabled: true } },
+    { method: 'PATCH', url: '/api/v1/admin/users/ramona', payload: { displayName: 'Ramona B.' } },
     { method: 'GET', url: '/api/v1/admin/keys', payload: {} },
     { method: 'POST', url: '/api/v1/admin/keys', payload: { owner: 'ramona', name: 'agent' } },
     { method: 'DELETE', url: '/api/v1/admin/keys/key_x', payload: {} },
@@ -251,6 +252,74 @@ describe('nobody can lock everybody out', () => {
     // themselves, which the previous test covers, or by a route call naming them.
     const admins = runtime.users.list().filter((u) => u.role === 'admin' && !u.disabled);
     expect(admins).toHaveLength(1);
+  });
+});
+
+describe('renaming an account', () => {
+  /**
+   * The label, not the account. A space could already be renamed and a person
+   * could not, which is the wrong way round: a space is named once by whoever
+   * makes it, and a person is the one whose name turns out to be spelled wrong.
+   */
+  it('changes somebody else’s display name', async () => {
+    const renamed = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/ramona',
+      headers: { cookie: adminCookie },
+      payload: { displayName: 'Ramona Bachmann' },
+    });
+
+    expect(renamed.statusCode).toBe(200);
+    expect(runtime.users.get('ramona')?.displayName).toBe('Ramona Bachmann');
+  });
+
+  it('leaves the account itself alone: the id is the vault’s folder', async () => {
+    const before = runtime.users.get('ramona');
+    await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/ramona',
+      headers: { cookie: adminCookie },
+      payload: { displayName: 'Andere' },
+    });
+    const after = runtime.users.get('ramona');
+
+    expect(after?.id).toBe(before?.id);
+    expect(after?.role).toBe(before?.role);
+  });
+
+  /** A body that tried to would be malformed, not quietly half-applied. */
+  it('refuses a body that names an id', async () => {
+    const tried = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/ramona',
+      headers: { cookie: adminCookie },
+      payload: { id: 'ramona2', displayName: 'Andere' },
+    });
+
+    expect(tried.statusCode).toBe(400);
+    expect(runtime.users.get('ramona')?.displayName).not.toBe('Andere');
+  });
+
+  it('says so about an account that is not there, rather than reporting success', async () => {
+    const missing = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/niemand',
+      headers: { cookie: adminCookie },
+      payload: { displayName: 'Wer' },
+    });
+
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it('refuses an empty name', async () => {
+    const empty = await server.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/users/ramona',
+      headers: { cookie: adminCookie },
+      payload: { displayName: '  ' },
+    });
+
+    expect(empty.statusCode).toBeGreaterThanOrEqual(400);
   });
 });
 
