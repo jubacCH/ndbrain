@@ -148,6 +148,33 @@ describe('the view fills its column', () => {
 });
 
 /**
+ * The two columns of "Continue", when one of them has nothing in it.
+ *
+ * The component puts a class on the grid and the stylesheet decides what that
+ * means, so the class on its own proves nothing — a class with no rule behind it
+ * is how the text-size knob came to be silently ineffective once already.
+ */
+describe('the continue tile', () => {
+  function declarations(selector: string): string {
+    return rules(css)
+      .filter(([selectors]) => selectors.split(',').some((one) => one.trim() === selector))
+      .map(([, body]) => body)
+      .join(';');
+  }
+
+  it('gives the width to one column when the other is empty', () => {
+    const one = declarations('.home-columns.one-sided');
+
+    expect(one).not.toBe('');
+    expect(one).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  });
+
+  it('still has two columns when neither is', () => {
+    expect(declarations('.home-columns')).toMatch(/grid-template-columns:\s*repeat\(2/);
+  });
+});
+
+/**
  * The skip link is the one control that must be reachable while it is invisible.
  *
  * `display: none` and `visibility: hidden` take an element out of the tab order

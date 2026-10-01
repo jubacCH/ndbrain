@@ -434,10 +434,21 @@ function Continue({
   // everything else in the app calls them cold.
   const editedRecently = edited.filter((note) => now - note.mtimeMs <= TRACE_DAYS * DAY_MS);
 
+  // A column with nothing in it should not hold half the tile open beside one
+  // that has something. "Opened lately" is read out of this browser's own
+  // storage, so it is empty in every client that has not been used yet — a new
+  // browser, and the Mac client's WebView, which is a second store — and what
+  // somebody met there was a sentence, a hand's width of nothing, and a list
+  // squeezed into the other half for no reason.
+  //
+  // Both headings stay either way. The empty one says what the column will
+  // become, which is worth a line and is not worth a column.
+  const oneSided = recents.length === 0 || editedRecently.length === 0;
+
   return (
     <section className="tile home-continue" aria-labelledby="home-continue-title">
       <p className="cap" id="home-continue-title">{copy.home.continue}</p>
-      <div className="home-columns">
+      <div className={oneSided ? 'home-columns one-sided' : 'home-columns'}>
         <div>
           <p className="home-sub">{copy.home.opened}</p>
           {recents.length === 0 ? (

@@ -156,6 +156,41 @@ describe('continue', () => {
     expect(within(section).queryByRole('button', { name: /Alt, in/ })).toBeNull();
     expect(within(section).getByText('Nothing edited in the last 14 days.')).toBeInTheDocument();
   });
+
+  /**
+   * An empty column held half the tile open beside a full one.
+   *
+   * "Opened lately" is read out of this browser's own storage, so it is empty
+   * in every client that has not been used yet — a new browser, and the Mac
+   * client's WebView, which is a second store. The first thing somebody sees in
+   * a fresh client is therefore a sentence and a hand's width of nothing, next
+   * to a list that had to make do with half the width.
+   *
+   * jsdom computes no layout, so the grid itself cannot be observed here; the
+   * class that decides it can. That is what these pin.
+   */
+  const columnsOf = (): Element => {
+    const section = screen.getByRole('region', { name: copy.home.continue });
+    const columns = section.querySelector('.home-columns');
+    if (columns === null) throw new Error('the continue tile has no columns');
+    return columns;
+  };
+
+  it('keeps two columns while both have something to show', () => {
+    renderHome();
+    expect(columnsOf().className).not.toContain('one-sided');
+  });
+
+  it('gives the whole width to the column that has something, when the other has not', () => {
+    renderHome({ recents: [] });
+    expect(columnsOf().className).toContain('one-sided');
+  });
+
+  it('does the same when it is the edited column that is empty', () => {
+    const stale = note('Alt.md', 'Alt', 'julian', NOW - 15 * 24 * HOUR);
+    renderHome({ overview: overview({ recent: [stale] }) });
+    expect(columnsOf().className).toContain('one-sided');
+  });
 });
 
 describe('your brain today', () => {

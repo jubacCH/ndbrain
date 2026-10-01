@@ -6099,6 +6099,13 @@ ul.inspector-links,
   .home-columns {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  /* One of the two has nothing in it, so the other takes the width rather than
+     sharing it with an empty half. See `Continue` in `Home.tsx`. */
+  .home-columns.one-sided {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-2);
+  }
 }
 
 .home-notes {
