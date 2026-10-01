@@ -1,0 +1,20 @@
+[package]
+name = "ndbrain-client"
+description = "The two requests the Mac client makes, over the decisions in ndbrain-capture."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ndbrain-capture = { path = "../capture" }
+# `native-tls` rather than the default rustls, so TLS goes through macOS's own
+# Security.framework — the same framework the Keychain in `app` uses, and no
+# second crypto library to build.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
+serde_json = { workspace = true }

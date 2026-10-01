@@ -25,6 +25,8 @@
 
 import { z } from 'zod';
 
+import { parseIsoDate } from './journal.js';
+
 /* ---- primitives ---------------------------------------------------------- */
 
 /** A vault-relative path. Emptiness is the one rule worth stating here; the
@@ -722,6 +724,40 @@ export const AppendNoteRequest = z
      * absent note is answered like any other missing note.
      */
     ifAbsent: z.string().optional(),
+  })
+  .strict();
+
+/**
+ * A day written `2026-10-01`, and one the calendar actually has.
+ *
+ * Checked through `parseIsoDate` rather than with a pattern of its own. That
+ * function is where this project already settled what a day is — including that
+ * `2026-02-30` is refused rather than rolled into March the way `Date` would —
+ * and a second opinion about it here is exactly the drift `journal.ts` exists to
+ * prevent.
+ */
+export const IsoDay = z.string().refine((value) => parseIsoDate(value) !== null, {
+  message: 'not a day the calendar has; expected YYYY-MM-DD',
+});
+
+/**
+ * One thought into one day's note.
+ *
+ * The same write as `AppendNoteRequest` with `section` and `ifAbsent` filled in,
+ * except that the caller does not say where today's note lives or what it starts
+ * with — the server reads that out of `shared/journal.ts`. That is the whole
+ * point of the route: a client that is not TypeScript cannot import that module,
+ * and a hand-written copy of the journal's shape would drift from it.
+ *
+ * `date` comes from the caller because the note somebody expects is the one for
+ * the date on their own clock, and the server's clock is the container's.
+ */
+export const CaptureRequest = z
+  .object({
+    content: z.string().min(1),
+    date: IsoDay,
+    /** Which vault. Also accepted in the query string; the route reads both. */
+    owner: UserId.optional(),
   })
   .strict();
 

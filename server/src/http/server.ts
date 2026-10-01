@@ -47,6 +47,7 @@ import { LoginThrottle } from './throttle.js';
 import { ZipFile } from 'yazl';
 import type { ZodType } from 'zod';
 import * as S from '../../../shared/schema.js';
+import { NOTES_SECTION, dailyNoteTemplate, journalPath, parseIsoDate } from '../../../shared/journal.js';
 import { SESSION_COOKIE } from './cookie.js';
 
 export { SESSION_COOKIE } from './cookie.js';
@@ -621,6 +622,50 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const result = await app.appendNote(owner, path, content, caller, {
       ...(section === undefined ? {} : { section }),
       ...(ifAbsent === undefined ? {} : { ifAbsent }),
+      authorize: recheck(caller, owner, path, 'write'),
+    });
+    return reply.code(result.created ? 201 : 200).send(result);
+  });
+
+  /**
+   * One thought into one day's note, without the caller knowing where that is.
+   *
+   * `POST /api/v1/append/*` already does the writing, and the start page's
+   * capture field calls it directly — it is TypeScript and may import
+   * `shared/journal.ts` for the path, the heading and the template. A native
+   * client may not, and `journal.ts` says in its own header why it must not grow
+   * a second hand-written copy: "the drift would show up as every daily note
+   * quietly lowering the health score."
+   *
+   * So the three facts that come out of that module stay here, and the caller
+   * sends only the text and the day. The day *is* the caller's to send:
+   * `localDate` is explicit that the note somebody expects is the one for the
+   * date on their own clock, and this process runs on the container's.
+   *
+   * Everything after that is the append route's: same `target`-shaped permission
+   * check against the derived path, same `appendNote` under the note's own lock,
+   * same answer.
+   */
+  fastify.post('/api/v1/capture', async (request, reply) => {
+    const caller = requireUser(request).id;
+    // `owner` is validated by the schema here and read by `ownerOf` below, which
+    // looks in the query string as well — the same two places every other route
+    // accepts it from.
+    const { content, date } = body(request, S.CaptureRequest);
+
+    // Already checked by the schema; `parseIsoDate` is asked again rather than
+    // asserted away because a non-null assertion here would be a promise about
+    // another module's validator.
+    const day = parseIsoDate(date);
+    if (day === null) throw Object.assign(new Error('unreachable: date was validated'), { statusCode: 400 });
+
+    const path = journalPath(day);
+    const owner = ownerOf(request, caller);
+    shares.check(caller, owner, path, 'write');
+
+    const result = await app.appendNote(owner, path, content, caller, {
+      section: NOTES_SECTION,
+      ifAbsent: dailyNoteTemplate(day),
       authorize: recheck(caller, owner, path, 'write'),
     });
     return reply.code(result.created ? 201 : 200).send(result);

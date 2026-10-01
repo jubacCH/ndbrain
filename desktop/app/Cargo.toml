@@ -1,0 +1,35 @@
+[package]
+name = "ndbrain-desktop"
+description = "ndBrain's Mac client: a menu-bar app whose reason to exist is one global shortcut."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# The logic lives in a library so `copy` and `settings` can be tested without
+# starting a WebView. `main.rs` is the thin binary over it.
+name = "ndbrain_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ndbrain-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[dependencies]
+ndbrain-capture = { path = "../capture" }
+ndbrain-client = { path = "../client" }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The Keychain, through macOS's own Security framework. The same framework
+# `reqwest`'s native-tls backend uses, so nothing new is linked for it.
+security-framework = "3"
