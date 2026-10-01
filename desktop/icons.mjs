@@ -1,5 +1,9 @@
 /**
- * Makes the app icon out of the one the PWA already uses.
+ * Makes the Mac client's two icons out of the one the PWA already uses.
+ *
+ * `app/icons/icon.png` is the application icon, in the Dock and in the bundle.
+ * `app/icons/tray.rgba` is the menu-bar icon, which is a different thing and
+ * not a smaller version of the same thing — see `trayTemplate` below.
  *
  * Tauri's code generator decodes `bundle.icon` at build time and panics with
  * "icon … is not RGBA" on anything else, while `web/scripts/icons.mjs` writes
@@ -21,6 +25,17 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE = join(HERE, '..', 'web', 'public', 'icon-512.png');
 const TARGET = join(HERE, 'app', 'icons', 'icon.png');
+const TRAY = join(HERE, 'app', 'icons', 'tray.rgba');
+
+/**
+ * The menu-bar icon's side, in pixels.
+ *
+ * `tray-icon` draws whatever it is given at 18 pt tall (its macOS backend sets
+ * the `NSImage` size to 18 and lets the bitmap scale), so the number that
+ * matters is how many pixels back those 18 points. 36 is 18 pt at 2x, which is
+ * every Mac this runs on.
+ */
+const TRAY_SIDE = 36;
 
 const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -114,3 +129,103 @@ writeFileSync(
 );
 
 process.stdout.write(`app/icons/icon.png (${width}px, RGBA)\n`);
+
+/* ---- the menu-bar icon --------------------------------------------------- */
+
+/**
+ * The template image macOS draws in the menu bar.
+ *
+ * A menu-bar icon is not a small app icon. macOS wants a **template**: a shape
+ * in the alpha channel and nothing in the colour channels, which it then fills
+ * with whatever contrasts against the bar — dark on a light bar, light on a dark
+ * one, inverted while the menu is open. Handed a coloured image instead, it
+ * draws the picture as it is, and this particular picture is a near-black square
+ * (`GROUND` in `web/scripts/icons.mjs`), which is how the icon came to be
+ * something the owner had to hunt for.
+ *
+ * So the mark is turned into coverage: for each pixel of the small icon, how
+ * much of the area it covers was the mark rather than the ground. That is the
+ * alpha; the colour is black everywhere and never read. Derived from the same
+ * PNG as the app icon rather than drawn again, for the reason in the header —
+ * a second copy of the geometry would drift and nobody would see it happen.
+ *
+ * Written as raw RGBA, not PNG, because the app has no PNG decoder: Tauri's
+ * `Image::new` takes exactly these bytes and is a `const fn` over them, so the
+ * icon is `include_bytes!` and cannot be missing at runtime. The silent case
+ * this replaces built a tray with no icon at all and said nothing.
+ */
+function trayTemplate(side) {
+  const mark = (x, y) => {
+    const at = y * sourceStride + 1 + x * 3;
+    // Nearer to the mark's colour than to the ground's. One comparison rather
+    // than a threshold per channel: the two colours are a near-white and a
+    // near-black, so the midpoint is not a close call.
+    return rgb[at] + rgb[at + 1] + rgb[at + 2] > (GROUND_SUM + MARK_SUM) / 2;
+  };
+
+  // The app icon has a margin around the mark, because an icon in the Dock sits
+  // in a tile. A menu-bar glyph does not: the bar gives it its own spacing, and
+  // a glyph carrying its own margin as well renders as a mark too small to read
+  // at 18 pt. So the source is cropped to the mark and the margin is left behind.
+  let left = width;
+  let right = -1;
+  let top = height;
+  let bottom = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (!mark(x, y)) continue;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+  }
+  if (right < 0) throw new Error(`no mark found in ${SOURCE}`);
+
+  // Square and centred, so the mark is not stretched, plus a hair of margin to
+  // keep the antialiased edge off the glyph's own boundary.
+  const span = Math.max(right - left + 1, bottom - top + 1) * (1 + 2 / side);
+  const originX = (left + right + 1) / 2 - span / 2;
+  const originY = (top + bottom + 1) / 2 - span / 2;
+
+  const out = Buffer.alloc(side * side * 4);
+  const box = span / side;
+  for (let ty = 0; ty < side; ty += 1) {
+    for (let tx = 0; tx < side; tx += 1) {
+      // Exact area weighting: 512 does not divide by 36, so the boxes do not
+      // line up with pixel edges and nearest-neighbour would give a glyph with
+      // ragged corners at the one size it is ever seen.
+      let covered = 0;
+      let total = 0;
+      const boxLeft = originX + tx * box;
+      const boxRight = boxLeft + box;
+      const boxTop = originY + ty * box;
+      const boxBottom = boxTop + box;
+      for (let y = Math.floor(boxTop); y < Math.ceil(boxBottom); y += 1) {
+        const weightY = Math.min(y + 1, boxBottom) - Math.max(y, boxTop);
+        for (let x = Math.floor(boxLeft); x < Math.ceil(boxRight); x += 1) {
+          const weight = weightY * (Math.min(x + 1, boxRight) - Math.max(x, boxLeft));
+          total += weight;
+          // Outside the source is margin, which is ground.
+          const inside = x >= 0 && x < width && y >= 0 && y < height;
+          if (inside && mark(x, y)) covered += weight;
+        }
+      }
+      const at = (ty * side + tx) * 4;
+      out[at] = 0;
+      out[at + 1] = 0;
+      out[at + 2] = 0;
+      out[at + 3] = Math.round((covered / total) * 255);
+    }
+  }
+  return out;
+}
+
+/** The two colours `web/scripts/icons.mjs` draws the mark with, as sums. */
+const GROUND_SUM = 14 + 16 + 19;
+const MARK_SUM = 241 + 242 + 244;
+
+const tray = trayTemplate(TRAY_SIDE);
+writeFileSync(TRAY, tray);
+
+process.stdout.write(`app/icons/tray.rgba (${TRAY_SIDE}px, template, ${tray.length} bytes)\n`);

@@ -22,6 +22,7 @@ tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+ndbrain-capture = { path = "../capture" }
 
 [dependencies]
 ndbrain-capture = { path = "../capture" }

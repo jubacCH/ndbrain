@@ -230,3 +230,66 @@ fn pads_the_day_the_way_the_server_parses_it() {
 fn takes_today_from_the_device_clock() {
     assert_eq!(ndbrain_client::today(), ndbrain_client::day_of(&chrono::Local::now()));
 }
+
+/* ---- which build the server is serving ---------------------------------- */
+
+const PAGE: &str = concat!(
+    "<!doctype html><html><head><title>ndBrain</title>",
+    "<script>var theme = 1;</script>",
+    r#"<script type="module" crossorigin src="/assets/index-Dw9DyPbP.js"></script>"#,
+    "</head><body><div id=\"root\"></div></body></html>",
+);
+
+/// The page is fetched from the root, unauthenticated, and no cookie goes with it.
+///
+/// `/` is outside the session gate — `server/src/http/server.ts` lets anything
+/// that does not start with `/api/` straight through — so this check works
+/// before anybody has signed in, and sending the session token on a request that
+/// does not need it would be putting a credential where it buys nothing.
+#[tokio::test]
+async fn asks_the_root_for_the_build_it_is_serving_and_sends_no_credential() {
+    let (address, seen) = serve_once("200 OK", &["content-type: text/html"], PAGE);
+    let client = Client::new(&address).unwrap();
+
+    let served = client.served_bundle().await;
+
+    let request = seen.recv().expect("the stub saw a request");
+    assert_eq!(request.target, "/");
+    assert_eq!(request.header("cookie"), None);
+    assert_eq!(served.as_deref(), Some("/assets/index-Dw9DyPbP.js"));
+}
+
+/// A server that cannot be reached says nothing about the build.
+///
+/// `None`, which `freshness` turns into `Unknown`, which never reloads. The
+/// failure this forbids is a window that throws away what somebody was typing
+/// because the network blinked.
+#[tokio::test]
+async fn says_nothing_about_a_server_that_does_not_answer() {
+    // A port nothing is listening on: bound, read for its number, then dropped.
+    let dead = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    };
+    let client = Client::new(&dead).unwrap();
+
+    assert_eq!(client.served_bundle().await, None);
+}
+
+/// A reply that is not the page — a proxy's error sheet, say — is also nothing.
+///
+/// The body here carries a `<script src>` of its own, which is what Cloudflare's
+/// error pages actually do. Reading a fingerprint out of it would make every
+/// 502 look like a fresh deploy, and the window would reload itself for as long
+/// as the server stayed down.
+#[tokio::test]
+async fn says_nothing_when_the_root_answers_with_something_else() {
+    let (address, _seen) = serve_once(
+        "502 Bad Gateway",
+        &["content-type: text/html"],
+        r#"<h1>502</h1><script src="/cdn-cgi/challenge-platform/scripts/main.js"></script>"#,
+    );
+    let client = Client::new(&address).unwrap();
+
+    assert_eq!(client.served_bundle().await, None);
+}

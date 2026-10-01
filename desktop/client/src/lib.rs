@@ -16,8 +16,8 @@
 use std::time::Duration;
 
 use ndbrain_capture::{
-    base_url, capture_body, capture_url, classify, classify_login, cookie_header, login_body,
-    login_url, BaseUrlError, CaptureError, LoginOutcome, Outcome,
+    base_url, bundle_fingerprint, capture_body, capture_url, classify, classify_login,
+    cookie_header, login_body, login_url, BaseUrlError, CaptureError, LoginOutcome, Outcome,
 };
 
 /// How long a capture waits before it is reported as unanswered.
@@ -115,6 +115,23 @@ impl Client {
             }
             Err(error) => Outcome::Failed { message: unreachable(&error) },
         })
+    }
+
+    /// Which build the server is handing out right now, by the name of its
+    /// entry module.
+    ///
+    /// Asked of `/`, which is outside the session gate, so this works before
+    /// anybody has signed in and carries no cookie. Everything that could go
+    /// wrong answers `None`: offline, a proxy's error page, a reply that is not
+    /// the page. `freshness` turns `None` into `Unknown`, and `Unknown` never
+    /// causes a reload — which is the property that matters, because a reload
+    /// fired on a failed fetch would discard whatever was on screen.
+    pub async fn served_bundle(&self) -> Option<String> {
+        let response = self.http.get(format!("{}/", self.base)).send().await.ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        bundle_fingerprint(&response.text().await.ok()?)
     }
 }
 

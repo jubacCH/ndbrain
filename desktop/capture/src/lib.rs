@@ -263,3 +263,103 @@ pub fn session_token(set_cookie: &[String]) -> Option<String> {
 pub fn cookie_header(token: &str) -> String {
     format!("{SESSION_COOKIE}={token}")
 }
+
+/* ---- is the window running what the server is serving? ------------------- */
+
+/// What a window's bundle is, compared with what the server hands out now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Freshness {
+    /// Both sides name the same entry module. Nothing to do.
+    Current,
+    /// The server is serving a different build than this window loaded.
+    Stale,
+    /// One side could not be read — the fetch failed, or the reply was not the
+    /// page. **Never a reason to reload anything.**
+    Unknown,
+}
+
+impl Freshness {
+    /// The one question a caller is allowed to ask before throwing a page away.
+    ///
+    /// Spelled out rather than left as `== Stale` at every call site, because the
+    /// mistake worth making structurally impossible is treating `Unknown` as a
+    /// reason to act: a reload on a failed fetch would discard whatever somebody
+    /// was typing every time the network blinked.
+    pub fn asks_for_a_reload(self) -> bool {
+        matches!(self, Self::Stale)
+    }
+}
+
+/// The name of the entry module a served page loads, if it names one.
+///
+/// Vite content-hashes it — `/assets/index-Dw9DyPbP.js` — so the name changes
+/// exactly when the code does, and two pages fetched at different times either
+/// agree or do not. That is the whole fingerprint; the stylesheet and the
+/// preloads are not read, because the entry's hash already moves whenever any
+/// module in the graph does.
+///
+/// Why this is needed at all: `web/src/build.ts` says it. ndBrain is a
+/// single-page app without a router, so it never navigates, and a window left
+/// open goes on running the JavaScript it loaded straight through a deploy with
+/// nothing on screen to say so. A browser tab gets closed eventually. A WebView
+/// in a menu-bar app that is never quit does not.
+///
+/// Hand-rolled rather than parsed: the one tag this looks for is written by the
+/// bundler, and an HTML parser here would be a dependency in a crate whose
+/// header says it has none.
+pub fn bundle_fingerprint(html: &str) -> Option<String> {
+    let mut rest = html;
+    while let Some(at) = rest.find("<script") {
+        rest = &rest[at + "<script".len()..];
+        // Only this element's attributes: `>` ends them, and looking past it
+        // would read the next tag's `src` as this one's.
+        let attributes = match rest.find('>') {
+            Some(end) => &rest[..end],
+            None => rest,
+        };
+        if let Some(src) = attribute(attributes, "src") {
+            if !src.is_empty() {
+                return Some(src);
+            }
+        }
+    }
+    None
+}
+
+/// The value of one quoted attribute out of a tag's attribute text.
+fn attribute(attributes: &str, name: &str) -> Option<String> {
+    let mut rest = attributes;
+    loop {
+        let at = rest.find(name)?;
+        // A whole attribute name, so `crossorigin` is not read as holding `o`.
+        let before_is_space = at == 0 || rest[..at].ends_with(|c: char| c.is_whitespace());
+        let after = rest[at + name.len()..].trim_start();
+        rest = &rest[at + name.len()..];
+        if !before_is_space {
+            continue;
+        }
+        let Some(value) = after.strip_prefix('=') else { continue };
+        let value = value.trim_start();
+        let quote = value.chars().next()?;
+        if quote != '"' && quote != '\'' {
+            continue;
+        }
+        let value = &value[quote.len_utf8()..];
+        let end = value.find(quote)?;
+        return Some(value[..end].to_string());
+    }
+}
+
+/// Whether a window is behind the server, as far as anyone can tell.
+///
+/// `Unknown` for anything but two names that could both be read: a fetch that
+/// failed says nothing about the build, and treating silence as a difference is
+/// how an unreachable server would turn into a window that reloads on every
+/// glance at it.
+pub fn freshness(loaded: Option<&str>, served: Option<&str>) -> Freshness {
+    match (loaded, served) {
+        (Some(loaded), Some(served)) if loaded == served => Freshness::Current,
+        (Some(_), Some(_)) => Freshness::Stale,
+        _ => Freshness::Unknown,
+    }
+}

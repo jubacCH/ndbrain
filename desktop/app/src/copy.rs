@@ -70,10 +70,49 @@ pub fn slow_down(seconds: Option<u64>) -> String {
 
 /* ---- the menu ----------------------------------------------------------- */
 
-pub const MENU_OPEN: &str = "Open ndBrain in the browser";
+/// The window, not a browser.
+///
+/// This used to hand the address to `/usr/bin/open`, which was the right answer
+/// while the app had no window of its own. It has one now, and two routes to the
+/// same application — one of them with a separate session, a separate cache and
+/// a separate set of open notes — is precisely the duplication that argued
+/// against having a window in the first place. There is one copy, and it is this
+/// one.
+pub const MENU_OPEN: &str = "Show ndBrain";
 pub const MENU_SIGN_OUT: &str = "Sign out";
-pub const MENU_QUIT: &str = "Quit";
+pub const MENU_QUIT: &str = "Quit ndBrain";
 pub const TOOLTIP: &str = "ndBrain";
+
+/* ---- the application menu ----------------------------------------------- */
+
+/// The submenu titles, which macOS shows along the top.
+///
+/// Only the titles and the two items this application defines itself are here.
+/// Cut, copy, paste, undo, minimise and the rest come from `PredefinedMenuItem`,
+/// which carries its own English labels — passing `None` takes them, and that is
+/// deliberate: a label this project does not write is a label it cannot get
+/// wrong, and `muda`'s table is English, so the one-language rule holds.
+///
+/// **Why there is an application menu at all now.** Without one, macOS gives a
+/// WebView no Edit menu, and with no Edit menu there is no ⌘C and no ⌘V in it —
+/// the keystrokes are menu accelerators, not something the text field handles.
+/// An accessory application has no menu bar, which cost nothing while the only
+/// window was a panel somebody typed one line into. It costs the clipboard in a
+/// window somebody writes notes in.
+pub const MENU_APP: &str = "ndBrain";
+pub const MENU_EDIT: &str = "Edit";
+pub const MENU_VIEW: &str = "View";
+pub const MENU_WINDOW: &str = "Window";
+
+/// Fetches the page again, which is the one thing a WebView needs that a browser
+/// tab gets from its address bar.
+///
+/// ndBrain is a single-page app without a router, so it never navigates by
+/// itself: the JavaScript a window loaded is the JavaScript it keeps running,
+/// straight through a deploy. The app watches for that and reloads on its own
+/// (see `lib.rs`), but a person who suspects they are looking at yesterday's
+/// build should not have to quit the application to find out.
+pub const MENU_RELOAD: &str = "Reload";
 
 /// Said in the menu, not swallowed.
 ///
