@@ -75,6 +75,7 @@ import type { RegionGroup } from './clusters';
 import { groupRegions } from './clusters';
 import { MAP_DEGREE } from './edges';
 import type { BrainGraph } from './model';
+import { RepelSpace } from './neighbours';
 import { hash32, unit } from './seed';
 import type { Side } from './shape';
 import { FISSURE, OUTLINE, centre, outlineDepth, rim, sideOf, withinOutline } from './shape';
@@ -486,6 +487,8 @@ export class BrainLayout {
   /** Scratch lists of the moving and the still nodes, in key order. */
   readonly #moving: Int32Array;
   readonly #still: Int32Array;
+  /** The repulsion's grids and scratch list, reused like the arrays above. */
+  readonly #near = new RepelSpace();
 
   constructor(graph: BrainGraph, options: LayoutOptions) {
     const n = graph.nodes.length;
@@ -1476,6 +1479,7 @@ export class BrainLayout {
       brain ? this.regionOf : null,
       brain ? BRAIN_REPULSION : REPULSION,
       brain ? BRAIN_CUTOFF : CUTOFF,
+      this.#near,
     );
     this.#springs(ax, ay);
     if (this.arrangement === 'brain') this.#shape(ax, ay);
@@ -1759,13 +1763,25 @@ function inLobe(x: number, y: number): boolean {
 /**
  * Repulsion on every node that may move, from every node closer than the cutoff.
  *
- * The one O(n²) loop, and deliberately a function of flat arrays and nothing
- * else: Barnes-Hut replaces exactly this, and a worker can run it on arrays it
- * owns. Pairs of which neither note may move are skipped — nothing would come
- * of them — so a remembered brain that only has to place a captured note costs
- * a single row instead of the full triangle. `region` makes notes of different
- * regions push harder, which is what opens a furrow between them; null for the
- * loose arrangement, which has none.
+ * It **was** the one O(n²) loop: the cutoff was tested after the distance, so
+ * every pair was measured and only the near ones were paid for. In the brain
+ * arrangement that cutoff is 45 units across a plane hundreds wide, so the
+ * overwhelming majority of the work produced exactly zero. `Neighbourhood`
+ * files the points into cells one cutoff wide and hands back the nine cells
+ * around each one; nothing outside them can be within the cutoff, so nothing
+ * that mattered is skipped.
+ *
+ * Not an approximation, which is why the simulation's frozen reference numbers
+ * are untouched and are the test for this: the same pairs are summed in the
+ * same order, so the sums are the same sums. The grid refuses sizes it would
+ * lose on, and refusing means the full scan below — slower, never wrong.
+ *
+ * Still a function of flat arrays and nothing else, so a worker can run it on
+ * arrays it owns. Pairs of which neither note may move are skipped — nothing
+ * would come of them — so a remembered brain that only has to place a captured
+ * note costs a single row instead of the full triangle. `region` makes notes of
+ * different regions push harder, which is what opens a furrow between them;
+ * null for the loose arrangement, which has none.
  */
 function repel(
   x: Float64Array,
@@ -1777,7 +1793,12 @@ function repel(
   region: Int32Array | null,
   strength: number,
   cutoff: number,
+  space: RepelSpace,
 ): void {
+  const near = space.fit(Math.max(moving.length, still.length));
+  const byCellMoving = space.moving.build(x, y, moving, cutoff);
+  const byCellStill = space.still.build(x, y, still, cutoff);
+
   // Written out twice rather than through a helper returning a pair: a tuple
   // per pair per frame is thousands of short-lived arrays for the collector.
   for (let p = 0; p < moving.length; p += 1) {
@@ -1786,32 +1807,76 @@ function repel(
     const yi = y[i]!;
     let fxi = ax[i]!;
     let fyi = ay[i]!;
-    for (let q = p + 1; q < moving.length; q += 1) {
-      const j = moving[q]!;
-      const dx = x[j]! - xi;
-      const dy = y[j]! - yi;
-      const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      if (d > cutoff) continue;
-      let f = strength / (d * d);
-      if (region !== null && region[i] !== region[j]) f *= APART;
-      const fx = (dx / d) * f;
-      const fy = (dy / d) * f;
-      fxi -= fx;
-      fyi -= fy;
-      ax[j] = ax[j]! + fx;
-      ay[j] = ay[j]! + fy;
+
+    // The candidates, ascending, so the sums are added in the order they were
+    // added in before there was a grid. `-1` is the scratch list running out,
+    // which `fit` makes impossible; it is handled rather than trusted.
+    let found = byCellMoving ? space.moving.around(xi, yi, near) : -1;
+    if (found < 0) {
+      for (let q = p + 1; q < moving.length; q += 1) {
+        const j = moving[q]!;
+        const dx = x[j]! - xi;
+        const dy = y[j]! - yi;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        if (d > cutoff) continue;
+        let f = strength / (d * d);
+        if (region !== null && region[i] !== region[j]) f *= APART;
+        const fx = (dx / d) * f;
+        const fy = (dy / d) * f;
+        fxi -= fx;
+        fyi -= fy;
+        ax[j] = ax[j]! + fx;
+        ay[j] = ay[j]! + fy;
+      }
+    } else {
+      for (let k = 0; k < found; k += 1) {
+        const q = near[k]!;
+        // Each pair once, and the later position is the one that does it —
+        // exactly as `q = p + 1` said.
+        if (q <= p) continue;
+        const j = moving[q]!;
+        const dx = x[j]! - xi;
+        const dy = y[j]! - yi;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        if (d > cutoff) continue;
+        let f = strength / (d * d);
+        if (region !== null && region[i] !== region[j]) f *= APART;
+        const fx = (dx / d) * f;
+        const fy = (dy / d) * f;
+        fxi -= fx;
+        fyi -= fy;
+        ax[j] = ax[j]! + fx;
+        ay[j] = ay[j]! + fy;
+      }
     }
-    for (let q = 0; q < still.length; q += 1) {
-      const j = still[q]!;
-      const dx = x[j]! - xi;
-      const dy = y[j]! - yi;
-      const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      if (d > cutoff) continue;
-      let f = strength / (d * d);
-      if (region !== null && region[i] !== region[j]) f *= APART;
-      fxi -= (dx / d) * f;
-      fyi -= (dy / d) * f;
+
+    found = byCellStill ? space.still.around(xi, yi, near) : -1;
+    if (found < 0) {
+      for (let q = 0; q < still.length; q += 1) {
+        const j = still[q]!;
+        const dx = x[j]! - xi;
+        const dy = y[j]! - yi;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        if (d > cutoff) continue;
+        let f = strength / (d * d);
+        if (region !== null && region[i] !== region[j]) f *= APART;
+        fxi -= (dx / d) * f;
+        fyi -= (dy / d) * f;
+      }
+    } else {
+      for (let k = 0; k < found; k += 1) {
+        const j = still[near[k]!]!;
+        const dx = x[j]! - xi;
+        const dy = y[j]! - yi;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        if (d > cutoff) continue;
+        let f = strength / (d * d);
+        if (region !== null && region[i] !== region[j]) f *= APART;
+        fxi -= (dx / d) * f;
+        fyi -= (dy / d) * f;
+      }
     }
+
     ax[i] = fxi;
     ay[i] = fyi;
   }
