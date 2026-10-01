@@ -542,7 +542,6 @@ export const AdminUser = z.object({
   disabled: z.boolean(),
   createdAt: Timestamp,
   notes: z.number(),
-  keys: z.number(),
 });
 
 export const AdminUsersResponse = z.object({ users: z.array(AdminUser) });

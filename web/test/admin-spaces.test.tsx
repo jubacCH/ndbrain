@@ -19,9 +19,9 @@ import { api, type AdminSpace, type AdminUser, type Share } from '../src/api';
 import { copy } from '../src/copy';
 
 const USERS: AdminUser[] = [
-  { id: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10, keys: 1 },
-  { id: 'anna', displayName: 'Anna', role: 'user', disabled: false, createdAt: 0, notes: 3, keys: 0 },
-  { id: 'otto', displayName: 'Otto', role: 'user', disabled: true, createdAt: 0, notes: 0, keys: 0 },
+  { id: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
+  { id: 'anna', displayName: 'Anna', role: 'user', disabled: false, createdAt: 0, notes: 3 },
+  { id: 'otto', displayName: 'Otto', role: 'user', disabled: true, createdAt: 0, notes: 0 },
 ];
 
 const SPACES: AdminSpace[] = [
@@ -303,20 +303,38 @@ describe('members of a space', () => {
   });
 });
 
+/**
+ * Keys on this screen are a space's keys, and there is no longer a person to
+ * pick. The surface reached any account because it was written when there was
+ * one account and an administrator who was also its owner; somebody's own agent
+ * keys are theirs, made and revoked in their own settings.
+ */
 describe('keys for a space', () => {
-  it('offers spaces beside people as the account a key is for', async () => {
+  it('offers the spaces and nobody else', async () => {
     const { props } = renderAdmin();
     const select = screen.getByRole('combobox', { name: copy.admin.forAccount });
-    const groups = within(select).getAllByRole('group');
-    expect(groups.map((g) => g.getAttribute('label'))).toEqual([copy.admin.people, copy.admin.spacesGroup]);
-    expect(within(groups[1]!).getAllByRole('option').map((o) => o.getAttribute('value'))).toEqual(['familie', 'verein']);
+
+    expect(within(select).queryAllByRole('group')).toHaveLength(0);
+    expect(within(select).getAllByRole('option').map((o) => o.getAttribute('value'))).toEqual(['familie', 'verein']);
 
     await userEvent.selectOptions(select, 'familie');
     expect(props.onPickOwner).toHaveBeenCalledWith('familie');
   });
 
-  it('says what a space’s key reaches when one is picked', () => {
+  it('says why, so the absence reads as a decision rather than a gap', () => {
+    renderAdmin();
+    expect(screen.getByText(copy.admin.keysArePersonal)).toBeInTheDocument();
+  });
+
+  it('says what a space’s key reaches', () => {
     renderAdmin({}, { keyOwner: 'familie' });
     expect(screen.getByText(copy.admin.keysForSpace)).toBeInTheDocument();
+  });
+
+  it('offers no key form at all where there is no space to make one for', () => {
+    renderAdmin({ spaces: [] });
+    expect(screen.getByText(copy.admin.noSpacesForKeys)).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: copy.admin.forAccount })).toBeNull();
+    expect(screen.queryByRole('button', { name: copy.admin.createKey })).toBeNull();
   });
 });

@@ -1260,12 +1260,14 @@ export const copy = {
 
     agentKeys: 'Agent keys',
     keysExplain:
-      'How an agent reaches a vault over MCP. A key is scoped to one account and, optionally, to one folder in it.',
-    forAccount: 'For account',
-    people: 'People',
-    spacesGroup: 'Spaces',
+      'How an agent reaches a space over MCP. A key is scoped to the space and, optionally, to one folder in it.',
+    forAccount: 'For space',
     keysForSpace: 'A key for a space reaches into that space and nowhere else.',
-    noKeys: 'No keys for this account.',
+    noKeys: 'No keys for this space.',
+    /** Why there is no account picker here any more. */
+    keysArePersonal:
+      'Only spaces. Somebody’s own agent keys are theirs: they make and revoke them in their settings, and they are not listed here. To stop one you cannot see, disable the account — that stops its keys as well as its sessions.',
+    noSpacesForKeys: 'No spaces yet. A key needs one.',
     keyName: 'Name',
     /** An example in the field, so the name reads as "which agent", not "which key". */
     keyNameExample: 'Claude',

@@ -1385,7 +1385,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         disabled: user.disabled,
         createdAt: user.createdAt,
         notes: app.queries.countNotes(user.id),
-        keys: keys.list(user.id).filter((key) => !key.revoked).length,
+        // How many agent keys they have is not reported either. It is a number
+        // nothing on this screen can act on any more, and it still says
+        // something about somebody's own arrangements.
       })),
     };
   });
@@ -1508,12 +1510,43 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return reply.code(204).send();
   });
 
+  /**
+   * An administrator's keys are a **space's** keys, and nobody else's.
+   *
+   * These routes used to reach any account. They were written when there was
+   * one account and an administrator who was also its owner, so "whose keys"
+   * was not a question; with three accounts it is, and the answer is that a
+   * person's agent keys are that person's business. The operator of this server
+   * is not entitled to a list of which agents somebody has connected to their
+   * own notes, any more than to their notes.
+   *
+   * **What that costs, and why it is affordable:** a leaked key can no longer be
+   * revoked from here, because it can no longer be seen from here. The lever
+   * that remains is blunter and sufficient — disabling the account stops its
+   * agent keys as well as its sessions, which `ApiKeyService.resolve` has
+   * enforced from the start by joining on `users.disabled_at`. The person
+   * revokes the key itself, in their own settings.
+   *
+   * A space has no such person. Nobody signs in to one, its members are shares,
+   * and handing any of them the right to make a key for it would be a grant
+   * nobody recorded — so a space's keys stay here, where they always were.
+   *
+   * A person's id is answered like an id that is not a space at all, which is
+   * what `requireSpaceOwner` does: a refusal that named the account would
+   * confirm it exists to somebody who may not ask about it.
+   */
+  function requireSpaceOwner(id: string): string {
+    const owner = users.get(id);
+    if (owner === undefined || owner.kind !== 'space') throw new UnknownUserError('no such space');
+    return owner.id;
+  }
+
   fastify.get('/api/v1/admin/keys', async (request) => {
     requireAdmin(request);
     const query = (request.query ?? {}) as { owner?: unknown };
-    const owner = typeof query.owner === 'string' ? query.owner : requireUser(request).id;
+    if (typeof query.owner !== 'string') return { keys: [] };
 
-    return { keys: keys.list(owner) };
+    return { keys: keys.list(requireSpaceOwner(query.owner)) };
   });
 
   /**
@@ -1531,10 +1564,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   fastify.post('/api/v1/admin/keys', async (request, reply) => {
     requireAdmin(request);
     const { owner, name, scope, canWrite, expiresInDays } = body(request, S.CreateKeyRequest);
-
-    if (users.get(owner) === undefined) {
-      return reply.code(404).send({ code: 'unknown_user', message: 'no such account' });
-    }
+    requireSpaceOwner(owner);
 
     const created = keys.create(owner, name, {
       ...(scope === undefined ? {} : { scope }),
@@ -1549,6 +1579,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   fastify.delete('/api/v1/admin/keys/:id', async (request, reply) => {
     requireAdmin(request);
     const { id } = request.params as { id: string };
+
+    // A person's key is answered exactly as a key that is not there, which is
+    // what it is as far as this surface is concerned.
+    const key = keys.get(id);
+    if (key === undefined || users.get(key.owner)?.kind !== 'space') {
+      throw new UnknownKeyError('no such key');
+    }
+
     keys.revoke(id);
     return reply.code(204).send();
   });

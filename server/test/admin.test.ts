@@ -48,6 +48,9 @@ beforeEach(async () => {
   runtime = await createRuntime(config);
   await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
   await runtime.users.create('ramona', 'ihr gutes passwort');
+  // A space, because the administrator's key routes now reach spaces and
+  // nothing else. See the describe below.
+  await runtime.users.createSpace('verein', 'Verein');
 
   server = await buildServer({
     app: runtime.app,
@@ -81,7 +84,7 @@ describe('who may reach any of this', () => {
    * absent one, and Fastify's inject types reject the union that produces. An
    * empty object is a legal body for a route that ignores it.
    */
-  const routes: Array<{ method: 'GET' | 'POST' | 'DELETE'; url: string; payload: object }> = [
+  const routes: Array<{ method: 'GET' | 'POST' | 'DELETE' | 'PATCH'; url: string; payload: object }> = [
     { method: 'GET', url: '/api/v1/admin/users', payload: {} },
     { method: 'POST', url: '/api/v1/admin/users', payload: { id: 'neu', password: 'ein gutes passwort' } },
     { method: 'POST', url: '/api/v1/admin/users/ramona/password', payload: { password: 'ein gutes passwort' } },
@@ -323,13 +326,13 @@ describe('renaming an account', () => {
   });
 });
 
-describe('agent keys', () => {
+describe('agent keys, which here means a space’s', () => {
   it('hands back the secret exactly once', async () => {
     const created = await server.inject({
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: adminCookie },
-      payload: { owner: 'ramona', name: 'Claude' },
+      payload: { owner: 'verein', name: 'Claude' },
     });
 
     expect(created.statusCode).toBe(201);
@@ -338,7 +341,7 @@ describe('agent keys', () => {
 
     // Nothing else ever carries it: only the hash is stored.
     const listed = await server.inject({
-      url: '/api/v1/admin/keys?owner=ramona',
+      url: '/api/v1/admin/keys?owner=verein',
       headers: { cookie: adminCookie },
     });
     const all = S.AdminKeysResponse.parse(listed.json());
@@ -351,11 +354,11 @@ describe('agent keys', () => {
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: adminCookie },
-      payload: { owner: 'ramona', name: 'Claude' },
+      payload: { owner: 'verein', name: 'Claude' },
     });
     const { secret } = S.CreatedKeyResponse.parse(created.json());
 
-    expect(runtime.keys.resolve(secret)?.owner).toBe('ramona');
+    expect(runtime.keys.resolve(secret)?.owner).toBe('verein');
   });
 
   it('revokes one, and the secret stops working', async () => {
@@ -363,7 +366,7 @@ describe('agent keys', () => {
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: adminCookie },
-      payload: { owner: 'ramona', name: 'Claude' },
+      payload: { owner: 'verein', name: 'Claude' },
     });
     const key = S.CreatedKeyResponse.parse(created.json());
 
@@ -387,12 +390,87 @@ describe('agent keys', () => {
     expect(response.statusCode).toBe(404);
   });
 
+  /**
+   * A person's keys are that person's business.
+   *
+   * These routes reached any account, because they were written when there was
+   * one account and an administrator who was also its owner. The operator of
+   * this server is not entitled to a list of which agents somebody has
+   * connected to their own notes.
+   *
+   * A person is answered like an id that is not a space, rather than like a
+   * refusal: naming the account would confirm it exists to somebody who may not
+   * ask about it.
+   */
+  it('does not list a person’s keys, nor say that the person is one', async () => {
+    runtime.keys.create('ramona', 'Ihrer');
+
+    const asked = await server.inject({
+      url: '/api/v1/admin/keys?owner=ramona',
+      headers: { cookie: adminCookie },
+    });
+    const invented = await server.inject({
+      url: '/api/v1/admin/keys?owner=niemand',
+      headers: { cookie: adminCookie },
+    });
+
+    expect(asked.statusCode).toBe(invented.statusCode);
+    expect(asked.body).toBe(invented.body);
+  });
+
+  it('does not make a key for a person', async () => {
+    const tried = await server.inject({
+      method: 'POST',
+      url: '/api/v1/admin/keys',
+      headers: { cookie: adminCookie },
+      payload: { owner: 'ramona', name: 'Claude' },
+    });
+
+    expect(tried.statusCode).toBe(404);
+    expect(runtime.keys.list('ramona')).toHaveLength(0);
+  });
+
+  it('does not revoke a person’s key, and the key goes on working', async () => {
+    const { key, secret } = runtime.keys.create('ramona', 'Ihrer');
+
+    const tried = await server.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/keys/${key.id}`,
+      headers: { cookie: adminCookie },
+    });
+
+    expect(tried.statusCode).toBe(404);
+    expect(runtime.keys.resolve(secret)).not.toBeNull();
+  });
+
+  /**
+   * The lever that is left, and the reason losing the one above is affordable.
+   *
+   * `ApiKeyService.resolve` joins on `users.disabled_at`, so switching an
+   * account off stops its agents as well as its sessions. An administrator who
+   * has to stop a leaked key they cannot see still can.
+   */
+  it('stops a person’s keys by disabling the account, which it still may do', async () => {
+    const { secret } = runtime.keys.create('ramona', 'Ihrer');
+    expect(runtime.keys.resolve(secret)).not.toBeNull();
+
+    const off = await server.inject({
+      method: 'POST',
+      url: '/api/v1/admin/users/ramona/disabled',
+      headers: { cookie: adminCookie },
+      payload: { disabled: true },
+    });
+
+    expect(off.statusCode).toBe(200);
+    expect(runtime.keys.resolve(secret)).toBeNull();
+  });
+
   it('carries the scope and the write flag it was given', async () => {
     const created = await server.inject({
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: adminCookie },
-      payload: { owner: 'ramona', name: 'Claude', scope: 'Projekte', canWrite: true },
+      payload: { owner: 'verein', name: 'Claude', scope: 'Projekte', canWrite: true },
     });
 
     const key = S.CreatedKeyResponse.parse(created.json());

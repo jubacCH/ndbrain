@@ -54,6 +54,9 @@ beforeEach(async () => {
   // needs nothing from the first.
   await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
   await runtime.users.create('ramona', 'ihr gutes passwort');
+  // The administrator's key routes reach spaces and nothing else, so the two
+  // tests below that still use them need one.
+  await runtime.users.createSpace('verein', 'Verein');
 
   server = await buildServer({
     app: runtime.app,
@@ -110,12 +113,13 @@ describe('making one', () => {
   it('refuses a key with no deadline; that stays with the administrator', async () => {
     expect((await make(ramona, { name: 'Cron', expiresInDays: null })).statusCode).toBe(400);
 
-    // And the administrator's route still takes it, for the job that needs it.
+    // And the administrator's route still takes it, for the job that needs it —
+    // on a space, which is the only owner that route still reaches.
     const byAdmin = await server.inject({
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: julian },
-      payload: { owner: 'julian', name: 'Cron', expiresInDays: null },
+      payload: { owner: 'verein', name: 'Cron', expiresInDays: null },
     });
     expect(byAdmin.statusCode).toBe(201);
     expect(S.CreatedKeyResponse.parse(byAdmin.json()).expiresAt).toBeNull();
@@ -191,22 +195,23 @@ describe('revoking one', () => {
     expect(runtime.keys.resolve(hers.secret)).not.toBeNull();
   });
 
-  /** An administrator is not exempt here: this route is about one's own keys. */
-  it('does not let an administrator through this door', async () => {
+  /**
+   * An administrator reaches it by neither door.
+   *
+   * Not by this one, which is about one's own keys. And no longer by the
+   * administrator's either: a person's agent keys are that person's business,
+   * so there is now no route on which somebody else revokes them. The lever
+   * that remains is disabling the account, which stops its keys as well — see
+   * `admin.test.ts`.
+   */
+  it('is reached by no administrator, on either route', async () => {
     const hers = S.CreatedKeyResponse.parse((await make(ramona, { name: 'Ihrer' })).json());
 
-    expect(
-      (await server.inject({ method: 'DELETE', url: `/api/v1/keys/${hers.id}`, headers: { cookie: julian } }))
-        .statusCode,
-    ).toBe(404);
+    for (const url of [`/api/v1/keys/${hers.id}`, `/api/v1/admin/keys/${hers.id}`]) {
+      const tried = await server.inject({ method: 'DELETE', url, headers: { cookie: julian } });
+      expect(tried.statusCode, url).toBe(404);
+    }
 
-    // The administrator's own route is where that is done, and it still works.
-    expect(
-      (await server.inject({
-        method: 'DELETE',
-        url: `/api/v1/admin/keys/${hers.id}`,
-        headers: { cookie: julian },
-      })).statusCode,
-    ).toBe(204);
+    expect(runtime.keys.resolve(hers.secret)).not.toBeNull();
   });
 });

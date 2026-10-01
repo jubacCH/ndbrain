@@ -342,7 +342,10 @@ function Shell({
   /** Which theme is on screen, whatever chose it — the header button flips from here. */
   const dark = isDark(prefs.theme, systemDark);
   /** Which account's keys the admin view is showing. */
-  const [keyOwner, setKeyOwner] = useState(user.id);
+  // Which space the key section is showing. Empty until the spaces arrive —
+  // not the signed-in account, which is what it used to be and is now an owner
+  // those routes refuse: somebody's own agent keys are theirs.
+  const [keyOwner, setKeyOwner] = useState('');
   const [adminBusy, setAdminBusy] = useState(false);
   const [recents, setRecents] = useState<Recent[]>(() => {
     discardLegacy();
@@ -505,6 +508,14 @@ function Shell({
   // administrator can ask the server who has an account.
   const adminUsersQuery = useAdminUsers(isAdmin && (view === 'admin' || shareTarget !== null));
   const adminSpacesQuery = useAdminSpaces(isAdmin && view === 'admin');
+  // Keeps the picked space a space that exists. Without it the select shows the
+  // first one while `keyOwner` still names something else, and the key is asked
+  // for an owner nobody chose.
+  useEffect(() => {
+    const spaces = adminSpacesQuery.data ?? [];
+    if (spaces.length === 0) return;
+    if (!spaces.some((space) => space.id === keyOwner)) setKeyOwner(spaces[0]!.id);
+  }, [adminSpacesQuery.data, keyOwner]);
   const adminKeysQuery = useAdminKeys(keyOwner, isAdmin && view === 'admin');
   // Only while that page is open: a key list is of no use anywhere else, and
   // asking for one on every load would be a request nobody reads.

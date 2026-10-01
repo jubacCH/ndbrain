@@ -383,10 +383,15 @@ describe('agent keys of a space', () => {
 describe('agent keys of a disabled person', () => {
   it('are refused exactly like an unknown key, and work again once the account is enabled', async () => {
     await h.runtime.app.createNote('julian', 'Privat.md', '# Privat\n', 'julian');
-    const created = await h.as('admin', {
+    // Made by Julian, because that is now the only way a person's key comes
+    // into being: the administrator's key routes reach spaces and nothing else.
+    // What this checks is unchanged and is the reason that is affordable — an
+    // administrator can still stop an agent they cannot see, by switching the
+    // account off.
+    const created = await h.as('julian', {
       method: 'POST',
-      url: '/api/v1/admin/keys',
-      payload: { owner: 'julian', name: 'julians-agent' },
+      url: '/api/v1/keys',
+      payload: { name: 'julians-agent' },
     });
     expect(created.status).toBe(201);
     const secret: string = created.body.secret;

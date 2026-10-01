@@ -25,13 +25,13 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 5, 15, 12);
 
 const USERS: AdminUser[] = [
-  { id: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10, keys: 4 },
+  { id: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
 ];
 
 function key(name: string, expiresAt: number | null, revoked = false): ApiKey {
   return {
     id: `key_${name}`,
-    owner: 'julian',
+    owner: 'verein',
     name,
     scope: '',
     canWrite: false,
@@ -56,9 +56,11 @@ function renderAdmin(keys: ApiKey[], onCreateKey = vi.fn()) {
     onCreateKey,
     onRevokeKey: vi.fn(async () => undefined),
     onPickOwner: vi.fn(),
-    keyOwner: 'julian',
+    // A space, because the key section is a space's now: somebody's own agent
+    // keys are theirs and are not listed on this screen.
+    keyOwner: 'verein',
     spaces: {
-      spaces: [],
+      spaces: [{ id: 'verein', displayName: 'Verein', disabled: false, noteCount: 0, members: 0 }],
       onCreate: vi.fn(async () => undefined),
       onRename: vi.fn(async () => undefined),
       onSetDisabled: vi.fn(async () => undefined),
@@ -146,7 +148,7 @@ describe('the lifetime a new key is given', () => {
     await userEvent.type(screen.getByLabelText(copy.admin.keyName), 'Claude');
     await userEvent.click(screen.getByRole('button', { name: copy.admin.createKey }));
 
-    expect(onCreateKey).toHaveBeenCalledWith('julian', 'Claude', '', false, 365);
+    expect(onCreateKey).toHaveBeenCalledWith('verein', 'Claude', '', false, 365);
   });
 
   it('can be told to last until revoked, which has to be chosen', async () => {
@@ -159,6 +161,6 @@ describe('the lifetime a new key is given', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: copy.admin.createKey }));
 
-    expect(onCreateKey).toHaveBeenCalledWith('julian', 'Monatslauf', '', false, null);
+    expect(onCreateKey).toHaveBeenCalledWith('verein', 'Monatslauf', '', false, null);
   });
 });

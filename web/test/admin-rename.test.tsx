@@ -23,8 +23,8 @@ import { copy } from '../src/copy';
 import type { AdminUser } from '../src/api';
 
 const USERS: AdminUser[] = [
-  { id: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10, keys: 1 },
-  { id: 'ramona', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 3, keys: 0 },
+  { id: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
+  { id: 'ramona', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 3 },
 ];
 
 function renderAdmin(over: Partial<AdminProps> = {}) {

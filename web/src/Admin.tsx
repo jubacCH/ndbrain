@@ -82,7 +82,6 @@ export function AdminView(props: AdminProps): React.JSX.Element {
             <tr>
               <th>{copy.admin.account}</th>
               <th className="n">{copy.admin.notes}</th>
-              <th className="n">{copy.admin.keys}</th>
               <th>{copy.admin.since}</th>
               <th className="n">{copy.admin.actions}</th>
             </tr>
@@ -97,7 +96,6 @@ export function AdminView(props: AdminProps): React.JSX.Element {
                   {user.disabled && <span className="pill p-crit">{copy.admin.disabled}</span>}
                 </td>
                 <td className="n">{user.notes}</td>
-                <td className="n">{user.keys}</td>
                 <td>{when(user.createdAt)}</td>
                 <td className="n adminrow-actions">
                   <Rename
@@ -153,30 +151,32 @@ export function AdminView(props: AdminProps): React.JSX.Element {
         <h3 className="cap">{copy.admin.agentKeys}</h3>
         <p className="setnote">{copy.admin.keysExplain}</p>
 
-        <div className="setrow">
-          <div className="setlabel">
-            <span>{copy.admin.forAccount}</span>
-          </div>
-          <select value={keyOwner} aria-label={copy.admin.forAccount} onChange={(e) => props.onPickOwner(e.target.value)}>
-            <optgroup label={copy.admin.people}>
-              {people.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.displayName} ({user.id})
-                </option>
-              ))}
-            </optgroup>
-            {spaces.length > 0 && (
-              <optgroup label={copy.admin.spacesGroup}>
+        {/* Spaces, and no account picker. Somebody's own agent keys are theirs;
+            this screen used to list any account's because it was written when
+            there was one account and an administrator who was also its owner. */}
+        <p className="setnote">{copy.admin.keysArePersonal}</p>
+
+        {spaces.length === 0 ? (
+          <p className="empty">{copy.admin.noSpacesForKeys}</p>
+        ) : (
+          <>
+            <div className="setrow">
+              <div className="setlabel">
+                <span>{copy.admin.forAccount}</span>
+              </div>
+              <select
+                value={keyOwner}
+                aria-label={copy.admin.forAccount}
+                onChange={(e) => props.onPickOwner(e.target.value)}
+              >
                 {spaces.map((space) => (
                   <option key={space.id} value={space.id}>
                     {space.displayName} ({space.id})
                   </option>
                 ))}
-              </optgroup>
-            )}
-          </select>
-        </div>
-        {spaceIds.has(keyOwner) && <p className="setnote">{copy.admin.keysForSpace}</p>}
+              </select>
+            </div>
+            <p className="setnote">{copy.admin.keysForSpace}</p>
 
         <KeyTable
           keys={keys}
@@ -189,13 +189,15 @@ export function AdminView(props: AdminProps): React.JSX.Element {
 
         {/* The administrator is the one who may make a key that never runs
             out, for the job that runs once a month. */}
-        <NewKey
-          busy={busy}
-          allowForever
-          onCreate={(name, scope, canWrite, expiresInDays) =>
-            props.onCreateKey(keyOwner, name, scope, canWrite, expiresInDays)
-          }
-        />
+            <NewKey
+              busy={busy}
+              allowForever
+              onCreate={(name, scope, canWrite, expiresInDays) =>
+                props.onCreateKey(keyOwner, name, scope, canWrite, expiresInDays)
+              }
+            />
+          </>
+        )}
       </section>
     </div>
   );
