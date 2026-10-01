@@ -77,7 +77,10 @@ function render(size, padding) {
 
   const inset = Math.round(size * padding);
   const box = size - inset * 2;
-  const stroke = Math.max(2, Math.round(box * 0.08));
+  // Finer than the SVG's 0.08, and on purpose: the SVG centres its stroke on the
+  // path while this draws it inwards from the edge, so the same number reads
+  // noticeably heavier. Matched by eye against the drawing at 512.
+  const stroke = Math.max(2, Math.round(box * 0.062));
 
   /** A point of the 20-unit grid the SVG is drawn on, in pixels. */
   const at = (unit) => inset + (unit / 20) * box;
@@ -157,6 +160,14 @@ const icons = [
   // iOS ignores the manifest and uses this one, always square, never masked.
   ['apple-touch-icon.png', 180, 0.12],
   ['favicon-32.png', 32, 0.1],
+  // The Mac client's source art. Far more padding than the web icons because a
+  // macOS icon is a squircle with its own margin — `desktop/icons.mjs` masks
+  // this, and a mark sized for a full square would then crowd the curve.
+  //
+  // 1024 rather than 512 because an `.icns` holds every size macOS draws, and
+  // the largest of them is 512 at 2x. A set built from a 512 source has that
+  // one upscaled, which is the size Finder shows in its own preview.
+  ['icon-mac-1024.png', 1024, 0.26],
 ];
 
 for (const [name, size, padding] of icons) {

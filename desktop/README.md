@@ -132,7 +132,7 @@ malformed icon is a build that does not finish.
 
 | | |
 |---|---|
-| launch | the window opens where it was last left |
+| launch | the window opens where it was last left, in front |
 | `⌘R` | fetches the page again, for a suspicion the automatic check missed |
 | `⌘W` | puts the window away; the shortcut keeps working |
 | `⌘Q` | quits, which is the only thing that stops the shortcut |
@@ -229,6 +229,8 @@ ui/        The panel. Static HTML, CSS and one module — no bundler.
 icons.mjs  Both icons, out of the PWA's: an RGBA app icon, which Tauri insists
            on, and a 36-pixel template for the menu bar, which is a different
            thing from a small app icon — see `app/src/tray.rs`.
+bundle.mjs The `.app`: a plist, the binary, and an `.icns` of every size macOS
+           asks for. `--install` puts it in /Applications.
 ```
 
 `capture/` is separate so the red/green loop over the decisions does not compile
@@ -264,11 +266,23 @@ that did not start.
 ## Building
 
 ```bash
-cargo test     # 89 tests across the three crates
-cargo build    # an unsigned debug binary in target/debug/
-node icons.mjs # only when the PWA's mark changes
+cargo test                # 90 tests across the three crates
+cargo build               # an unsigned debug binary in target/debug/
+node icons.mjs            # only when the PWA's mark changes
+node bundle.mjs --install # the .app, into /Applications
 ```
 
-Rust 1.90 or newer; Tauri 2.12 sets that floor. `cargo build` produces a binary,
-not a bundle: `cargo tauri build` makes the `.app`, and signing and notarisation
-need a certificate, so the shippable build happens in Xcode.
+Rust 1.90 or newer; Tauri 2.12 sets that floor.
+
+`cargo build` produces a binary, and macOS will not treat a binary as an
+application: no Dock icon of its own, no Launchpad, no Spotlight. `bundle.mjs`
+makes the `.app` — it exists because the first one was assembled by hand, and
+the only record of how was a terminal's scrollback. Two things were wrong in it
+and neither was visible: the `.icns` held a single size, so every place macOS
+draws the icon larger or smaller scaled that one image, and the bundle was never
+signed, only linker-signed, leaving its `Info.plist` unbound and its resources
+unsealed.
+
+It signs ad-hoc, which is well-formed and nothing more. Signing properly needs a
+certificate and a certificate lives in Xcode, so that is still where a shippable
+build happens.

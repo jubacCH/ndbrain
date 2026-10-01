@@ -23,7 +23,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE = join(HERE, '..', 'web', 'public', 'icon-512.png');
+// The mac-sized source: more padding than the web icons, because the squircle
+// below adds a margin of its own and the mark would otherwise crowd the curve.
+const SOURCE = join(HERE, '..', 'web', 'public', 'icon-mac-1024.png');
 const TARGET = join(HERE, 'app', 'icons', 'icon.png');
 const TRAY = join(HERE, 'app', 'icons', 'tray.rgba');
 
@@ -97,6 +99,49 @@ for (let y = 0; y < height; y += 1) {
   if (rgb[y * sourceStride] !== 0) throw new Error(`row ${y} is filtered; this only reads filter 0`);
 }
 
+/**
+ * The shape macOS expects, which is not a square.
+ *
+ * An application icon in the Dock is a superellipse — Apple's "squircle" — with
+ * a margin around it, and every other icon in the Dock has it. A full-bleed
+ * square stands out as the one thing that was not made for this system, which is
+ * exactly how it looked.
+ *
+ * The two numbers are measured rather than guessed, against the silhouette of a
+ * system application's own icon at 1024 pixels: the margin is 0.0977 a side, and
+ * the curve fits a superellipse of exponent 5.1 to within 3.3 pixels RMS. A
+ * circular radius is visibly wrong next to the real thing — it leaves the
+ * straight edge too late and arrives too early — and that is what fitting the
+ * whole profile, rather than checking one row, is able to say.
+ *
+ * The PWA icon stays a full square on purpose — browsers and launchers mask it
+ * themselves, and masking it twice cuts the mark.
+ */
+const MARGIN = 0.0977;
+const EXPONENT = 5.1;
+
+/** How much of this pixel is inside the squircle, sampled rather than guessed. */
+const coverage = (x, y) => {
+  const inset = width * MARGIN;
+  const half = (width - inset * 2) / 2;
+  const cx = width / 2;
+  const cy = height / 2;
+  let inside = 0;
+  // Four samples a side: enough to keep the curve from stepping, cheap enough
+  // not to matter for an icon written once.
+  const STEPS = 4;
+  for (let sy = 0; sy < STEPS; sy += 1) {
+    for (let sx = 0; sx < STEPS; sx += 1) {
+      const px = x + (sx + 0.5) / STEPS;
+      const py = y + (sy + 0.5) / STEPS;
+      const nx = Math.abs(px - cx) / half;
+      const ny = Math.abs(py - cy) / half;
+      if (nx ** EXPONENT + ny ** EXPONENT <= 1) inside += 1;
+    }
+  }
+  return inside / (STEPS * STEPS);
+};
+
 const stride = width * 4 + 1;
 const rgba = Buffer.alloc(stride * height);
 for (let y = 0; y < height; y += 1) {
@@ -108,7 +153,7 @@ for (let y = 0; y < height; y += 1) {
     rgba[at] = rgb[from + x * 3];
     rgba[at + 1] = rgb[from + x * 3 + 1];
     rgba[at + 2] = rgb[from + x * 3 + 2];
-    rgba[at + 3] = 255; // the mark is a filled square; nothing is transparent
+    rgba[at + 3] = Math.round(coverage(x, y) * 255);
   }
 }
 
