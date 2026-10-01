@@ -37,6 +37,7 @@ import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { copy } from './copy';
 import { useFilesPane } from './useFilesPane';
+import { useTidyActions } from './useTidyActions';
 import { useSearch } from './useSearch';
 import { discardLegacy, dropRecent, forgetAccount, loadRecents, pushRecent, type Recent } from './accountStorage';
 import { SESSION_SIGNAL_KEY, announceSessionChange, closeSession, openSession } from './session';
@@ -304,12 +305,9 @@ function Shell({
   const [fullscreen, setFullscreen] = useState<FullscreenFrame | null>(null);
   const fullscreenRef = useRef<FullscreenFrame | null>(null);
   fullscreenRef.current = fullscreen;
-  const [selection, setSelection] = useState<Set<string>>(new Set());
-  const [bulkBusy, setBulkBusy] = useState(false);
   const [taskDir, setTaskDir] = useState<string | undefined>(undefined);
   const [taskIncludeDone, setTaskIncludeDone] = useState(false);
   const [taskBusy, setTaskBusy] = useState(false);
-  const [topicsDone, setTopicsDone] = useState<number | null>(null);
   /** The finding the tidy view opens narrowed to, when it was reached from the home view's health card. */
   const [tidyFocus, setTidyFocus] = useState<HealthKey | 'stale' | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
@@ -848,67 +846,6 @@ function Shell({
       }
     },
     [open, client],
-  );
-
-  /**
-   * Adds the proposed tags to the notes that were left ticked.
-   *
-   * Sends paths only. The tags themselves are re-derived on the server, so a
-   * proposal this page has been holding for ten minutes cannot write something
-   * the note no longer says.
-   */
-  const applyTopics = useCallback(
-    async (paths: string[]): Promise<void> => {
-      setBulkBusy(true);
-      try {
-        const { applied } = await api.applyTopics(paths);
-        // Everything that reads tags is now stale: the tree markers, the tag
-        // cloud, the untagged finding and the proposal list itself.
-        invalidate.afterStructure(client);
-        setTopicsDone(applied.length);
-        setError(null);
-      } catch (caught) {
-        setError(caught instanceof ApiError ? caught.message : copy.topics.failed);
-      } finally {
-        setBulkBusy(false);
-      }
-    },
-    [client],
-  );
-
-  /**
-   * Removes one empty folder, from the tidy view's finding.
-   *
-   * The whole of what replaced the automatic pruning: a folder that goes empty
-   * stays, the view says so, and this is the person acting on it. Confirmed
-   * first — a folder is not a note and does not come back through Recently
-   * deleted — though there is nothing in it to lose, so the question says that
-   * rather than warning about data.
-   *
-   * No `settle()` before it, unlike the note operations: nothing that could be
-   * in flight writes into an empty folder, and if something does land there
-   * between the listing and the click, the server refuses the delete because
-   * the folder is no longer empty. That refusal is the right answer and it is
-   * the server's to give.
-   */
-  const removeEmptyFolder = useCallback(
-    async (dir: string): Promise<void> => {
-      if (!window.confirm(copy.ask.deleteFolder(dir))) return;
-
-      setBulkBusy(true);
-      try {
-        await api.deleteFolder(dir);
-        // The tree shows folders off the filesystem, and the finding comes from
-        // the same walk — both are stale the moment one goes.
-        invalidate.afterStructure(client);
-        setError(null);
-      } catch (caught) {
-        setError(caught instanceof ApiError ? caught.message : copy.errors.deleteFolderFailed);
-      } finally {
-        setBulkBusy(false);
-      }
-    },
-    [client],
   );
 
   /**
@@ -1566,63 +1503,29 @@ function Shell({
   };
 
   /**
-   * Runs a bulk action over the current selection and reports honestly.
+   * The findings that are ticked and what the bulk bar does to them, in
+   * `useBulkSelection`.
    *
-   * Partial success is the normal outcome, not an exception: the server does
-   * what it can and names what it could not, and hiding that behind a generic
-   * "some items failed" would leave somebody to find out which ones by hand.
+   * The three handlers that changed the selection used to be written inline in
+   * the JSX, where nothing could reach them; they are named functions now.
    */
-  const runBulk = async (action: 'move' | 'tag' | 'delete'): Promise<void> => {
-    const paths = [...selection];
-    if (paths.length === 0) return;
-
-    let extra: { tag?: string; dir?: string } = {};
-
-    if (action === 'move') {
-      const dir = window.prompt(copy.ask.moveTo(paths.length), 'Archive');
-      if (dir === null) return;
-      extra = { dir };
-    } else if (action === 'tag') {
-      const tag = window.prompt(copy.ask.tagWith(paths.length));
-      if (tag === null || tag.trim() === '') return;
-      extra = { tag };
-    } else {
-      const preview = await api.deletePreview(user.id, paths).catch(() => null);
-      const afterwards = copy.ask.afterDelete(preview);
-      if (!window.confirm(copy.ask.deleteNotes(paths.length) + (afterwards !== '' ? ` ${afterwards}` : ''))) return;
-    }
-
-    // Written first, like every other operation that moves or removes a note
-    // under the editor: a save in flight belongs to the path it was typed at,
-    // and one that lands after a move re-creates the note there.
-    await settle();
-
-    setBulkBusy(true);
-    try {
-      // The caller's own vault: the tidy view that feeds this selection never
-      // shows anybody else's notes.
-      const result = await api.bulk(user.id, action, paths, extra);
-      setSelection(new Set());
-      await refreshTree();
-      await refreshOverview();
-
-      if (result.failed.length === 0) {
-        setError(null);
-      } else {
-        setError(
-          copy.errors.bulkPartly(
-            result.ok.length,
-            result.failed.map((entry) => entry.path),
-            result.failed[0]?.reason ?? '',
-          ),
-        );
-      }
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : copy.errors.bulkFailed);
-    } finally {
-      setBulkBusy(false);
-    }
-  };
+  const {
+    selection,
+    busy: bulkBusy,
+    topicsDone,
+    toggle: toggleSelected,
+    toggleAll: toggleAllSelected,
+    keepSelected,
+    runBulk,
+    applyTopics,
+    removeEmptyFolder,
+  } = useTidyActions({
+      userId: user.id,
+      settle,
+      refreshTree,
+      refreshOverview,
+      setError,
+    });
 
   // A focus handed over from the home view is used once, on arrival.
   useEffect(() => {
@@ -2322,24 +2225,9 @@ function Shell({
                   // score does not depend on it, only the wording of an empty line.
                   health={{ notes: notes.filter((note) => note.owner === user.id).length, tagsInUse: tags.length > 0 }}
                   initialFocus={tidyFocus}
-                  onToggle={(path) =>
-                    setSelection((current) => {
-                      const next = new Set(current);
-                      if (next.has(path)) next.delete(path);
-                      else next.add(path);
-                      return next;
-                    })
-                  }
-                  onToggleAll={(paths) =>
-                    setSelection((current) => (current.size === paths.length ? new Set() : new Set(paths)))
-                  }
-                  onKeepSelected={(paths) =>
-                    setSelection((current) => {
-                      const shown = new Set(paths);
-                      const kept = [...current].filter((path) => shown.has(path));
-                      return kept.length === current.size ? current : new Set(kept);
-                    })
-                  }
+                  onToggle={toggleSelected}
+                  onToggleAll={toggleAllSelected}
+                  onKeepSelected={keepSelected}
                   onOpen={(path) => void openNote(user.id, path)}
                   onBulk={(action) => void runBulk(action)}
                   onDeleteFolder={(dir) => void removeEmptyFolder(dir)}
