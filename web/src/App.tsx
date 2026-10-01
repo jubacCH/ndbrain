@@ -1323,6 +1323,14 @@ function Shell({
   useEffect(() => {
     if (view !== 'note' || openRef === null || !visible) return;
     if (noteQuery.data?.canWrite !== true) return;
+    // And not while this tab is in a room. The same argument as the read-only
+    // reader above: there is nothing here to act on. In a room the text arrives
+    // through the room — an agent's write over MCP goes into it, and a file
+    // changed from outside is merged in by the watcher — so the editor already
+    // holds what the file holds, while the version the answer reports has moved
+    // on past the one the note was read at, because the room persists. Asking
+    // produced a difference that was never a conflict.
+    if (live) return;
 
     const { owner, path } = openRef;
     let alive = true;
@@ -1341,7 +1349,7 @@ function Shell({
       alive = false;
       window.clearInterval(timer);
     };
-  }, [view, openRef, visible, noteQuery.data?.canWrite, prefs.pulseMs, sawVersion]);
+  }, [view, openRef, visible, live, noteQuery.data?.canWrite, prefs.pulseMs, sawVersion]);
 
   /**
    * The open note's neighbourhood: itself and whatever links to or from it.
@@ -2010,7 +2018,10 @@ function Shell({
             at not quite what I think it is" — and something that is about the
             whole note belongs where the eye already is rather than in a corner.
             Only in the note view, where there is a note it can be about. */}
-        {view === 'note' && open !== null && stale && <StaleNoteBar onLoad={loadTheirVersion} />}
+        {/* Not while live: a room that opens after the warning was already up
+            resolves it by itself, and the bar would otherwise sit there
+            offering to replace the text with itself. */}
+        {view === 'note' && open !== null && stale && !live && <StaleNoteBar onLoad={loadTheirVersion} />}
 
         <div className="stage">
           {/* `tabIndex={-1}` so the skip link can actually land here: without

@@ -49,6 +49,31 @@ vi.mock('../src/Editor', () => ({
 }));
 vi.mock('../src/Context', () => ({ ContextPanel: () => <div /> }));
 
+/**
+ * Whether this tab holds a live room, which every test but one says it does not.
+ *
+ * Without a socket `useCollab` reports `unavailable` anyway, so the default here
+ * is what jsdom would have given: these tests are about the save path, and the
+ * save path is what runs when there is no room.
+ */
+const room = vi.hoisted(() => ({
+  collab: { provider: null, status: 'unavailable', peers: [], canWrite: false, synced: false } as unknown,
+}));
+vi.mock('../src/collab/useCollab', () => ({ useCollab: () => room.collab }));
+
+/** This tab is in a room and holds its text. */
+function joinedARoom(): void {
+  room.collab = {
+    // The editor is mocked in this file, so what the room hands it is never
+    // read — only that there *is* one, which is what `live` turns on.
+    provider: { text: {}, awareness: {}, doc: { clientID: 1 } },
+    status: 'live',
+    peers: [],
+    canWrite: true,
+    synced: true,
+  };
+}
+
 const server = vi.hoisted(() => ({
   signedIn: null as User | null,
   notes: [] as NoteRow[],
@@ -215,6 +240,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  room.collab = { provider: null, status: 'unavailable', peers: [], canWrite: false, synced: false };
   await hidden(false);
   window.localStorage.clear();
   window.__ndbrainPending = null;
@@ -273,6 +299,67 @@ describe('somebody else changed the open note', () => {
 
     await waitFor(() => expect(warned()).not.toBeNull());
     expect(screen.getByText(copy.staleNote.whenSaving)).toBeInTheDocument();
+  });
+
+  /**
+   * The warning is about the save path, and in a room there is no save path.
+   *
+   * What somebody met: the bar saying their note had changed, and "Load their
+   * version" showing **the same text they were already looking at**. In a room
+   * the text arrives through the room — an agent writing over MCP goes into it
+   * (`appendNote` in `server/src/app.ts`), and a file changed from outside is
+   * merged in by `App.noteChanged` → `Room.flush`. The editor is therefore
+   * already showing what the file holds.
+   *
+   * The version the bar compares against is the one the note was *read* at, and
+   * the room moves the file on past it with every persist. So the bar fired on
+   * the room doing its job, about a difference that had already been resolved,
+   * and offered an action that would have replaced the text with itself.
+   */
+  it('stays away while this tab is in a room, where the text arrives on its own', async () => {
+    joinedARoom();
+    mount();
+    await openFromPalette('Plan');
+
+    somebodyElseWrote(PLAN, 'Anna hat weitergeschrieben');
+    await advance(POLL);
+    await advance(POLL);
+
+    expect(warned()).toBeNull();
+  });
+
+  /**
+   * And it stops asking, which is the half the bar alone would hide.
+   *
+   * Hiding the bar is enough to be rid of the message; it would leave a request
+   * every pulse whose answer is thrown away. The poll's own reasoning already
+   * covers this case — a read-only reader is not polled, because "polling a
+   * hash they cannot act on would be watching the owner type" — and a tab in a
+   * room cannot act on it either.
+   */
+  it('does not even ask for the version while this tab is in a room', async () => {
+    joinedARoom();
+    mount();
+    await openFromPalette('Plan');
+    await advance(POLL);
+    await advance(POLL);
+
+    expect(server.versionCalls.get(PLAN) ?? 0).toBe(0);
+  });
+
+  it('goes when a room comes up under a warning that is already on screen', async () => {
+    mount();
+    await openFromPalette('Plan');
+    somebodyElseWrote(PLAN, 'Anna hat weitergeschrieben');
+    await advance(POLL);
+    await waitFor(() => expect(warned()).not.toBeNull());
+
+    // The socket connects a moment after the note opened, which is the ordinary
+    // order of things. Whatever the warning was about, the room settles it.
+    joinedARoom();
+    await typeInEditor();
+
+    expect(warned()).toBeNull();
   });
 
   it('says it about a note in somebody else’s vault, which is what it is for', async () => {
