@@ -23,7 +23,7 @@ one instance behind a reverse proxy, holding real notes, with agents writing int
 | 2 | REST API, authentication, web UI, container image | done |
 | 3–6 | Search, backlinks, overview, tidy-up, graph views, home, journal and daily notes | done |
 | 7 | Sharing between users | done |
-| 8 | Installable as an app (PWA) | done; the desktop shell was never built, see below |
+| 8 | Installable as an app (PWA) | done, and a Mac client beside it — see `desktop/` |
 | 9 | MCP endpoint with scoped agent keys | done |
 
 Three releases came after the plan ran out: spaces (vaults nobody signs in to), bringing back a
@@ -67,7 +67,7 @@ the theme bootstrap in `web/index.html` is allowed by digest, so `script-src` ne
 server/    Node + Fastify, TypeScript. Vault access, index, REST, MCP.
 web/       React + Vite UI, installable as an app.
 shared/    The API schemas both sides compile against.
-desktop/   macOS menu-bar app: the global capture shortcut, in Rust — see desktop/README.md.
+desktop/   Mac client: a window on ndBrain plus the global capture shortcut, in Rust.
 ops/       History and backup on the hosts — see ops/README.md.
 ```
 
@@ -334,11 +334,14 @@ Worth knowing before reading the code, because some of it is conspicuous by its 
   the honest state rather than an oversight waiting to be fixed. Search is SQLite FTS5 over title
   and body plus the link structure; the brain view is a layout of that link graph, not a model.
   Agents come to ndBrain through MCP and bring their own intelligence with them.
-- **No desktop application that shows notes.** `desktop/` is a Tauri v2 menu-bar app, and it is
-  only the global capture shortcut — it has no window that loads ndBrain. An installed PWA is
-  already a chromeless window with its own icon, so a WebView there would have been a second place
-  to be signed in and a second cache to go stale in exchange for nothing. Its menu opens ndBrain in
-  the browser. See [desktop/README.md](desktop/README.md).
+- **No second copy of the application in the Mac client.** `desktop/` is a Tauri v2 app with a
+  window on this server and a global capture shortcut beside it. The window is a WKWebView on the
+  configured address, not a reimplementation: there is one UI, one content-security policy — the
+  server's, since Tauri's own applies only to what Tauri serves — and one session, reconciled
+  between the WebView's cookie store and the Keychain the capture panel uses. What it does add is
+  the staleness check a browser tab does not have: a single-page app without a router never
+  navigates, so the client compares the served bundle's content hash against the one its window is
+  running and reloads on a difference. See [desktop/README.md](desktop/README.md).
 - **No offline notes.** The service worker exists for startup speed and installability. Anything
   under `/api/` never touches the cache in either direction, because serving a cached note would
   be showing somebody text that may have changed with no way for them to tell.

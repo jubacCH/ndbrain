@@ -81,3 +81,23 @@ fn always_has_something_to_say() {
         assert!(!reply_for(outcome).message.is_empty());
     }
 }
+
+/* ---- and the window that must not go away quietly ----------------------- */
+
+/// `⌘W` must not put the capture panel away.
+///
+/// The panel refuses `esc` while it holds unsent text, because hiding it then is
+/// exactly how a thought is lost without anybody noticing. An application menu
+/// — which the main window needs, or there is no ⌘C and no ⌘V in it — brings
+/// `⌘W` along, and `⌘W` knows nothing about the field. So a close request on the
+/// panel is left to the panel, which is the half that knows.
+#[test]
+fn refuses_to_put_the_panel_away_on_a_close_request() {
+    assert_eq!(ndbrain_desktop::closing("capture"), ndbrain_desktop::Closing::LeaveItToTheWindow);
+}
+
+/// The main window has nothing in it that is not on the server.
+#[test]
+fn hides_the_main_window_on_a_close_request() {
+    assert_eq!(ndbrain_desktop::closing("main"), ndbrain_desktop::Closing::PutItAway);
+}
