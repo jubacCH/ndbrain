@@ -609,6 +609,13 @@ export const ApiKey = z.object({
 
 export const AdminKeysResponse = z.object({ keys: z.array(ApiKey) });
 
+/**
+ * The caller's own keys. Deliberately the same shape, and written as the same
+ * schema: the two listings differ in whose keys they return and in nothing
+ * else, and a second definition would be free to drift from this one.
+ */
+export const KeysResponse = AdminKeysResponse;
+
 export const CreateKeyRequest = z
   .object({
     owner: UserId,
@@ -624,6 +631,31 @@ export const CreateKeyRequest = z
      * up. Ten years is the ceiling: past that the number is decoration.
      */
     expiresInDays: z.number().int().min(1).max(3650).nullable().optional(),
+  })
+  .strict();
+
+/**
+ * A key somebody makes for themselves.
+ *
+ * No `owner`. The caller is the owner, taken from the session and never from
+ * the body — a self-service route that read an owner out of the request would
+ * be the admin route with the check taken off. `.strict()` makes naming one a
+ * malformed body rather than a field that is quietly dropped, because the
+ * second is the same outcome today and an escalation the day somebody adds the
+ * property back "for symmetry".
+ *
+ * No `null` either, so a key made this way always runs out. "No deadline" is
+ * for the job that runs once a month and is somebody's considered decision
+ * about a machine they operate; it stays on the administrator's route, where it
+ * was. A key that never expires and was made in passing is the one nobody
+ * remembers to revoke.
+ */
+export const CreateOwnKeyRequest = z
+  .object({
+    name: z.string().min(1).max(64),
+    scope: z.string().max(1024).optional(),
+    canWrite: z.boolean().optional(),
+    expiresInDays: z.number().int().min(1).max(3650).optional(),
   })
   .strict();
 

@@ -20,7 +20,8 @@
 
 import { useRef, useState } from 'react';
 
-import { ApiError, api } from './api';
+import { ApiError, api, type ApiKey } from './api';
+import { KeyTable, NewKey } from './AgentKeys';
 import { builtAtLocal } from './build';
 import { copy } from './copy';
 import { LEAVE_INSERT, type LeaveInsert, type Measure, type Prefs, type StartView, type Theme } from './prefs';
@@ -34,6 +35,22 @@ export interface SettingsProps {
   user: { id: string; displayName: string; role: string };
   onSignedOutEverywhere: () => void;
   onRenamed: () => void;
+  /**
+   * The caller's own agent keys, and the two things that can be done with them.
+   *
+   * Handed in rather than fetched here, which is how `staleDays` above already
+   * works: this page reads from the shell and writes through it, and a query
+   * inside it would make the one component that is pure settings depend on a
+   * client that half its tests do not have.
+   */
+  keys: ApiKey[];
+  onCreateKey: (
+    name: string,
+    scope: string,
+    canWrite: boolean,
+    expiresInDays?: number,
+  ) => Promise<ApiKey & { secret: string }>;
+  onRevokeKey: (id: string) => Promise<void>;
 }
 
 const THEMES: Array<{ value: Theme; label: string; hint: string }> = [
@@ -134,6 +151,9 @@ export function SettingsView({
   user,
   onSignedOutEverywhere,
   onRenamed,
+  keys,
+  onCreateKey,
+  onRevokeKey,
 }: SettingsProps): React.JSX.Element {
   const set = <K extends keyof Prefs>(key: K, value: Prefs[K]): void =>
     onPrefs({ ...prefs, [key]: value });
@@ -360,6 +380,8 @@ export function SettingsView({
         predates the build that has it — and on that occasion it is the only
         thing on screen that can say so.
       */}
+      <MyKeys keys={keys} onCreate={onCreateKey} onRevoke={onRevokeKey} />
+
       <section className="setgroup">
         <h3 className="cap">{copy.settings.build}</h3>
         <p className="sethint">
@@ -369,6 +391,73 @@ export function SettingsView({
         </p>
       </section>
     </div>
+  );
+}
+
+/**
+ * The caller's own agent keys.
+ *
+ * Here rather than only on the administrator's screen because making one was an
+ * administrator's job, which is invisible with a single account and becomes an
+ * obstacle the moment there is a second: connecting an agent to your own notes
+ * went through somebody with a shell, for a vault they had no other reason to
+ * touch.
+ *
+ * The table and the form are the administrator's, imported rather than copied.
+ * What differs is two things and both are arguments: whose keys are shown, and
+ * that "until revoked" is not offered — a key with no deadline is a decision
+ * about a machine somebody operates, and the server refuses one here anyway.
+ */
+function MyKeys({
+  keys,
+  onCreate,
+  onRevoke,
+}: {
+  keys: ApiKey[];
+  onCreate: SettingsProps['onCreateKey'];
+  onRevoke: SettingsProps['onRevokeKey'];
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
+
+  return (
+    <section className="setgroup">
+      <h3 className="cap">{copy.admin.agentKeys}</h3>
+      <p className="setnote">{copy.settings.myKeysExplain}</p>
+
+      {note !== null && (
+        <p className={note.kind === 'ok' ? 'setok' : 'setbad'} role="alert">
+          {note.text}
+        </p>
+      )}
+
+      <KeyTable
+        keys={keys}
+        busy={busy}
+        onRevoke={(key) => {
+          if (!window.confirm(copy.settings.confirmRevokeMine(key.name))) return;
+          setBusy(true);
+          void onRevoke(key.id)
+            .then(() => setNote({ kind: 'ok', text: copy.admin.keyRevoked(key.name) }))
+            .catch((caught: unknown) =>
+              setNote({
+                kind: 'bad',
+                text: caught instanceof ApiError ? caught.message : copy.admin.failed,
+              }),
+            )
+            .finally(() => setBusy(false));
+        }}
+      />
+
+      <NewKey
+        busy={busy}
+        onCreate={(name, scope, canWrite, expiresInDays) =>
+          // `null` never reaches here: the form offers no "until revoked"
+          // without `allowForever`, and the route would refuse it.
+          onCreate(name, scope, canWrite, expiresInDays === null ? undefined : expiresInDays)
+        }
+      />
+    </section>
   );
 }
 

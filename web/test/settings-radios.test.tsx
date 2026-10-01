@@ -30,6 +30,9 @@ function renderSettings(prefs: Partial<Prefs> = {}) {
       staleDays={90}
       onStaleDays={vi.fn()}
       user={{ id: 'julian', displayName: 'Julian', role: 'user' }}
+      keys={[]}
+      onCreateKey={vi.fn()}
+      onRevokeKey={vi.fn()}
       onSignedOutEverywhere={vi.fn()}
       onRenamed={vi.fn()}
     />,

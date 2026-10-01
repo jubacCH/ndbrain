@@ -730,6 +730,30 @@ export const api = {
   revokeKey: (id: string) =>
     request(`/api/v1/admin/keys/${encodeURIComponent(id)}`, Empty, { method: 'DELETE' }),
 
+  /* ---- a person's own agent keys -------------------------------------------
+   *
+   * The same three calls without an owner anywhere: the session decides whose
+   * vault it is. Naming one would be refused — see `CreateOwnKeyRequest` — and
+   * that is the point rather than an inconvenience.
+   */
+
+  myKeys: () => request('/api/v1/keys', S.KeysResponse),
+
+  /** As `createKey`, and likewise the only time the secret exists. */
+  createMyKey: (name: string, scope: string, canWrite: boolean, expiresInDays?: number) =>
+    request('/api/v1/keys', S.CreatedKeyResponse, {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        ...(scope === '' ? {} : { scope }),
+        canWrite,
+        ...(expiresInDays === undefined ? {} : { expiresInDays }),
+      }),
+    }),
+
+  revokeMyKey: (id: string) =>
+    request(`/api/v1/keys/${encodeURIComponent(id)}`, Empty, { method: 'DELETE' }),
+
   // ---- topics ---------------------------------------------------------------
 
   topics: () => request('/api/v1/topics', S.TopicsResponse),

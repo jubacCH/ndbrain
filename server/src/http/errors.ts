@@ -26,6 +26,7 @@ import {
   TaskChangedError,
   UnlinkableNameError,
 } from '../errors.js';
+import { UnknownKeyError } from '../auth/keys.js';
 import { UnknownUserError, UserExistsError } from '../auth/users.js';
 
 export interface HttpProblem {
@@ -51,6 +52,13 @@ export function toProblem(error: unknown): HttpProblem {
   }
   if (error instanceof NoteNotFoundError) {
     return { status: 404, code: 'not_found', message: 'note does not exist' };
+  }
+  // A key that is not there and a key that is somebody else's are one answer,
+  // for the reason every refusal in here is shaped that way: the difference
+  // between "no such key" and "not yours" is itself worth knowing, and it is
+  // not the caller's to know. Previously unmapped, so both arrived as a 500.
+  if (error instanceof UnknownKeyError) {
+    return { status: 404, code: 'not_found', message: 'no such key' };
   }
   if (error instanceof NoteExistsError) {
     return { status: 409, code: 'exists', message: 'a note already exists at that path' };

@@ -1085,6 +1085,11 @@ export const copy = {
   },
 
   settings: {
+    /** The caller's own keys, on their own settings page. */
+    myKeysExplain:
+      'How an agent reaches your vault over MCP. A key acts as you and can only ever see less: your vault, and the one folder you scope it to. It never follows what others have shared with you.',
+    confirmRevokeMine: (name: string) =>
+      `Revoke “${name}”? Anything using it stops working at once, and the key cannot be brought back.`,
     title: 'Settings',
     subtitle: 'Most of these belong to this browser. One of them changes what the server reports.',
 

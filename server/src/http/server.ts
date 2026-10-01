@@ -24,7 +24,7 @@ import staticPlugin from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 
 import type { App, BulkResult } from '../app.js';
-import type { ApiKeyService } from '../auth/keys.js';
+import { UnknownKeyError, type ApiKeyService } from '../auth/keys.js';
 import { InvalidShareError, type Need, type Share, type ShareService } from '../auth/shares.js';
 import type { SettingsService } from '../auth/settings.js';
 import type { History, HistoryView } from '../vault/history.js';
@@ -1439,6 +1439,50 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     users.setDisabled(id, disabled);
     if (disabled) sessions.destroyAllFor(id);
     return { ok: true };
+  });
+
+  /* ---- a person's own agent keys -------------------------------------------
+   *
+   * The same three operations as the administrator's routes below, for the
+   * caller's own vault and nothing else. They exist because making a key was an
+   * administrator's job: with one account that is invisible, and with three it
+   * means nobody but the operator can connect an agent to their own notes.
+   *
+   * What is **not** here, and stays with the administrator: naming another
+   * owner, and a key with no deadline. A key for a space is still made by an
+   * administrator, because a space is an account nobody signs in to and its
+   * members are the people with shares on it — handing any of them a key for it
+   * would be a grant nobody recorded.
+   */
+  fastify.get('/api/v1/keys', async (request) => {
+    return { keys: keys.list(requireUser(request).id) };
+  });
+
+  fastify.post('/api/v1/keys', async (request, reply) => {
+    const caller = requireUser(request).id;
+    const { name, scope, canWrite, expiresInDays } = body(request, S.CreateOwnKeyRequest);
+
+    // The owner is the session's, never the body's. See `CreateOwnKeyRequest`.
+    const created = keys.create(caller, name, {
+      ...(scope === undefined ? {} : { scope }),
+      ...(expiresInDays === undefined ? {} : { expiresInDays }),
+      canWrite: canWrite ?? false,
+    });
+    return reply.code(201).send({ ...created.key, secret: created.secret });
+  });
+
+  fastify.delete('/api/v1/keys/:id', async (request, reply) => {
+    const caller = requireUser(request).id;
+    const { id } = request.params as { id: string };
+
+    // Somebody else's key is answered exactly as one that does not exist: both
+    // throw the same error from the same place, so the two cannot be told apart
+    // by status, body or timing of a database read that did not happen.
+    const key = keys.get(id);
+    if (key === undefined || key.owner !== caller) throw new UnknownKeyError('no such key');
+
+    keys.revoke(id);
+    return reply.code(204).send();
   });
 
   fastify.get('/api/v1/admin/keys', async (request) => {

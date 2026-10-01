@@ -70,6 +70,7 @@ export const keys = {
   topics: ['topics'] as const,
   adminUsers: ['admin', 'users'] as const,
   adminKeys: (owner: string) => ['admin', 'keys', owner] as const,
+  myKeys: ['my', 'keys'] as const,
   adminSpaces: ['admin', 'spaces'] as const,
   spaceMembers: (space: string) => ['admin', 'spaces', space, 'members'] as const,
   spaceTree: (space: string) => ['admin', 'spaces', space, 'tree'] as const,
@@ -469,6 +470,16 @@ export function useAdminKeys(owner: string, enabled: boolean): UseQueryResult<Aw
     queryKey: keys.adminKeys(owner),
     queryFn: () => api.adminKeys(owner),
     enabled: enabled && owner !== '',
+    staleTime: 5_000,
+  });
+}
+
+/** The caller's own agent keys, for the settings page. */
+export function useMyKeys(enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.myKeys>>> {
+  return useQuery({
+    queryKey: keys.myKeys,
+    queryFn: () => api.myKeys(),
+    enabled,
     staleTime: 5_000,
   });
 }

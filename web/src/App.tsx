@@ -84,6 +84,7 @@ import {
   useSettings,
   useAdminUsers,
   useAdminKeys,
+  useMyKeys,
   useAdminSpaces,
   useTopics,
   useGraph,
@@ -505,6 +506,9 @@ function Shell({
   const adminUsersQuery = useAdminUsers(isAdmin && (view === 'admin' || shareTarget !== null));
   const adminSpacesQuery = useAdminSpaces(isAdmin && view === 'admin');
   const adminKeysQuery = useAdminKeys(keyOwner, isAdmin && view === 'admin');
+  // Only while that page is open: a key list is of no use anywhere else, and
+  // asking for one on every load would be a request nobody reads.
+  const myKeys = useMyKeys(view === 'settings');
   // Built rather than spread with `dir: taskDir` directly: the filter type is
   // properly optional (`dir?: string`), and `exactOptionalPropertyTypes` draws
   // a line between "absent" and "present but undefined" that a plain object
@@ -2363,6 +2367,16 @@ function Shell({
                   staleDays={settingsQuery.data?.settings.staleDays ?? null}
                   onStaleDays={(days) => void saveStaleDays(days)}
                   user={user}
+                  keys={myKeys.data?.keys ?? []}
+                  onCreateKey={async (name, scope, canWrite, expiresInDays) => {
+                    const created = await api.createMyKey(name, scope, canWrite, expiresInDays);
+                    await client.invalidateQueries({ queryKey: keys.myKeys });
+                    return created;
+                  }}
+                  onRevokeKey={async (id) => {
+                    await api.revokeMyKey(id);
+                    await client.invalidateQueries({ queryKey: keys.myKeys });
+                  }}
                   onSignedOutEverywhere={() => setError(null)}
                   onRenamed={() => {
                     // The sidebar greets you by this name, so it changes with it

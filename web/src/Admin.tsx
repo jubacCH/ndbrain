@@ -17,9 +17,9 @@
 
 import { useState } from 'react';
 
-import { KEY_EXPIRY_WARNING_DAYS } from '../../shared/schema';
 import { ApiError, type AdminSpace, type AdminUser, type ApiKey } from './api';
 import { AdminSpaces, type AdminSpacesProps } from './AdminSpaces';
+import { KeyTable, NewKey, when } from './AgentKeys';
 import { copy } from './copy';
 
 export interface AdminProps {
@@ -44,32 +44,6 @@ export interface AdminProps {
   spaces: Omit<AdminSpacesProps, 'users' | 'busy'>;
 }
 
-function when(at: number): string {
-  return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-/**
- * When a key runs out, said loudly only while there is something to do.
- *
- * Inside the warning window it reads in days rather than as a date, for the
- * same reason the server's log line does: a date needs arithmetic before
- * anybody knows whether to act on it, and what is being prevented is a key
- * running out with nobody having noticed. Further out, the date is the more
- * useful thing to see. A revoked key is past mattering either way, so its
- * deadline is not dressed up as something to act on.
- */
-function Deadline({ value, now }: { value: ApiKey; now: number }): React.JSX.Element {
-  const dim = (text: string): React.JSX.Element => <span className="dim">{text}</span>;
-
-  if (value.expiresAt === null) return dim(copy.admin.noExpiry);
-  if (value.revoked) return dim(when(value.expiresAt));
-  if (value.expiresAt <= now) return <span className="pill p-crit">{copy.admin.expired}</span>;
-
-  const days = Math.ceil((value.expiresAt - now) / 86_400_000);
-  if (days > KEY_EXPIRY_WARNING_DAYS) return dim(when(value.expiresAt));
-  return <span className="pill p-warn">{copy.admin.expiresIn(days)}</span>;
-}
-
 export function AdminView(props: AdminProps): React.JSX.Element {
   const { users, keys, self, busy, keyOwner } = props;
   const spaces: AdminSpace[] = props.spaces.spaces;
@@ -78,10 +52,6 @@ export function AdminView(props: AdminProps): React.JSX.Element {
   // offered as people, with a password to reset.
   const people = users.filter((user) => !spaceIds.has(user.id));
   const [note, setNote] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
-  // Read once per render rather than per row, so every deadline in the table is
-  // measured against the same moment.
-  const now = Date.now();
-
   const guard = async (run: () => Promise<void>, ok: string): Promise<void> => {
     try {
       await run();
@@ -199,54 +169,24 @@ export function AdminView(props: AdminProps): React.JSX.Element {
         </div>
         {spaceIds.has(keyOwner) && <p className="setnote">{copy.admin.keysForSpace}</p>}
 
-        {keys.length === 0 ? (
-          <p className="empty">{copy.admin.noKeys}</p>
-        ) : (
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>{copy.admin.keyName}</th>
-                <th>{copy.admin.scope}</th>
-                <th>{copy.admin.expires}</th>
-                <th>{copy.admin.lastUsed}</th>
-                <th className="n">{copy.admin.actions}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {keys.map((key) => (
-                <tr key={key.id} data-disabled={key.revoked}>
-                  <td>
-                    {key.name}
-                    {key.canWrite && <span className="pill p-warn">{copy.admin.canWrite}</span>}
-                    {key.revoked && <span className="pill p-crit">{copy.admin.revoked}</span>}
-                  </td>
-                  <td className="dim">{key.scope === '' ? copy.admin.wholeVault : key.scope}</td>
-                  <td>
-                    <Deadline value={key} now={now} />
-                  </td>
-                  <td className="dim">{key.lastUsedAt === null ? copy.admin.never : when(key.lastUsedAt)}</td>
-                  <td className="n">
-                    {!key.revoked && (
-                      <button
-                        type="button"
-                        className="danger"
-                        disabled={busy}
-                        onClick={() => {
-                          if (!window.confirm(copy.admin.confirmRevoke(key.name))) return;
-                          void guard(() => props.onRevokeKey(key.id), copy.admin.keyRevoked(key.name));
-                        }}
-                      >
-                        {copy.admin.revoke}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <KeyTable
+          keys={keys}
+          busy={busy}
+          onRevoke={(key) => {
+            if (!window.confirm(copy.admin.confirmRevoke(key.name))) return;
+            void guard(() => props.onRevokeKey(key.id), copy.admin.keyRevoked(key.name));
+          }}
+        />
 
-        <NewKey owner={keyOwner} busy={busy} onCreate={props.onCreateKey} />
+        {/* The administrator is the one who may make a key that never runs
+            out, for the job that runs once a month. */}
+        <NewKey
+          busy={busy}
+          allowForever
+          onCreate={(name, scope, canWrite, expiresInDays) =>
+            props.onCreateKey(keyOwner, name, scope, canWrite, expiresInDays)
+          }
+        />
       </section>
     </div>
   );
@@ -364,88 +304,3 @@ function NewAccount({
  * genuinely is not one, and an interface that mentions this quietly is an
  * interface that will have somebody closing the tab too early.
  */
-function NewKey({
-  owner,
-  busy,
-  onCreate,
-}: {
-  owner: string;
-  busy: boolean;
-  onCreate: (
-    owner: string,
-    name: string,
-    scope: string,
-    canWrite: boolean,
-    expiresInDays?: number | null,
-  ) => Promise<ApiKey & { secret: string }>;
-}): React.JSX.Element {
-  const [name, setName] = useState('');
-  const [scope, setScope] = useState('');
-  const [canWrite, setCanWrite] = useState(false);
-  const [lifetime, setLifetime] = useState('365');
-  const [secret, setSecret] = useState<string | null>(null);
-
-  if (secret !== null) {
-    return (
-      <div className="secretbox">
-        <p className="secrettitle">{copy.admin.secretOnce}</p>
-        <p className="setnote">{copy.admin.secretWhy}</p>
-        <textarea readOnly value={secret} rows={2} onFocus={(e) => e.currentTarget.select()} />
-        <button type="button" onClick={() => setSecret(null)}>
-          {copy.admin.gotIt}
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <form
-      className="adminform"
-      onSubmit={(event) => {
-        event.preventDefault();
-        // `forever` goes as null, a number of days as itself. Never undefined:
-        // this form has a visible answer, so it says which one was chosen
-        // rather than leaving the server to guess a default.
-        const expiresInDays = lifetime === 'forever' ? null : Number(lifetime);
-        void onCreate(owner, name.trim(), scope.trim(), canWrite, expiresInDays).then((created) => {
-          setSecret(created.secret);
-          setName('');
-          setScope('');
-          setCanWrite(false);
-          setLifetime('365');
-        });
-      }}
-    >
-      <h4>{copy.admin.newKey}</h4>
-      <label>
-        <span>{copy.admin.keyName}</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={copy.admin.keyNameExample} required />
-      </label>
-      <label>
-        <span>{copy.admin.scope}</span>
-        <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder={copy.admin.wholeVault} />
-      </label>
-      <label>
-        <span>{copy.admin.lifetime}</span>
-        {/* A year is preselected, and "until revoked" is one option among four
-            rather than the default — the key nobody renews is the one that
-            outlives whatever it was made for. */}
-        <select value={lifetime} aria-label={copy.admin.lifetime} onChange={(e) => setLifetime(e.target.value)}>
-          <option value="365">{copy.admin.lifetimeYear}</option>
-          <option value="90">{copy.admin.lifetimeQuarter}</option>
-          <option value="30">{copy.admin.lifetimeMonth}</option>
-          <option value="forever">{copy.admin.lifetimeForever}</option>
-        </select>
-      </label>
-      <p className="setnote">{copy.admin.lifetimeExplain}</p>
-      <label className="checkline">
-        <input type="checkbox" checked={canWrite} onChange={(e) => setCanWrite(e.target.checked)} />
-        <span>{copy.admin.mayWrite}</span>
-      </label>
-
-      <button type="submit" disabled={busy || name.trim() === ''}>
-        {copy.admin.createKey}
-      </button>
-    </form>
-  );
-}
