@@ -19,6 +19,7 @@ import { TOOLS, type ToolContext } from '../src/mcp/tools.js';
 let dataDir: string;
 let runtime: Runtime;
 let agent: ToolContext;
+let julian: string;
 
 const tool = (name: string) => {
   const found = TOOLS.find((t) => t.name === name);
@@ -29,16 +30,16 @@ const tool = (name: string) => {
 beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-pulse-'));
   runtime = await createRuntime({ ...loadConfig(), dataDir });
-  await runtime.users.create('julian', 'ein gutes passwort');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort')).id;
 
-  const key = runtime.keys.create('julian', 'claude-code', { canWrite: true });
+  const key = runtime.keys.create(julian, 'claude-code', { canWrite: true });
   agent = {
     app: runtime.app,
     keys: runtime.keys,
     key: runtime.keys.resolve(key.secret)!,
   } as ToolContext;
 
-  await runtime.app.createNote('julian', 'Homelab/Proxmox.md', '# Proxmox\n\nZwei Nodes.\n');
+  await runtime.app.createNote(julian, 'Homelab/Proxmox.md', '# Proxmox\n\nZwei Nodes.\n');
 });
 
 afterEach(async () => {
@@ -49,9 +50,9 @@ afterEach(async () => {
 describe('the pulse', () => {
   it('reports what a person changed', async () => {
     const from = Date.now() - 1000;
-    await runtime.app.putNote('julian', 'Homelab/Proxmox.md', 'geändert\n', 'julian');
+    await runtime.app.putNote(julian, 'Homelab/Proxmox.md', 'geändert\n', 'julian');
 
-    const events = runtime.app.queries.pulse('julian', from);
+    const events = runtime.app.queries.pulse(julian, from);
     const write = events.find((e) => e.path === 'Homelab/Proxmox.md' && e.kind === 'write');
 
     expect(write).toBeDefined();
@@ -64,7 +65,7 @@ describe('the pulse', () => {
     const from = Date.now() - 1000;
     await tool('get_note').handler(agent, { path: 'Homelab/Proxmox.md' });
 
-    const events = runtime.app.queries.pulse('julian', from);
+    const events = runtime.app.queries.pulse(julian, from);
     const read = events.find((e) => e.kind === 'read');
 
     expect(read).toBeDefined();
@@ -86,7 +87,7 @@ describe('the pulse', () => {
     await new Promise((r) => setTimeout(r, 20));
     await tool('append_note').handler(agent, { path: 'Homelab/Proxmox.md', content: 'Zusatz.' });
 
-    const events = runtime.app.queries.pulse('julian', from);
+    const events = runtime.app.queries.pulse(julian, from);
     const forNote = events.filter((e) => e.path === 'Homelab/Proxmox.md');
 
     expect(forNote.filter((e) => e.kind === 'write')).toHaveLength(1);
@@ -97,7 +98,7 @@ describe('the pulse', () => {
     const from = Date.now() - 1000;
     await tool('search_notes').handler(agent, { query: 'proxmox' });
 
-    const events = runtime.app.queries.pulse('julian', from);
+    const events = runtime.app.queries.pulse(julian, from);
     const search = events.find((e) => e.what === 'search_notes');
 
     expect(search).toBeDefined();
@@ -110,26 +111,26 @@ describe('the pulse', () => {
       tool('get_note').handler(agent, { path: 'GibtEsNicht.md' }),
     ).rejects.toThrow();
 
-    const events = runtime.app.queries.pulse('julian', from);
+    const events = runtime.app.queries.pulse(julian, from);
     expect(events.filter((e) => e.path === 'GibtEsNicht.md')).toEqual([]);
   });
 
   it('only returns what happened after the given moment', async () => {
-    await runtime.app.putNote('julian', 'Homelab/Proxmox.md', 'alt\n', 'julian');
+    await runtime.app.putNote(julian, 'Homelab/Proxmox.md', 'alt\n', 'julian');
     const between = Date.now() + 1;
     await new Promise((r) => setTimeout(r, 20));
-    await runtime.app.putNote('julian', 'Homelab/Proxmox.md', 'neu\n', 'julian');
+    await runtime.app.putNote(julian, 'Homelab/Proxmox.md', 'neu\n', 'julian');
 
-    expect(runtime.app.queries.pulse('julian', between)).toHaveLength(1);
+    expect(runtime.app.queries.pulse(julian, between)).toHaveLength(1);
   });
 
   it('returns the newest first', async () => {
     const from = Date.now() - 1000;
-    await runtime.app.createNote('julian', 'Erste.md', 'a', 'julian');
+    await runtime.app.createNote(julian, 'Erste.md', 'a', 'julian');
     await new Promise((r) => setTimeout(r, 20));
-    await runtime.app.createNote('julian', 'Zweite.md', 'b', 'julian');
+    await runtime.app.createNote(julian, 'Zweite.md', 'b', 'julian');
 
-    const events = runtime.app.queries.pulse('julian', from);
+    const events = runtime.app.queries.pulse(julian, from);
     expect(events[0]!.path).toBe('Zweite.md');
   });
 
@@ -139,13 +140,13 @@ describe('the pulse', () => {
    * being watched.
    */
   it('never shows activity from another vault, not even a shared one', async () => {
-    await runtime.users.create('ramona', 'ihr gutes passwort');
-    runtime.shares.grant('ramona', '', 'julian', false);
+    const ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
+    runtime.shares.grant(ramona, '', julian, false);
 
     const from = Date.now() - 1000;
-    await runtime.app.createNote('ramona', 'Ihres.md', 'x', 'ramona');
+    await runtime.app.createNote(ramona, 'Ihres.md', 'x', 'ramona');
 
-    const events = runtime.app.queries.pulse('julian', from);
+    const events = runtime.app.queries.pulse(julian, from);
     expect(events.filter((e) => e.path === 'Ihres.md')).toEqual([]);
   });
 });

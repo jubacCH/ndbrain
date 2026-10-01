@@ -17,7 +17,7 @@
 
 import type { Database } from './database.js';
 
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 const MIGRATIONS: Array<(db: Database) => void> = [
   // v0 -> v1: initial schema
@@ -503,6 +503,77 @@ const MIGRATIONS: Array<(db: Database) => void> = [
         UPDATE users SET guid = 'acc_' || lower(hex(randomblob(16))) WHERE id = NEW.id;
       END;
     `);
+  },
+
+  // v15 -> v16: the identifier becomes the id, and the vault's directory with it
+  //
+  // Everything that names an account names it by `users.id`, and the code
+  // passes that around as an opaque string — so making the id the random
+  // identifier changes no route, no query and no client code. What it does
+  // change is every row that points at a user, and the name of a directory.
+  //
+  // **Order.** The children are rewritten first, while `users` still holds the
+  // names they refer to; `users` goes last. `PRAGMA defer_foreign_keys` holds
+  // the constraints until the commit, which is the one thing that makes this
+  // possible at all: this schema has no `ON UPDATE CASCADE` anywhere, and
+  // `PRAGMA foreign_keys` cannot be switched inside a transaction while
+  // `defer_foreign_keys` can.
+  //
+  // **The directories are not touched here.** A migration has a database and
+  // nothing else, and the dangerous part of this change is the seam between the
+  // two: a database that says `acc_…` while the folder is still called `julian`
+  // is an account whose notes have all vanished. So the mapping is written into
+  // `vault_moves` and the move itself happens at start-up, from that table,
+  // repeatably — a crash between the two leaves rows the next start finishes.
+  //
+  // **The index is emptied rather than translated.** `notes`, `tags`, `links`,
+  // `tasks`, `props` and the FTS table all carry an owner, and all of them are
+  // derived from the vault; the header of this file says losing them must cost
+  // nothing. Rebuilding is one sweep at start-up and cannot be subtly wrong,
+  // which translating six tables can.
+  (db) => {
+    db.exec(`
+      CREATE TABLE vault_moves (
+        -- The identifier the directory is to be called.
+        guid      TEXT PRIMARY KEY,
+        -- What it is called now. The row goes once the move has happened, so
+        -- this table is empty except between the migration and the next start.
+        from_name TEXT NOT NULL
+      ) STRICT;
+    `);
+    db.exec('INSERT INTO vault_moves (guid, from_name) SELECT guid, id FROM users;');
+
+    db.exec('PRAGMA defer_foreign_keys = ON;');
+
+    // Both columns of `shares`: a grantee is an account like an owner is.
+    const pointsAtAUser: ReadonlyArray<readonly [string, string]> = [
+      ['sessions', 'user_id'],
+      ['edits', 'owner'],
+      ['api_keys', 'owner'],
+      ['access_log', 'owner'],
+      ['shares', 'owner'],
+      ['shares', 'grantee'],
+      ['user_settings', 'user_id'],
+    ];
+    for (const [table, column] of pointsAtAUser) {
+      db.exec(
+        `UPDATE ${table} SET ${column} = (SELECT u.guid FROM users u WHERE u.id = ${table}.${column})
+          WHERE ${column} IN (SELECT id FROM users)`,
+      );
+    }
+
+    db.exec('UPDATE users SET id = guid;');
+
+    // The staging column has done its work: the identifier is the id now, and
+    // two columns holding one value is a pair that can come to disagree.
+    db.exec('DROP TRIGGER users_guid_default;');
+    db.exec('DROP INDEX users_guid;');
+    db.exec('ALTER TABLE users DROP COLUMN guid;');
+
+    db.exec(
+      'DELETE FROM notes_fts; DELETE FROM props; DELETE FROM tasks; ' +
+        'DELETE FROM links; DELETE FROM tags; DELETE FROM notes;',
+    );
   },
 ];
 

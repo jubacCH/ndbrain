@@ -20,6 +20,7 @@ import { SessionService, UserService } from './auth/users.js';
 import { indexFile, type Config } from './config.js';
 import { Database } from './db/database.js';
 import { migrate } from './db/schema.js';
+import { runVaultMoves, writeSignposts, type MoveReport } from './vault/moves.js';
 import { Indexer } from './index/indexer.js';
 import { VaultWatcher } from './index/watcher.js';
 import { NoteService } from './notes/service.js';
@@ -32,6 +33,14 @@ export interface Runtime {
   config: Config;
   db: Database;
   vault: Vault;
+  /**
+   * What the start-up move did, for the caller to say out loud.
+   *
+   * Returned rather than logged from inside: a function that both moves
+   * directories and decides how to talk about it is one that cannot be tested
+   * without reading log lines.
+   */
+  moves: MoveReport;
   notes: NoteService;
   indexer: Indexer;
   app: App;
@@ -72,6 +81,13 @@ export async function createRuntime(config: Config, options: RuntimeOptions = {}
 
   const db = new Database(indexFile(config));
   migrate(db);
+
+  // Immediately after the migration and before anything reads a note. v16 made
+  // a vault's directory the account's identifier, and the database is already
+  // calling it that: until this has run, every account's notes are at a path
+  // nothing looks at. A crash in between leaves rows in `vault_moves` that the
+  // next start finishes, which is why it is a table and not a variable.
+  const moves = await runVaultMoves(db, config.dataDir);
 
   const vault = new Vault(config.dataDir);
   // Shares first: the note write path tells them, from inside its lock, when a
@@ -125,10 +141,20 @@ export async function createRuntime(config: Config, options: RuntimeOptions = {}
   const sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS);
   sweepTimer.unref();
 
+  // Written after the accounts are readable and rebuilt from scratch every
+  // start, so a rename or a removed account cannot leave a link pointing at a
+  // name that is gone. Nothing reads it; it is there so the disk explains
+  // itself to a backup and to whoever has a shell.
+  await writeSignposts(
+    config.dataDir,
+    users.list().map((user) => ({ id: user.id, loginName: user.loginName })),
+  );
+
   return {
     config,
     db,
     vault,
+    moves,
     notes,
     indexer,
     app,

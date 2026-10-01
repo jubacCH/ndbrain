@@ -22,6 +22,8 @@ const run = promisify(execFile);
 const HOUR = 60 * 60 * 1000;
 
 let h: Harness;
+let julian: string;
+let ramona: string;
 
 async function initRepo(owner: string): Promise<void> {
   const cwd = path.join(h.dataDir, 'vaults', owner);
@@ -43,11 +45,11 @@ async function commit(owner: string, subject: string, at: number): Promise<void>
 
 beforeEach(async () => {
   h = await startHarness('note-past');
-  await h.runtime.users.create('julian', 'ein gutes passwort');
-  await h.runtime.users.create('ramona', 'ihr gutes passwort');
+  julian = (await h.runtime.users.create('julian', 'ein gutes passwort')).id;
+  ramona = (await h.runtime.users.create('ramona', 'ihr gutes passwort')).id;
   await h.login('julian', 'ein gutes passwort');
   await h.login('ramona', 'ihr gutes passwort');
-  await initRepo('julian');
+  await initRepo(julian);
 });
 
 afterEach(async () => {
@@ -57,18 +59,18 @@ afterEach(async () => {
 /** An earlier note called Plan.md, edited, committed and deleted; then a new one. */
 async function aPastUnderTheSameName(): Promise<void> {
   const app = h.runtime.app;
-  await app.createNote('julian', 'Projekt/Plan.md', '# Plan\n\nalter geheimer Plan\n', 'julian');
-  await commit('julian', 'Stand 1', Date.now() - 3 * HOUR);
-  await app.putNote('julian', 'Projekt/Plan.md', '# Plan\n\nalter geheimer Plan, überarbeitet\n', 'peter-agent');
-  await commit('julian', 'Stand 2', Date.now() - 2 * HOUR);
-  await app.deleteNote('julian', 'Projekt/Plan.md', 'julian');
+  await app.createNote(julian, 'Projekt/Plan.md', '# Plan\n\nalter geheimer Plan\n', 'julian');
+  await commit(julian, 'Stand 1', Date.now() - 3 * HOUR);
+  await app.putNote(julian, 'Projekt/Plan.md', '# Plan\n\nalter geheimer Plan, überarbeitet\n', 'peter-agent');
+  await commit(julian, 'Stand 2', Date.now() - 2 * HOUR);
+  await app.deleteNote(julian, 'Projekt/Plan.md', 'julian');
   h.runtime.db.run("UPDATE edits SET at = at - ? WHERE path = 'Projekt/Plan.md'", 2 * HOUR);
-  await app.createNote('julian', 'Projekt/Plan.md', '# Plan\n\nder neue Plan\n', 'julian');
+  await app.createNote(julian, 'Projekt/Plan.md', '# Plan\n\nder neue Plan\n', 'julian');
   h.runtime.db.run(
     "UPDATE edits SET at = ? WHERE path = 'Projekt/Plan.md' AND action = 'create' AND at = (SELECT MAX(at) FROM edits WHERE path = 'Projekt/Plan.md')",
     Date.now() - HOUR,
   );
-  await commit('julian', 'Stand 3', Date.now() - HOUR);
+  await commit(julian, 'Stand 3', Date.now() - HOUR);
 }
 
 async function shareNote(canWrite = true): Promise<void> {
@@ -89,36 +91,36 @@ describe('the history of a shared note', () => {
     expect(owner.body.versions).toHaveLength(3);
     const old = owner.body.versions[2].id as string;
 
-    const before = await h.as('ramona', { url: '/api/v1/history/Projekt/Plan.md?owner=julian' });
+    const before = await h.as('ramona', { url: `/api/v1/history/Projekt/Plan.md?owner=${julian}` });
     // The sidecar is fine — `ready` — and this grantee simply may not see back
     // that far. An empty list for a reason that is about the share, not about
     // the server, and the state has to keep saying so.
     expect(before.body).toEqual({ state: 'ready', versions: [] });
 
-    await h.runtime.app.putNote('julian', 'Projekt/Plan.md', '# Plan\n\nder neue Plan, weiter\n', 'julian');
-    await commit('julian', 'Stand 4', Date.now() + HOUR);
-    const after = await h.as('ramona', { url: '/api/v1/history/Projekt/Plan.md?owner=julian' });
+    await h.runtime.app.putNote(julian, 'Projekt/Plan.md', '# Plan\n\nder neue Plan, weiter\n', 'julian');
+    await commit(julian, 'Stand 4', Date.now() + HOUR);
+    const after = await h.as('ramona', { url: `/api/v1/history/Projekt/Plan.md?owner=${julian}` });
     expect(after.body.versions.map((version: { subject: string }) => version.subject)).toEqual(['Stand 4']);
 
     const missing = await h.as('ramona', {
-      url: '/api/v1/history/Projekt/Plan.md?owner=julian&version=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      url: `/api/v1/history/Projekt/Plan.md?owner=${julian}&version=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef`,
     });
-    const reading = await h.as('ramona', { url: `/api/v1/history/Projekt/Plan.md?owner=julian&version=${old}` });
+    const reading = await h.as('ramona', { url: `/api/v1/history/Projekt/Plan.md?owner=${julian}&version=${old}` });
     expect({ status: reading.status, raw: reading.raw }).toEqual({ status: missing.status, raw: missing.raw });
     expect(reading.raw).not.toContain('geheim');
 
     const restoring = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/history/restore',
-      payload: { owner: 'julian', path: 'Projekt/Plan.md', version: old },
+      payload: { owner: julian, path: 'Projekt/Plan.md', version: old },
     });
     expect(restoring.status).toBe(404);
-    expect((await h.runtime.app.notes.getNote('julian', 'Projekt/Plan.md')).content).not.toContain('geheim');
+    expect((await h.runtime.app.notes.getNote(julian, 'Projekt/Plan.md')).content).not.toContain('geheim');
   });
 
   it('starts again when the share moves to a path with a past of its own', async () => {
     await aPastUnderTheSameName();
-    await h.runtime.app.createNote('julian', 'Projekt/Neu.md', '# Neu\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Projekt/Neu.md', '# Neu\n', 'julian');
     const reply = await h.as('julian', {
       method: 'POST',
       url: '/api/v1/shares',
@@ -127,27 +129,27 @@ describe('the history of a shared note', () => {
     expect(reply.status).toBe(200);
     // The share was given hours after Plan.md's past; the rename is now.
     h.runtime.db.run("UPDATE shares SET bound_at = ? WHERE kind = 'note'", Date.now() - 4 * HOUR);
-    await h.runtime.app.deleteNote('julian', 'Projekt/Plan.md', 'julian');
+    await h.runtime.app.deleteNote(julian, 'Projekt/Plan.md', 'julian');
     await h.as('julian', {
       method: 'POST',
       url: '/api/v1/rename',
       payload: { from: 'Projekt/Neu.md', to: 'Projekt/Plan.md' },
     });
 
-    const history = await h.as('ramona', { url: '/api/v1/history/Projekt/Plan.md?owner=julian' });
+    const history = await h.as('ramona', { url: `/api/v1/history/Projekt/Plan.md?owner=${julian}` });
     expect(history.body.versions).toEqual([]);
     // The rename itself is the note's own and shows; the old Plan.md's edits do not.
     const activity = await h.as('ramona', { url: '/api/v1/overview?days=30' });
-    expect(activity.body.activity.filter((row: { owner: string }) => row.owner === 'julian')).toEqual([
-      expect.objectContaining({ path: 'Projekt/Plan.md', action: 'rename', edits: 1, actor: 'julian' }),
+    expect(activity.body.activity.filter((row: { owner: string }) => row.owner === julian)).toEqual([
+      expect.objectContaining({ path: 'Projekt/Plan.md', action: 'rename', edits: 1, actor: julian }),
     ]);
   });
 
   it('is left whole for a grantee of the folder, and for the owner', async () => {
     await aPastUnderTheSameName();
-    h.runtime.shares.grant('julian', 'Projekt', 'ramona', false);
+    h.runtime.shares.grant(julian, 'Projekt', ramona, false);
     await shareNote();
-    const history = await h.as('ramona', { url: '/api/v1/history/Projekt/Plan.md?owner=julian' });
+    const history = await h.as('ramona', { url: `/api/v1/history/Projekt/Plan.md?owner=${julian}` });
     expect(history.body.versions).toHaveLength(3);
   });
 });
@@ -158,17 +160,17 @@ describe('the activity of a shared note', () => {
     await shareNote();
 
     const before = await h.as('ramona', { url: '/api/v1/overview?days=30' });
-    expect(before.body.activity.filter((row: { owner: string }) => row.owner === 'julian')).toEqual([]);
+    expect(before.body.activity.filter((row: { owner: string }) => row.owner === julian)).toEqual([]);
 
     await h.as('ramona', {
       method: 'PUT',
-      url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+      url: `/api/v1/notes/Projekt/Plan.md?owner=${julian}`,
       payload: { content: '# Plan\n\nvon Ramona\n' },
     });
     const after = await h.as('ramona', { url: '/api/v1/overview?days=30' });
-    const rows = after.body.activity.filter((row: { owner: string }) => row.owner === 'julian');
+    const rows = after.body.activity.filter((row: { owner: string }) => row.owner === julian);
     expect(rows).toEqual([
-      expect.objectContaining({ path: 'Projekt/Plan.md', actor: 'ramona', action: 'update', edits: 1 }),
+      expect.objectContaining({ path: 'Projekt/Plan.md', actor: ramona, action: 'update', edits: 1 }),
     ]);
     expect(JSON.stringify(after.body)).not.toContain('peter-agent');
 

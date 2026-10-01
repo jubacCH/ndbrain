@@ -24,19 +24,21 @@ const DAY = 24 * 60 * 60 * 1000;
 let h: Harness;
 let ramonaKey: string;
 let bounds: string;
+let julianId: string;
+let ramonaId: string;
 
 const PLAN =
   '---\ntags: [projekt]\nstatus: offen\n---\n# Plan\n\nZwei Nodes, Qdevice auf [[Technik]] und [[Plan2]].\n\n- [ ] Termin fixieren\n';
 
 beforeEach(async () => {
   h = await startHarness('note-shares');
-  await h.runtime.users.create('julian', 'ein gutes passwort');
-  await h.runtime.users.create('ramona', 'ihr gutes passwort');
-  await h.runtime.app.createNote('julian', 'Projekt/Plan.md', PLAN, 'julian');
-  await h.runtime.app.createNote('ramona', 'Eigenes.md', '# Eigenes\n\n#projekt Qdevice bei mir.\n\n- [ ] eigene Aufgabe\n', 'ramona');
+  julianId = (await h.runtime.users.create('julian', 'ein gutes passwort')).id;
+  ramonaId = (await h.runtime.users.create('ramona', 'ihr gutes passwort')).id;
+  await h.runtime.app.createNote(julianId, 'Projekt/Plan.md', PLAN, 'julian');
+  await h.runtime.app.createNote(ramonaId, 'Eigenes.md', '# Eigenes\n\n#projekt Qdevice bei mir.\n\n- [ ] eigene Aufgabe\n', 'ramona');
   await h.login('julian', 'ein gutes passwort');
   await h.login('ramona', 'ihr gutes passwort');
-  ramonaKey = h.runtime.keys.create('ramona', 'ramonas-agent', { canWrite: true }).secret;
+  ramonaKey = h.runtime.keys.create(ramonaId, 'ramonas-agent', { canWrite: true }).secret;
   const start = Date.now() - 12 * 60 * 60 * 1000;
   bounds = `${start},${start + DAY}`;
 });
@@ -57,46 +59,49 @@ async function shareNote(canWrite = true): Promise<Reply> {
 async function addNeighbours(): Promise<void> {
   const app = h.runtime.app;
   await app.createNote(
-    'julian',
+    julianId,
     'Projekt/Plan2.md',
     '---\ntags: [projekt, geheim]\nstatus: geheim\n---\n# Plan2\n\nQdevice geheim, siehe [[Plan]].\n\n- [ ] geheime Aufgabe\n- [x] erledigt geheim\n',
     'julian',
   );
-  await app.createNote('julian', 'Projekt/Technik.md', '# Technik\n\nQdevice Details, zurück zu [[Plan]].\n', 'julian');
-  await app.createNote('julian', 'Projekt/Sub/Tief.md', '# Tief\n\n#projekt Qdevice tief [[Plan]]\n', 'julian');
-  await app.createNote('julian', 'Verweis.md', 'Siehe [[Projekt/Plan.md]] #projekt Qdevice\n', 'julian');
-  await app.createNote('julian', 'Plan.md', '# Plan im Wurzelordner\n\nQdevice\n', 'julian');
-  await app.createNote('julian', 'Projekt/Plan (Konflikt 2026-01-01 10.00).md', 'Qdevice alt\n', 'julian');
-  await app.writeFile('julian', 'Projekt/Plan.md.bak', Buffer.from('Qdevice Sicherung'), 'julian');
-  await app.writeFile('julian', 'Projekt/bild.png', Buffer.from([137, 80, 78, 71]), 'julian');
-  await app.createFolder('julian', 'Projekt/Leer');
-  await app.putNote('julian', 'Projekt/Plan2.md', '# Plan2\n\nQdevice, geändert, [[Plan]]\n\n- [ ] noch eine\n', 'julian');
+  await app.createNote(julianId, 'Projekt/Technik.md', '# Technik\n\nQdevice Details, zurück zu [[Plan]].\n', 'julian');
+  await app.createNote(julianId, 'Projekt/Sub/Tief.md', '# Tief\n\n#projekt Qdevice tief [[Plan]]\n', 'julian');
+  await app.createNote(julianId, 'Verweis.md', 'Siehe [[Projekt/Plan.md]] #projekt Qdevice\n', 'julian');
+  await app.createNote(julianId, 'Plan.md', '# Plan im Wurzelordner\n\nQdevice\n', 'julian');
+  await app.createNote(julianId, 'Projekt/Plan (Konflikt 2026-01-01 10.00).md', 'Qdevice alt\n', 'julian');
+  await app.writeFile(julianId, 'Projekt/Plan.md.bak', Buffer.from('Qdevice Sicherung'), 'julian');
+  await app.writeFile(julianId, 'Projekt/bild.png', Buffer.from([137, 80, 78, 71]), 'julian');
+  await app.createFolder(julianId, 'Projekt/Leer');
+  await app.putNote(julianId, 'Projekt/Plan2.md', '# Plan2\n\nQdevice, geändert, [[Plan]]\n\n- [ ] noch eine\n', 'julian');
 
   // Index-only: `Projekt/Plan.md/x.md` cannot sit on disk next to the file.
   const db = h.runtime.db;
   const x = 'Projekt/Plan.md/x.md';
   db.run(
     `INSERT INTO notes (owner, path, title, path_key, title_key, size, mtime_ms, hash, indexed_at)
-     VALUES ('julian', ?, 'x', ?, 'x', 10, ?, 'h', ?)`,
+     VALUES (?, ?, 'x', ?, 'x', 10, ?, 'h', ?)`,
+    julianId,
     x,
     x.toLowerCase(),
     Date.now(),
     Date.now(),
   );
-  db.run("INSERT INTO notes_fts (owner, path, title, body) VALUES ('julian', ?, 'x', 'Qdevice darunter')", x);
-  db.run("INSERT INTO tags (owner, path, tag, key) VALUES ('julian', ?, 'projekt', 'projekt')", x);
-  db.run("INSERT INTO tags (owner, path, tag, key) VALUES ('julian', ?, 'darunter', 'darunter')", x);
-  db.run("INSERT INTO tasks (owner, path, line, done, text) VALUES ('julian', ?, 1, 0, 'Aufgabe darunter')", x);
+  db.run("INSERT INTO notes_fts (owner, path, title, body) VALUES (?, ?, 'x', 'Qdevice darunter')", julianId, x);
+  db.run("INSERT INTO tags (owner, path, tag, key) VALUES (?, ?, 'projekt', 'projekt')", julianId, x);
+  db.run("INSERT INTO tags (owner, path, tag, key) VALUES (?, ?, 'darunter', 'darunter')", julianId, x);
+  db.run("INSERT INTO tasks (owner, path, line, done, text) VALUES (?, ?, 1, 0, 'Aufgabe darunter')", julianId, x);
   db.run(
-    "INSERT INTO props (owner, path, key, value, key_fold, value_fold) VALUES ('julian', ?, 'status', 'darunter', 'status', 'darunter')",
+    "INSERT INTO props (owner, path, key, value, key_fold, value_fold) VALUES (?, ?, 'status', 'darunter', 'status', 'darunter')",
+    julianId,
     x,
   );
   db.run(
     `INSERT INTO links (owner, source, target_raw, target_key, target_path, heading, alias, offset)
-     VALUES ('julian', ?, 'Plan', 'plan', 'Projekt/Plan.md', NULL, NULL, 0)`,
+     VALUES (?, ?, 'Plan', 'plan', 'Projekt/Plan.md', NULL, NULL, 0)`,
+    julianId,
     x,
   );
-  db.run("INSERT INTO edits (owner, path, actor, action, at) VALUES ('julian', ?, 'julian', 'update', ?)", x, Date.now());
+  db.run("INSERT INTO edits (owner, path, actor, action, at) VALUES (?, ?, 'julian', 'update', ?)", julianId, x, Date.now());
 }
 
 /** What Ramona sees, everywhere she can look. Volatile fields are removed, nothing else. */
@@ -120,7 +125,7 @@ async function surface(): Promise<Record<string, { status: number; raw: string }
   };
 
   await get('tree', '/api/v1/tree');
-  await get('note', '/api/v1/notes/Projekt/Plan.md?owner=julian');
+  await get('note', `/api/v1/notes/Projekt/Plan.md?owner=${julianId}`);
   for (const neighbour of [
     'Projekt/Plan2.md',
     'Projekt/Plan.md/x.md',
@@ -130,16 +135,16 @@ async function surface(): Promise<Record<string, { status: number; raw: string }
     'Projekt/Plan (Konflikt 2026-01-01 10.00).md',
     'Projekt/Gibtsnicht.md',
   ]) {
-    await get(`note ${neighbour}`, `/api/v1/notes/${encodeURI(neighbour)}?owner=julian`);
-    await get(`backlinks ${neighbour}`, `/api/v1/backlinks/${encodeURI(neighbour)}?owner=julian`);
-    await get(`history ${neighbour}`, `/api/v1/history/${encodeURI(neighbour)}?owner=julian`);
-    await get(`file ${neighbour}`, `/api/v1/files/${encodeURI(neighbour)}?owner=julian`);
+    await get(`note ${neighbour}`, `/api/v1/notes/${encodeURI(neighbour)}?owner=${julianId}`);
+    await get(`backlinks ${neighbour}`, `/api/v1/backlinks/${encodeURI(neighbour)}?owner=${julianId}`);
+    await get(`history ${neighbour}`, `/api/v1/history/${encodeURI(neighbour)}?owner=${julianId}`);
+    await get(`file ${neighbour}`, `/api/v1/files/${encodeURI(neighbour)}?owner=${julianId}`);
   }
-  await get('file bild', '/api/v1/files/Projekt/bild.png?owner=julian');
-  await get('file own md', '/api/v1/files/Projekt/Plan.md?owner=julian');
-  await get('files listing', '/api/v1/files?owner=julian');
-  await get('backlinks', '/api/v1/backlinks/Projekt/Plan.md?owner=julian');
-  await get('history', '/api/v1/history/Projekt/Plan.md?owner=julian');
+  await get('file bild', `/api/v1/files/Projekt/bild.png?owner=${julianId}`);
+  await get('file own md', `/api/v1/files/Projekt/Plan.md?owner=${julianId}`);
+  await get('files listing', `/api/v1/files?owner=${julianId}`);
+  await get('backlinks', `/api/v1/backlinks/Projekt/Plan.md?owner=${julianId}`);
+  await get('history', `/api/v1/history/Projekt/Plan.md?owner=${julianId}`);
   await get('search words', '/api/v1/search?q=Qdevice');
   await get('search plan', '/api/v1/search?q=Plan');
   await get('search tag', '/api/v1/search?tag=projekt');
@@ -168,15 +173,15 @@ async function surface(): Promise<Record<string, { status: number; raw: string }
   // Writes against neighbours, with a write share on the note next to them.
   // Each is refused, so none of them changes the world it is compared in.
   for (const neighbour of ['Projekt/Plan2.md', 'Projekt/Plan.md/x.md', 'Projekt/Gibtsnicht.md']) {
-    await send(`put ${neighbour}`, 'PUT', `/api/v1/notes/${encodeURI(neighbour)}?owner=julian`, { content: 'x' });
-    await send(`delete ${neighbour}`, 'DELETE', `/api/v1/notes/${encodeURI(neighbour)}?owner=julian`);
+    await send(`put ${neighbour}`, 'PUT', `/api/v1/notes/${encodeURI(neighbour)}?owner=${julianId}`, { content: 'x' });
+    await send(`delete ${neighbour}`, 'DELETE', `/api/v1/notes/${encodeURI(neighbour)}?owner=${julianId}`);
     await send(`rename from ${neighbour}`, 'POST', '/api/v1/rename', {
-      owner: 'julian',
+      owner: julianId,
       from: neighbour,
       to: 'Projekt/Anders.md',
     });
     await send(`toggle ${neighbour}`, 'POST', '/api/v1/tasks/toggle', {
-      owner: 'julian',
+      owner: julianId,
       path: neighbour,
       line: 9,
       expectedText: 'geheime Aufgabe',
@@ -184,49 +189,49 @@ async function surface(): Promise<Record<string, { status: number; raw: string }
       done: true,
     });
     await send(`restore ${neighbour}`, 'POST', '/api/v1/history/restore', {
-      owner: 'julian',
+      owner: julianId,
       path: neighbour,
       version: 'abcdef',
     });
   }
   await send('rename onto neighbour', 'POST', '/api/v1/rename', {
-    owner: 'julian',
+    owner: julianId,
     from: 'Projekt/Plan.md',
     to: 'Projekt/Plan2.md',
   });
   await send('rename away', 'POST', '/api/v1/rename', {
-    owner: 'julian',
+    owner: julianId,
     from: 'Projekt/Plan.md',
     to: 'Projekt/Plan3.md',
   });
-  await send('upload beside', 'POST', '/api/v1/files/Projekt/Plan.md.bak?owner=julian', 'neu');
+  await send('upload beside', 'POST', `/api/v1/files/Projekt/Plan.md.bak?owner=${julianId}`, 'neu');
   await send('bulk', 'POST', '/api/v1/bulk', {
-    owner: 'julian',
+    owner: julianId,
     paths: ['Projekt/Plan2.md', 'Projekt/Plan.md/x.md', 'Projekt/Gibtsnicht.md'],
     action: 'delete',
   });
   await send('bulk move', 'POST', '/api/v1/bulk', {
-    owner: 'julian',
+    owner: julianId,
     paths: ['Projekt/Plan2.md'],
     action: 'move',
     dir: 'Projekt',
   });
   await send('folder of the owner', 'POST', '/api/v1/folders/rename', { from: 'Projekt', to: 'Anders' });
-  await send('folder create beside', 'POST', '/api/v1/folders', { owner: 'julian', path: 'Projekt/Neu' });
-  await send('folder create under', 'POST', '/api/v1/folders', { owner: 'julian', path: 'Projekt/Plan.md/Neu' });
+  await send('folder create beside', 'POST', '/api/v1/folders', { owner: julianId, path: 'Projekt/Neu' });
+  await send('folder create under', 'POST', '/api/v1/folders', { owner: julianId, path: 'Projekt/Plan.md/Neu' });
   await send('folder rename beside', 'POST', '/api/v1/folders/rename', {
-    owner: 'julian',
+    owner: julianId,
     from: 'Projekt/Leer',
     to: 'Projekt/Voll',
   });
   await send('folder rename parent', 'POST', '/api/v1/folders/rename', {
-    owner: 'julian',
+    owner: julianId,
     from: 'Projekt',
     to: 'Projekt2',
   });
-  await send('folder delete beside', 'DELETE', '/api/v1/folders/Projekt/Leer?owner=julian');
-  await send('folder delete parent', 'DELETE', '/api/v1/folders/Projekt?owner=julian');
-  await get('admin tree', '/api/v1/admin/spaces/julian/tree');
+  await send('folder delete beside', 'DELETE', `/api/v1/folders/Projekt/Leer?owner=${julianId}`);
+  await send('folder delete parent', 'DELETE', `/api/v1/folders/Projekt?owner=${julianId}`);
+  await get('admin tree', `/api/v1/admin/spaces/${julianId}/tree`);
 
   await tool('vault_map', {});
   await tool('search_notes', { query: 'Qdevice' });
@@ -249,8 +254,8 @@ describe('a share on one note', () => {
     const granted = await shareNote();
     expect(granted.status).toBe(200);
     expect(granted.body.share).toMatchObject({
-      owner: 'julian',
-      grantee: 'ramona',
+      owner: julianId,
+      grantee: ramonaId,
       kind: 'note',
       prefix: 'Projekt/Plan.md',
       canWrite: true,
@@ -260,8 +265,8 @@ describe('a share on one note', () => {
     expect(listed.body.received).toEqual([granted.body.share]);
     const tree = await h.as('ramona', { url: '/api/v1/tree' });
     expect(tree.body.owners).toEqual([
-      { id: 'ramona', kind: 'person', displayName: 'ramona' },
-      { id: 'julian', kind: 'person', displayName: 'julian' },
+      { id: ramonaId, kind: 'person', displayName: 'ramona' },
+      { id: julianId, kind: 'person', displayName: 'julian' },
     ]);
   });
 
@@ -290,9 +295,9 @@ describe('a share on one note', () => {
   it('answers a neighbour exactly as a note that does not exist', async () => {
     await shareNote();
     await addNeighbours();
-    const missing = await h.as('ramona', { url: '/api/v1/notes/Projekt/Gibtsnicht.md?owner=julian' });
+    const missing = await h.as('ramona', { url: `/api/v1/notes/Projekt/Gibtsnicht.md?owner=${julianId}` });
     for (const neighbour of ['Projekt/Plan2.md', 'Projekt/Plan.md/x.md', 'Projekt/Plan.md.bak', 'Plan.md']) {
-      const reply = await h.as('ramona', { url: `/api/v1/notes/${neighbour}?owner=julian` });
+      const reply = await h.as('ramona', { url: `/api/v1/notes/${neighbour}?owner=${julianId}` });
       expect({ neighbour, status: reply.status, raw: reply.raw }).toEqual({
         neighbour,
         status: missing.status,
@@ -305,16 +310,16 @@ describe('a share on one note', () => {
     await shareNote();
     await addNeighbours();
     const tree = await h.as('ramona', { url: '/api/v1/tree' });
-    const foreign = tree.body.dirs.filter((dir: { owner: string }) => dir.owner === 'julian');
-    expect(foreign).toEqual([{ owner: 'julian', path: 'Projekt' }]);
-    const notes = tree.body.notes.filter((note: { owner: string }) => note.owner === 'julian');
+    const foreign = tree.body.dirs.filter((dir: { owner: string }) => dir.owner === julianId);
+    expect(foreign).toEqual([{ owner: julianId, path: 'Projekt' }]);
+    const notes = tree.body.notes.filter((note: { owner: string }) => note.owner === julianId);
     expect(notes.map((note: { path: string }) => note.path)).toEqual(['Projekt/Plan.md']);
   });
 
   it('reports the outgoing links of the note with hidden targets unresolved', async () => {
     await shareNote();
     await addNeighbours();
-    const links = await h.as('ramona', { url: '/api/v1/backlinks/Projekt/Plan.md?owner=julian' });
+    const links = await h.as('ramona', { url: `/api/v1/backlinks/Projekt/Plan.md?owner=${julianId}` });
     expect(links.body.backlinks).toEqual([]);
     for (const link of links.body.outgoing) expect(link.targetPath).toBeNull();
   });
@@ -326,7 +331,7 @@ describe('a share on one note', () => {
       payload: { grantee: 'ramona', kind: 'note', path: 'Projekt/Gibtsnicht.md', canWrite: false },
     });
     expect(reply.status).toBe(404);
-    expect(h.runtime.shares.byOwner('julian')).toEqual([]);
+    expect(h.runtime.shares.byOwner(julianId)).toEqual([]);
   });
 
   it('never shares a note of somebody else', async () => {
@@ -336,7 +341,7 @@ describe('a share on one note', () => {
       payload: { grantee: 'julian', kind: 'note', path: 'Projekt/Plan.md', canWrite: true },
     });
     expect(reply.status).toBe(404);
-    expect(h.runtime.shares.byOwner('ramona')).toEqual([]);
+    expect(h.runtime.shares.byOwner(ramonaId)).toEqual([]);
   });
 
   it('refuses a note share that does not name a note, and a vault share with a path', async () => {
@@ -370,13 +375,13 @@ describe('a share on one note', () => {
     await shareNote(true);
     const put = await h.as('ramona', {
       method: 'PUT',
-      url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+      url: `/api/v1/notes/Projekt/Plan.md?owner=${julianId}`,
       payload: { content: '# Plan\n\nvon Ramona\n' },
     });
     expect(put.status).toBe(200);
     const created = await h.as('ramona', {
       method: 'PUT',
-      url: '/api/v1/notes/Projekt/Neu.md?owner=julian',
+      url: `/api/v1/notes/Projekt/Neu.md?owner=${julianId}`,
       payload: { content: 'x' },
     });
     expect(created.status).toBe(404);
@@ -384,11 +389,11 @@ describe('a share on one note', () => {
 
   it('is read-only when granted read-only', async () => {
     await shareNote(false);
-    const reply = await h.as('ramona', { url: '/api/v1/notes/Projekt/Plan.md?owner=julian' });
+    const reply = await h.as('ramona', { url: `/api/v1/notes/Projekt/Plan.md?owner=${julianId}` });
     expect(reply.body.canWrite).toBe(false);
     const put = await h.as('ramona', {
       method: 'PUT',
-      url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+      url: `/api/v1/notes/Projekt/Plan.md?owner=${julianId}`,
       payload: { content: 'x' },
     });
     expect(put.status).toBe(404);

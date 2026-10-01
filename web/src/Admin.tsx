@@ -95,21 +95,11 @@ export function AdminView(props: AdminProps): React.JSX.Element {
                 <td>
                   <span className="adminname">{user.displayName}</span>
                   <span className="adminid">{user.loginName}</span>
-                  {/* Only where the two have come apart. The id is the vault's
-                      directory and does not move when the login is changed, so
-                      somebody looking at the disk after a rename finds a folder
-                      under the old name — said here rather than discovered in a
-                      backup. */}
-                  {user.loginName !== user.id && (
-                    <span className="adminid" title={copy.admin.vaultFolderWhy}>
-                      {copy.admin.vaultFolder(user.id)}
-                    </span>
-                  )}
                   {/* The identifier, on this screen and on no other. Selectable
                       rather than offered with a copy button: it is wanted when
                       something is being looked up by hand, which is already a
                       terminal and a paste. */}
-                  <code className="adminguid" title={copy.admin.guidWhy}>{user.guid}</code>
+                  <code className="adminguid" title={copy.admin.guidWhy}>{user.id}</code>
                   {user.role === 'admin' && <span className="pill p-tag">{copy.admin.admin}</span>}
                   {user.disabled && <span className="pill p-crit">{copy.admin.disabled}</span>}
                 </td>

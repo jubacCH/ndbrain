@@ -27,6 +27,8 @@ const DAY = 24 * HOUR;
 let dataDir: string;
 let runtime: Runtime;
 let server: FastifyInstance;
+let julian: string;
+let ramona: string;
 const cookies: Record<string, string> = {};
 
 const tool = (name: string) => {
@@ -64,8 +66,8 @@ beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-days-'));
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
-  await runtime.users.create('julian', 'ein gutes passwort');
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort')).id;
+  ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -91,34 +93,34 @@ afterEach(async () => {
 
 describe('counting a day', () => {
   it('counts notes, not saves: twenty autosaves are one note edited', async () => {
-    await runtime.app.createNote('julian', 'Alt.md', 'x', 'julian');
+    await runtime.app.createNote(julian, 'Alt.md', 'x', julian);
     const bounds = [Date.now() + 1, Date.now() + DAY];
     await new Promise((r) => setTimeout(r, 5));
-    for (let i = 0; i < 20; i += 1) await runtime.app.updateNote('julian', 'Alt.md', `Fassung ${i}`);
+    for (let i = 0; i < 20; i += 1) await runtime.app.updateNote(julian, 'Alt.md', `Fassung ${i}`);
 
-    const [today] = runtime.app.queries.dailyActivity('julian', bounds);
+    const [today] = runtime.app.queries.dailyActivity(julian, bounds);
     expect(today).toMatchObject({ created: 0, edited: 1, touched: 1 });
   });
 
   it('counts a note created and then edited on the same day as new, not also as edited', async () => {
     const bounds = threeDays();
-    await runtime.app.createNote('julian', 'Neu.md', 'x', 'julian');
-    await runtime.app.updateNote('julian', 'Neu.md', 'y');
-    await runtime.app.updateNote('julian', 'Neu.md', 'z');
+    await runtime.app.createNote(julian, 'Neu.md', 'x', julian);
+    await runtime.app.updateNote(julian, 'Neu.md', 'y');
+    await runtime.app.updateNote(julian, 'Neu.md', 'z');
 
-    const result = runtime.app.queries.dailyActivity('julian', bounds);
+    const result = runtime.app.queries.dailyActivity(julian, bounds);
     expect(result).toHaveLength(3);
     expect(result[2]).toMatchObject({ created: 1, edited: 0, touched: 1 });
   });
 
   it('puts each change into the day it happened in, and nothing outside the bounds', async () => {
-    await runtime.app.createNote('julian', 'Vorher.md', 'x', 'julian');
+    await runtime.app.createNote(julian, 'Vorher.md', 'x', julian);
     await new Promise((r) => setTimeout(r, 5));
     const start = Date.now();
-    await runtime.app.createNote('julian', 'Heute.md', 'x', 'julian');
+    await runtime.app.createNote(julian, 'Heute.md', 'x', julian);
 
     const bounds = [start - 2 * DAY, start - DAY, start, start + DAY];
-    const result = runtime.app.queries.dailyActivity('julian', bounds);
+    const result = runtime.app.queries.dailyActivity(julian, bounds);
     // Vorher lies a few milliseconds before `start`, so in the day before it.
     expect(result.map((d) => d.created)).toEqual([0, 1, 1]);
     expect(result.map((d) => [d.start, d.end])).toEqual([
@@ -129,22 +131,22 @@ describe('counting a day', () => {
   });
 
   it('counts deletes and renames on their own', async () => {
-    await runtime.app.createNote('julian', 'Weg.md', 'x', 'julian');
-    await runtime.app.createNote('julian', 'Alt.md', 'x', 'julian');
+    await runtime.app.createNote(julian, 'Weg.md', 'x', julian);
+    await runtime.app.createNote(julian, 'Alt.md', 'x', julian);
     const bounds = [Date.now() + 1, Date.now() + DAY];
     await new Promise((r) => setTimeout(r, 5));
-    await runtime.app.deleteNote('julian', 'Weg.md');
-    await runtime.app.renameNote('julian', 'Alt.md', 'Neu.md', { view: 'julian' });
+    await runtime.app.deleteNote(julian, 'Weg.md');
+    await runtime.app.renameNote(julian, 'Alt.md', 'Neu.md', { view: julian });
 
-    const [today] = runtime.app.queries.dailyActivity('julian', bounds);
+    const [today] = runtime.app.queries.dailyActivity(julian, bounds);
     expect(today!.deleted).toBe(1);
     expect(today!.renamed).toBeGreaterThanOrEqual(1);
   });
 
   it('counts what agents read and wrote, and leaves out what they were refused', async () => {
     const bounds = threeDays();
-    await runtime.app.createNote('julian', 'Homelab/Proxmox.md', '# Proxmox\n', 'julian');
-    const agent = agentFor('julian');
+    await runtime.app.createNote(julian, 'Homelab/Proxmox.md', '# Proxmox\n', julian);
+    const agent = agentFor(julian);
 
     await tool('get_note').handler(agent, { path: 'Homelab/Proxmox.md' });
     await tool('search_notes').handler(agent, { query: 'proxmox' });
@@ -152,18 +154,18 @@ describe('counting a day', () => {
     // Refused: a key without write access tries a write, and a key scoped to
     // another folder tries a read. Both are logged, neither may be counted.
     await expect(
-      tool('append_note').handler(agentFor('julian', false), { path: 'Homelab/Proxmox.md', content: 'Nein.' }),
+      tool('append_note').handler(agentFor(julian, false), { path: 'Homelab/Proxmox.md', content: 'Nein.' }),
     ).rejects.toThrow();
-    const scoped = runtime.keys.create('julian', 'scoped', { scope: 'Privat/', canWrite: true });
+    const scoped = runtime.keys.create(julian, 'scoped', { scope: 'Privat/', canWrite: true });
     const scopedAgent = { app: runtime.app, keys: runtime.keys, key: runtime.keys.resolve(scoped.secret)! } as ToolContext;
     await expect(tool('get_note').handler(scopedAgent, { path: 'Homelab/Proxmox.md' })).rejects.toThrow();
     await expect(
       tool('append_note').handler(scopedAgent, { path: 'Homelab/Proxmox.md', content: 'Auch nicht.' }),
     ).rejects.toThrow();
-    const refused = runtime.keys.recentAccess('julian', 50).filter((row) => !row.allowed);
+    const refused = runtime.keys.recentAccess(julian, 50).filter((row) => !row.allowed);
     expect(refused.length).toBeGreaterThanOrEqual(3);
 
-    const today = runtime.app.queries.dailyActivity('julian', bounds)[2]!;
+    const today = runtime.app.queries.dailyActivity(julian, bounds)[2]!;
     expect(today.agentReads).toBe(2);
     expect(today.agentWrites).toBe(1);
   });
@@ -190,7 +192,7 @@ describe('counting a day', () => {
     }
     runtime.db.transaction(() => {
       for (const row of rows) {
-        runtime.db.run('INSERT INTO edits (owner, path, actor, action, at) VALUES (?, ?, ?, ?, ?)', 'julian', row.path, 'julian', row.action, row.at);
+        runtime.db.run('INSERT INTO edits (owner, path, actor, action, at) VALUES (?, ?, ?, ?, ?)', julian, row.path, julian, row.action, row.at);
       }
     });
 
@@ -207,7 +209,7 @@ describe('counting a day', () => {
         touched: all.length,
       };
     });
-    const result = runtime.app.queries.dailyActivity('julian', bounds).map(({ created, edited, deleted, renamed, touched }) => ({
+    const result = runtime.app.queries.dailyActivity(julian, bounds).map(({ created, edited, deleted, renamed, touched }) => ({
       created,
       edited,
       deleted,
@@ -217,30 +219,30 @@ describe('counting a day', () => {
     expect(result).toEqual(expected);
     expect(expected.every((d) => d.created > 0 && d.edited > 0 && d.touched > d.created)).toBe(true);
 
-    const params = [...bounds.slice(0, -1).flatMap((lo, i) => [i, lo, bounds[i + 1]!]), 'julian'];
+    const params = [...bounds.slice(0, -1).flatMap((lo, i) => [i, lo, bounds[i + 1]!]), julian];
     const plan = runtime.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${dailyEditsSql(3)}`, ...params).map((r) => r.detail);
     expect(plan.some((d) => /USING INDEX edits_owner_at/.test(d))).toBe(true);
     expect(plan.filter((d) => /CORRELATED/.test(d))).toEqual([]);
   });
 
   it('answers an empty list for fewer than two bounds', () => {
-    expect(runtime.app.queries.dailyActivity('julian', [])).toEqual([]);
-    expect(runtime.app.queries.dailyActivity('julian', [Date.now()])).toEqual([]);
+    expect(runtime.app.queries.dailyActivity(julian, [])).toEqual([]);
+    expect(runtime.app.queries.dailyActivity(julian, [Date.now()])).toEqual([]);
   });
 });
 
 describe('two worlds', () => {
   beforeEach(async () => {
     // Ramona may read Julian's whole vault.
-    runtime.shares.grant('julian', '', 'ramona', false);
+    runtime.shares.grant(julian, '', ramona, false);
   });
 
   it('never counts activity from another vault, not even a shared one', async () => {
     const bounds = threeDays();
-    await runtime.app.createNote('julian', 'Seins.md', 'x', 'julian');
-    await tool('get_note').handler(agentFor('julian'), { path: 'Seins.md' });
+    await runtime.app.createNote(julian, 'Seins.md', 'x', julian);
+    await tool('get_note').handler(agentFor(julian), { path: 'Seins.md' });
 
-    const hers = runtime.app.queries.dailyActivity('ramona', bounds);
+    const hers = runtime.app.queries.dailyActivity(ramona, bounds);
     expect(hers.every((d) => d.touched === 0 && d.created === 0 && d.agentReads === 0)).toBe(true);
   });
 
@@ -248,8 +250,8 @@ describe('two worlds', () => {
     const bounds = threeDays().join(',');
     const before = await days('ramona', `bounds=${bounds}`);
 
-    await runtime.app.createNote('julian', 'Seins.md', 'x', 'julian');
-    await tool('get_note').handler(agentFor('julian'), { path: 'Seins.md' });
+    await runtime.app.createNote(julian, 'Seins.md', 'x', julian);
+    await tool('get_note').handler(agentFor(julian), { path: 'Seins.md' });
 
     const plain = await days('ramona', `bounds=${bounds}`);
     const aimed = await days('ramona', `bounds=${bounds}&owner=julian`);

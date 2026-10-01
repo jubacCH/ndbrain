@@ -36,7 +36,9 @@ export async function runReindexCommand(
   } else {
     // Named and unknown is a typo, not an empty job. Reporting "0 notes" for a
     // misspelled account would look like a successful reindex of an empty vault.
-    const user = runtime.users.get(named);
+    // By login, because that is the word somebody types; the id is a random
+    // identifier and nobody is going to paste one of those at a shell.
+    const user = runtime.users.byLogin(named);
     if (user === undefined) throw new Error(`no such account: ${named}`);
     owners = [user.id];
   }

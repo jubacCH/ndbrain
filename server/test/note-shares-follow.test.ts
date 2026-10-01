@@ -22,20 +22,22 @@ vi.setConfig({ testTimeout: 30_000 });
 
 let h: Harness;
 let watcher: VaultWatcher | null = null;
+let julian: string;
+let ramona: string;
+let peter: string;
 
 beforeEach(async () => {
   h = await startHarness('follow');
-  for (const [id, password] of [
-    ['julian', 'ein gutes passwort'],
-    ['ramona', 'ihr gutes passwort'],
-    ['peter', 'sein gutes passwort'],
-  ] as const) {
-    await h.runtime.users.create(id, password);
-    await h.login(id, password);
-  }
-  await h.runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n\ngeteilt\n', 'julian');
-  await h.runtime.app.createNote('julian', 'Projekt/Alt.md', '# Alt\n\nfür Peter\n', 'julian');
-  await h.runtime.app.createNote('julian', 'Verweis.md', 'Siehe [[Plan]]\n', 'julian');
+  julian = (await h.runtime.users.create('julian', 'ein gutes passwort')).id;
+  await h.login('julian', 'ein gutes passwort');
+  ramona = (await h.runtime.users.create('ramona', 'ihr gutes passwort')).id;
+  await h.login('ramona', 'ihr gutes passwort');
+  peter = (await h.runtime.users.create('peter', 'sein gutes passwort')).id;
+  await h.login('peter', 'sein gutes passwort');
+
+  await h.runtime.app.createNote(julian, 'Projekt/Plan.md', '# Plan\n\ngeteilt\n', julian);
+  await h.runtime.app.createNote(julian, 'Projekt/Alt.md', '# Alt\n\nfür Peter\n', julian);
+  await h.runtime.app.createNote(julian, 'Verweis.md', 'Siehe [[Plan]]\n', julian);
 });
 
 afterEach(async () => {
@@ -54,12 +56,12 @@ async function shareNote(grantee: string, notePath: string, canWrite = false): P
 }
 
 async function reads(user: string, notePath: string): Promise<number> {
-  return (await h.as(user, { url: `/api/v1/notes/${encodeURI(notePath)}?owner=julian` })).status;
+  return (await h.as(user, { url: `/api/v1/notes/${encodeURI(notePath)}?owner=${julian}` })).status;
 }
 
 function noteShares(): Array<{ path: string; grantee: string }> {
   return h.runtime.shares
-    .byOwner('julian')
+    .byOwner(julian)
     .filter((share) => share.kind === 'note')
     .map((share) => ({ path: share.prefix, grantee: share.grantee }));
 }
@@ -67,9 +69,13 @@ function noteShares(): Array<{ path: string; grantee: string }> {
 /** A note share left behind by a note that disappeared while nobody was looking. */
 async function strandShare(grantee: string, notePath: string): Promise<void> {
   await shareNote(grantee, notePath);
-  await fs.rm(path.join(h.dataDir, 'vaults', 'julian', notePath));
-  h.runtime.indexer.removeNote('julian', notePath);
-  expect(noteShares()).toContainEqual({ path: notePath, grantee });
+  await fs.rm(path.join(h.dataDir, 'vaults', julian, notePath));
+  h.runtime.indexer.removeNote(julian, notePath);
+  // `grantee` here is the login name sent over HTTP; the row noteShares() reads
+  // back is keyed by the account's real id, the same way the share route itself
+  // resolves it.
+  const granteeId = h.runtime.users.byLogin(grantee)!.id;
+  expect(noteShares()).toContainEqual({ path: notePath, grantee: granteeId });
 }
 
 describe('rename and move', () => {
@@ -82,18 +88,18 @@ describe('rename and move', () => {
     });
     expect(reply.status).toBe(200);
 
-    expect(noteShares()).toEqual([{ path: 'Archiv/Planung.md', grantee: 'ramona' }]);
+    expect(noteShares()).toEqual([{ path: 'Archiv/Planung.md', grantee: ramona }]);
     expect(await reads('ramona', 'Archiv/Planung.md')).toBe(200);
     expect(await reads('ramona', 'Projekt/Plan.md')).toBe(404);
   });
 
   it('moves it when a grantee with a folder share renames the note', async () => {
     await shareNote('ramona', 'Projekt/Plan.md');
-    h.runtime.shares.grant('julian', 'Projekt', 'peter', true);
+    h.runtime.shares.grant(julian, 'Projekt', peter, true);
     const reply = await h.as('peter', {
       method: 'POST',
       url: '/api/v1/rename',
-      payload: { owner: 'julian', from: 'Projekt/Plan.md', to: 'Projekt/Plan neu.md' },
+      payload: { owner: julian, from: 'Projekt/Plan.md', to: 'Projekt/Plan neu.md' },
     });
     expect(reply.status).toBe(200);
     expect(await reads('ramona', 'Projekt/Plan neu.md')).toBe(200);
@@ -104,20 +110,20 @@ describe('rename and move', () => {
     const reply = await h.as('julian', {
       method: 'POST',
       url: '/api/v1/bulk',
-      payload: { owner: 'julian', paths: ['Projekt/Plan.md'], action: 'move', dir: 'Archiv' },
+      payload: { owner: julian, paths: ['Projekt/Plan.md'], action: 'move', dir: 'Archiv' },
     });
     expect(reply.body.ok).toEqual(['Archiv/Plan.md']);
-    expect(noteShares()).toEqual([{ path: 'Archiv/Plan.md', grantee: 'ramona' }]);
+    expect(noteShares()).toEqual([{ path: 'Archiv/Plan.md', grantee: ramona }]);
     expect(await reads('ramona', 'Archiv/Plan.md')).toBe(200);
   });
 
   it('moves note shares inside a renamed folder, and the folder shares on it and below', async () => {
     await shareNote('ramona', 'Projekt/Plan.md');
-    await h.runtime.app.createNote('julian', 'Projekt/Sub/Tief.md', 'tief\n', 'julian');
-    await h.runtime.app.createNote('julian', 'Projektil.md', 'daneben\n', 'julian');
-    h.runtime.shares.grant('julian', 'Projekt', 'peter', false);
-    h.runtime.shares.grant('julian', 'Projekt/Sub', 'ramona', false);
-    h.runtime.shares.grant('julian', 'Projektil.md', 'peter', false);
+    await h.runtime.app.createNote(julian, 'Projekt/Sub/Tief.md', 'tief\n', julian);
+    await h.runtime.app.createNote(julian, 'Projektil.md', 'daneben\n', julian);
+    h.runtime.shares.grant(julian, 'Projekt', peter, false);
+    h.runtime.shares.grant(julian, 'Projekt/Sub', ramona, false);
+    h.runtime.shares.grant(julian, 'Projektil.md', peter, false);
 
     const reply = await h.as('julian', {
       method: 'POST',
@@ -126,16 +132,19 @@ describe('rename and move', () => {
     });
     expect(reply.status).toBe(200);
 
+    // Sorted by path, which is unique here and unaffected by the grantee's
+    // (now random) account id — grouping by grantee the way the id would sort
+    // gives no stable order across runs.
     const all = h.runtime.shares
-      .byOwner('julian')
+      .byOwner(julian)
       .map((share) => ({ kind: share.kind, path: share.prefix, grantee: share.grantee }))
-      .sort((a, b) => `${a.grantee}${a.path}`.localeCompare(`${b.grantee}${b.path}`));
+      .sort((a, b) => a.path.localeCompare(b.path));
     expect(all).toEqual([
-      { kind: 'folder', path: 'Archiv/Projekt 2026/', grantee: 'peter' },
+      { kind: 'folder', path: 'Archiv/Projekt 2026/', grantee: peter },
+      { kind: 'note', path: 'Archiv/Projekt 2026/Plan.md', grantee: ramona },
+      { kind: 'folder', path: 'Archiv/Projekt 2026/Sub/', grantee: ramona },
       // A folder share on a folder merely starting with the same letters stays.
-      { kind: 'folder', path: 'Projektil.md/', grantee: 'peter' },
-      { kind: 'note', path: 'Archiv/Projekt 2026/Plan.md', grantee: 'ramona' },
-      { kind: 'folder', path: 'Archiv/Projekt 2026/Sub/', grantee: 'ramona' },
+      { kind: 'folder', path: 'Projektil.md/', grantee: peter },
     ]);
     expect(await reads('ramona', 'Archiv/Projekt 2026/Plan.md')).toBe(200);
     expect(await reads('peter', 'Archiv/Projekt 2026/Alt.md')).toBe(200);
@@ -143,7 +152,7 @@ describe('rename and move', () => {
 
   it('follows a folder rename that only changes letter case', async () => {
     await shareNote('ramona', 'Projekt/Plan.md');
-    h.runtime.shares.grant('julian', 'Projekt', 'peter', false);
+    h.runtime.shares.grant(julian, 'Projekt', peter, false);
     const reply = await h.as('julian', {
       method: 'POST',
       url: '/api/v1/folders/rename',
@@ -167,7 +176,7 @@ describe('rename and move', () => {
     });
     expect(reply.status).toBe(200);
 
-    expect(noteShares()).toEqual([{ path: 'Projekt/Alt.md', grantee: 'ramona' }]);
+    expect(noteShares()).toEqual([{ path: 'Projekt/Alt.md', grantee: ramona }]);
     expect(await reads('peter', 'Projekt/Alt.md')).toBe(404);
     expect(await reads('ramona', 'Projekt/Alt.md')).toBe(200);
   });
@@ -182,10 +191,10 @@ describe('rename and move', () => {
     expect((await rename('Projekt/Alt.md', 'Projekt/Plan.md')).status).toBe(200);
     expect((await rename('Projekt/Tmp.md', 'Projekt/Alt.md')).status).toBe(200);
 
-    const ramona = await h.as('ramona', { url: '/api/v1/notes/Projekt/Alt.md?owner=julian' });
-    expect(ramona.body.note.content).toContain('geteilt');
-    const peter = await h.as('peter', { url: '/api/v1/notes/Projekt/Plan.md?owner=julian' });
-    expect(peter.body.note.content).toContain('für Peter');
+    const ramonaReply = await h.as('ramona', { url: `/api/v1/notes/Projekt/Alt.md?owner=${julian}` });
+    expect(ramonaReply.body.note.content).toContain('geteilt');
+    const peterReply = await h.as('peter', { url: `/api/v1/notes/Projekt/Plan.md?owner=${julian}` });
+    expect(peterReply.body.note.content).toContain('für Peter');
     expect(await reads('ramona', 'Projekt/Plan.md')).toBe(404);
     expect(await reads('peter', 'Projekt/Alt.md')).toBe(404);
   });
@@ -213,26 +222,26 @@ describe('delete', () => {
     const reply = await h.as('julian', {
       method: 'POST',
       url: '/api/v1/bulk',
-      payload: { owner: 'julian', paths: ['Projekt/Plan.md'], action: 'delete' },
+      payload: { owner: julian, paths: ['Projekt/Plan.md'], action: 'delete' },
     });
     expect(reply.body.ok).toEqual(['Projekt/Plan.md']);
-    expect(noteShares()).toEqual([{ path: 'Projekt/Alt.md', grantee: 'peter' }]);
+    expect(noteShares()).toEqual([{ path: 'Projekt/Alt.md', grantee: peter }]);
   });
 
   it('withdraws a share on a grantee-deleted note too', async () => {
     await shareNote('ramona', 'Projekt/Plan.md', true);
     expect(
-      (await h.as('ramona', { method: 'DELETE', url: '/api/v1/notes/Projekt/Plan.md?owner=julian' })).status,
+      (await h.as('ramona', { method: 'DELETE', url: `/api/v1/notes/Projekt/Plan.md?owner=${julian}` })).status,
     ).toBe(204);
     expect(noteShares()).toEqual([]);
   });
 
   it('withdraws folder shares on a deleted folder', async () => {
-    await h.runtime.app.createFolder('julian', 'Leer/Innen');
-    h.runtime.shares.grant('julian', 'Leer/Innen', 'ramona', false);
-    h.runtime.shares.grant('julian', 'Leer', 'peter', false);
+    await h.runtime.app.createFolder(julian, 'Leer/Innen');
+    h.runtime.shares.grant(julian, 'Leer/Innen', ramona, false);
+    h.runtime.shares.grant(julian, 'Leer', peter, false);
     expect((await h.as('julian', { method: 'DELETE', url: '/api/v1/folders/Leer/Innen' })).status).toBe(204);
-    expect(h.runtime.shares.byOwner('julian').map((share) => share.prefix)).toEqual(['Leer/']);
+    expect(h.runtime.shares.byOwner(julian).map((share) => share.prefix)).toEqual(['Leer/']);
   });
 });
 
@@ -258,7 +267,7 @@ describe('a new note never inherits', () => {
 
   it('from a stranded share, through an agent creating the note', async () => {
     await strandShare('peter', 'Projekt/Alt.md');
-    const secret = h.runtime.keys.create('julian', 'agent', { canWrite: true }).secret;
+    const secret = h.runtime.keys.create(julian, 'agent', { canWrite: true }).secret;
     const reply = await h.tool(secret, 'create_note', { path: 'Projekt/Alt.md', content: 'vom agenten' });
     expect(reply.body.result.isError).toBeUndefined();
     expect(noteShares()).toEqual([]);
@@ -285,9 +294,9 @@ describe('changes made around ndBrain', () => {
     throw new Error(`the watcher never delivered: ${description}`);
   }
 
-  const onDisk = (notePath: string): string => path.join(h.dataDir, 'vaults', 'julian', notePath);
+  const onDisk = (notePath: string): string => path.join(h.dataDir, 'vaults', julian, notePath);
   const indexed = (notePath: string): boolean =>
-    h.runtime.app.queries.getNote('julian', 'julian', notePath) !== undefined;
+    h.runtime.app.queries.getNote(julian, julian, notePath) !== undefined;
 
   it('withdraws the share when the file is deleted, and a file of that name later gets nothing', async () => {
     await shareNote('ramona', 'Projekt/Plan.md');
@@ -310,7 +319,7 @@ describe('changes made around ndBrain', () => {
     if (gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
     await fs.writeFile(onDisk('Projekt/Plan.md'), '# ersetzt\n', 'utf8');
     await waitForWatcher('the replacement indexed', () =>
-      h.runtime.app.queries.search('julian', 'ersetzt').length === 1,
+      h.runtime.app.queries.search(julian, 'ersetzt').length === 1,
     );
     expect(noteShares()).toEqual([]);
   });
@@ -322,7 +331,7 @@ describe('changes made around ndBrain', () => {
     for (let i = 0; i < 5; i += 1) {
       await h.as('ramona', {
         method: 'PUT',
-        url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+        url: `/api/v1/notes/Projekt/Plan.md?owner=${julian}`,
         payload: { content: `# Plan\n\nFassung ${i}\n` },
       });
       await new Promise((resolve) => setTimeout(resolve, 150));
@@ -330,7 +339,7 @@ describe('changes made around ndBrain', () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
     await watcher?.flushNow();
 
-    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: 'ramona' }]);
+    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: ramona }]);
     expect(await reads('ramona', 'Projekt/Plan.md')).toBe(200);
   });
 
@@ -344,7 +353,7 @@ describe('changes made around ndBrain', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 600));
     await watcher?.flushNow();
-    expect(noteShares()).toEqual([{ path: 'Projekt/Plan 2.md', grantee: 'ramona' }]);
+    expect(noteShares()).toEqual([{ path: 'Projekt/Plan 2.md', grantee: ramona }]);
   });
 
   // The events alone cannot tell a replaced file from an edited one: a file
@@ -372,7 +381,7 @@ describe('changes made around ndBrain', () => {
 
     await replace();
     await waitForWatcher('the replacement indexed', () =>
-      h.runtime.app.queries.search('julian', 'fremd').length === 1,
+      h.runtime.app.queries.search(julian, 'fremd').length === 1,
     );
     expect(noteShares()).toEqual([]);
     expect(await reads('ramona', 'Projekt/Plan.md')).toBe(404);
@@ -385,9 +394,9 @@ describe('changes made around ndBrain', () => {
     // Written into the same file, as nano, VS Code or Obsidian save.
     await fs.writeFile(onDisk('Projekt/Plan.md'), '# Plan\n\nvon draussen bearbeitet\n', 'utf8');
     await waitForWatcher('the edit indexed', () =>
-      h.runtime.app.queries.search('julian', 'draussen').length === 1,
+      h.runtime.app.queries.search(julian, 'draussen').length === 1,
     );
-    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: 'ramona' }]);
+    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: ramona }]);
     expect(await reads('ramona', 'Projekt/Plan.md')).toBe(200);
   });
 
@@ -404,7 +413,7 @@ describe('changes made around ndBrain', () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     await watcher?.flushNow();
     await createWatcher(h.runtime).reconcile();
-    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: 'ramona' }]);
+    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: ramona }]);
   });
 
   it('lets reconciliation withdraw a share whose note was replaced without any event', async () => {
@@ -414,7 +423,7 @@ describe('changes made around ndBrain', () => {
     await fs.rename(onDisk('Fremd.md'), onDisk('Projekt/Plan.md'));
 
     await createWatcher(h.runtime).reconcile();
-    expect(noteShares()).toEqual([{ path: 'Projekt/Alt.md', grantee: 'peter' }]);
+    expect(noteShares()).toEqual([{ path: 'Projekt/Alt.md', grantee: peter }]);
   });
 
   it('keeps a share whose note came back as a new file with the same text, as after a restore', async () => {
@@ -428,7 +437,7 @@ describe('changes made around ndBrain', () => {
       'utf8',
     );
     await waitForWatcher('the edit indexed', () =>
-      h.runtime.app.queries.search('julian', 'Fassung').length === 1,
+      h.runtime.app.queries.search(julian, 'Fassung').length === 1,
     );
     await watcher?.stop();
     watcher = null;
@@ -438,7 +447,7 @@ describe('changes made around ndBrain', () => {
     await fs.rename(onDisk('Kopie.tmp'), onDisk('Projekt/Plan.md'));
 
     await syncAllVaults(h.runtime);
-    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: 'ramona' }]);
+    expect(noteShares()).toEqual([{ path: 'Projekt/Plan.md', grantee: ramona }]);
   });
 
   it('lets reconciliation withdraw a share whose file vanished without any event', async () => {
@@ -447,7 +456,7 @@ describe('changes made around ndBrain', () => {
     await fs.rm(onDisk('Projekt/Plan.md'));
 
     await createWatcher(h.runtime).reconcile();
-    expect(noteShares()).toEqual([{ path: 'Projekt/Alt.md', grantee: 'peter' }]);
+    expect(noteShares()).toEqual([{ path: 'Projekt/Alt.md', grantee: peter }]);
   });
 
   it('withdraws shares on notes that went while the server was down, on start', async () => {

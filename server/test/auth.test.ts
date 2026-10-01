@@ -73,8 +73,8 @@ describe('accounts', () => {
   it('creates a user together with their vault directory', async () => {
     const user = await users.create('julian', 'ein gutes passwort', { role: 'admin' });
 
-    expect(user).toMatchObject({ id: 'julian', role: 'admin', disabled: false });
-    const stat = await fs.stat(vault.rootFor('julian'));
+    expect(user).toMatchObject({ loginName: 'julian', role: 'admin', disabled: false });
+    const stat = await fs.stat(vault.rootFor(user.id));
     expect(stat.isDirectory()).toBe(true);
   });
 
@@ -90,9 +90,9 @@ describe('accounts', () => {
   });
 
   it('authenticates with the right password only', async () => {
-    await users.create('julian', 'ein gutes passwort');
+    const julian = await users.create('julian', 'ein gutes passwort');
 
-    expect(await users.authenticate('julian', 'ein gutes passwort')).toMatchObject({ id: 'julian' });
+    expect(await users.authenticate('julian', 'ein gutes passwort')).toMatchObject({ id: julian.id });
     expect(await users.authenticate('julian', 'falsch')).toBeNull();
   });
 
@@ -119,21 +119,21 @@ describe('accounts', () => {
   });
 
   it('refuses a disabled account and ends its sessions', async () => {
-    await users.create('julian', 'ein gutes passwort');
-    const { token } = sessions.create('julian');
+    const julian = await users.create('julian', 'ein gutes passwort');
+    const { token } = sessions.create(julian.id);
 
-    users.setDisabled('julian', true);
+    users.setDisabled(julian.id, true);
 
     expect(await users.authenticate('julian', 'ein gutes passwort')).toBeNull();
     expect(sessions.resolve(token)).toBeNull();
   });
 
   it('ends every session when the password changes', async () => {
-    await users.create('julian', 'ein gutes passwort');
-    const { token } = sessions.create('julian');
+    const julian = await users.create('julian', 'ein gutes passwort');
+    const { token } = sessions.create(julian.id);
     expect(sessions.resolve(token)).not.toBeNull();
 
-    await users.setPassword('julian', 'ein neues passwort');
+    await users.setPassword(julian.id, 'ein neues passwort');
 
     expect(sessions.resolve(token)).toBeNull();
     expect(await users.authenticate('julian', 'ein neues passwort')).not.toBeNull();
@@ -141,17 +141,19 @@ describe('accounts', () => {
 });
 
 describe('sessions', () => {
+  let julianId: string;
+
   beforeEach(async () => {
-    await users.create('julian', 'ein gutes passwort');
+    julianId = (await users.create('julian', 'ein gutes passwort')).id;
   });
 
   it('resolves a freshly issued token', () => {
-    const { token } = sessions.create('julian');
-    expect(sessions.resolve(token)).toMatchObject({ userId: 'julian' });
+    const { token } = sessions.create(julianId);
+    expect(sessions.resolve(token)).toMatchObject({ userId: julianId });
   });
 
   it('stores only the hash, never the token itself', () => {
-    const { token } = sessions.create('julian');
+    const { token } = sessions.create(julianId);
     const rows = db.all<{ token_hash: string }>('SELECT token_hash FROM sessions');
     expect(rows).toHaveLength(1);
     expect(String(rows[0]?.token_hash)).not.toBe(token);
@@ -160,7 +162,7 @@ describe('sessions', () => {
 
   it('rejects an unknown, empty or expired token', () => {
     const now = Date.now();
-    const { token } = sessions.create('julian', now);
+    const { token } = sessions.create(julianId, now);
 
     expect(sessions.resolve('')).toBeNull();
     expect(sessions.resolve('erfunden')).toBeNull();
@@ -169,34 +171,34 @@ describe('sessions', () => {
 
   it('drops an expired session on the spot', () => {
     const now = Date.now();
-    const { token } = sessions.create('julian', now);
+    const { token } = sessions.create(julianId, now);
     sessions.resolve(token, now + SESSION_TTL_MS + 1);
     expect(db.all('SELECT 1 FROM sessions')).toHaveLength(0);
   });
 
   it('logs out', () => {
-    const { token } = sessions.create('julian');
+    const { token } = sessions.create(julianId);
     sessions.destroy(token);
     expect(sessions.resolve(token)).toBeNull();
   });
 
   it('purges expired sessions but keeps live ones', () => {
     const now = Date.now();
-    sessions.create('julian', now - SESSION_TTL_MS - 1000);
-    const live = sessions.create('julian', now);
+    sessions.create(julianId, now - SESSION_TTL_MS - 1000);
+    const live = sessions.create(julianId, now);
 
     expect(sessions.purgeExpired(now)).toBe(1);
     expect(sessions.resolve(live.token, now)).not.toBeNull();
   });
 
   it('issues tokens that do not repeat', () => {
-    const seen = new Set(Array.from({ length: 50 }, () => sessions.create('julian').token));
+    const seen = new Set(Array.from({ length: 50 }, () => sessions.create(julianId).token));
     expect(seen.size).toBe(50);
   });
 
   it('removes sessions when the account is deleted', async () => {
-    const { token } = sessions.create('julian');
-    db.run('DELETE FROM users WHERE id = ?', 'julian');
+    const { token } = sessions.create(julianId);
+    db.run('DELETE FROM users WHERE id = ?', julianId);
     expect(sessions.resolve(token)).toBeNull();
   });
 });

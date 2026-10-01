@@ -28,10 +28,11 @@ import { Vault } from '../src/vault/fs.js';
 import { startHarness, type Harness } from './support/harness.js';
 
 let h: Harness;
+let anna: string;
 
 beforeEach(async () => {
   h = await startHarness('health');
-  await h.runtime.users.create('anna', 'passwort-eins-zwei');
+  anna = (await h.runtime.users.create('anna', 'passwort-eins-zwei')).id;
 });
 
 afterEach(async () => {
@@ -59,7 +60,7 @@ describe('the health endpoint', () => {
   });
 
   it('gives an unauthenticated reader nothing to measure the vault with', async () => {
-    await h.runtime.app.createNote('anna', 'Notiz.md', '# Notiz\n');
+    await h.runtime.app.createNote(anna, 'Notiz.md', '# Notiz\n');
 
     const reply = await health();
 
@@ -198,8 +199,8 @@ describe('what the health endpoint says about the history', () => {
   });
 
   it('is ok once the vault has a repository with a commit in it', async () => {
-    const cwd = path.join(h.dataDir, 'vaults', 'anna');
-    await h.runtime.app.createNote('anna', 'Notiz.md', '# Notiz\n');
+    const cwd = path.join(h.dataDir, 'vaults', anna);
+    await h.runtime.app.createNote(anna, 'Notiz.md', '# Notiz\n');
     await run('git', ['init', '-q', '-b', 'main'], { cwd });
     await run('git', ['add', '-A'], { cwd });
     await run('git', ['commit', '-q', '-m', 'Vault-Stand'], {
@@ -218,8 +219,8 @@ describe('what the health endpoint says about the history', () => {
   });
 
   it('is broken, and degraded, when the repository is there and cannot be read', async () => {
-    const cwd = path.join(h.dataDir, 'vaults', 'anna');
-    await h.runtime.app.createNote('anna', 'Notiz.md', '# Notiz\n');
+    const cwd = path.join(h.dataDir, 'vaults', anna);
+    await h.runtime.app.createNote(anna, 'Notiz.md', '# Notiz\n');
     await run('git', ['init', '-q', '-b', 'main'], { cwd });
     await fs.rm(path.join(cwd, '.git', 'objects'), { recursive: true, force: true });
 

@@ -14,20 +14,22 @@ let dataDir: string;
 let runtime: Runtime;
 let server: FastifyInstance;
 let cookie: string;
+let julian: string;
+let ramona: string;
 
 beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-bulk-'));
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
 
-  await runtime.users.create('julian', 'ein gutes passwort');
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort')).id;
+  ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
 
-  await runtime.app.createNote('julian', 'Inbox/Eins.md', '# Eins\n');
-  await runtime.app.createNote('julian', 'Inbox/Zwei.md', '---\ntags: [alt]\n---\n# Zwei\n');
-  await runtime.app.createNote('julian', 'Inbox/Drei.md', '# Drei\n');
-  await runtime.app.createNote('julian', 'Verweis.md', 'Siehe [[Eins]] und [[Zwei]].\n');
-  await runtime.app.createNote('ramona', 'Privat/Geheim.md', 'gehört Ramona\n');
+  await runtime.app.createNote(julian, 'Inbox/Eins.md', '# Eins\n');
+  await runtime.app.createNote(julian, 'Inbox/Zwei.md', '---\ntags: [alt]\n---\n# Zwei\n');
+  await runtime.app.createNote(julian, 'Inbox/Drei.md', '# Drei\n');
+  await runtime.app.createNote(julian, 'Verweis.md', 'Siehe [[Eins]] und [[Zwei]].\n');
+  await runtime.app.createNote(ramona, 'Privat/Geheim.md', 'gehört Ramona\n');
 
   server = await buildServer({
     app: runtime.app,
@@ -83,8 +85,8 @@ describe('bulk move', () => {
     expect(body.failed).toEqual([]);
 
     // The links still resolve, which is the entire point of doing it here.
-    expect(runtime.app.queries.deadLinks('julian')).toEqual([]);
-    expect(await read('julian', 'Verweis.md')).toBe('Siehe [[Eins]] und [[Zwei]].\n');
+    expect(runtime.app.queries.deadLinks(julian)).toEqual([]);
+    expect(await read(julian, 'Verweis.md')).toBe('Siehe [[Eins]] und [[Zwei]].\n');
   });
 
   it('moves to the vault root', async () => {
@@ -94,7 +96,7 @@ describe('bulk move', () => {
 
   it('reports the notes that failed and still does the rest', async () => {
     // A name collision at the target must not roll back the others.
-    await runtime.app.createNote('julian', 'Homelab/Eins.md', 'schon da\n');
+    await runtime.app.createNote(julian, 'Homelab/Eins.md', 'schon da\n');
 
     const { body } = await bulk({
       action: 'move',
@@ -105,7 +107,7 @@ describe('bulk move', () => {
     expect(body.ok.sort()).toEqual(['Homelab/Drei.md', 'Homelab/Zwei.md']);
     expect(body.failed).toHaveLength(1);
     expect(body.failed[0].path).toBe('Inbox/Eins.md');
-    expect(await read('julian', 'Homelab/Eins.md')).toBe('schon da\n');
+    expect(await read(julian, 'Homelab/Eins.md')).toBe('schon da\n');
   });
 
   it('treats a move to where it already is as a no-op', async () => {
@@ -126,7 +128,7 @@ describe('bulk move', () => {
       paths: ['Inbox/Eins.md', 'Inbox/Zwei.md', 'Inbox/Drei.md'],
       dir: 'Archiv',
     });
-    expect(await runtime.notes.listDirs('julian')).toEqual(['Archiv', 'Inbox']);
+    expect(await runtime.notes.listDirs(julian)).toEqual(['Archiv', 'Inbox']);
   });
 });
 
@@ -139,8 +141,8 @@ describe('bulk tag', () => {
     });
 
     expect(body.failed).toEqual([]);
-    expect(parseNote(await read('julian', 'Inbox/Eins.md')).tags).toEqual(['sortiert']);
-    expect(parseNote(await read('julian', 'Inbox/Zwei.md')).tags).toEqual(['alt', 'sortiert']);
+    expect(parseNote(await read(julian, 'Inbox/Eins.md')).tags).toEqual(['sortiert']);
+    expect(parseNote(await read(julian, 'Inbox/Zwei.md')).tags).toEqual(['alt', 'sortiert']);
   });
 
   it('does not rewrite a note that already carries the tag', async () => {
@@ -148,14 +150,14 @@ describe('bulk tag', () => {
 
     // Writing anyway would bump the modification date and make an untouched note
     // look edited in the overview.
-    const activity = runtime.app.queries.activity('julian', 0);
+    const activity = runtime.app.queries.activity(julian, 0);
     const entry = activity.find((row) => row.path === 'Inbox/Zwei.md');
     expect(entry?.edits).toBe(1); // only the original creation
   });
 
   it('removes a tag again', async () => {
     await bulk({ action: 'untag', paths: ['Inbox/Zwei.md'], tag: 'alt' });
-    expect(parseNote(await read('julian', 'Inbox/Zwei.md')).tags).toEqual([]);
+    expect(parseNote(await read(julian, 'Inbox/Zwei.md')).tags).toEqual([]);
   });
 
   it('refuses an empty tag', async () => {
@@ -170,10 +172,10 @@ describe('bulk delete', () => {
     const { body } = await bulk({ action: 'delete', paths: ['Inbox/Eins.md', 'Inbox/Zwei.md'] });
 
     expect(body.ok.sort()).toEqual(['Inbox/Eins.md', 'Inbox/Zwei.md']);
-    expect(runtime.app.queries.countNotes('julian')).toBe(2);
+    expect(runtime.app.queries.countNotes(julian)).toBe(2);
     // Deleting a target does not silently edit the notes that pointed at it —
     // the broken links are reported instead.
-    expect(runtime.app.queries.deadLinks('julian')).toHaveLength(2);
+    expect(runtime.app.queries.deadLinks(julian)).toHaveLength(2);
   });
 
   it('reports a missing note without stopping', async () => {
@@ -194,7 +196,7 @@ describe('bulk operations respect the tenant boundary', () => {
 
     expect(body.ok).toEqual([]);
     expect(body.failed).toHaveLength(1);
-    expect(await read('ramona', 'Privat/Geheim.md')).toBe('gehört Ramona\n');
+    expect(await read(ramona, 'Privat/Geheim.md')).toBe('gehört Ramona\n');
   });
 
   it('cannot escape the vault with a traversing target folder', async () => {
@@ -206,7 +208,7 @@ describe('bulk operations respect the tenant boundary', () => {
 
     expect(body.ok).toEqual([]);
     expect(body.failed).toHaveLength(1);
-    expect(runtime.app.queries.countNotes('ramona')).toBe(1);
+    expect(runtime.app.queries.countNotes(ramona)).toBe(1);
   });
 });
 

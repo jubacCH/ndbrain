@@ -36,6 +36,7 @@ let db: Database;
 let keys: ApiKeyService;
 let users: UserService;
 let sessions: SessionService;
+let julian: string;
 
 beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-keep-'));
@@ -44,7 +45,7 @@ beforeEach(async () => {
   users = new UserService(db, new Vault(dataDir));
   keys = new ApiKeyService(db);
   sessions = new SessionService(db);
-  await users.create('julian', 'ein gutes passwort');
+  julian = (await users.create('julian', 'ein gutes passwort')).id;
 });
 
 afterEach(async () => {
@@ -57,7 +58,7 @@ function logged(at: number, tool = 'get_note'): void {
   db.run(
     'INSERT INTO access_log (key_id, owner, tool, path, allowed, at) VALUES (?, ?, ?, ?, ?, ?)',
     'key_x',
-    'julian',
+    julian,
     tool,
     'Homelab/Proxmox.md',
     1,
@@ -102,7 +103,7 @@ describe('the access log', () => {
 
     keys.purgeLog(now);
 
-    const recent = keys.recentAccess('julian', 10);
+    const recent = keys.recentAccess(julian, 10);
     expect(recent).toHaveLength(1);
     expect(recent[0]?.tool).toBe('get_note');
   });
@@ -115,7 +116,7 @@ describe('expired sessions', () => {
     db.run(
       'INSERT INTO sessions (token_hash, user_id, expires_at, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)',
       'abgelaufen',
-      'julian',
+      julian,
       Date.UTC(2026, 8, 1),
       Date.UTC(2026, 7, 1),
       Date.UTC(2026, 8, 1),

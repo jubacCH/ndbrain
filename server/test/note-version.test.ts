@@ -25,6 +25,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { startHarness, type Harness, type Reply } from './support/harness.js';
 
 let h: Harness;
+// The real account id behind the 'julian' login — what every owner/vault
+// parameter now takes, since the refactor split the typed name (login) from
+// the random account id.
+let julian: string;
 
 const PLAN = 'Projekt/Plan.md';
 const PLAN_TEXT = '# Plan\n\nZwei Nodes, Qdevice steht noch offen.\n';
@@ -38,8 +42,9 @@ beforeEach(async () => {
     await h.runtime.users.create(id, password);
     await h.login(id, password);
   }
-  await h.runtime.app.createNote('julian', PLAN, PLAN_TEXT, 'julian');
-  await h.runtime.app.createNote('julian', 'Projekt/Geheim.md', '# Geheim\n\nnur für Julian\n', 'julian');
+  julian = h.runtime.users.byLogin('julian')!.id;
+  await h.runtime.app.createNote(julian, PLAN, PLAN_TEXT, 'julian');
+  await h.runtime.app.createNote(julian, 'Projekt/Geheim.md', '# Geheim\n\nnur für Julian\n', 'julian');
 });
 
 afterEach(async () => {
@@ -47,10 +52,10 @@ afterEach(async () => {
 });
 
 const version = (user: string, notePath: string): Promise<Reply> =>
-  h.as(user, { url: `/api/v1/version/${encodeURI(notePath)}?owner=julian` });
+  h.as(user, { url: `/api/v1/version/${encodeURI(notePath)}?owner=${julian}` });
 
 const read = (user: string, notePath: string): Promise<Reply> =>
-  h.as(user, { url: `/api/v1/notes/${encodeURI(notePath)}?owner=julian` });
+  h.as(user, { url: `/api/v1/notes/${encodeURI(notePath)}?owner=${julian}` });
 
 async function share(grantee: string, kind: 'note' | 'folder', sharePath: string, canWrite: boolean): Promise<void> {
   const reply = await h.as('julian', {
@@ -85,12 +90,12 @@ describe('the owner asking about their own note', () => {
     // A `touch`: the same bytes behind a newer stamp. This is the case the
     // whole design rests on — a version read off the clock would call this a
     // change and warn about nothing.
-    const file = path.join(h.dataDir, 'vaults', 'julian', PLAN);
+    const file = path.join(h.dataDir, 'vaults', julian, PLAN);
     const later = new Date(Date.now() + 60_000);
     await fs.utimes(file, later, later);
     expect((await version('julian', PLAN)).body.hash).toBe(before);
 
-    await h.runtime.app.putNote('julian', PLAN, `${PLAN_TEXT}\nQdevice bei Ramona.\n`, 'julian');
+    await h.runtime.app.putNote(julian, PLAN, `${PLAN_TEXT}\nQdevice bei Ramona.\n`, 'julian');
     expect((await version('julian', PLAN)).body.hash).not.toBe(before);
   });
 
@@ -109,7 +114,7 @@ describe('who may ask at all', () => {
     expect(before.status).toBe(200);
     expect(before.body.hash).toBe((await version('julian', PLAN)).body.hash);
 
-    await h.runtime.app.putNote('julian', PLAN, `${PLAN_TEXT}\nJulian hat weitergeschrieben.\n`, 'julian');
+    await h.runtime.app.putNote(julian, PLAN, `${PLAN_TEXT}\nJulian hat weitergeschrieben.\n`, 'julian');
     expect((await version('ramona', PLAN)).body.hash).not.toBe(before.body.hash);
   });
 
@@ -119,7 +124,7 @@ describe('who may ask at all', () => {
     // The share works — she can read the note. She still gets no version.
     expect((await read('ramona', PLAN)).status).toBe(200);
 
-    for (const held of h.runtime.shares.byOwner('julian')) h.runtime.shares.revoke(held.id);
+    for (const held of h.runtime.shares.byOwner(julian)) h.runtime.shares.revoke(held.id);
     const stranger = await version('ramona', PLAN);
     const missing = await version('ramona', 'Projekt/Gibtsnicht.md');
     const unreadable = await version('ramona', 'Projekt/Geheim.md');
@@ -136,7 +141,7 @@ describe('who may ask at all', () => {
 
     // A different file at the same path, in one step, as `mv` over it does —
     // and long enough that an equal hash is not what vouches for it.
-    const dir = path.join(h.dataDir, 'vaults', 'julian');
+    const dir = path.join(h.dataDir, 'vaults', julian);
     await fs.writeFile(path.join(dir, 'Fremd.tmp'), '# Plan\n\nein ganz anderes Dokument, fremd und privat.\n', 'utf8');
     await fs.rename(path.join(dir, 'Fremd.tmp'), path.join(dir, PLAN));
 

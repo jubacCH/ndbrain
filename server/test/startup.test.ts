@@ -120,32 +120,32 @@ describe('the start-up sync', () => {
   });
 
   it('gets past a vault holding a file it cannot index, and reaches the next one', async () => {
-    await runtime.users.create('anna', 'passwort-eins-zwei');
-    await runtime.users.create('bruno', 'passwort-eins-zwei');
+    const anna = (await runtime.users.create('anna', 'passwort-eins-zwei')).id;
+    const bruno = (await runtime.users.create('bruno', 'passwort-eins-zwei')).id;
 
-    await dropFile('anna', 'Was ist ein VLAN?.md', '# VLAN\n');
-    await runtime.notes.createNote('bruno', 'Notiz.md', '# Notiz\n');
+    await dropFile(anna, 'Was ist ein VLAN?.md', '# VLAN\n');
+    await runtime.notes.createNote(bruno, 'Notiz.md', '# Notiz\n');
 
     const report = await syncAllVaults(runtime);
 
     expect(report.failed).toEqual([]);
-    expect(skipped).toContainEqual({ owner: 'anna', notePath: 'Was ist ein VLAN?.md' });
-    expect(runtime.app.queries.countNotes('bruno')).toBe(1);
+    expect(skipped).toContainEqual({ owner: anna, notePath: 'Was ist ein VLAN?.md' });
+    expect(runtime.app.queries.countNotes(bruno)).toBe(1);
   });
 
   it('carries on to the next vault when one fails outright', async () => {
-    await runtime.users.create('anna', 'passwort-eins-zwei');
-    await runtime.users.create('bruno', 'passwort-eins-zwei');
-    await runtime.notes.createNote('bruno', 'Notiz.md', '# Notiz\n');
+    const anna = (await runtime.users.create('anna', 'passwort-eins-zwei')).id;
+    const bruno = (await runtime.users.create('bruno', 'passwort-eins-zwei')).id;
+    await runtime.notes.createNote(bruno, 'Notiz.md', '# Notiz\n');
 
     const broken = new Error('disk fell over');
     runtime.indexer.sync = async (owner: string) => {
-      if (owner === 'anna') throw broken;
+      if (owner === anna) throw broken;
       return { added: 0, updated: 0, removed: 0, unchanged: 0, skipped: [] };
     };
 
     const report = await syncAllVaults(runtime);
 
-    expect(report.failed).toEqual([{ owner: 'anna', error: broken }]);
+    expect(report.failed).toEqual([{ owner: anna, error: broken }]);
   });
 });

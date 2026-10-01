@@ -124,12 +124,13 @@ describe('the content security policy', () => {
     });
     const jar = login.cookies.find((c) => c.name === SESSION_COOKIE);
     const cookie = `${SESSION_COOKIE}=${String(jar?.value)}`;
+    const anna = h.runtime.users.byLogin('anna')!.id;
 
-    await h.runtime.app.writeFile('anna', 'bild.png', Buffer.from([1, 2, 3]), 'anna');
+    await h.runtime.app.writeFile(anna, 'bild.png', Buffer.from([1, 2, 3]), anna);
 
     const download = await h.server.inject({
       method: 'GET',
-      url: '/api/v1/files/bild.png?owner=anna',
+      url: `/api/v1/files/bild.png?owner=${anna}`,
       headers: { cookie },
     });
 

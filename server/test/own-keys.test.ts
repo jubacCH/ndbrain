@@ -31,6 +31,10 @@ let runtime: Runtime;
 let server: FastifyInstance;
 let julian: string;
 let ramona: string;
+/** The account ids, as distinct from `julian`/`ramona` above, which hold session cookies. */
+let julianId: string;
+let ramonaId: string;
+let verein: string;
 
 async function signIn(user: string, password: string): Promise<string> {
   const response = await server.inject({
@@ -52,11 +56,11 @@ beforeEach(async () => {
   runtime = await createRuntime(config);
   // An administrator and an ordinary account: the point is that the second one
   // needs nothing from the first.
-  await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julianId = (await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' })).id;
+  ramonaId = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
   // The administrator's key routes reach spaces and nothing else, so the two
   // tests below that still use them need one.
-  await runtime.users.createSpace('verein', 'Verein');
+  verein = (await runtime.users.createSpace('verein', 'Verein')).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -88,7 +92,7 @@ describe('making one', () => {
     expect(created.statusCode).toBe(201);
     const key = S.CreatedKeyResponse.parse(created.json());
     expect(key.secret).toMatch(/^ndb_[0-9a-f]{64}$/);
-    expect(key.owner).toBe('ramona');
+    expect(key.owner).toBe(ramonaId);
 
     // Nowhere else, ever: only the hash is kept.
     const listed = await server.inject({ url: '/api/v1/keys', headers: { cookie: ramona } });
@@ -107,7 +111,7 @@ describe('making one', () => {
     const created = await make(ramona, { name: 'Claude', owner: 'julian' });
 
     expect(created.statusCode).toBe(400);
-    expect(runtime.keys.list('julian')).toHaveLength(0);
+    expect(runtime.keys.list(julianId)).toHaveLength(0);
   });
 
   it('refuses a key with no deadline; that stays with the administrator', async () => {
@@ -119,7 +123,7 @@ describe('making one', () => {
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: julian },
-      payload: { owner: 'verein', name: 'Cron', expiresInDays: null },
+      payload: { owner: verein, name: 'Cron', expiresInDays: null },
     });
     expect(byAdmin.statusCode).toBe(201);
     expect(S.CreatedKeyResponse.parse(byAdmin.json()).expiresAt).toBeNull();

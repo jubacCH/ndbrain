@@ -31,6 +31,7 @@ let dataDir: string;
 let runtime: Runtime;
 let server: FastifyInstance;
 let cookie: string;
+let julian: string;
 
 const REAL_LINE =
   '> **type:** reference · **topic:** proxmox, homelab · **src:** manual · **updated:** 2026-06-06';
@@ -39,7 +40,7 @@ beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-topics-'));
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
-  await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
+  julian = (await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' })).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -116,8 +117,8 @@ describe('reading the line', () => {
 
 describe('the proposal endpoint', () => {
   beforeEach(async () => {
-    await runtime.app.createNote('julian', 'Mit.md', `${REAL_LINE}\n\nZwei Nodes.\n`);
-    await runtime.app.createNote('julian', 'Ohne.md', 'Nur Text, keine Metazeile.\n');
+    await runtime.app.createNote(julian, 'Mit.md', `${REAL_LINE}\n\nZwei Nodes.\n`);
+    await runtime.app.createNote(julian, 'Ohne.md', 'Nur Text, keine Metazeile.\n');
   });
 
   it('lists only the notes that would change', async () => {
@@ -132,7 +133,7 @@ describe('the proposal endpoint', () => {
   });
 
   it('applies only the notes it was given', async () => {
-    await runtime.app.createNote('julian', 'Auch.md', '> **topic:** netzwerk\n');
+    await runtime.app.createNote(julian, 'Auch.md', '> **topic:** netzwerk\n');
 
     const response = await server.inject({
       method: 'POST',
@@ -145,7 +146,7 @@ describe('the proposal endpoint', () => {
       'Mit.md',
     ]);
     // The one not named is untouched.
-    expect((await runtime.app.notes.getNote('julian', 'Auch.md')).content).not.toContain('tags:');
+    expect((await runtime.app.notes.getNote(julian, 'Auch.md')).content).not.toContain('tags:');
   });
 
   it('writes the tags into the frontmatter and leaves the body alone', async () => {
@@ -156,7 +157,7 @@ describe('the proposal endpoint', () => {
       payload: { paths: ['Mit.md'] },
     });
 
-    const note = await runtime.app.notes.getNote('julian', 'Mit.md');
+    const note = await runtime.app.notes.getNote(julian, 'Mit.md');
     expect(note.content).toContain('proxmox');
     // Additive only: the line it read is still exactly where it was. Removing it
     // would be editing prose to tidy up after a migration, and if the result is
@@ -217,8 +218,8 @@ describe('the proposal endpoint', () => {
   });
 
   it("only ever touches the caller's own vault", async () => {
-    await runtime.users.create('ramona', 'ihr gutes passwort');
-    await runtime.app.createNote('ramona', 'Ihre.md', '> **topic:** privat\n');
+    const ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
+    await runtime.app.createNote(ramona, 'Ihre.md', '> **topic:** privat\n');
 
     const response = await server.inject({ url: '/api/v1/topics', headers: { cookie } });
     const parsed = S.TopicsResponse.parse(response.json());

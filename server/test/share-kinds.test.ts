@@ -84,10 +84,15 @@ describe('the v9 migration', () => {
     migrate(db);
     expect(db.userVersion).toBe(SCHEMA_VERSION);
 
-    const users = db.all('SELECT id, kind FROM users ORDER BY id').map((row) => ({ ...row }));
+    // By login and not by id: this runs every migration, and v16 moves each
+    // account's id to a random identifier. The login is what `julian` was, and
+    // `kind` is what this test is about.
+    const users = db
+      .all('SELECT login_name, kind FROM users ORDER BY login_name')
+      .map((row) => ({ ...row }));
     expect(users).toEqual([
-      { id: 'julian', kind: 'person' },
-      { id: 'ramona', kind: 'person' },
+      { login_name: 'julian', kind: 'person' },
+      { login_name: 'ramona', kind: 'person' },
     ]);
 
     const shares = db

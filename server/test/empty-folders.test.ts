@@ -126,10 +126,13 @@ describe('which folders are reported', () => {
 describe('the finding in the tidy view', () => {
   let h: Harness;
 
+  let julian: string;
+  let ramona: string;
+
   beforeEach(async () => {
     h = await startHarness('tidy-empty');
-    await h.runtime.users.create('julian', 'ein gutes passwort');
-    await h.runtime.users.create('ramona', 'ihr gutes passwort');
+    julian = (await h.runtime.users.create('julian', 'ein gutes passwort')).id;
+    ramona = (await h.runtime.users.create('ramona', 'ihr gutes passwort')).id;
     await h.login('julian', 'ein gutes passwort');
   });
 
@@ -138,7 +141,7 @@ describe('the finding in the tidy view', () => {
   });
 
   it('is carried by /api/v1/tidy, with its real total', async () => {
-    await h.runtime.app.createFolder('julian', 'Projekte');
+    await h.runtime.app.createFolder(julian, 'Projekte');
 
     const reply = await h.as('julian', { url: '/api/v1/tidy' });
     expect(reply.status).toBe(200);
@@ -147,7 +150,7 @@ describe('the finding in the tidy view', () => {
   });
 
   it('goes away once the folder is deleted, which is the action offered for it', async () => {
-    await h.runtime.app.createFolder('julian', 'Projekte');
+    await h.runtime.app.createFolder(julian, 'Projekte');
 
     const deleted = await h.as('julian', { method: 'DELETE', url: '/api/v1/folders/Projekte' });
     expect(deleted.status).toBe(204);
@@ -158,8 +161,8 @@ describe('the finding in the tidy view', () => {
   });
 
   it('appears when the last note leaves the folder, instead of the folder disappearing', async () => {
-    await h.runtime.app.createNote('julian', 'Inbox/Schnell.md', 'x', 'julian');
-    await h.runtime.app.deleteNote('julian', 'Inbox/Schnell.md', 'julian');
+    await h.runtime.app.createNote(julian, 'Inbox/Schnell.md', 'x', julian);
+    await h.runtime.app.deleteNote(julian, 'Inbox/Schnell.md', julian);
 
     const reply = await h.as('julian', { url: '/api/v1/tidy' });
     expect(reply.body.emptyFolders).toEqual(['Inbox']);
@@ -171,9 +174,9 @@ describe('the finding in the tidy view', () => {
    * folders to delete in a vault that is not theirs.
    */
   it('is the caller’s own vault only, even under a share that may write', async () => {
-    await h.runtime.app.createFolder('julian', 'Projekt');
-    await h.runtime.app.createFolder('julian', 'Projekt/Leer');
-    await h.runtime.app.grantShare('julian', 'ramona', { kind: 'folder', path: 'Projekt' }, true);
+    await h.runtime.app.createFolder(julian, 'Projekt');
+    await h.runtime.app.createFolder(julian, 'Projekt/Leer');
+    await h.runtime.app.grantShare(julian, ramona, { kind: 'folder', path: 'Projekt' }, true);
 
     await h.login('ramona', 'ihr gutes passwort');
     const reply = await h.as('ramona', { url: '/api/v1/tidy' });

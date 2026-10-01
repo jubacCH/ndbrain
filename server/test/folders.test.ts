@@ -22,11 +22,12 @@ const INTERIM_MARKER = '.moving-';
 
 let dataDir: string;
 let runtime: Runtime;
+let julian: string;
 
 beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-dirs-'));
   runtime = await createRuntime({ ...loadConfig(), dataDir });
-  await runtime.users.create('julian', 'ein gutes passwort');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort')).id;
 });
 
 afterEach(async () => {
@@ -36,62 +37,62 @@ afterEach(async () => {
 
 describe('creating a folder', () => {
   it('makes one that has no notes in it, and it survives a full rebuild', async () => {
-    await runtime.app.createFolder('julian', '10_Projects/11_Active');
-    expect(await runtime.app.notes.listDirs('julian')).toContain('10_Projects/11_Active');
+    await runtime.app.createFolder(julian, '10_Projects/11_Active');
+    expect(await runtime.app.notes.listDirs(julian)).toContain('10_Projects/11_Active');
 
     // The index is a cache built from notes, so an empty folder can only come
     // from the filesystem. That is the point of the check.
-    await runtime.indexer.rebuild('julian');
-    expect(await runtime.app.notes.listDirs('julian')).toContain('10_Projects/11_Active');
+    await runtime.indexer.rebuild(julian);
+    expect(await runtime.app.notes.listDirs(julian)).toContain('10_Projects/11_Active');
   });
 
   it('is idempotent and refuses a name that looks like a note', async () => {
-    await runtime.app.createFolder('julian', 'Archiv');
-    await expect(runtime.app.createFolder('julian', 'Archiv')).resolves.toBe('Archiv');
-    await expect(runtime.app.createFolder('julian', 'Archiv.md')).rejects.toThrow(InvalidPathError);
+    await runtime.app.createFolder(julian, 'Archiv');
+    await expect(runtime.app.createFolder(julian, 'Archiv')).resolves.toBe('Archiv');
+    await expect(runtime.app.createFolder(julian, 'Archiv.md')).rejects.toThrow(InvalidPathError);
   });
 });
 
 describe('renaming a folder', () => {
   beforeEach(async () => {
-    await runtime.app.createNote('julian', 'Homelab/Proxmox.md', '# Proxmox\n\nZwei Nodes.\n');
-    await runtime.app.createNote('julian', 'Homelab/Netz/VLANs.md', '# VLANs\n\nVLAN 30.\n');
-    await runtime.app.createFolder('julian', 'Homelab/Leer');
+    await runtime.app.createNote(julian, 'Homelab/Proxmox.md', '# Proxmox\n\nZwei Nodes.\n');
+    await runtime.app.createNote(julian, 'Homelab/Netz/VLANs.md', '# VLANs\n\nVLAN 30.\n');
+    await runtime.app.createFolder(julian, 'Homelab/Leer');
     await runtime.app.createNote(
-      'julian',
+      julian,
       'MOC.md',
       'Siehe [[Homelab/Proxmox]] und [[Homelab/Netz/VLANs|die VLANs]].\n',
     );
   });
 
   it('carries the notes and rewrites the links that pointed into it', async () => {
-    const result = await runtime.app.renameFolder('julian', 'Homelab', 'Infrastruktur', { view: 'julian', actor: 'julian' });
+    const result = await runtime.app.renameFolder(julian, 'Homelab', 'Infrastruktur', { view: julian, actor: julian });
 
     expect(result.movedNotes).toContain('Infrastruktur/Proxmox.md');
     expect(result.movedNotes).toContain('Infrastruktur/Netz/VLANs.md');
 
     // The whole reason this is not a directory rename.
-    const moc = await runtime.app.notes.getNote('julian', 'MOC.md');
+    const moc = await runtime.app.notes.getNote(julian, 'MOC.md');
     expect(moc.content).toContain('[[Infrastruktur/Proxmox]]');
     expect(moc.content).toContain('[[Infrastruktur/Netz/VLANs|die VLANs]]');
     expect(moc.content).not.toContain('Homelab');
 
-    const dead = runtime.app.queries.deadLinks('julian');
+    const dead = runtime.app.queries.deadLinks(julian);
     expect(dead).toEqual([]);
   });
 
   it('takes empty subfolders with it instead of flattening the structure', async () => {
-    await runtime.app.renameFolder('julian', 'Homelab', 'Infrastruktur', { view: 'julian', actor: 'julian' });
-    const dirs = await runtime.app.notes.listDirs('julian');
+    await runtime.app.renameFolder(julian, 'Homelab', 'Infrastruktur', { view: julian, actor: julian });
+    const dirs = await runtime.app.notes.listDirs(julian);
 
     expect(dirs).toContain('Infrastruktur/Leer');
     expect(dirs.filter((d) => d.startsWith('Homelab'))).toEqual([]);
   });
 
   it('handles a pure change of letter case', async () => {
-    await runtime.app.renameFolder('julian', 'Homelab', 'homelab', { view: 'julian', actor: 'julian' });
+    await runtime.app.renameFolder(julian, 'Homelab', 'homelab', { view: julian, actor: julian });
 
-    const paths = (await runtime.app.notes.listNotes('julian')).map((n) => n.path).sort();
+    const paths = (await runtime.app.notes.listNotes(julian)).map((n) => n.path).sort();
     expect(paths).toContain('homelab/Proxmox.md');
     expect(paths).toContain('homelab/Netz/VLANs.md');
     // No leftovers from the interim name the two-step move goes through. This
@@ -99,17 +100,17 @@ describe('renaming a folder', () => {
     // that suffix; see the test below for what that name cost when a pass did
     // not finish.
     expect(paths.filter((p) => p.includes(INTERIM_MARKER))).toEqual([]);
-    expect(await runtime.app.notes.listDirs('julian')).toEqual(['homelab', 'homelab/Leer', 'homelab/Netz']);
+    expect(await runtime.app.notes.listDirs(julian)).toEqual(['homelab', 'homelab/Leer', 'homelab/Netz']);
   });
 
   it('refuses to move a folder inside itself', async () => {
     await expect(
-      runtime.app.renameFolder('julian', 'Homelab', 'Homelab/Unterordner', { view: 'julian', actor: 'julian' }),
+      runtime.app.renameFolder(julian, 'Homelab', 'Homelab/Unterordner', { view: julian, actor: julian }),
     ).rejects.toThrow(InvalidPathError);
   });
 
   it('refuses a folder that is not there', async () => {
-    await expect(runtime.app.renameFolder('julian', 'GibtEsNicht', 'Neu', { view: 'julian', actor: 'julian' })).rejects.toThrow(
+    await expect(runtime.app.renameFolder(julian, 'GibtEsNicht', 'Neu', { view: julian, actor: julian })).rejects.toThrow(
       NoteNotFoundError,
     );
   });
@@ -122,19 +123,19 @@ describe('renaming a folder', () => {
    * in, so every embed pointed at a file that was no longer beside it.
    */
   it('carries the attachments beside the notes, so an embed still resolves', async () => {
-    await runtime.app.writeFile('julian', 'Homelab/rack.png', Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-    await runtime.app.writeFile('julian', 'Homelab/Netz/plan.pdf', Buffer.from('%PDF-1.4'));
-    await runtime.app.putNote('julian', 'Homelab/Proxmox.md', '# Proxmox\n\n![[rack.png]]\n');
+    await runtime.app.writeFile(julian, 'Homelab/rack.png', Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await runtime.app.writeFile(julian, 'Homelab/Netz/plan.pdf', Buffer.from('%PDF-1.4'));
+    await runtime.app.putNote(julian, 'Homelab/Proxmox.md', '# Proxmox\n\n![[rack.png]]\n');
 
-    const result = await runtime.app.renameFolder('julian', 'Homelab', 'Infrastruktur', {
-      view: 'julian',
-      actor: 'julian',
+    const result = await runtime.app.renameFolder(julian, 'Homelab', 'Infrastruktur', {
+      view: julian,
+      actor: julian,
     });
 
     expect(result.movedFiles.sort()).toEqual(['Infrastruktur/Netz/plan.pdf', 'Infrastruktur/rack.png']);
     expect(result.failed).toEqual([]);
 
-    const { files, dirs } = await runtime.app.listFiles('julian');
+    const { files, dirs } = await runtime.app.listFiles(julian);
     const paths = files.map((f) => f.path);
     expect(paths).toContain('Infrastruktur/rack.png');
     expect(paths).toContain('Infrastruktur/Netz/plan.pdf');
@@ -145,25 +146,25 @@ describe('renaming a folder', () => {
 
     // The embed is written as a bare name and resolves against the note's own
     // folder, so "still resolves" means the file is in that folder.
-    const note = await runtime.app.notes.getNote('julian', 'Infrastruktur/Proxmox.md');
+    const note = await runtime.app.notes.getNote(julian, 'Infrastruktur/Proxmox.md');
     expect(note.content).toContain('![[rack.png]]');
     expect(paths).toContain('Infrastruktur/rack.png');
   });
 
   it('never writes an attachment over a file already standing at its target', async () => {
-    await runtime.app.writeFile('julian', 'Homelab/rack.png', Buffer.from('neu'));
-    await runtime.app.writeFile('julian', 'Archiv/Homelab/rack.png', Buffer.from('alt'));
+    await runtime.app.writeFile(julian, 'Homelab/rack.png', Buffer.from('neu'));
+    await runtime.app.writeFile(julian, 'Archiv/Homelab/rack.png', Buffer.from('alt'));
 
-    const result = await runtime.app.renameFolder('julian', 'Homelab', 'Archiv/Homelab', {
-      view: 'julian',
-      actor: 'julian',
+    const result = await runtime.app.renameFolder(julian, 'Homelab', 'Archiv/Homelab', {
+      view: julian,
+      actor: julian,
     });
 
     expect(result.failed.map((f) => f.path)).toEqual(['Homelab/rack.png']);
     // `rename(2)` replaces the target without a word, which for an attachment
     // is a file deleted by a folder move nobody thought was destructive.
-    expect((await runtime.app.readFile('julian', 'Archiv/Homelab/rack.png')).toString()).toBe('alt');
-    expect((await runtime.app.readFile('julian', 'Homelab/rack.png')).toString()).toBe('neu');
+    expect((await runtime.app.readFile(julian, 'Archiv/Homelab/rack.png')).toString()).toBe('alt');
+    expect((await runtime.app.readFile(julian, 'Homelab/rack.png')).toString()).toBe('neu');
   });
 
   /**
@@ -177,11 +178,11 @@ describe('renaming a folder', () => {
    * nowhere left to go.
    */
   it('keeps going past a note it cannot move and names the ones it left', async () => {
-    await runtime.app.createNote('julian', 'Infrastruktur/Proxmox.md', 'schon da');
+    await runtime.app.createNote(julian, 'Infrastruktur/Proxmox.md', 'schon da');
 
-    const result = await runtime.app.renameFolder('julian', 'Homelab', 'Infrastruktur', {
-      view: 'julian',
-      actor: 'julian',
+    const result = await runtime.app.renameFolder(julian, 'Homelab', 'Infrastruktur', {
+      view: julian,
+      actor: julian,
     });
 
     expect(result.movedNotes).toEqual(['Infrastruktur/Netz/VLANs.md']);
@@ -190,8 +191,8 @@ describe('renaming a folder', () => {
     expect(result.failed[0]?.reason).toMatch(/exist/i);
 
     // Neither note was lost, and neither was overwritten.
-    expect((await runtime.app.notes.getNote('julian', 'Homelab/Proxmox.md')).content).toContain('Zwei Nodes');
-    expect((await runtime.app.notes.getNote('julian', 'Infrastruktur/Proxmox.md')).content).toBe('schon da');
+    expect((await runtime.app.notes.getNote(julian, 'Homelab/Proxmox.md')).content).toContain('Zwei Nodes');
+    expect((await runtime.app.notes.getNote(julian, 'Infrastruktur/Proxmox.md')).content).toBe('schon da');
   });
 
   /**
@@ -210,9 +211,9 @@ describe('renaming a folder', () => {
       return real(owner, from, to, options);
     };
 
-    const result = await runtime.app.renameFolder('julian', 'Homelab', 'homelab', {
-      view: 'julian',
-      actor: 'julian',
+    const result = await runtime.app.renameFolder(julian, 'Homelab', 'homelab', {
+      view: julian,
+      actor: julian,
     });
 
     expect(result.movedNotes).toEqual(['homelab/Netz/VLANs.md']);
@@ -221,28 +222,28 @@ describe('renaming a folder', () => {
     const stranded = result.failed[0]?.path ?? '';
     expect(stranded.endsWith('/Proxmox.md')).toBe(true);
     // Named where it is, and it is really there.
-    expect((await runtime.app.notes.getNote('julian', stranded)).content).toContain('Zwei Nodes');
+    expect((await runtime.app.notes.getNote(julian, stranded)).content).toContain('Zwei Nodes');
     // And not under a name the watcher and `reconcile` disagree about.
     expect(stranded.slice(0, stranded.lastIndexOf('/')).endsWith('.tmp')).toBe(false);
   });
 
   it('moves a folder into another folder', async () => {
-    await runtime.app.createFolder('julian', 'Archiv');
-    await runtime.app.renameFolder('julian', 'Homelab', 'Archiv/Homelab', { view: 'julian', actor: 'julian' });
+    await runtime.app.createFolder(julian, 'Archiv');
+    await runtime.app.renameFolder(julian, 'Homelab', 'Archiv/Homelab', { view: julian, actor: julian });
 
-    const paths = (await runtime.app.notes.listNotes('julian')).map((n) => n.path);
+    const paths = (await runtime.app.notes.listNotes(julian)).map((n) => n.path);
     expect(paths).toContain('Archiv/Homelab/Proxmox.md');
 
-    const moc = await runtime.app.notes.getNote('julian', 'MOC.md');
+    const moc = await runtime.app.notes.getNote(julian, 'MOC.md');
     expect(moc.content).toContain('[[Archiv/Homelab/Proxmox]]');
   });
 });
 
 describe('deleting a folder', () => {
   it('removes an empty one', async () => {
-    await runtime.app.createFolder('julian', 'Leer');
-    await runtime.app.deleteFolder('julian', 'Leer');
-    expect(await runtime.app.notes.listDirs('julian')).not.toContain('Leer');
+    await runtime.app.createFolder(julian, 'Leer');
+    await runtime.app.deleteFolder(julian, 'Leer');
+    expect(await runtime.app.notes.listDirs(julian)).not.toContain('Leer');
   });
 
   /**
@@ -251,9 +252,9 @@ describe('deleting a folder', () => {
    * undo, and the bulk view already deletes notes deliberately, listed.
    */
   it('refuses one that still holds a note', async () => {
-    await runtime.app.createNote('julian', 'Voll/Notiz.md', 'x');
-    await expect(runtime.app.deleteFolder('julian', 'Voll')).rejects.toThrow(NotAFileError);
-    expect((await runtime.app.notes.listNotes('julian')).map((n) => n.path)).toContain('Voll/Notiz.md');
+    await runtime.app.createNote(julian, 'Voll/Notiz.md', 'x');
+    await expect(runtime.app.deleteFolder(julian, 'Voll')).rejects.toThrow(NotAFileError);
+    expect((await runtime.app.notes.listNotes(julian)).map((n) => n.path)).toContain('Voll/Notiz.md');
   });
 });
 
@@ -278,15 +279,15 @@ describe('deleting a folder', () => {
  */
 describe('a folder outlives the notes in it', () => {
   it('keeps the whole chain when the last note moves out of it', async () => {
-    await runtime.app.createFolder('julian', 'Projekte/2026/Q1');
-    await runtime.app.createNote('julian', 'Projekte/2026/Q1/Plan.md', '# Plan\n');
+    await runtime.app.createFolder(julian, 'Projekte/2026/Q1');
+    await runtime.app.createNote(julian, 'Projekte/2026/Q1/Plan.md', '# Plan\n');
 
-    await runtime.app.renameNote('julian', 'Projekte/2026/Q1/Plan.md', 'Plan.md', {
-      view: 'julian',
-      actor: 'julian',
+    await runtime.app.renameNote(julian, 'Projekte/2026/Q1/Plan.md', 'Plan.md', {
+      view: julian,
+      actor: julian,
     });
 
-    expect(await runtime.app.notes.listDirs('julian')).toEqual([
+    expect(await runtime.app.notes.listDirs(julian)).toEqual([
       'Projekte',
       'Projekte/2026',
       'Projekte/2026/Q1',
@@ -294,12 +295,12 @@ describe('a folder outlives the notes in it', () => {
   });
 
   it('keeps it when the last note in it is deleted', async () => {
-    await runtime.app.createFolder('julian', 'Archiv/2024');
-    await runtime.app.createNote('julian', 'Archiv/2024/Alt.md', 'x');
+    await runtime.app.createFolder(julian, 'Archiv/2024');
+    await runtime.app.createNote(julian, 'Archiv/2024/Alt.md', 'x');
 
-    await runtime.app.deleteNote('julian', 'Archiv/2024/Alt.md');
+    await runtime.app.deleteNote(julian, 'Archiv/2024/Alt.md');
 
-    expect(await runtime.app.notes.listDirs('julian')).toContain('Archiv/2024');
+    expect(await runtime.app.notes.listDirs(julian)).toContain('Archiv/2024');
   });
 
   /**
@@ -309,23 +310,23 @@ describe('a folder outlives the notes in it', () => {
    * tidy view, and it is the person's click.
    */
   it('keeps a folder that only ever held that one note', async () => {
-    await runtime.app.createNote('julian', 'Inbox/Schnell.md', 'x');
+    await runtime.app.createNote(julian, 'Inbox/Schnell.md', 'x');
 
-    await runtime.app.deleteNote('julian', 'Inbox/Schnell.md');
+    await runtime.app.deleteNote(julian, 'Inbox/Schnell.md');
 
-    expect(await runtime.app.notes.listDirs('julian')).toEqual(['Inbox']);
+    expect(await runtime.app.notes.listDirs(julian)).toEqual(['Inbox']);
   });
 
   /** rsync, Finder, a shell on the host: somebody made that folder on purpose too. */
   it('keeps a folder made outside ndBrain', async () => {
-    await fs.mkdir(path.join(dataDir, 'vaults', 'julian', 'Extern/Unterordner'), {
+    await fs.mkdir(path.join(dataDir, 'vaults', julian, 'Extern/Unterordner'), {
       recursive: true,
     });
-    await runtime.app.createNote('julian', 'Extern/Unterordner/Notiz.md', 'x');
+    await runtime.app.createNote(julian, 'Extern/Unterordner/Notiz.md', 'x');
 
-    await runtime.app.deleteNote('julian', 'Extern/Unterordner/Notiz.md');
+    await runtime.app.deleteNote(julian, 'Extern/Unterordner/Notiz.md');
 
-    expect(await runtime.app.notes.listDirs('julian')).toContain('Extern/Unterordner');
+    expect(await runtime.app.notes.listDirs(julian)).toContain('Extern/Unterordner');
   });
 
   /**
@@ -335,15 +336,15 @@ describe('a folder outlives the notes in it', () => {
    * That is not a guess about intent — the folder was moved, by request.
    */
   it('still leaves nothing of the old tree behind when a folder is renamed', async () => {
-    await runtime.app.createNote('julian', 'Homelab/Netz/VLANs.md', '# VLANs\n');
-    await runtime.app.createFolder('julian', 'Homelab/Leer');
+    await runtime.app.createNote(julian, 'Homelab/Netz/VLANs.md', '# VLANs\n');
+    await runtime.app.createFolder(julian, 'Homelab/Leer');
 
-    await runtime.app.renameFolder('julian', 'Homelab', 'Infrastruktur', {
-      view: 'julian',
-      actor: 'julian',
+    await runtime.app.renameFolder(julian, 'Homelab', 'Infrastruktur', {
+      view: julian,
+      actor: julian,
     });
 
-    const dirs = await runtime.app.notes.listDirs('julian');
+    const dirs = await runtime.app.notes.listDirs(julian);
     expect(dirs.filter((dir) => dir.startsWith('Homelab'))).toEqual([]);
     expect(dirs).toEqual(['Infrastruktur', 'Infrastruktur/Leer', 'Infrastruktur/Netz']);
   });
@@ -351,17 +352,17 @@ describe('a folder outlives the notes in it', () => {
 
 describe('the tenant boundary still holds', () => {
   it('does not let one user touch another vault through a folder call', async () => {
-    await runtime.users.create('ramona', 'ihr gutes passwort');
-    await runtime.app.createNote('ramona', 'Privat/Tagebuch.md', 'geheim');
+    const ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
+    await runtime.app.createNote(ramona, 'Privat/Tagebuch.md', 'geheim');
 
-    await expect(runtime.app.createFolder('julian', '../ramona/Privat')).rejects.toThrow(
+    await expect(runtime.app.createFolder(julian, '../ramona/Privat')).rejects.toThrow(
       InvalidPathError,
     );
     await expect(
-      runtime.app.renameFolder('julian', '../ramona/Privat', 'Geklaut', { view: 'julian', actor: 'julian' }),
+      runtime.app.renameFolder(julian, '../ramona/Privat', 'Geklaut', { view: julian, actor: julian }),
     ).rejects.toThrow(InvalidPathError);
 
-    expect((await runtime.app.notes.listNotes('ramona')).map((n) => n.path)).toEqual([
+    expect((await runtime.app.notes.listNotes(ramona)).map((n) => n.path)).toEqual([
       'Privat/Tagebuch.md',
     ]);
   });

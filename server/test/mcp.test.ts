@@ -18,6 +18,8 @@ let fullKey: string;
 let readOnlyKey: string;
 let scopedKey: string;
 let ramonaKey: string;
+let julian: string;
+let ramona: string;
 
 /** One JSON-RPC round trip. */
 async function rpc(secret: string, method: string, params?: unknown): Promise<any> {
@@ -47,21 +49,21 @@ beforeEach(async () => {
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
 
-  await runtime.users.create('julian', 'ein gutes passwort');
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort')).id;
+  ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
 
-  await runtime.app.createNote('julian', 'Homelab/Proxmox.md', '# Proxmox\n\nQdevice auf [[dns01]].\n');
-  await runtime.app.createNote('julian', 'Homelab/UniFi.md', '# UniFi\n\nZonen und Regeln.\n');
-  await runtime.app.createNote('julian', 'Privat/Gedanken.md', '# Gedanken\n\nsehr persönlich\n');
-  await runtime.app.createNote('ramona', 'Ihres.md', 'gehört Ramona\n');
+  await runtime.app.createNote(julian, 'Homelab/Proxmox.md', '# Proxmox\n\nQdevice auf [[dns01]].\n');
+  await runtime.app.createNote(julian, 'Homelab/UniFi.md', '# UniFi\n\nZonen und Regeln.\n');
+  await runtime.app.createNote(julian, 'Privat/Gedanken.md', '# Gedanken\n\nsehr persönlich\n');
+  await runtime.app.createNote(ramona, 'Ihres.md', 'gehört Ramona\n');
 
-  fullKey = runtime.keys.create('julian', 'agent-voll', { canWrite: true }).secret;
-  readOnlyKey = runtime.keys.create('julian', 'agent-lesend').secret;
-  scopedKey = runtime.keys.create('julian', 'agent-homelab', {
+  fullKey = runtime.keys.create(julian, 'agent-voll', { canWrite: true }).secret;
+  readOnlyKey = runtime.keys.create(julian, 'agent-lesend').secret;
+  scopedKey = runtime.keys.create(julian, 'agent-homelab', {
     scope: 'Homelab',
     canWrite: true,
   }).secret;
-  ramonaKey = runtime.keys.create('ramona', 'ihr-agent', { canWrite: true }).secret;
+  ramonaKey = runtime.keys.create(ramona, 'ihr-agent', { canWrite: true }).secret;
 
   server = await buildServer({
     app: runtime.app,
@@ -198,7 +200,7 @@ describe('authentication', () => {
   });
 
   it('stops working the moment the key is revoked', async () => {
-    const { key, secret } = runtime.keys.create('julian', 'kurzlebig');
+    const { key, secret } = runtime.keys.create(julian, 'kurzlebig');
     expect((await rpc(secret, 'ping')).status).toBe(200);
 
     runtime.keys.revoke(key.id);
@@ -212,7 +214,7 @@ describe('authentication', () => {
     // that differed would tell whoever presented the string that they had found
     // a real key, only a late one.
     const expired = runtime.keys.create(
-      'julian',
+      julian,
       'abgelaufen',
       { expiresInDays: 1 },
       Date.now() - 10 * 24 * 60 * 60 * 1000,
@@ -239,7 +241,7 @@ describe('authentication', () => {
   });
 
   it('records when a key was last used', async () => {
-    const { key, secret } = runtime.keys.create('julian', 'benutzt');
+    const { key, secret } = runtime.keys.create(julian, 'benutzt');
     expect(runtime.keys.get(key.id)?.lastUsedAt).toBeNull();
 
     await rpc(secret, 'ping');
@@ -256,14 +258,17 @@ describe('a key can never see more than its owner', () => {
   });
 
   it('cannot traverse out of the vault', async () => {
-    const result = await call(fullKey, 'get_note', { path: '../ramona/Ihres.md' });
+    // Points at ramona's real vault directory, not the string "ramona" — a
+    // literal that no longer names anything on disk now that vaults are keyed
+    // by account id, which would test nothing.
+    const result = await call(fullKey, 'get_note', { path: `../${ramona}/Ihres.md` });
     expect(result.isError).toBe(true);
     expect(result.text).not.toContain('Ramona');
   });
 
   it('writes only into the owner\'s vault', async () => {
-    await call(fullKey, 'create_note', { path: '../ramona/Eingeschleust.md', content: 'x' });
-    expect(runtime.app.queries.countNotes('ramona')).toBe(1);
+    await call(fullKey, 'create_note', { path: `../${ramona}/Eingeschleust.md`, content: 'x' });
+    expect(runtime.app.queries.countNotes(ramona)).toBe(1);
   });
 
   it('keeps two owners\' keys apart', async () => {
@@ -299,7 +304,7 @@ describe('scope narrows further, never wider', () => {
 
   it('cannot write outside its scope', async () => {
     await call(scopedKey, 'create_note', { path: 'Privat/Eingeschleust.md', content: 'x' });
-    expect(runtime.app.queries.getNote('julian', 'julian', 'Privat/Eingeschleust.md')).toBeUndefined();
+    expect(runtime.app.queries.getNote(julian, julian, 'Privat/Eingeschleust.md')).toBeUndefined();
   });
 
   /**
@@ -323,7 +328,7 @@ describe('scope narrows further, never wider', () => {
 
     expect(outside.isError).toBe(true);
     expect(outside.text).toBe(missing.text);
-    expect((await runtime.notes.getNote('julian', 'Privat/Gedanken.md')).content).not.toContain(
+    expect((await runtime.notes.getNote(julian, 'Privat/Gedanken.md')).content).not.toContain(
       'eingeschleust',
     );
   });
@@ -334,7 +339,7 @@ describe('scope narrows further, never wider', () => {
     // withholds: an out-of-scope target is reported exactly as a target that
     // was never there.
     await runtime.app.createNote(
-      'julian',
+      julian,
       'Homelab/Netzplan.md',
       'Siehe [[Privat/Gedanken]], [[Homelab/UniFi]] und [[Homelab/GibtsNicht]].\n',
     );
@@ -356,8 +361,8 @@ describe('scope narrows further, never wider', () => {
     // you may not see it". A writing key can ask that about any name it likes by
     // putting the name into a note of its own, which turns get_links into a free
     // existence oracle over the whole vault. Both answers must be one answer.
-    await runtime.app.createNote('julian', 'Homelab/Frage A.md', 'Siehe [[Privat/Gedanken]].\n');
-    await runtime.app.createNote('julian', 'Homelab/Frage B.md', 'Siehe [[Privat/Phantom]].\n');
+    await runtime.app.createNote(julian, 'Homelab/Frage A.md', 'Siehe [[Privat/Gedanken]].\n');
+    await runtime.app.createNote(julian, 'Homelab/Frage B.md', 'Siehe [[Privat/Phantom]].\n');
 
     const existsOutside = await call(scopedKey, 'get_links', { path: 'Homelab/Frage A.md' });
     const neverExisted = await call(scopedKey, 'get_links', { path: 'Homelab/Frage B.md' });
@@ -371,7 +376,7 @@ describe('scope narrows further, never wider', () => {
   });
 
   it('does not match a folder that merely starts the same', async () => {
-    await runtime.app.createNote('julian', 'Homelab2/Fremd.md', 'nicht im scope\n');
+    await runtime.app.createNote(julian, 'Homelab2/Fremd.md', 'nicht im scope\n');
     expect((await call(scopedKey, 'list_notes')).text).not.toContain('Homelab2/');
     expect((await call(scopedKey, 'get_note', { path: 'Homelab2/Fremd.md' })).isError).toBe(true);
   });
@@ -384,7 +389,7 @@ describe('scope narrows further, never wider', () => {
    * drifted from the original without a single case going red.
    */
   it('maps only what the scope covers', async () => {
-    await runtime.app.createNote('julian', 'Homelab2/Fremd.md', 'nicht im scope\n');
+    await runtime.app.createNote(julian, 'Homelab2/Fremd.md', 'nicht im scope\n');
 
     const { text } = await call(scopedKey, 'vault_map');
 
@@ -419,7 +424,7 @@ describe('read-only keys', () => {
 
   it('leaves the note untouched', async () => {
     await call(readOnlyKey, 'append_note', { path: 'Homelab/Proxmox.md', content: 'angehängt' });
-    const note = await runtime.notes.getNote('julian', 'Homelab/Proxmox.md');
+    const note = await runtime.notes.getNote(julian, 'Homelab/Proxmox.md');
     expect(note.content).not.toContain('angehängt');
   });
 
@@ -427,8 +432,8 @@ describe('read-only keys', () => {
     await call(readOnlyKey, 'delete_note', { path: 'Homelab/Proxmox.md' });
     await call(readOnlyKey, 'rename_note', { from: 'Homelab/Proxmox.md', to: 'Homelab/Weg.md' });
 
-    expect((await runtime.notes.getNote('julian', 'Homelab/Proxmox.md')).content).toContain('Qdevice');
-    await expect(runtime.notes.getNote('julian', 'Homelab/Weg.md')).rejects.toThrow();
+    expect((await runtime.notes.getNote(julian, 'Homelab/Proxmox.md')).content).toContain('Qdevice');
+    await expect(runtime.notes.getNote(julian, 'Homelab/Weg.md')).rejects.toThrow();
   });
 });
 
@@ -440,13 +445,13 @@ describe('writing tools', () => {
     });
     expect(result.isError).toBe(false);
 
-    const activity = runtime.app.queries.activity('julian', 0);
+    const activity = runtime.app.queries.activity(julian, 0);
     expect(activity.find((row) => row.path === 'Homelab/Neu.md')?.actor).toBe('agent-voll');
   });
 
   it('appends with a blank line, without doubling one that is there', async () => {
     await call(fullKey, 'append_note', { path: 'Homelab/UniFi.md', content: 'Nachtrag.' });
-    const note = await runtime.notes.getNote('julian', 'Homelab/UniFi.md');
+    const note = await runtime.notes.getNote(julian, 'Homelab/UniFi.md');
 
     expect(note.content).toBe('# UniFi\n\nZonen und Regeln.\n\nNachtrag.');
   });
@@ -477,7 +482,7 @@ describe('writing tools', () => {
       content: 'überschrieben',
     });
     expect(result.isError).toBe(true);
-    expect((await runtime.notes.getNote('julian', 'Homelab/Proxmox.md')).content).toContain('Qdevice');
+    expect((await runtime.notes.getNote(julian, 'Homelab/Proxmox.md')).content).toContain('Qdevice');
   });
 
   it('edits an unambiguous match', async () => {
@@ -487,11 +492,11 @@ describe('writing tools', () => {
       replace: 'Qdevice auf [[dns02]]',
     });
     expect(result.isError).toBe(false);
-    expect((await runtime.notes.getNote('julian', 'Homelab/Proxmox.md')).content).toContain('dns02');
+    expect((await runtime.notes.getNote(julian, 'Homelab/Proxmox.md')).content).toContain('dns02');
   });
 
   it('refuses an ambiguous edit rather than guessing', async () => {
-    await runtime.app.createNote('julian', 'Homelab/Doppelt.md', 'wert\nwert\n');
+    await runtime.app.createNote(julian, 'Homelab/Doppelt.md', 'wert\nwert\n');
 
     const result = await call(fullKey, 'edit_note', {
       path: 'Homelab/Doppelt.md',
@@ -503,7 +508,7 @@ describe('writing tools', () => {
     expect(result.text).toContain('2 times');
     // Nothing was changed — a "replace the first match" fallback would have
     // silently edited the wrong line.
-    expect((await runtime.notes.getNote('julian', 'Homelab/Doppelt.md')).content).toBe('wert\nwert\n');
+    expect((await runtime.notes.getNote(julian, 'Homelab/Doppelt.md')).content).toBe('wert\nwert\n');
   });
 
   it('refuses an edit whose text is not there', async () => {
@@ -556,11 +561,11 @@ function spliced(source: string, find: string, replace: string): string {
 
 describe('edit_note changes the span it was given and nothing else', () => {
   beforeEach(async () => {
-    await runtime.app.createNote('julian', 'Projekte/Slimvid.md', MIGRATED_NOTE);
+    await runtime.app.createNote(julian, 'Projekte/Slimvid.md', MIGRATED_NOTE);
   });
 
   const read = async (): Promise<string> =>
-    (await runtime.notes.getNote('julian', 'Projekte/Slimvid.md')).content;
+    (await runtime.notes.getNote(julian, 'Projekte/Slimvid.md')).content;
 
   it('keeps the whole note byte-identical across two edits in a row', async () => {
     const first = {
@@ -598,11 +603,11 @@ describe('edit_note changes the span it was given and nothing else', () => {
 
 describe('tool arguments are held to the schema the server publishes', () => {
   beforeEach(async () => {
-    await runtime.app.createNote('julian', 'Projekte/Slimvid.md', MIGRATED_NOTE);
+    await runtime.app.createNote(julian, 'Projekte/Slimvid.md', MIGRATED_NOTE);
   });
 
   const read = async (path: string): Promise<string> =>
-    (await runtime.notes.getNote('julian', path)).content;
+    (await runtime.notes.getNote(julian, path)).content;
 
   it('refuses an argument the tool does not have, and names it', async () => {
     // What actually happened: an agent sent `new_string`, the name the editor
@@ -659,7 +664,7 @@ describe('tool arguments are held to the schema the server publishes', () => {
 
     expect(result.isError).toBe(true);
     expect(result.text).toContain('content');
-    await expect(runtime.notes.getNote('julian', 'Projekte/Leer.md')).rejects.toThrow();
+    await expect(runtime.notes.getNote(julian, 'Projekte/Leer.md')).rejects.toThrow();
   });
 
   it('does not touch a note when append_note has no content', async () => {
@@ -704,15 +709,15 @@ describe('the access log', () => {
     await call(fullKey, 'get_note', { path: 'Homelab/Proxmox.md' });
     await call(scopedKey, 'get_note', { path: 'Privat/Gedanken.md' });
 
-    const entries = runtime.keys.recentAccess('julian');
+    const entries = runtime.keys.recentAccess(julian);
     expect(entries.some((entry) => entry.tool === 'get_note' && entry.allowed)).toBe(true);
     expect(entries.some((entry) => entry.tool === 'get_note' && !entry.allowed)).toBe(true);
   });
 
   it('is scoped to the owner', async () => {
     await call(ramonaKey, 'list_notes');
-    expect(runtime.keys.recentAccess('julian')).toHaveLength(0);
-    expect(runtime.keys.recentAccess('ramona')).toHaveLength(1);
+    expect(runtime.keys.recentAccess(julian)).toHaveLength(0);
+    expect(runtime.keys.recentAccess(ramona)).toHaveLength(1);
   });
 
   it('records a call the schema check refuses, not just ones a handler refuses', async () => {
@@ -726,7 +731,7 @@ describe('the access log', () => {
     });
     expect(result.isError).toBe(true);
 
-    const entries = runtime.keys.recentAccess('julian');
+    const entries = runtime.keys.recentAccess(julian);
     expect(entries.some((entry) => entry.tool === 'edit_note' && !entry.allowed)).toBe(true);
   });
 });
@@ -759,14 +764,14 @@ describe('delete_note', () => {
     const result = await call(scopedKey, 'delete_note', { path: 'Homelab/UniFi.md' });
 
     expect(result.isError).toBe(false);
-    await expect(runtime.notes.getNote('julian', 'Homelab/UniFi.md')).rejects.toThrow();
+    await expect(runtime.notes.getNote(julian, 'Homelab/UniFi.md')).rejects.toThrow();
   });
 
   it('records the key as the actor, not the account', async () => {
     await call(fullKey, 'delete_note', { path: 'Homelab/UniFi.md' });
 
     const entry = runtime.app.queries
-      .activity('julian', 0)
+      .activity(julian, 0)
       .find((row) => row.path === 'Homelab/UniFi.md');
     expect(entry?.actor).toBe('agent-voll');
     expect(entry?.action).toBe('delete');
@@ -778,7 +783,7 @@ describe('delete_note', () => {
     // cases where somebody reaches for it.
     await call(fullKey, 'delete_note', { path: 'Homelab/UniFi.md' });
 
-    const listed = await recentlyDeleted().list('julian');
+    const listed = await recentlyDeleted().list(julian);
     const row = listed.find((note) => note.path === 'Homelab/UniFi.md');
     expect(row).toBeDefined();
     expect(row?.actor).toBe('agent-voll');
@@ -801,13 +806,13 @@ describe('delete_note', () => {
     const result = await call(scopedKey, 'delete_note', { path: 'Homelab/Proxmox.md' });
 
     expect(result.isError).toBe(false);
-    await expect(runtime.notes.getNote('julian', 'Homelab/Proxmox.md')).rejects.toThrow();
+    await expect(runtime.notes.getNote(julian, 'Homelab/Proxmox.md')).rejects.toThrow();
   });
 
   it('gives the same answer whether or not the note outside the scope is there', async () => {
     const whileItExists = await call(scopedKey, 'delete_note', { path: 'Privat/Gedanken.md' });
     // Removed by its owner, so nothing about the key's own state changed.
-    await runtime.app.deleteNote('julian', 'Privat/Gedanken.md');
+    await runtime.app.deleteNote(julian, 'Privat/Gedanken.md');
     const onceItIsGone = await call(scopedKey, 'delete_note', { path: 'Privat/Gedanken.md' });
 
     expect(whileItExists.isError).toBe(true);
@@ -816,26 +821,26 @@ describe('delete_note', () => {
 
   it('does not delete outside the scope', async () => {
     await call(scopedKey, 'delete_note', { path: 'Privat/Gedanken.md' });
-    expect((await runtime.notes.getNote('julian', 'Privat/Gedanken.md')).content).toContain(
+    expect((await runtime.notes.getNote(julian, 'Privat/Gedanken.md')).content).toContain(
       'persönlich',
     );
   });
 
   it('cannot reach another vault', async () => {
     await call(fullKey, 'delete_note', { path: '../ramona/Ihres.md' });
-    expect(runtime.app.queries.countNotes('ramona')).toBe(1);
+    expect(runtime.app.queries.countNotes(ramona)).toBe(1);
   });
 
   it('records the refusal in the access log', async () => {
     await call(scopedKey, 'delete_note', { path: 'Privat/Gedanken.md' });
-    const entries = runtime.keys.recentAccess('julian');
+    const entries = runtime.keys.recentAccess(julian);
     expect(entries.some((entry) => entry.tool === 'delete_note' && !entry.allowed)).toBe(true);
   });
 });
 
 describe('rename_note', () => {
   it('renames inside the scope and carries the links with it', async () => {
-    await runtime.app.createNote('julian', 'Homelab/Netzplan.md', 'Siehe [[Homelab/UniFi]].\n');
+    await runtime.app.createNote(julian, 'Homelab/Netzplan.md', 'Siehe [[Homelab/UniFi]].\n');
 
     const result = await call(scopedKey, 'rename_note', {
       from: 'Homelab/UniFi.md',
@@ -843,8 +848,8 @@ describe('rename_note', () => {
     });
 
     expect(result.isError).toBe(false);
-    expect((await runtime.notes.getNote('julian', 'Homelab/Netzwerk.md')).content).toContain('Zonen');
-    expect((await runtime.notes.getNote('julian', 'Homelab/Netzplan.md')).content).toContain(
+    expect((await runtime.notes.getNote(julian, 'Homelab/Netzwerk.md')).content).toContain('Zonen');
+    expect((await runtime.notes.getNote(julian, 'Homelab/Netzplan.md')).content).toContain(
       '[[Homelab/Netzwerk]]',
     );
     expect(result.text).toContain('Homelab/Netzplan.md');
@@ -854,7 +859,7 @@ describe('rename_note', () => {
     await call(fullKey, 'rename_note', { from: 'Homelab/UniFi.md', to: 'Homelab/Netzwerk.md' });
 
     const entry = runtime.app.queries
-      .activity('julian', 0)
+      .activity(julian, 0)
       .find((row) => row.path === 'Homelab/Netzwerk.md');
     expect(entry?.actor).toBe('agent-voll');
     expect(entry?.action).toBe('rename');
@@ -865,7 +870,7 @@ describe('rename_note', () => {
     // the owner is left with a dead link in a note nobody touched — see the
     // tool's comment for why that is allowed. What the key is *told* obeys the
     // scope, exactly as every other list here does.
-    await runtime.app.createNote('julian', 'Privat/Merkzettel.md', 'Siehe [[Homelab/UniFi]].\n');
+    await runtime.app.createNote(julian, 'Privat/Merkzettel.md', 'Siehe [[Homelab/UniFi]].\n');
 
     const result = await call(scopedKey, 'rename_note', {
       from: 'Homelab/UniFi.md',
@@ -873,7 +878,7 @@ describe('rename_note', () => {
     });
 
     expect(result.isError).toBe(false);
-    expect((await runtime.notes.getNote('julian', 'Privat/Merkzettel.md')).content).toContain(
+    expect((await runtime.notes.getNote(julian, 'Privat/Merkzettel.md')).content).toContain(
       '[[Homelab/Netzwerk]]',
     );
     expect(result.text).not.toContain('Privat');
@@ -883,7 +888,7 @@ describe('rename_note', () => {
   it('names the rewritten notes to a key that may read them', async () => {
     // The other side of the same filter: bounded by the view, not switched off
     // and not thrown away.
-    await runtime.app.createNote('julian', 'Privat/Merkzettel.md', 'Siehe [[Homelab/UniFi]].\n');
+    await runtime.app.createNote(julian, 'Privat/Merkzettel.md', 'Siehe [[Homelab/UniFi]].\n');
 
     const result = await call(fullKey, 'rename_note', {
       from: 'Homelab/UniFi.md',
@@ -900,8 +905,8 @@ describe('rename_note', () => {
     });
 
     expect(result.isError).toBe(true);
-    await expect(runtime.notes.getNote('julian', 'Privat/UniFi.md')).rejects.toThrow();
-    expect((await runtime.notes.getNote('julian', 'Homelab/UniFi.md')).content).toContain('Zonen');
+    await expect(runtime.notes.getNote(julian, 'Privat/UniFi.md')).rejects.toThrow();
+    expect((await runtime.notes.getNote(julian, 'Homelab/UniFi.md')).content).toContain('Zonen');
   });
 
   it('will not walk a note into the scope from outside it', async () => {
@@ -911,8 +916,8 @@ describe('rename_note', () => {
     });
 
     expect(result.isError).toBe(true);
-    await expect(runtime.notes.getNote('julian', 'Homelab/Gedanken.md')).rejects.toThrow();
-    expect((await runtime.notes.getNote('julian', 'Privat/Gedanken.md')).content).toContain(
+    await expect(runtime.notes.getNote(julian, 'Homelab/Gedanken.md')).rejects.toThrow();
+    expect((await runtime.notes.getNote(julian, 'Privat/Gedanken.md')).content).toContain(
       'persönlich',
     );
   });
@@ -922,7 +927,7 @@ describe('rename_note', () => {
       from: 'Privat/Gedanken.md',
       to: 'Homelab/Gedanken.md',
     });
-    await runtime.app.deleteNote('julian', 'Privat/Gedanken.md');
+    await runtime.app.deleteNote(julian, 'Privat/Gedanken.md');
     const onceItIsGone = await call(scopedKey, 'rename_note', {
       from: 'Privat/Gedanken.md',
       to: 'Homelab/Gedanken.md',
@@ -941,13 +946,13 @@ describe('rename_note', () => {
     });
 
     expect(taken.isError).toBe(true);
-    expect((await runtime.notes.getNote('julian', 'Homelab/UniFi.md')).content).toContain('Zonen');
+    expect((await runtime.notes.getNote(julian, 'Homelab/UniFi.md')).content).toContain('Zonen');
   });
 
   it('cannot reach another vault', async () => {
     await call(fullKey, 'rename_note', { from: '../ramona/Ihres.md', to: 'Geklaut.md' });
-    expect(runtime.app.queries.countNotes('ramona')).toBe(1);
-    await expect(runtime.notes.getNote('julian', 'Geklaut.md')).rejects.toThrow();
+    expect(runtime.app.queries.countNotes(ramona)).toBe(1);
+    await expect(runtime.notes.getNote(julian, 'Geklaut.md')).rejects.toThrow();
   });
 });
 
@@ -989,12 +994,12 @@ describe('the query cap is applied to what the key may see', () => {
   let lateKey: string;
 
   beforeEach(async () => {
-    await runtime.app.createNote('julian', 'Zzz/Spaet.md', '# Spät\n\nSpaetzuendung.\n');
-    lateKey = runtime.keys.create('julian', 'agent-spaet', { scope: 'Zzz' }).secret;
+    await runtime.app.createNote(julian, 'Zzz/Spaet.md', '# Spät\n\nSpaetzuendung.\n');
+    lateKey = runtime.keys.create(julian, 'agent-spaet', { scope: 'Zzz' }).secret;
   });
 
   it('maps a folder that sorts after five thousand other notes', async () => {
-    fillIndex('julian', 'Aaa/', 5000, 1);
+    fillIndex(julian, 'Aaa/', 5000, 1);
 
     const { text } = await call(lateKey, 'vault_map');
 
@@ -1004,7 +1009,7 @@ describe('the query cap is applied to what the key may see', () => {
 
   it('searches a folder that sorts after the rows the query asked for', async () => {
     // Newer than the note in the scope, so recency puts every filler row first.
-    fillIndex('julian', 'Aaa/', 500, Date.now() + 60_000);
+    fillIndex(julian, 'Aaa/', 500, Date.now() + 60_000);
 
     const { text } = await call(lateKey, 'search_notes', { query: '' });
 
@@ -1013,7 +1018,7 @@ describe('the query cap is applied to what the key may see', () => {
   });
 
   it('answers an empty folder and a forbidden one identically', async () => {
-    fillIndex('julian', 'Aaa/', 10, 1);
+    fillIndex(julian, 'Aaa/', 10, 1);
 
     const empty = await call(lateKey, 'vault_map', { folder: 'Zzz/Leer' });
     const forbidden = await call(lateKey, 'vault_map', { folder: 'Privat' });
@@ -1032,11 +1037,11 @@ describe('the query cap is applied to what the key may see', () => {
 describe('list_tasks', () => {
   beforeEach(async () => {
     await runtime.app.createNote(
-      'julian',
+      julian,
       'Homelab/Offen.md',
       '# Offen\n\n- [ ] Firmware aktualisieren\n- [x] Backup geprüft\n',
     );
-    await runtime.app.createNote('julian', 'Privat/Vorhaben.md', '- [ ] Geheimes Vorhaben\n');
+    await runtime.app.createNote(julian, 'Privat/Vorhaben.md', '- [ ] Geheimes Vorhaben\n');
   });
 
   it('lists the open points with the note and the line they stand in', async () => {
@@ -1072,7 +1077,7 @@ describe('list_tasks', () => {
 
   it('says how many it left out rather than letting a cap look like the end', async () => {
     const many = Array.from({ length: 12 }, (_, i) => `- [ ] Punkt ${i}`).join('\n');
-    await runtime.app.createNote('julian', 'Homelab/Viele.md', `${many}\n`);
+    await runtime.app.createNote(julian, 'Homelab/Viele.md', `${many}\n`);
 
     const { text } = await call(scopedKey, 'list_tasks', { limit: 3 });
 
@@ -1109,11 +1114,11 @@ describe('list_findings', () => {
     // One tagged note, so being untagged is a convention here and therefore a
     // finding at all — see `untaggedFindings`.
     await runtime.app.createNote(
-      'julian',
+      julian,
       'Homelab/Netz.md',
       '---\ntags: [homelab]\n---\n# Netz\n\nSiehe [[Homelab/UniFi]] und [[Nirgendwo]].\n',
     );
-    await runtime.app.createNote('julian', 'Privat/Notiz.md', 'Siehe [[Privat/Phantom]].\n');
+    await runtime.app.createNote(julian, 'Privat/Notiz.md', 'Siehe [[Privat/Phantom]].\n');
   });
 
   it('names the note to open for each kind of finding', async () => {
@@ -1162,7 +1167,7 @@ describe('list_findings', () => {
 
   it('says how many it left out rather than letting a cap look like the end', async () => {
     for (let i = 0; i < 8; i += 1) {
-      await runtime.app.createNote('julian', `Homelab/Kaputt ${i}.md`, `Siehe [[Fehlt ${i}]].\n`);
+      await runtime.app.createNote(julian, `Homelab/Kaputt ${i}.md`, `Siehe [[Fehlt ${i}]].\n`);
     }
 
     const { text } = await call(scopedKey, 'list_findings', { kind: 'dead_links', limit: 3 });
@@ -1189,11 +1194,11 @@ describe('list_findings', () => {
    * very same bytes — anything else is that oracle.
    */
   it('answers byte for byte the same whether the guessed name exists outside the scope or not', async () => {
-    await runtime.app.createNote('julian', 'Homelab/Koeder.md', 'Siehe [[Privat/Phantom]].\n');
+    await runtime.app.createNote(julian, 'Homelab/Koeder.md', 'Siehe [[Privat/Phantom]].\n');
 
     const before = await call(scopedKey, 'list_findings');
 
-    await runtime.app.createNote('julian', 'Privat/Phantom.md', 'jetzt gibt es mich\n');
+    await runtime.app.createNote(julian, 'Privat/Phantom.md', 'jetzt gibt es mich\n');
 
     const after = await call(scopedKey, 'list_findings');
 

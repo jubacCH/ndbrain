@@ -29,12 +29,13 @@ let dataDir: string;
 let runtime: Runtime;
 let server: FastifyInstance;
 let cookie: string;
+let julian: string;
 
 beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-contract-'));
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
-  await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
+  julian = (await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' })).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -130,8 +131,8 @@ describe('request validation', () => {
 
 describe('responses match the shared schema', () => {
   beforeEach(async () => {
-    await runtime.app.createNote('julian', 'Eins.md', '---\ntags: [x]\n---\nSiehe [[Zwei]].\n');
-    await runtime.app.createNote('julian', 'Zwei.md', '---\ntags: [x]\n---\nZurück zu [[Eins]].\n');
+    await runtime.app.createNote(julian, 'Eins.md', '---\ntags: [x]\n---\nSiehe [[Zwei]].\n');
+    await runtime.app.createNote(julian, 'Zwei.md', '---\ntags: [x]\n---\nZurück zu [[Eins]].\n');
   });
 
   const cases: Array<[string, { safeParse: (v: unknown) => { success: boolean } }]> = [
@@ -160,14 +161,14 @@ describe('responses match the shared schema', () => {
   it('carries the owner on every pulse event', async () => {
     // Regression: the network view keys nodes by (owner, path). Without this
     // field every lookup was `"undefined …"` and no live event ever landed.
-    await runtime.app.putNote('julian', 'Eins.md', 'geändert\n', 'julian');
+    await runtime.app.putNote(julian, 'Eins.md', 'geändert\n', julian);
 
     const response = await server.inject({ url: '/api/v1/pulse?since=1', headers: { cookie } });
     const parsed = S.PulseResponse.parse(response.json());
 
     expect(parsed.events.length).toBeGreaterThan(0);
     for (const event of parsed.events) {
-      expect(event.owner).toBe('julian');
+      expect(event.owner).toBe(julian);
     }
   });
 });

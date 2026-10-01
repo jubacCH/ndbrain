@@ -85,8 +85,17 @@ export function AdminSpaces(props: AdminSpacesProps): React.JSX.Element {
     }
   };
 
+  /**
+   * The names already in use, for the form to refuse one before sending it.
+   *
+   * By what each account is **called**, not by its identifier: the identifier is
+   * random and can never clash with a word somebody types, so a set built from
+   * it would be a check that always passes. The server refuses the clash either
+   * way; what is at stake here is whether it is said before the request or
+   * after it.
+   */
   const taken = useMemo(
-    () => new Set([...users.map((user) => user.id), ...spaces.map((space) => space.id)]),
+    () => new Set([...users.map((user) => user.loginName), ...spaces.map((space) => space.id)]),
     [users, spaces],
   );
   const managed = spaces.find((space) => space.id === managing) ?? null;
@@ -423,7 +432,10 @@ function Members({
             <option value="">{copy.spaces.pickPerson}</option>
             {people.map((user) => (
               <option key={user.id} value={user.id}>
-                {user.displayName} ({user.id})
+                {/* The value is the identifier, which is what a grant points
+                    at; the label is what the person is called, because
+                    `acc_0f3a…` beside a name tells nobody anything. */}
+                {user.displayName} ({user.loginName})
               </option>
             ))}
           </select>

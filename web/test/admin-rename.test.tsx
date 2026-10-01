@@ -23,8 +23,8 @@ import { copy } from '../src/copy';
 import type { AdminUser } from '../src/api';
 
 const USERS: AdminUser[] = [
-  { id: 'julian', guid: 'acc_julianjulianjulianjulianjulianju', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
-  { id: 'ramona', guid: 'acc_ramonaramonaramonaramonaramonara', loginName: 'ramona', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 3 },
+  { id: 'acc_julianjulianjulianjulianjulianju', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
+  { id: 'acc_ramonaramonaramonaramonaramonara', loginName: 'ramona', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 3 },
 ];
 
 function renderAdmin(over: Partial<AdminProps> = {}) {
@@ -33,7 +33,11 @@ function renderAdmin(over: Partial<AdminProps> = {}) {
   const props = {
     users: USERS,
     keys: [],
-    self: 'julian',
+    // The signed-in account's identifier, which is what the shell passes
+    // (`self={user.id}`). The guard that keeps somebody from disabling their
+    // own account compares against it, so a login here would make that guard
+    // silently stop matching — which is what this fixture was doing.
+    self: USERS[0]!.id,
     busy: false,
     onCreateUser: vi.fn(async () => undefined),
     onResetPassword: vi.fn(async () => undefined),
@@ -106,7 +110,7 @@ describe('the control', () => {
 
     // Only what changed: a request that resends an unchanged login can be
     // refused on the uniqueness of the name it already has.
-    expect(onRenameUser).toHaveBeenCalledWith('ramona', { displayName: 'Ramona Bachmann' });
+    expect(onRenameUser).toHaveBeenCalledWith(USERS[1]!.id, { displayName: 'Ramona Bachmann' });
     expect(within(rowOf('ramona')).queryByRole('button', { name: copy.admin.saveName })).toBeNull();
   });
 
@@ -124,7 +128,7 @@ describe('the control', () => {
     await userEvent.type(login, 'ramona-b');
     await userEvent.click(within(row).getByRole('button', { name: copy.admin.saveName }));
 
-    expect(onRenameUser).toHaveBeenCalledWith('ramona', { loginName: 'ramona-b' });
+    expect(onRenameUser).toHaveBeenCalledWith(USERS[1]!.id, { loginName: 'ramona-b' });
   });
 
   it('sends both when both were changed', async () => {
@@ -135,31 +139,22 @@ describe('the control', () => {
     await userEvent.type(within(row).getByLabelText(copy.admin.newLoginFor('ramona')), '-b');
     await userEvent.click(within(row).getByRole('button', { name: copy.admin.saveName }));
 
-    expect(onRenameUser).toHaveBeenCalledWith('ramona', {
+    expect(onRenameUser).toHaveBeenCalledWith(USERS[1]!.id, {
       displayName: 'Ramona B.',
       loginName: 'ramona-b',
     });
   });
 
-  /**
-   * The cost of not moving anything, made visible.
+  /*
+   * Gone with the design it described.
    *
-   * After a rename the folder on disk still carries the name the account was
-   * made with. Somebody who meets that in a backup and not on this screen would
-   * reasonably think something had gone wrong.
+   * There was an hour in which the id stayed the readable name and only the
+   * login moved, so the two could come apart and the folder on disk kept the
+   * old one — and this screen said so. The id is the identifier and the folder
+   * again, drawn at random and never equal to a name, so there is nothing left
+   * to come apart from. The test is removed rather than reworded because the
+   * behaviour is gone, not because it became inconvenient.
    */
-  it('shows the vault’s folder once it stops matching the login', () => {
-    renderAdmin({
-      users: [
-        { id: 'julian', guid: 'acc_julianjulianjulianjulianjulianju', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 1 },
-        { id: 'ramona', guid: 'acc_ramonaramonaramonaramonaramonara', loginName: 'ramona-b', displayName: 'Ramona', role: 'user', disabled: false, createdAt: 0, notes: 0 },
-      ],
-    });
-
-    expect(within(rowOf('ramona-b')).getByText(copy.admin.vaultFolder('ramona'))).toBeInTheDocument();
-    // And not where they still agree, which is every account until one is renamed.
-    expect(within(rowOf('julian')).queryByText(copy.admin.vaultFolder('julian'))).toBeNull();
-  });
 
   it('sends nothing on a cancel', async () => {
     const { onRenameUser } = renderAdmin();
@@ -194,7 +189,7 @@ describe('the identifier', () => {
   it('is shown beside the account, and is not one of the names', async () => {
     renderAdmin();
     const row = rowOf('ramona');
-    const guid = USERS[1]!.guid;
+    const guid = USERS[1]!.id;
 
     expect(within(row).getByText(guid)).toBeInTheDocument();
 

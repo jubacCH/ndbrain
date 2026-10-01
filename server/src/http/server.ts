@@ -1380,9 +1380,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       // password reset for an account that has no password.
       users: users.list().filter((user) => user.kind === 'person').map((user) => ({
         id: user.id,
-        // Only here. `publicUser` below, which is what every other route
-        // answers with, deliberately does not carry it.
-        guid: user.guid,
         loginName: user.loginName,
         displayName: user.displayName,
         role: user.role,
@@ -1879,10 +1876,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (grantee === '') {
       return reply.code(400).send({ code: 'no_grantee', message: 'name somebody to share with' });
     }
+    // By login, because this is a name somebody typed into a form. The id is a
+    // random identifier and nobody shares a vault by pasting one.
+    //
     // A space is not somebody to share with, and it answers exactly like a
     // name that does not exist: whether a space of that name exists is not the
     // caller's to learn from this form.
-    const recipient = users.get(grantee);
+    const recipient = users.byLogin(grantee);
     if (recipient === undefined || recipient.kind !== 'person') {
       return reply.code(404).send({ code: 'no_such_user', message: 'no such account' });
     }
@@ -1891,7 +1891,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       input.kind === undefined ? (input.prefix ?? input.path ?? '') : { kind: input.kind, path: input.path ?? input.prefix ?? '' };
 
     try {
-      return { share: await app.grantShare(owner, grantee, target, input.canWrite === true) };
+      // The account, not the word: a share is a row pointing at an id.
+      return { share: await app.grantShare(owner, recipient.id, target, input.canWrite === true) };
     } catch (error) {
       if (error instanceof InvalidShareError) {
         return reply.code(400).send({ code: 'invalid_share', message: error.message });
@@ -1930,9 +1931,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
  *
  * Written as a pick of three named fields rather than as a spread with the
  * secrets removed: a field added to `User` then has to be named here before it
- * can leave the server, which is the way round that fails safely. `guid` is the
- * first one that tests it — it is for whoever administers the server and
- * appears on the administrator's listing alone.
+ * can leave the server, which is the way round that fails safely.
+ *
+ * The id is among them and has to be: the client compares it against every
+ * note's owner to know which notes are its own, and keys what it remembers by
+ * it. What an ordinary caller never learns through any route is *another*
+ * account's identifier — which is a different promise from not seeing one's
+ * own, and the one that can actually be kept.
  */
 function publicUser(user: User): Pick<User, 'id' | 'displayName' | 'role'> {
   return { id: user.id, displayName: user.displayName, role: user.role };

@@ -12,6 +12,8 @@ import { createRuntime, type Runtime } from '../src/runtime.js';
 let dataDir: string;
 let runtime: Runtime;
 let server: FastifyInstance;
+let julian: string;
+let ramona: string;
 
 /** Session cookies, so a request can be made as either person. */
 const cookies: Record<string, string> = {};
@@ -65,18 +67,18 @@ beforeEach(async () => {
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
 
-  await runtime.users.create('julian', 'ein gutes passwort');
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort')).id;
+  ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
 
   await runtime.app.createNote(
-    'julian',
+    julian,
     'Projekt/Plan.md',
     '---\ntags: [projekt]\n---\n# Plan\n\nZwei Nodes, Qdevice auf [[Technik]].\n\n- [ ] Termin fixieren\n',
   );
-  await runtime.app.createNote('julian', 'Projekt/Technik.md', '# Technik\n\nDetails zum Projekt.\n');
-  await runtime.app.createNote('julian', 'Privat/Tagebuch.md', '# Tagebuch\n\nstreng geheim\n');
-  await runtime.app.createNote('julian', 'Verweis.md', 'Siehe [[Plan]] — privat notiert.\n');
-  await runtime.app.createNote('ramona', 'Eigenes.md', '# Eigenes\n\nRamonas Notiz.\n');
+  await runtime.app.createNote(julian, 'Projekt/Technik.md', '# Technik\n\nDetails zum Projekt.\n');
+  await runtime.app.createNote(julian, 'Privat/Tagebuch.md', '# Tagebuch\n\nstreng geheim\n');
+  await runtime.app.createNote(julian, 'Verweis.md', 'Siehe [[Plan]] — privat notiert.\n');
+  await runtime.app.createNote(ramona, 'Eigenes.md', '# Eigenes\n\nRamonas Notiz.\n');
 
   server = await buildServer({
     app: runtime.app,
@@ -101,7 +103,10 @@ afterEach(async () => {
   await fs.rm(dataDir, { recursive: true, force: true });
 });
 
-const NOTE = '/api/v1/notes/Projekt/Plan.md?owner=julian';
+/** The owner query/body field is the account id, never the login name. */
+function NOTE(): string {
+  return `/api/v1/notes/Projekt/Plan.md?owner=${julian}`;
+}
 
 describe('the permission matrix', () => {
   /**
@@ -110,18 +115,18 @@ describe('the permission matrix', () => {
    * cannot be added without deciding what it does at all three levels.
    */
   const OPERATIONS = {
-    read: () => as('ramona', { url: NOTE }),
+    read: () => as('ramona', { url: NOTE() }),
     write: () =>
-      as('ramona', { method: 'PUT', url: NOTE, payload: { content: 'überschrieben\n' } }),
+      as('ramona', { method: 'PUT', url: NOTE(), payload: { content: 'überschrieben\n' } }),
     rename: () =>
       as('ramona', {
         method: 'POST',
         url: '/api/v1/rename',
-        payload: { owner: 'julian', from: 'Projekt/Plan.md', to: 'Projekt/Planung.md' },
+        payload: { owner: julian, from: 'Projekt/Plan.md', to: 'Projekt/Planung.md' },
       }),
-    delete: () => as('ramona', { method: 'DELETE', url: NOTE }),
+    delete: () => as('ramona', { method: 'DELETE', url: NOTE() }),
     search: () => as('ramona', { url: '/api/v1/search?q=Qdevice' }),
-    backlinks: () => as('ramona', { url: '/api/v1/backlinks/Projekt/Plan.md?owner=julian' }),
+    backlinks: () => as('ramona', { url: `/api/v1/backlinks/Projekt/Plan.md?owner=${julian}` }),
   };
 
   describe('without a grant', () => {
@@ -159,7 +164,7 @@ describe('the permission matrix', () => {
       const { status, body } = await OPERATIONS.read();
       expect(status).toBe(200);
       expect(body.note.content).toContain('Qdevice');
-      expect(body.owner).toBe('julian');
+      expect(body.owner).toBe(julian);
       expect(body.canWrite).toBe(false);
     });
 
@@ -170,14 +175,14 @@ describe('the permission matrix', () => {
 
     it('leaves the note untouched after a refused write', async () => {
       await OPERATIONS.write();
-      const note = await runtime.notes.getNote('julian', 'Projekt/Plan.md');
+      const note = await runtime.notes.getNote(julian, 'Projekt/Plan.md');
       expect(note.content).toContain('Qdevice');
     });
 
     it('finds the note in search, labelled with its owner', async () => {
       const { body } = await OPERATIONS.search();
       expect(body.hits).toHaveLength(1);
-      expect(body.hits[0].owner).toBe('julian');
+      expect(body.hits[0].owner).toBe(julian);
       expect(body.hits[0].path).toBe('Projekt/Plan.md');
     });
 
@@ -185,10 +190,10 @@ describe('the permission matrix', () => {
       const { body } = await as('ramona', { url: '/api/v1/tree' });
       const paths = body.notes.map((n: any) => `${n.owner}:${n.path}`);
 
-      expect(paths).toContain('julian:Projekt/Plan.md');
-      expect(paths).toContain('ramona:Eigenes.md');
-      expect(paths).not.toContain('julian:Privat/Tagebuch.md');
-      expect(body.dirs.map((d: any) => `${d.owner}:${d.path}`)).not.toContain('julian:Privat');
+      expect(paths).toContain(`${julian}:Projekt/Plan.md`);
+      expect(paths).toContain(`${ramona}:Eigenes.md`);
+      expect(paths).not.toContain(`${julian}:Privat/Tagebuch.md`);
+      expect(body.dirs.map((d: any) => `${d.owner}:${d.path}`)).not.toContain(`${julian}:Privat`);
     });
 
     it('counts shared notes in the overview and lists their open tasks', async () => {
@@ -235,20 +240,20 @@ describe('the permission matrix', () => {
       const { status } = await OPERATIONS.write();
       expect(status).toBe(200);
 
-      const note = await runtime.notes.getNote('julian', 'Projekt/Plan.md');
+      const note = await runtime.notes.getNote(julian, 'Projekt/Plan.md');
       expect(note.content).toBe('überschrieben\n');
     });
 
     it('records who actually made the change, not whose vault it is', async () => {
       await OPERATIONS.write();
-      const activity = runtime.app.queries.activity('julian', 0);
-      expect(activity.find((row) => row.path === 'Projekt/Plan.md')?.actor).toBe('ramona');
+      const activity = runtime.app.queries.activity(julian, 0);
+      expect(activity.find((row) => row.path === 'Projekt/Plan.md')?.actor).toBe(ramona);
     });
 
     it('renames inside the shared folder', async () => {
       const { status } = await OPERATIONS.rename();
       expect(status).toBe(200);
-      expect(runtime.app.queries.getNote('julian', 'julian', 'Projekt/Planung.md')).toBeDefined();
+      expect(runtime.app.queries.getNote(julian, julian, 'Projekt/Planung.md')).toBeDefined();
     });
 
     it('deletes inside the shared folder', async () => {
@@ -264,10 +269,10 @@ describe('the edge of a share', () => {
   });
 
   it('does not treat a folder that merely starts the same as shared', async () => {
-    await runtime.app.createNote('julian', 'Projekt-Privat/Geheim.md', 'nicht geteilt\n');
+    await runtime.app.createNote(julian, 'Projekt-Privat/Geheim.md', 'nicht geteilt\n');
 
     const { status } = await as('ramona', {
-      url: '/api/v1/notes/Projekt-Privat/Geheim.md?owner=julian',
+      url: `/api/v1/notes/Projekt-Privat/Geheim.md?owner=${julian}`,
     });
     expect(status).toBe(404);
   });
@@ -276,22 +281,22 @@ describe('the edge of a share', () => {
     const { status } = await as('ramona', {
       method: 'POST',
       url: '/api/v1/rename',
-      payload: { owner: 'julian', from: 'Projekt/Plan.md', to: 'Plan.md' },
+      payload: { owner: julian, from: 'Projekt/Plan.md', to: 'Plan.md' },
     });
 
     expect(status).toBe(404);
-    expect(runtime.app.queries.getNote('julian', 'julian', 'Projekt/Plan.md')).toBeDefined();
+    expect(runtime.app.queries.getNote(julian, julian, 'Projekt/Plan.md')).toBeDefined();
   });
 
   it('refuses to move a note out of the shared folder in bulk either', async () => {
     const { body } = await as('ramona', {
       method: 'POST',
       url: '/api/v1/bulk',
-      payload: { owner: 'julian', action: 'move', paths: ['Projekt/Plan.md'], dir: 'Anderswo' },
+      payload: { owner: julian, action: 'move', paths: ['Projekt/Plan.md'], dir: 'Anderswo' },
     });
 
     expect(body.ok ?? []).toEqual([]);
-    expect(runtime.app.queries.getNote('julian', 'julian', 'Projekt/Plan.md')).toBeDefined();
+    expect(runtime.app.queries.getNote(julian, julian, 'Projekt/Plan.md')).toBeDefined();
   });
 
   it('reports an out-of-scope note in a bulk selection as missing, and does the rest', async () => {
@@ -299,7 +304,7 @@ describe('the edge of a share', () => {
       method: 'POST',
       url: '/api/v1/bulk',
       payload: {
-        owner: 'julian',
+        owner: julian,
         action: 'tag',
         paths: ['Projekt/Plan.md', 'Privat/Tagebuch.md'],
         tag: 'sortiert',
@@ -309,19 +314,19 @@ describe('the edge of a share', () => {
     expect(body.ok).toEqual(['Projekt/Plan.md']);
     expect(body.failed).toEqual([{ path: 'Privat/Tagebuch.md', reason: 'note does not exist' }]);
     // The untouched note is genuinely untouched, not merely reported as failed.
-    const untouched = await runtime.notes.getNote('julian', 'Privat/Tagebuch.md');
+    const untouched = await runtime.notes.getNote(julian, 'Privat/Tagebuch.md');
     expect(untouched.content).not.toContain('sortiert');
   });
 
   it('cannot create a note outside the shared folder', async () => {
     const { status } = await as('ramona', {
       method: 'PUT',
-      url: '/api/v1/notes/Eingeschleust.md?owner=julian',
+      url: `/api/v1/notes/Eingeschleust.md?owner=${julian}`,
       payload: { content: 'x' },
     });
 
     expect(status).toBe(404);
-    expect(runtime.app.queries.getNote('julian', 'julian', 'Eingeschleust.md')).toBeUndefined();
+    expect(runtime.app.queries.getNote(julian, julian, 'Eingeschleust.md')).toBeUndefined();
   });
 
   it('never lets a share be passed on', async () => {
@@ -335,7 +340,7 @@ describe('the edge of a share', () => {
     });
 
     cookies['gast'] = await login('gast', 'noch ein passwort');
-    const { status } = await as('gast', { url: NOTE });
+    const { status } = await as('gast', { url: NOTE() });
     expect(status).toBe(404);
   });
 });
@@ -347,7 +352,7 @@ describe('links stop at the sharing boundary', () => {
     // `Verweis.md` links to `Plan.md` but is not itself shared. Ramona may read
     // the target; naming the source would tell her a note she cannot see exists.
     const { body } = await as('ramona', {
-      url: '/api/v1/backlinks/Projekt/Plan.md?owner=julian',
+      url: `/api/v1/backlinks/Projekt/Plan.md?owner=${julian}`,
     });
 
     expect(body.backlinks.map((l: any) => l.source)).toEqual([]);
@@ -364,13 +369,13 @@ describe('links stop at the sharing boundary', () => {
     await share('Projekt', true);
     await as('ramona', {
       method: 'PUT',
-      url: '/api/v1/notes/Projekt/Neu.md?owner=julian',
+      url: `/api/v1/notes/Projekt/Neu.md?owner=${julian}`,
       payload: { content: 'Siehe [[Eigenes]].\n' },
     });
 
     // `Eigenes.md` is Ramona's own note. Written into Julian's vault, the link
     // has no target — vaults do not link to each other.
-    const outgoing = runtime.app.queries.outgoingLinks('julian', 'julian', 'Projekt/Neu.md');
+    const outgoing = runtime.app.queries.outgoingLinks(julian, julian, 'Projekt/Neu.md');
     expect(outgoing[0]?.targetPath).toBeNull();
   });
 
@@ -383,7 +388,7 @@ describe('links stop at the sharing boundary', () => {
     /** `Projekt/Notiz.md` links out to `Privat/Tagebuch.md` and to nothing. */
     async function linkOutOfTheShare(): Promise<void> {
       await runtime.app.createNote(
-        'julian',
+        julian,
         'Projekt/Notiz.md',
         'Siehe [[Tagebuch]] und [[Nirgendwo]].\n',
       );
@@ -394,7 +399,7 @@ describe('links stop at the sharing boundary', () => {
       await linkOutOfTheShare();
 
       const { body } = await as('ramona', {
-        url: '/api/v1/backlinks/Projekt/Notiz.md?owner=julian',
+        url: `/api/v1/backlinks/Projekt/Notiz.md?owner=${julian}`,
       });
 
       const link = body.outgoing.find((l: any) => l.targetRaw === 'Tagebuch');
@@ -406,7 +411,7 @@ describe('links stop at the sharing boundary', () => {
       await linkOutOfTheShare();
 
       const { body } = await as('ramona', {
-        url: '/api/v1/backlinks/Projekt/Notiz.md?owner=julian',
+        url: `/api/v1/backlinks/Projekt/Notiz.md?owner=${julian}`,
       });
 
       // Dropping the line instead would say it: the grantee reads the note, so
@@ -422,11 +427,11 @@ describe('links stop at the sharing boundary', () => {
     });
 
     it('still shows a dead link inside the share as dead', async () => {
-      await runtime.app.createNote('julian', 'Projekt/Notiz.md', 'Siehe [[Nirgendwo]].\n');
+      await runtime.app.createNote(julian, 'Projekt/Notiz.md', 'Siehe [[Nirgendwo]].\n');
       await share('Projekt', false);
 
       const { body } = await as('ramona', {
-        url: '/api/v1/backlinks/Projekt/Notiz.md?owner=julian',
+        url: `/api/v1/backlinks/Projekt/Notiz.md?owner=${julian}`,
       });
 
       expect(body.outgoing).toHaveLength(1);
@@ -438,7 +443,7 @@ describe('links stop at the sharing boundary', () => {
       await linkOutOfTheShare();
       // A private note pointing *into* the share: the edge is invisible to her,
       // so the degree of the shared note must not count it either.
-      await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
+      await runtime.app.createNote(julian, 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
 
       const { body } = await as('ramona', { url: '/api/v1/graph' });
 
@@ -455,7 +460,7 @@ describe('links stop at the sharing boundary', () => {
 
     it('leaves the owner his own vault whole', async () => {
       await linkOutOfTheShare();
-      await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
+      await runtime.app.createNote(julian, 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
 
       const { body } = await as('julian', { url: '/api/v1/backlinks/Projekt/Notiz.md' });
       const link = body.outgoing.find((l: any) => l.targetRaw === 'Tagebuch');
@@ -488,7 +493,7 @@ describe('renaming inside a share', () => {
    * which she may not.
    */
   async function linkedFromBothHalves(): Promise<void> {
-    await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
+    await runtime.app.createNote(julian, 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
     await share('Projekt', true);
   }
 
@@ -496,7 +501,7 @@ describe('renaming inside a share', () => {
     return as('ramona', {
       method: 'POST',
       url: '/api/v1/rename',
-      payload: { owner: 'julian', from: 'Projekt/Technik.md', to: 'Projekt/Technik-neu.md' },
+      payload: { owner: julian, from: 'Projekt/Technik.md', to: 'Projekt/Technik-neu.md' },
     });
   }
 
@@ -514,7 +519,7 @@ describe('renaming inside a share', () => {
     await linkedFromBothHalves();
     await renameTechnik();
 
-    const hidden = await runtime.notes.getNote('julian', 'Privat/Heimlich.md');
+    const hidden = await runtime.notes.getNote(julian, 'Privat/Heimlich.md');
     expect(hidden.content).toContain('[[Technik-neu]]');
   });
 
@@ -538,15 +543,15 @@ describe('renaming inside a share', () => {
     // the two answers differ in any byte, the difference is the leak.
     const withPrivate = (await renameTechnik()).body;
 
-    await runtime.app.deleteNote('julian', 'Privat/Heimlich.md');
-    await runtime.app.deleteNote('julian', 'Privat/Tagebuch.md');
-    await runtime.app.deleteNote('julian', 'Verweis.md');
+    await runtime.app.deleteNote(julian, 'Privat/Heimlich.md');
+    await runtime.app.deleteNote(julian, 'Privat/Tagebuch.md');
+    await runtime.app.deleteNote(julian, 'Verweis.md');
 
     const without = (
       await as('ramona', {
         method: 'POST',
         url: '/api/v1/rename',
-        payload: { owner: 'julian', from: 'Projekt/Technik-neu.md', to: 'Projekt/Technik.md' },
+        payload: { owner: julian, from: 'Projekt/Technik-neu.md', to: 'Projekt/Technik.md' },
       })
     ).body;
 
@@ -576,12 +581,12 @@ describe('renaming inside a share', () => {
     const { status, body } = await as('ramona', {
       method: 'POST',
       url: '/api/v1/folders/rename',
-      payload: { owner: 'julian', from: 'Projekt', to: 'Projekt-neu' },
+      payload: { owner: julian, from: 'Projekt', to: 'Projekt-neu' },
     });
 
     expect(status).toBe(404);
     expect(JSON.stringify(body)).not.toContain('Privat');
-    expect(runtime.app.queries.getNote('julian', 'julian', 'Projekt/Plan.md')).toBeDefined();
+    expect(runtime.app.queries.getNote(julian, julian, 'Projekt/Plan.md')).toBeDefined();
   });
 
   /**
@@ -590,24 +595,24 @@ describe('renaming inside a share', () => {
    * grantee's view, while the rewrite still reaches the owner's private note.
    */
   it('reports a folder rename inside the share through the grantee\'s view', async () => {
-    await runtime.app.createNote('julian', 'Projekt/Unter/Tiefer.md', '# Tiefer\n');
-    await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Tiefer]].\n');
-    await runtime.app.createNote('julian', 'Projekt/Offen.md', 'Siehe [[Projekt/Unter/Tiefer]].\n');
+    await runtime.app.createNote(julian, 'Projekt/Unter/Tiefer.md', '# Tiefer\n');
+    await runtime.app.createNote(julian, 'Privat/Heimlich.md', 'Siehe [[Tiefer]].\n');
+    await runtime.app.createNote(julian, 'Projekt/Offen.md', 'Siehe [[Projekt/Unter/Tiefer]].\n');
     await share('Projekt', true);
 
     const { status, body } = await as('ramona', {
       method: 'POST',
       url: '/api/v1/folders/rename',
-      payload: { owner: 'julian', from: 'Projekt/Unter', to: 'Projekt/Drunter' },
+      payload: { owner: julian, from: 'Projekt/Unter', to: 'Projekt/Drunter' },
     });
 
     expect(status).toBe(200);
     expect(body.movedNotes).toEqual(['Projekt/Drunter/Tiefer.md']);
     expect(body.updatedLinks).toEqual(['Projekt/Offen.md']);
     expect(JSON.stringify(body)).not.toContain('Privat');
-    const hidden = await runtime.app.notes.getNote('julian', 'Privat/Heimlich.md');
+    const hidden = await runtime.app.notes.getNote(julian, 'Privat/Heimlich.md');
     expect(hidden.content).toContain('[[Tiefer]]');
-    const open = await runtime.app.notes.getNote('julian', 'Projekt/Offen.md');
+    const open = await runtime.app.notes.getNote(julian, 'Projekt/Offen.md');
     expect(open.content).toContain('[[Projekt/Drunter/Tiefer]]');
   });
 });
@@ -630,10 +635,10 @@ describe('the private half is indistinguishable from an empty one', () => {
   async function linkViews(): Promise<string> {
     const graph = (await as('ramona', { url: '/api/v1/graph' })).body;
     const notiz = (
-      await as('ramona', { url: '/api/v1/backlinks/Projekt/Notiz.md?owner=julian' })
+      await as('ramona', { url: `/api/v1/backlinks/Projekt/Notiz.md?owner=${julian}` })
     ).body;
     const technik = (
-      await as('ramona', { url: '/api/v1/backlinks/Projekt/Technik.md?owner=julian' })
+      await as('ramona', { url: `/api/v1/backlinks/Projekt/Technik.md?owner=${julian}` })
     ).body;
 
     return JSON.stringify({ graph, notiz, technik });
@@ -643,11 +648,11 @@ describe('the private half is indistinguishable from an empty one', () => {
     // `Projekt/Notiz.md` links out of the share and into the void;
     // `Privat/Heimlich.md` links back into the share from outside it.
     await runtime.app.createNote(
-      'julian',
+      julian,
       'Projekt/Notiz.md',
       'Siehe [[Tagebuch]] und [[Nirgendwo]].\n',
     );
-    await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
+    await runtime.app.createNote(julian, 'Privat/Heimlich.md', 'Siehe [[Technik]].\n');
     await share('Projekt', false);
 
     const withPrivate = await linkViews();
@@ -658,9 +663,9 @@ describe('the private half is indistinguishable from an empty one', () => {
     expect(graph.edges.length).toBeGreaterThan(0);
     expect(graph.nodes.length).toBeGreaterThan(0);
 
-    await runtime.app.deleteNote('julian', 'Privat/Heimlich.md');
-    await runtime.app.deleteNote('julian', 'Privat/Tagebuch.md');
-    await runtime.app.deleteNote('julian', 'Verweis.md');
+    await runtime.app.deleteNote(julian, 'Privat/Heimlich.md');
+    await runtime.app.deleteNote(julian, 'Privat/Tagebuch.md');
+    await runtime.app.deleteNote(julian, 'Verweis.md');
 
     expect(await linkViews()).toBe(withPrivate);
   });
@@ -709,8 +714,8 @@ describe('the search result says nothing about the rest of the vault', () => {
 describe('what counts as orphaned stops at the sharing boundary', () => {
   /** `Projekt/Allein.md` is linked to from the private half and nowhere else. */
   async function orphanedAsFarAsSheKnows(): Promise<void> {
-    await runtime.app.createNote('julian', 'Projekt/Allein.md', '# Allein\n');
-    await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Allein]].\n');
+    await runtime.app.createNote(julian, 'Projekt/Allein.md', '# Allein\n');
+    await runtime.app.createNote(julian, 'Privat/Heimlich.md', 'Siehe [[Allein]].\n');
     await share('Projekt', false);
   }
 
@@ -718,7 +723,7 @@ describe('what counts as orphaned stops at the sharing boundary', () => {
     await orphanedAsFarAsSheKnows();
 
     const paths = runtime.app.queries
-      .orphans(runtime.shares.view('ramona'))
+      .orphans(runtime.shares.view(ramona))
       .map((note) => note.path);
 
     expect(paths).toContain('Projekt/Allein.md');
@@ -726,17 +731,17 @@ describe('what counts as orphaned stops at the sharing boundary', () => {
 
   it('gives the same answer as a vault that never had the private note', async () => {
     await orphanedAsFarAsSheKnows();
-    const withPrivate = runtime.app.queries.orphans(runtime.shares.view('ramona'));
+    const withPrivate = runtime.app.queries.orphans(runtime.shares.view(ramona));
 
-    await runtime.app.deleteNote('julian', 'Privat/Heimlich.md');
+    await runtime.app.deleteNote(julian, 'Privat/Heimlich.md');
 
-    expect(runtime.app.queries.orphans(runtime.shares.view('ramona'))).toEqual(withPrivate);
+    expect(runtime.app.queries.orphans(runtime.shares.view(ramona))).toEqual(withPrivate);
   });
 
   it('leaves the owner his own answer, which counts the private link', async () => {
     await orphanedAsFarAsSheKnows();
 
-    const paths = runtime.app.queries.orphans('julian').map((note) => note.path);
+    const paths = runtime.app.queries.orphans(julian).map((note) => note.path);
     expect(paths).not.toContain('Projekt/Allein.md');
   });
 });
@@ -753,9 +758,9 @@ describe('what counts as orphaned stops at the sharing boundary', () => {
 describe('a bulk move renames on the caller\'s behalf', () => {
   beforeEach(async () => {
     await share('Projekt', true);
-    await runtime.app.createNote('julian', 'Projekt/Unter/Technik2.md', '# Technik2\n');
-    await runtime.app.createNote('julian', 'Projekt/Plan2.md', 'Siehe [[Technik2]].\n');
-    await runtime.app.createNote('julian', 'Privat/Heimlich.md', 'Siehe [[Technik2]].\n');
+    await runtime.app.createNote(julian, 'Projekt/Unter/Technik2.md', '# Technik2\n');
+    await runtime.app.createNote(julian, 'Projekt/Plan2.md', 'Siehe [[Technik2]].\n');
+    await runtime.app.createNote(julian, 'Privat/Heimlich.md', 'Siehe [[Technik2]].\n');
   });
 
   async function move(): Promise<{ status: number; body: any }> {
@@ -763,7 +768,7 @@ describe('a bulk move renames on the caller\'s behalf', () => {
       method: 'POST',
       url: '/api/v1/bulk',
       payload: {
-        owner: 'julian',
+        owner: julian,
         action: 'move',
         paths: ['Projekt/Unter/Technik2.md'],
         dir: 'Projekt',
@@ -782,9 +787,9 @@ describe('a bulk move renames on the caller\'s behalf', () => {
   it('rewrites the hidden link all the same', async () => {
     await move();
 
-    const hidden = await runtime.notes.getNote('julian', 'Privat/Heimlich.md');
+    const hidden = await runtime.notes.getNote(julian, 'Privat/Heimlich.md');
     expect(hidden.content).toContain('[[Technik2]]');
-    expect((await runtime.notes.getNote('julian', 'Projekt/Plan2.md')).content).toContain(
+    expect((await runtime.notes.getNote(julian, 'Projekt/Plan2.md')).content).toContain(
       '[[Technik2]]',
     );
   });
@@ -801,19 +806,19 @@ describe('a bulk move renames on the caller\'s behalf', () => {
   it('still records who made the move', async () => {
     await move();
 
-    const activity = runtime.app.queries.activity('julian', 0);
-    expect(activity.find((row) => row.path === 'Projekt/Technik2.md')?.actor).toBe('ramona');
+    const activity = runtime.app.queries.activity(julian, 0);
+    expect(activity.find((row) => row.path === 'Projekt/Technik2.md')?.actor).toBe(ramona);
   });
 });
 
 describe('withdrawing a share', () => {
   it('ends access immediately, with no cached decision', async () => {
     const id = await share('Projekt', true);
-    expect((await as('ramona', { url: NOTE })).status).toBe(200);
+    expect((await as('ramona', { url: NOTE() })).status).toBe(200);
 
     await as('julian', { method: 'DELETE', url: `/api/v1/shares/${id}` });
 
-    expect((await as('ramona', { url: NOTE })).status).toBe(404);
+    expect((await as('ramona', { url: NOTE() })).status).toBe(404);
     expect((await as('ramona', { url: '/api/v1/search?q=Qdevice' })).body.hits).toEqual([]);
   });
 
@@ -822,7 +827,7 @@ describe('withdrawing a share', () => {
     const { status } = await as('ramona', { method: 'DELETE', url: `/api/v1/shares/${id}` });
 
     expect(status).toBe(204);
-    expect((await as('ramona', { url: NOTE })).status).toBe(404);
+    expect((await as('ramona', { url: NOTE() })).status).toBe(404);
   });
 
   it('is invisible to anybody else', async () => {
@@ -833,7 +838,7 @@ describe('withdrawing a share', () => {
     const { status } = await as('gast', { method: 'DELETE', url: `/api/v1/shares/${id}` });
 
     expect(status).toBe(404);
-    expect((await as('ramona', { url: NOTE })).status).toBe(200);
+    expect((await as('ramona', { url: NOTE() })).status).toBe(200);
   });
 
   it('re-granting changes the right instead of stacking a second grant', async () => {
@@ -841,12 +846,12 @@ describe('withdrawing a share', () => {
     const second = await share('Projekt', true);
 
     expect(second).toBe(first);
-    expect(runtime.shares.toGrantee('ramona')).toHaveLength(1);
+    expect(runtime.shares.toGrantee(ramona)).toHaveLength(1);
     expect((await OPERATIONS_write()).status).toBe(200);
   });
 
   async function OPERATIONS_write(): Promise<{ status: number }> {
-    return as('ramona', { method: 'PUT', url: NOTE, payload: { content: 'neu\n' } });
+    return as('ramona', { method: 'PUT', url: NOTE(), payload: { content: 'neu\n' } });
   }
 });
 
@@ -860,17 +865,17 @@ describe('managing shares', () => {
 
     const hers = await as('ramona', { url: '/api/v1/shares' });
     expect(hers.body.granted).toEqual([]);
-    expect(hers.body.received[0].owner).toBe('julian');
+    expect(hers.body.received[0].owner).toBe(julian);
   });
 
   it('normalises the prefix to a folder boundary', async () => {
     await share('/Projekt/', false);
-    expect(runtime.shares.toGrantee('ramona')[0]?.prefix).toBe('Projekt/');
+    expect(runtime.shares.toGrantee(ramona)[0]?.prefix).toBe('Projekt/');
   });
 
   it('treats an empty prefix as the whole vault', async () => {
     await share('', false);
-    expect((await as('ramona', { url: '/api/v1/notes/Privat/Tagebuch.md?owner=julian' })).status)
+    expect((await as('ramona', { url: `/api/v1/notes/Privat/Tagebuch.md?owner=${julian}` })).status)
       .toBe(200);
   });
 
@@ -906,7 +911,7 @@ describe('conflicting writes to a shared note', () => {
 
   /** Reads the note the way a client would, to get the mtime it should send back. */
   async function open(user: string): Promise<number> {
-    const { body } = await as(user, { url: NOTE });
+    const { body } = await as(user, { url: NOTE() });
     return body.note.mtimeMs;
   }
 
@@ -915,12 +920,12 @@ describe('conflicting writes to a shared note', () => {
 
     // Julian writes while Ramona has the note open…
     await new Promise((resolve) => setTimeout(resolve, 20));
-    await runtime.app.updateNote('julian', 'Projekt/Plan.md', 'Julians Fassung\n', 'julian');
+    await runtime.app.updateNote(julian, 'Projekt/Plan.md', 'Julians Fassung\n', julian);
 
     // …and Ramona saves on top of it.
     const { status, body } = await as('ramona', {
       method: 'PUT',
-      url: NOTE,
+      url: NOTE(),
       payload: { content: 'Ramonas Fassung\n', baseMtimeMs: base },
     });
 
@@ -928,10 +933,10 @@ describe('conflicting writes to a shared note', () => {
     expect(body.conflictCopy).toMatch(/^Projekt\/Plan \(Konflikt .+\)\.md$/);
 
     // Last writer wins, and the version that lost is still on disk.
-    expect((await runtime.notes.getNote('julian', 'Projekt/Plan.md')).content).toBe(
+    expect((await runtime.notes.getNote(julian, 'Projekt/Plan.md')).content).toBe(
       'Ramonas Fassung\n',
     );
-    expect((await runtime.notes.getNote('julian', body.conflictCopy)).content).toBe(
+    expect((await runtime.notes.getNote(julian, body.conflictCopy)).content).toBe(
       'Julians Fassung\n',
     );
   });
@@ -939,11 +944,11 @@ describe('conflicting writes to a shared note', () => {
   it('makes the conflict copy findable rather than leaving it lying in the folder', async () => {
     const base = await open('ramona');
     await new Promise((resolve) => setTimeout(resolve, 20));
-    await runtime.app.updateNote('julian', 'Projekt/Plan.md', 'Julians eigenwillige Fassung\n');
+    await runtime.app.updateNote(julian, 'Projekt/Plan.md', 'Julians eigenwillige Fassung\n');
 
     await as('ramona', {
       method: 'PUT',
-      url: NOTE,
+      url: NOTE(),
       payload: { content: 'Ramonas Fassung\n', baseMtimeMs: base },
     });
 
@@ -956,7 +961,7 @@ describe('conflicting writes to a shared note', () => {
     const base = await open('ramona');
     const { body } = await as('ramona', {
       method: 'PUT',
-      url: NOTE,
+      url: NOTE(),
       payload: { content: 'nur ich\n', baseMtimeMs: base },
     });
 
@@ -966,11 +971,11 @@ describe('conflicting writes to a shared note', () => {
   it('does not make a copy when both wrote the same text', async () => {
     const base = await open('ramona');
     await new Promise((resolve) => setTimeout(resolve, 20));
-    await runtime.app.updateNote('julian', 'Projekt/Plan.md', 'dasselbe\n');
+    await runtime.app.updateNote(julian, 'Projekt/Plan.md', 'dasselbe\n');
 
     const { body } = await as('ramona', {
       method: 'PUT',
-      url: NOTE,
+      url: NOTE(),
       payload: { content: 'dasselbe\n', baseMtimeMs: base },
     });
 
@@ -978,11 +983,11 @@ describe('conflicting writes to a shared note', () => {
   });
 
   it('leaves a client that sends no base version with the old behaviour', async () => {
-    await runtime.app.updateNote('julian', 'Projekt/Plan.md', 'Julians Fassung\n');
+    await runtime.app.updateNote(julian, 'Projekt/Plan.md', 'Julians Fassung\n');
 
     const { body } = await as('ramona', {
       method: 'PUT',
-      url: NOTE,
+      url: NOTE(),
       payload: { content: 'Ramonas Fassung\n' },
     });
 

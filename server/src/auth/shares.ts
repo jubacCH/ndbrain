@@ -402,7 +402,12 @@ export class ShareService {
         `SELECT s.* FROM shares s JOIN users u ON u.id = s.owner
           WHERE s.grantee = ?
             AND NOT (u.kind = 'space' AND u.disabled_at IS NOT NULL)
-          ORDER BY s.owner, s.prefix`,
+          -- By what the owner is called, not by the identifier: the id became
+          -- random, so ordering by it put the vaults somebody has access to in
+          -- an order that changed between runs. The interface sorts its own
+          -- sections, but an endpoint whose order is arbitrary is one no test
+          -- can pin and one no reader can predict.
+          ORDER BY lower(u.login_name), s.prefix`,
         grantee,
       )
       .map(toShare);

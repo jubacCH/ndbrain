@@ -36,6 +36,8 @@ let runtime: Runtime;
 let server: FastifyInstance;
 let cookie: string;
 let ramonaCookie: string;
+let julian: string;
+let ramona: string;
 
 async function signIn(user: string, password: string): Promise<string> {
   const response = await server.inject({
@@ -64,9 +66,9 @@ beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-files-'));
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
-  await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
-  await runtime.users.create('ramona', 'ihr gutes passwort');
-  await runtime.app.createNote('julian', 'Homelab/Proxmox.md', '# Proxmox\n\nZwei Nodes.\n');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' })).id;
+  ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
+  await runtime.app.createNote(julian, 'Homelab/Proxmox.md', '# Proxmox\n\nZwei Nodes.\n');
 
   server = await buildServer({
     app: runtime.app,
@@ -105,7 +107,7 @@ describe('listing', () => {
   });
 
   it('lists folders too, so an empty one does not vanish', async () => {
-    await runtime.app.createFolder('julian', 'Leer');
+    await runtime.app.createFolder(julian, 'Leer');
 
     const response = await server.inject({ url: '/api/v1/files', headers: { cookie } });
     const listing = S.FilesResponse.parse(response.json());
@@ -283,7 +285,7 @@ describe('the tenant boundary', () => {
     await upload('/api/v1/files/geheim.bin', Buffer.from('privat'));
 
     const response = await server.inject({
-      url: '/api/v1/files/geheim.bin?owner=julian',
+      url: `/api/v1/files/geheim.bin?owner=${julian}`,
       headers: { cookie: ramonaCookie },
     });
 
@@ -302,7 +304,7 @@ describe('the tenant boundary', () => {
    */
   describe('listing somebody else\'s vault', () => {
     async function listing(): Promise<{ status: number; body: string }> {
-      const response = await server.inject({ url: '/api/v1/files?owner=julian', headers: { cookie: ramonaCookie } });
+      const response = await server.inject({ url: `/api/v1/files?owner=${julian}`, headers: { cookie: ramonaCookie } });
       return { status: response.statusCode, body: response.body.replace(/"mtimeMs":[0-9.]+/g, '"mtimeMs":0') };
     }
 
@@ -311,13 +313,13 @@ describe('the tenant boundary', () => {
       await upload('/api/v1/files/Homelab.pdf', Buffer.from('daneben'));
       await upload('/api/v1/files/Homelab2/nah.txt', Buffer.from('fast'));
       await upload('/api/v1/files/Homelab/Proxmox.md.bak', Buffer.from('kopie'));
-      await runtime.app.createNote('julian', 'Homelab/Nachbar.md', '# Nachbar\n');
-      await runtime.app.createFolder('julian', 'Leer');
+      await runtime.app.createNote(julian, 'Homelab/Nachbar.md', '# Nachbar\n');
+      await runtime.app.createFolder(julian, 'Leer');
     }
 
     it('lists a shared folder, and nothing beside it', async () => {
       await upload('/api/v1/files/Homelab/schema.png', Buffer.from('png'));
-      runtime.shares.grant('julian', 'Homelab', 'ramona', false);
+      runtime.shares.grant(julian, 'Homelab', ramona, false);
       const first = await listing();
       expect(first.status).toBe(200);
       const parsed = S.FilesResponse.parse(JSON.parse(first.body));
@@ -327,14 +329,14 @@ describe('the tenant boundary', () => {
       await upload('/api/v1/files/Privat/geheim.pdf', Buffer.from('privat'));
       await upload('/api/v1/files/Homelab2/nah.txt', Buffer.from('fast'));
       await upload('/api/v1/files/Homelab.pdf', Buffer.from('daneben'));
-      await runtime.app.createFolder('julian', 'Leer');
+      await runtime.app.createFolder(julian, 'Leer');
       expect(await listing()).toEqual(first);
     });
 
     it('lists a shared note alone, the same whether its neighbours exist or not', async () => {
-      await runtime.app.createNote('julian', 'Homelab/Plan.md', '# Plan\n');
-      runtime.shares.grant('julian', { kind: 'note', path: 'Homelab/Plan.md' }, 'ramona', false);
-      await runtime.app.bindings.bindAll('julian', 'Homelab/Plan.md');
+      await runtime.app.createNote(julian, 'Homelab/Plan.md', '# Plan\n');
+      runtime.shares.grant(julian, { kind: 'note', path: 'Homelab/Plan.md' }, ramona, false);
+      await runtime.app.bindings.bindAll(julian, 'Homelab/Plan.md');
       const first = await listing();
       const parsed = S.FilesResponse.parse(JSON.parse(first.body));
       expect(parsed.files.map((f) => f.path)).toEqual(['Homelab/Plan.md']);
@@ -342,7 +344,7 @@ describe('the tenant boundary', () => {
 
       await secondWorld();
       await upload('/api/v1/files/Homelab/Plan.md.bak', Buffer.from('kopie'));
-      await runtime.app.createFolder('julian', 'Homelab/Plan.md.d');
+      await runtime.app.createFolder(julian, 'Homelab/Plan.md.d');
       expect(await listing()).toEqual(first);
     });
 
@@ -354,7 +356,7 @@ describe('the tenant boundary', () => {
     });
 
     it('lists a whole-vault share as the vault', async () => {
-      runtime.shares.grant('julian', '', 'ramona', false);
+      runtime.shares.grant(julian, '', ramona, false);
       await upload('/api/v1/files/Privat/geheim.pdf', Buffer.from('privat'));
       const parsed = S.FilesResponse.parse(JSON.parse((await listing()).body));
       expect(parsed.files.map((f) => f.path)).toEqual(['Homelab/Proxmox.md', 'Privat/geheim.pdf']);
@@ -374,10 +376,10 @@ describe('the tenant boundary', () => {
   });
 
   it('refuses a write into a share that is read-only', async () => {
-    runtime.shares.grant('julian', 'Homelab/', 'ramona', false);
+    runtime.shares.grant(julian, 'Homelab/', ramona, false);
 
     const response = await upload(
-      '/api/v1/files/Homelab/eingeschmuggelt.txt?owner=julian',
+      `/api/v1/files/Homelab/eingeschmuggelt.txt?owner=${julian}`,
       Buffer.from('nope'),
       ramonaCookie,
     );
@@ -386,10 +388,10 @@ describe('the tenant boundary', () => {
   });
 
   it('allows a write inside a writable share', async () => {
-    runtime.shares.grant('julian', 'Homelab/', 'ramona', true);
+    runtime.shares.grant(julian, 'Homelab/', ramona, true);
 
     const response = await upload(
-      '/api/v1/files/Homelab/von-ramona.txt?owner=julian',
+      `/api/v1/files/Homelab/von-ramona.txt?owner=${julian}`,
       Buffer.from('hallo'),
       ramonaCookie,
     );
@@ -478,7 +480,7 @@ describe('export', () => {
   });
 
   it('exports only your own vault, never a share', async () => {
-    runtime.shares.grant('julian', 'Homelab/', 'ramona', false);
+    runtime.shares.grant(julian, 'Homelab/', ramona, false);
 
     const response = await server.inject({ url: '/api/v1/export', headers: { cookie: ramonaCookie } });
     const raw = response.rawPayload.toString('latin1');

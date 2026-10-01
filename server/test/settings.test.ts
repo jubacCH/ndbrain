@@ -33,6 +33,7 @@ let dataDir: string;
 let runtime: Runtime;
 let server: FastifyInstance;
 let cookie: string;
+let julianId: string;
 
 const PASSWORD = 'ein gutes passwort';
 
@@ -55,7 +56,7 @@ beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-settings-'));
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
-  await runtime.users.create('julian', PASSWORD, { role: 'admin' });
+  julianId = (await runtime.users.create('julian', PASSWORD, { role: 'admin' })).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -102,11 +103,11 @@ describe('preferences', () => {
   it('actually changes which notes are reported as stale', async () => {
     // The point of storing it on the server rather than in the browser: it
     // changes what the server answers, not how the answer is drawn.
-    await runtime.app.createNote('julian', 'Alt.md', 'Lange nicht angefasst.\n');
-    const file = path.join(dataDir, 'vaults', 'julian', 'Alt.md');
+    await runtime.app.createNote(julianId, 'Alt.md', 'Lange nicht angefasst.\n');
+    const file = path.join(dataDir, 'vaults', julianId, 'Alt.md');
     const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
     await fs.utimes(file, tenDaysAgo, tenDaysAgo);
-    await runtime.indexer.rebuild('julian');
+    await runtime.indexer.rebuild(julianId);
 
     const staleCount = async (): Promise<number> => {
       const response = await server.inject({ url: '/api/v1/tidy', headers: { cookie } });
@@ -303,7 +304,7 @@ describe('the display name', () => {
     });
 
     const me = await server.inject({ url: '/api/v1/auth/me', headers: { cookie } });
-    expect(S.MeResponse.parse(me.json()).user.id).toBe('julian');
+    expect(S.MeResponse.parse(me.json()).user.id).toBe(julianId);
 
     // And signing in still uses the id, not the new label.
     const wrong = await server.inject({
@@ -337,7 +338,7 @@ describe('the display name', () => {
   });
 
   it('changes nobody else', async () => {
-    await runtime.users.create('ramona', 'ihr gutes passwort');
+    const ramonaId = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
     await server.inject({
       method: 'PUT',
       url: '/api/v1/account/profile',
@@ -345,6 +346,6 @@ describe('the display name', () => {
       payload: { displayName: 'Julian' },
     });
 
-    expect(runtime.users.get('ramona')?.displayName).toBe('ramona');
+    expect(runtime.users.get(ramonaId)?.displayName).toBe('ramona');
   });
 });

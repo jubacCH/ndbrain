@@ -26,6 +26,7 @@ let dataDir: string;
 let runtime: Runtime;
 let server: FastifyInstance;
 let cookie: string;
+let julian: string;
 
 interface Counts {
   notes: number;
@@ -46,7 +47,7 @@ beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-attention-'));
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
-  await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
+  julian = (await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' })).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -81,10 +82,10 @@ describe('the attention count', () => {
     // A tagged note first, so that tagging counts as a convention in this vault
     // and "untagged" is a real finding — otherwise the overlap this is about
     // cannot arise at all.
-    await runtime.app.createNote('julian', 'Getaggt.md', '---\ntags: [x]\n---\nSiehe [[Allein]].\n');
+    await runtime.app.createNote(julian, 'Getaggt.md', '---\ntags: [x]\n---\nSiehe [[Allein]].\n');
     // Nothing tags this one, and once the link above is the only thing pointing
     // at it, it is untagged. Linked, so the finding under test stands alone.
-    await runtime.app.createNote('julian', 'Allein.md', 'Kein Tag.\n');
+    await runtime.app.createNote(julian, 'Allein.md', 'Kein Tag.\n');
 
     const c = await counts();
     expect(c.tagsInUse).toBe(true);
@@ -97,7 +98,7 @@ describe('the attention count', () => {
 
   it('never exceeds the number of notes', async () => {
     for (let i = 0; i < 5; i += 1) {
-      await runtime.app.createNote('julian', `Note ${i}.md`, 'Nichts verweist hierher.\n');
+      await runtime.app.createNote(julian, `Note ${i}.md`, 'Nichts verweist hierher.\n');
     }
 
     const c = await counts();
@@ -106,8 +107,8 @@ describe('the attention count', () => {
   });
 
   it('counts a broken link against the note that holds it', async () => {
-    await runtime.app.createNote('julian', 'Quelle.md', '---\ntags: [x]\n---\nSiehe [[Gibt Es Nicht]].\n');
-    await runtime.app.createNote('julian', 'Ziel.md', '---\ntags: [x]\n---\nVerweist auf [[Quelle]].\n');
+    await runtime.app.createNote(julian, 'Quelle.md', '---\ntags: [x]\n---\nSiehe [[Gibt Es Nicht]].\n');
+    await runtime.app.createNote(julian, 'Ziel.md', '---\ntags: [x]\n---\nVerweist auf [[Quelle]].\n');
 
     const c = await counts();
     expect(c.deadLinks).toBe(1);
@@ -119,8 +120,8 @@ describe('the attention count', () => {
     // They are driven by one rule and must not disagree: the overview declaring
     // that tagging is not a convention here, while the table lists every note as
     // untagged, is two views contradicting each other about the same vault.
-    await runtime.app.createNote('julian', 'Eins.md', 'Ohne Tag.\n');
-    await runtime.app.createNote('julian', 'Zwei.md', 'Auch ohne.\n');
+    await runtime.app.createNote(julian, 'Eins.md', 'Ohne Tag.\n');
+    await runtime.app.createNote(julian, 'Zwei.md', 'Auch ohne.\n');
 
     const response = await server.inject({ url: '/api/v1/tidy', headers: { cookie } });
     const tidy = response.json() as { untagged: unknown[] };
@@ -130,8 +131,8 @@ describe('the attention count', () => {
   });
 
   it('holds back the untagged finding while no note is tagged', async () => {
-    await runtime.app.createNote('julian', 'Eins.md', 'Ohne Tag.\n');
-    await runtime.app.createNote('julian', 'Zwei.md', 'Auch ohne.\n');
+    await runtime.app.createNote(julian, 'Eins.md', 'Ohne Tag.\n');
+    await runtime.app.createNote(julian, 'Zwei.md', 'Auch ohne.\n');
 
     const c = await counts();
     expect(c.tagsInUse).toBe(false);
@@ -147,12 +148,12 @@ describe('the attention count', () => {
   it('starts counting untagged notes as soon as one note is tagged', async () => {
     // Linked to each other, so neither is an orphan and untagged is the only
     // finding in play — otherwise this would not distinguish the two rules.
-    await runtime.app.createNote('julian', 'Eins.md', 'Siehe [[Zwei]].\n');
-    await runtime.app.createNote('julian', 'Zwei.md', 'Siehe [[Eins]].\n');
+    await runtime.app.createNote(julian, 'Eins.md', 'Siehe [[Zwei]].\n');
+    await runtime.app.createNote(julian, 'Zwei.md', 'Siehe [[Eins]].\n');
 
     expect((await counts()).attention).toBe(0);
 
-    await runtime.app.updateNote('julian', 'Zwei.md', '---\ntags: [homelab]\n---\nSiehe [[Eins]].\n');
+    await runtime.app.updateNote(julian, 'Zwei.md', '---\ntags: [homelab]\n---\nSiehe [[Eins]].\n');
 
     const c = await counts();
     expect(c.tagsInUse).toBe(true);

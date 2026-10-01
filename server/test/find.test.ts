@@ -13,34 +13,36 @@ let dataDir: string;
 let runtime: Runtime;
 let server: FastifyInstance;
 let cookie: string;
+let julian: string;
+let ramona: string;
 
 const DAY = 24 * 60 * 60 * 1000;
 
 async function seed(): Promise<void> {
   await runtime.app.createNote(
-    'julian',
+    julian,
     'Homelab/Proxmox Cluster.md',
     '---\ntags: [homelab, proxmox]\n---\n# Proxmox Cluster\n\nZwei Nodes, Qdevice auf dns01.\n',
   );
   await runtime.app.createNote(
-    'julian',
+    julian,
     'Homelab/UniFi ZBF.md',
     '---\ntags: [homelab, netzwerk]\n---\n# UniFi\n\nZonen und Regeln.\n',
   );
   await runtime.app.createNote(
-    'julian',
+    julian,
     'Projekte/ndBrain.md',
     '---\ntags: [projekt]\n---\n# ndBrain\n\nNotiz-Tool. Erwähnt Proxmox am Rande.\n',
   );
-  await runtime.app.createNote('julian', 'Journal/2026-07-27.md', 'Ohne Tag, ohne alles.\n');
+  await runtime.app.createNote(julian, 'Journal/2026-07-27.md', 'Ohne Tag, ohne alles.\n');
 }
 
 /** Backdates a note on disk and in the index, to test the time filter. */
 async function backdate(notePath: string, days: number): Promise<void> {
-  const file = path.join(dataDir, 'vaults', 'julian', notePath);
+  const file = path.join(dataDir, 'vaults', julian, notePath);
   const when = new Date(Date.now() - days * DAY);
   await fs.utimes(file, when, when);
-  await runtime.indexer.rebuild('julian');
+  await runtime.indexer.rebuild(julian);
 }
 
 beforeEach(async () => {
@@ -48,10 +50,10 @@ beforeEach(async () => {
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
 
-  await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' })).id;
+  ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
   await seed();
-  await runtime.app.createNote('ramona', 'Privat/Proxmox.md', 'Ramona schreibt auch über Proxmox\n');
+  await runtime.app.createNote(ramona, 'Privat/Proxmox.md', 'Ramona schreibt auch über Proxmox\n');
 
   server = await buildServer({
     app: runtime.app,
@@ -105,8 +107,8 @@ describe('search filters', () => {
   });
 
   it('does not let a folder filter match a folder that merely starts the same', async () => {
-    await runtime.app.createNote('julian', 'Homelab2/Fremd.md', 'x');
-    await runtime.indexer.rebuild('julian');
+    await runtime.app.createNote(julian, 'Homelab2/Fremd.md', 'x');
+    await runtime.indexer.rebuild(julian);
 
     const paths = await search('dir=Homelab');
     expect(paths).not.toContain('Homelab2/Fremd.md');
@@ -224,12 +226,12 @@ describe('excerpts that distinguish one hit from another', () => {
     // metadata as the first line of the body, so FTS5 finds its match there
     // every time and every excerpt comes back identical.
     await runtime.app.createNote(
-      'julian',
+      julian,
       'Meta/Eins.md',
       `${META}\n\nDer Cluster hat zwei Nodes und ein Qdevice auf dns01.\n`,
     );
     await runtime.app.createNote(
-      'julian',
+      julian,
       'Meta/Zwei.md',
       `${META}\n\nProxmox speichert die Gäste auf local-lvm, nicht auf dem NAS.\n`,
     );
@@ -272,7 +274,7 @@ describe('excerpts that distinguish one hit from another', () => {
   it('still finds a note whose only match is in that line', async () => {
     // Presentation only. Stripping the line from the index would have made this
     // note unfindable; it is still matched, just shown differently.
-    await runtime.app.createNote('julian', 'Meta/Nur.md', `${META}\n\nKeine weiteren Worte.\n`);
+    await runtime.app.createNote(julian, 'Meta/Nur.md', `${META}\n\nKeine weiteren Worte.\n`);
 
     const response = await server.inject({ url: '/api/v1/search?q=homelab', headers: { cookie } });
     const paths = (response.json() as { hits: Array<{ path: string }> }).hits.map((h) => h.path);

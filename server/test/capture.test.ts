@@ -26,16 +26,21 @@ import { startHarness, type Harness } from './support/harness.js';
 import { NOTES_SECTION, dailyNoteTemplate } from '../../shared/journal.js';
 
 let h: Harness;
+let julian: string;
+let ramona: string;
 
 beforeEach(async () => {
   h = await startHarness('capture');
-  for (const [id, password] of [
+  const ids: Record<string, string> = {};
+  for (const [login, password] of [
     ['julian', 'ein gutes passwort'],
     ['ramona', 'ihr gutes passwort'],
   ] as const) {
-    await h.runtime.users.create(id, password);
-    await h.login(id, password);
+    ids[login] = (await h.runtime.users.create(login, password)).id;
+    await h.login(login, password);
   }
+  julian = ids['julian']!;
+  ramona = ids['ramona']!;
 });
 
 afterEach(async () => {
@@ -48,7 +53,7 @@ const capture = (
 ): ReturnType<Harness['as']> => h.as(user, { method: 'POST', url: '/api/v1/capture', payload });
 
 const read = (notePath: string): Promise<string> =>
-  h.runtime.app.notes.getNote('julian', notePath).then((note) => note.content);
+  h.runtime.app.notes.getNote(julian, notePath).then((note) => note.content);
 
 describe('POST /api/v1/capture', () => {
   it("starts the day's note from the shared template and answers 201", async () => {
@@ -129,7 +134,7 @@ describe('POST /api/v1/capture', () => {
     const reply = await capture('ramona', {
       content: 'Fremder Gedanke.',
       date: '2026-10-01',
-      owner: 'julian',
+      owner: julian,
     });
 
     expect(reply.status).toBe(404);

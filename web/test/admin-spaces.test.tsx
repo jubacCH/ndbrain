@@ -18,10 +18,13 @@ import { spaceNameProblem } from '../src/AdminSpaces';
 import { api, type AdminSpace, type AdminUser, type Share } from '../src/api';
 import { copy } from '../src/copy';
 
+/** The identifier the member picker carries for Anna; her name is the label. */
+const ANNA = 'acc_annaannaannaannaannaannaannaanna';
+
 const USERS: AdminUser[] = [
-  { id: 'julian', guid: 'acc_julianjulianjulianjulianjulianju', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
-  { id: 'anna', guid: 'acc_annaannaannaannaannaannaannaanna', loginName: 'anna', displayName: 'Anna', role: 'user', disabled: false, createdAt: 0, notes: 3 },
-  { id: 'otto', guid: 'acc_ottoottoottoottoottoottoottootto', loginName: 'otto', displayName: 'Otto', role: 'user', disabled: true, createdAt: 0, notes: 0 },
+  { id: 'acc_julianjulianjulianjulianjulianju', loginName: 'julian', displayName: 'Julian', role: 'admin', disabled: false, createdAt: 0, notes: 10 },
+  { id: ANNA, loginName: 'anna', displayName: 'Anna', role: 'user', disabled: false, createdAt: 0, notes: 3 },
+  { id: 'acc_ottoottoottoottoottoottoottootto', loginName: 'otto', displayName: 'Otto', role: 'user', disabled: true, createdAt: 0, notes: 0 },
 ];
 
 const SPACES: AdminSpace[] = [
@@ -58,7 +61,8 @@ function renderAdmin(overrides: Partial<AdminProps['spaces']> = {}, props: Parti
   const all = {
     users: USERS,
     keys: [],
-    self: 'julian',
+    // The identifier, as the shell passes it (`self={user.id}`).
+    self: USERS[0]!.id,
     busy: false,
     onCreateUser: vi.fn(async () => undefined),
     onResetPassword: vi.fn(async () => undefined),
@@ -207,7 +211,7 @@ describe('members of a space', () => {
 
     // Disabled people are not offered.
     expect(within(form).queryByRole('option', { name: /Otto/ })).toBeNull();
-    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), 'anna');
+    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), ANNA);
     await userEvent.click(within(form).getByLabelText(copy.spaces.extent.note));
     const picker = await within(form).findByLabelText(copy.spaces.pickNote);
     expect(within(picker).getAllByRole('option').map((o) => o.textContent)).toEqual([
@@ -219,24 +223,24 @@ describe('members of a space', () => {
     await userEvent.click(within(form).getByLabelText(copy.shareNote.write));
     await userEvent.click(within(form).getByRole('button', { name: copy.spaces.add }));
 
-    expect(spaces.onAddMember).toHaveBeenCalledWith('familie', 'anna', 'note', 'Rezepte/Zopf.md', true);
+    expect(spaces.onAddMember).toHaveBeenCalledWith('familie', ANNA, 'note', 'Rezepte/Zopf.md', true);
   });
 
   it('adds a folder, or the whole space with no path at all', async () => {
     const { panel, spaces } = await manage();
     const form = within(panel).getByRole('heading', { name: copy.spaces.addMember }).closest('form')!;
 
-    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), 'anna');
+    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), ANNA);
     await userEvent.click(within(form).getByLabelText(copy.spaces.extent.folder));
     await userEvent.selectOptions(await within(form).findByLabelText(copy.spaces.pickFolder), 'Rezepte');
     await userEvent.click(within(form).getByRole('button', { name: copy.spaces.add }));
-    expect(spaces.onAddMember).toHaveBeenLastCalledWith('familie', 'anna', 'folder', 'Rezepte', false);
+    expect(spaces.onAddMember).toHaveBeenLastCalledWith('familie', ANNA, 'folder', 'Rezepte', false);
 
     await waitFor(() => expect(within(form).getByLabelText(copy.shareNote.person)).toHaveValue(''));
-    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), 'julian');
+    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), USERS[0]!.id);
     await userEvent.click(within(form).getByLabelText(copy.spaces.extent.vault));
     await userEvent.click(within(form).getByRole('button', { name: copy.spaces.add }));
-    expect(spaces.onAddMember).toHaveBeenLastCalledWith('familie', 'julian', 'vault', '', false);
+    expect(spaces.onAddMember).toHaveBeenLastCalledWith('familie', USERS[0]!.id, 'vault', '', false);
   });
 
   it('picks from the space’s own tree, which an administrator gets without being a member', async () => {
@@ -275,7 +279,7 @@ describe('members of a space', () => {
     vi.mocked(api.spaceTree).mockResolvedValue({ dirs: [], notes: [] });
     const { panel } = await manage();
     const form = within(panel).getByRole('heading', { name: copy.spaces.addMember }).closest('form')!;
-    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), 'anna');
+    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), ANNA);
     await userEvent.click(within(form).getByLabelText(copy.spaces.extent.note));
     expect(await within(form).findByText(copy.spaces.nothingToPick.note)).toBeInTheDocument();
     expect(within(form).queryByRole('textbox')).toBeNull();
@@ -287,12 +291,12 @@ describe('members of a space', () => {
     const { panel, spaces } = await manage();
     const form = within(panel).getByRole('heading', { name: copy.spaces.addMember }).closest('form')!;
 
-    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), 'anna');
+    await userEvent.selectOptions(within(form).getByLabelText(copy.shareNote.person), ANNA);
     await userEvent.click(within(form).getByLabelText(copy.spaces.extent.note));
     expect(await within(form).findByText(copy.spaces.notVisible)).toBeInTheDocument();
     await userEvent.type(within(form).getByPlaceholderText(copy.spaces.noteExample), 'Geheim/Liste.md');
     await userEvent.click(within(form).getByRole('button', { name: copy.spaces.add }));
-    expect(spaces.onAddMember).toHaveBeenCalledWith('familie', 'anna', 'note', 'Geheim/Liste.md', false);
+    expect(spaces.onAddMember).toHaveBeenCalledWith('familie', ANNA, 'note', 'Geheim/Liste.md', false);
   });
 
   it('withdraws a member after asking', async () => {

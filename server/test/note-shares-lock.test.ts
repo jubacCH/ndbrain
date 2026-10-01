@@ -30,6 +30,7 @@ vi.setConfig({ testTimeout: 30_000 });
 const run = promisify(execFile);
 
 let h: Harness;
+let julianId: string;
 
 /** Long enough that the hash rescue cannot vouch for it; see `RESCUE_MIN_BYTES`. */
 const FREMD = '# Fremd\n\nfremder Inhalt, den Ramona nie sehen darf, streng geheim, lang genug\n';
@@ -40,15 +41,16 @@ beforeEach(async () => {
     ['julian', 'ein gutes passwort'],
     ['ramona', 'ihr gutes passwort'],
   ] as const) {
-    await h.runtime.users.create(id, password);
+    const user = await h.runtime.users.create(id, password);
     await h.login(id, password);
+    if (id === 'julian') julianId = user.id;
   }
   const app = h.runtime.app;
-  await app.createNote('julian', 'Projekt/Plan.md', '# Plan\n\ngeteilt\n\n- [ ] eins\n', 'julian');
-  await app.createNote('julian', 'Projekt/Plan2.md', '# Plan 2\n\ngeteilt\n\n- [ ] eins\n', 'julian');
-  await app.createNote('julian', 'Projekt/Geheim.md', '# Geheim\n\nnur für Julian\n', 'julian');
-  await app.createNote('julian', 'Archiv/x.md', '# x\n\nlange genug, damit der Hash-Rettungsweg greifen könnte\n', 'julian');
-  await app.createNote('julian', 'Archiv/Geheim.md', '# Archiv-Geheim\n\nnur für Julian\n', 'julian');
+  await app.createNote(julianId, 'Projekt/Plan.md', '# Plan\n\ngeteilt\n\n- [ ] eins\n', 'julian');
+  await app.createNote(julianId, 'Projekt/Plan2.md', '# Plan 2\n\ngeteilt\n\n- [ ] eins\n', 'julian');
+  await app.createNote(julianId, 'Projekt/Geheim.md', '# Geheim\n\nnur für Julian\n', 'julian');
+  await app.createNote(julianId, 'Archiv/x.md', '# x\n\nlange genug, damit der Hash-Rettungsweg greifen könnte\n', 'julian');
+  await app.createNote(julianId, 'Archiv/Geheim.md', '# Archiv-Geheim\n\nnur für Julian\n', 'julian');
 });
 
 afterEach(async () => {
@@ -56,13 +58,13 @@ afterEach(async () => {
   await h.close();
 });
 
-const onDisk = (notePath: string): string => path.join(h.dataDir, 'vaults', 'julian', notePath);
+const onDisk = (notePath: string): string => path.join(h.dataDir, 'vaults', julianId, notePath);
 const exists = (notePath: string): Promise<boolean> =>
   fs.stat(onDisk(notePath)).then(() => true, () => false);
 const read = (notePath: string): Promise<string> => fs.readFile(onDisk(notePath), 'utf8');
 const noteShares = (): string[] =>
   h.runtime.shares
-    .byOwner('julian')
+    .byOwner(julianId)
     .filter((s) => s.kind === 'note')
     .map((s) => `${s.grantee}:${s.prefix}`);
 
@@ -70,7 +72,7 @@ async function share(grantee: string, kind: 'note' | 'folder', sharePath: string
   const reply = await h.as('julian', {
     method: 'POST',
     url: '/api/v1/shares',
-    payload: { grantee, kind, path: sharePath, canWrite },
+    payload: { grantee: h.runtime.users.byLogin(grantee)!.id, kind, path: sharePath, canWrite },
   });
   expect(reply.status).toBe(200);
 }
@@ -83,7 +85,7 @@ async function replaceBehind(notePath: string, content = FREMD): Promise<void> {
 
 /** The answer a note nobody shared gives — what every refusal here has to look like. */
 async function absentAnswer(): Promise<{ status: number; raw: string }> {
-  const reply = await h.as('ramona', { url: '/api/v1/notes/Archiv/Geheim.md?owner=julian' });
+  const reply = await h.as('ramona', { url: '/api/v1/notes/Archiv/Geheim.md?owner=' + julianId });
   return { status: reply.status, raw: reply.raw };
 }
 
@@ -121,7 +123,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
       const reply = await h.as('ramona', {
         method: 'POST',
         url: '/api/v1/rename',
-        payload: { owner: 'julian', from: 'Archiv/x.md', to: 'Projekt/x.md' },
+        payload: { owner: julianId, from: 'Archiv/x.md', to: 'Projekt/x.md' },
       });
 
       expect(reply).toMatchObject(await absentAnswer());
@@ -130,7 +132,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
       expect(await read('Archiv/x.md')).toContain('fremder');
       expect(noteShares()).toEqual([]);
 
-      const after = await h.as('ramona', { url: '/api/v1/notes/Archiv/x.md?owner=julian' });
+      const after = await h.as('ramona', { url: '/api/v1/notes/Archiv/x.md?owner=' + julianId });
       expect(after.status).toBe(404);
     });
 
@@ -138,7 +140,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
       const reply = await h.as('ramona', {
         method: 'POST',
         url: '/api/v1/bulk',
-        payload: { owner: 'julian', action: 'move', paths: ['Archiv/x.md'], dir: 'Projekt' },
+        payload: { owner: julianId, action: 'move', paths: ['Archiv/x.md'], dir: 'Projekt' },
       });
 
       expect(reply.status).toBe(200);
@@ -159,7 +161,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
 
       const reply = await h.as('ramona', {
         method: 'PUT',
-        url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+        url: '/api/v1/notes/Projekt/Plan.md?owner=' + julianId,
         payload: { content: '# von ramona\n', ifAbsent: true },
       });
 
@@ -173,7 +175,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
 
       const reply = await h.as('ramona', {
         method: 'PUT',
-        url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+        url: '/api/v1/notes/Projekt/Plan.md?owner=' + julianId,
         payload: { content: '# von ramona\n' },
       });
 
@@ -183,12 +185,12 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
     });
 
     it('PUT with a base version: no write and no conflict copy', async () => {
-      const seen = await h.as('ramona', { url: '/api/v1/notes/Projekt/Plan.md?owner=julian' });
+      const seen = await h.as('ramona', { url: '/api/v1/notes/Projekt/Plan.md?owner=' + julianId });
       await replaceBehind('Projekt/Plan.md');
 
       const reply = await h.as('ramona', {
         method: 'PUT',
-        url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+        url: '/api/v1/notes/Projekt/Plan.md?owner=' + julianId,
         payload: { content: '# von ramona\n', baseMtimeMs: seen.body.note.mtimeMs },
       });
 
@@ -204,7 +206,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
 
       const reply = await h.as('ramona', {
         method: 'DELETE',
-        url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+        url: '/api/v1/notes/Projekt/Plan.md?owner=' + julianId,
       });
 
       expect(reply).toMatchObject(await absentAnswer());
@@ -224,9 +226,9 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
       const toggle = async (notePath: string, text: string): ReturnType<Harness['as']> =>
         h.as('ramona', {
           method: 'POST',
-          url: '/api/v1/tasks/toggle?owner=julian',
+          url: '/api/v1/tasks/toggle?owner=' + julianId,
           payload: {
-            owner: 'julian',
+            owner: julianId,
             path: notePath,
             line: 3,
             expectedText: text,
@@ -258,9 +260,9 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
 
       const reply = await h.as('ramona', {
         method: 'POST',
-        url: '/api/v1/tasks/toggle?owner=julian',
+        url: '/api/v1/tasks/toggle?owner=' + julianId,
         payload: {
-          owner: 'julian',
+          owner: julianId,
           path: 'Projekt/Plan.md',
           line: 5,
           expectedText: 'eins',
@@ -275,8 +277,8 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
     });
 
     it('restore: writes nothing over the file', async () => {
-      await startHistory('julian');
-      const history = await h.as('ramona', { url: '/api/v1/history/Projekt/Plan.md?owner=julian' });
+      await startHistory(julianId);
+      const history = await h.as('ramona', { url: '/api/v1/history/Projekt/Plan.md?owner=' + julianId });
       expect(history.status).toBe(200);
       const version = history.body.versions?.[0]?.id;
       expect(typeof version).toBe('string');
@@ -286,7 +288,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
       const reply = await h.as('ramona', {
         method: 'POST',
         url: '/api/v1/history/restore',
-        payload: { owner: 'julian', path: 'Projekt/Plan.md', version },
+        payload: { owner: julianId, path: 'Projekt/Plan.md', version },
       });
 
       expect(reply).toMatchObject(await absentAnswer());
@@ -298,7 +300,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
 
       const reply = await h.as('ramona', {
         method: 'POST',
-        url: '/api/v1/files/Projekt/Plan.md?owner=julian',
+        url: '/api/v1/files/Projekt/Plan.md?owner=' + julianId,
         payload: '# von ramona\n',
       });
 
@@ -312,7 +314,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
       const reply = await h.as('ramona', {
         method: 'POST',
         url: '/api/v1/bulk',
-        payload: { owner: 'julian', action: 'tag', paths: ['Projekt/Plan.md'], tag: 'neu' },
+        payload: { owner: julianId, action: 'tag', paths: ['Projekt/Plan.md'], tag: 'neu' },
       });
 
       expect(reply.body.ok).toEqual([]);
@@ -326,7 +328,7 @@ describe('a share withdrawn inside the lock stops the operation it was checked f
       const reply = await h.as('ramona', {
         method: 'POST',
         url: '/api/v1/bulk',
-        payload: { owner: 'julian', action: 'delete', paths: ['Projekt/Plan.md'] },
+        payload: { owner: julianId, action: 'delete', paths: ['Projekt/Plan.md'] },
       });
 
       expect(reply.body.ok).toEqual([]);
@@ -348,7 +350,7 @@ describe('the destination of a rename is decided in the lock too', () => {
     await share('ramona', 'folder', 'Projekt', true);
     await share('ramona', 'note', 'Archiv/x.md', true);
 
-    const destination = h.runtime.shares.byOwner('julian').find((s) => s.kind === 'folder');
+    const destination = h.runtime.shares.byOwner(julianId).find((s) => s.kind === 'folder');
     expect(destination).toBeDefined();
 
     // Withdrawn from inside the rename, after the route's own check and before
@@ -364,7 +366,7 @@ describe('the destination of a rename is decided in the lock too', () => {
     const reply = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/rename',
-      payload: { owner: 'julian', from: 'Archiv/x.md', to: 'Projekt/x.md' },
+      payload: { owner: julianId, from: 'Archiv/x.md', to: 'Projekt/x.md' },
     });
 
     expect(reply.status).toBe(404);
@@ -384,7 +386,7 @@ describe('the destination of a rename is decided in the lock too', () => {
  */
 describe('a refused rename rewrites no links', () => {
   beforeEach(async () => {
-    await h.runtime.app.createNote('julian', 'Projekt/Ref.md', '# Ref\n\nsiehe [[Archiv/x]]\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Projekt/Ref.md', '# Ref\n\nsiehe [[Archiv/x]]\n', 'julian');
   });
 
   const referrer = (): Promise<string> => read('Projekt/Ref.md');
@@ -397,7 +399,7 @@ describe('a refused rename rewrites no links', () => {
     const reply = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/rename',
-      payload: { owner: 'julian', from: 'Archiv/x.md', to: 'Projekt/x.md' },
+      payload: { owner: julianId, from: 'Archiv/x.md', to: 'Projekt/x.md' },
     });
 
     expect(reply.status).toBe(404);
@@ -435,7 +437,7 @@ describe('a refused rename rewrites no links', () => {
   });
 
   it('carries a note´s link to its own old name with it', async () => {
-    await h.runtime.app.putNote('julian', 'Archiv/x.md', '# x\n\nich selbst: [[Archiv/x]]\n', 'julian');
+    await h.runtime.app.putNote(julianId, 'Archiv/x.md', '# x\n\nich selbst: [[Archiv/x]]\n', 'julian');
 
     const reply = await h.as('julian', {
       method: 'POST',
@@ -467,7 +469,7 @@ describe('the letter-case collision is reported to the owner only', () => {
     it(`answers a grantee's ${what} as a missing note`, async () => {
       const reply = await h.as('ramona', {
         method: 'PUT',
-        url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+        url: '/api/v1/notes/Projekt/Plan.md?owner=' + julianId,
         payload,
       });
 

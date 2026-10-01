@@ -68,6 +68,20 @@ async function main(): Promise<void> {
 
   const runtime = await createRuntime(loadConfig());
 
+  /**
+   * The account a word on the command line means.
+   *
+   * Since the id became a random identifier, a name typed at a shell is a login
+   * and not a row key — so every command that takes one goes through here, and
+   * says plainly when there is nothing behind it rather than carrying on with a
+   * string that was never an account and failing somewhere less obvious.
+   */
+  const accountFor = (who: string): string => {
+    const user = runtime.users.byLogin(who);
+    if (user === undefined) throw new Error(`no such account: ${who}`);
+    return user.id;
+  };
+
   try {
     switch (command) {
       case 'create': {
@@ -92,7 +106,7 @@ async function main(): Promise<void> {
         const password = (await passwordFromStdin()) ?? generatePassword();
         const generated = process.stdin.isTTY;
 
-        await runtime.users.setPassword(name, password);
+        await runtime.users.setPassword(accountFor(name), password);
         process.stdout.write(`password changed for ${name}; all sessions ended\n`);
         if (generated) process.stdout.write(`password: ${password}\n`);
         break;
@@ -101,7 +115,7 @@ async function main(): Promise<void> {
       case 'disable':
       case 'enable': {
         if (name === undefined) throw new Error(`usage: ${command} <name>`);
-        runtime.users.setDisabled(name, command === 'disable');
+        runtime.users.setDisabled(accountFor(name), command === 'disable');
         process.stdout.write(`${name} ${command}d\n`);
         break;
       }
@@ -144,7 +158,7 @@ async function main(): Promise<void> {
             options.expiresInDays = days;
           }
 
-          const { key, secret } = runtime.keys.create(owner, keyName, options);
+          const { key, secret } = runtime.keys.create(accountFor(owner), keyName, options);
           const lines = [
             `created ${key.id} for ${key.owner}`,
             `scope: ${key.scope === '' ? 'entire vault' : key.scope}`,
@@ -166,7 +180,7 @@ async function main(): Promise<void> {
         if (action === 'list') {
           const [owner] = rest2;
           if (owner === undefined) throw new Error('usage: key list <user>');
-          const keys = runtime.keys.list(owner);
+          const keys = runtime.keys.list(accountFor(owner));
           if (keys.length === 0) {
             process.stdout.write('no keys\n');
             break;
@@ -201,7 +215,7 @@ async function main(): Promise<void> {
         if (action === 'log') {
           const [owner] = rest2;
           if (owner === undefined) throw new Error('usage: key log <user>');
-          const entries = runtime.keys.recentAccess(owner, 50);
+          const entries = runtime.keys.recentAccess(accountFor(owner), 50);
           if (entries.length === 0) {
             process.stdout.write('no agent activity\n');
             break;

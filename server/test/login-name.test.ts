@@ -47,14 +47,22 @@ function olderAccount(id: string): void {
 }
 
 describe('the v14 migration', () => {
+  /**
+   * Stopped at 14, which is what this describe is about.
+   *
+   * Run to the end instead and v16 would have moved every id to a random
+   * identifier before the assertion — so the test would be describing two
+   * migrations at once and failing on the one it does not name. `guid-migration`
+   * is where the whole road is walked.
+   */
   it('gives every account that already existed its own id as its login', () => {
     migrate(db, 13);
     expect(db.userVersion).toBe(13);
     olderAccount('julian');
     olderAccount('ramona');
 
-    migrate(db);
-    expect(db.userVersion).toBe(SCHEMA_VERSION);
+    migrate(db, 14);
+    expect(db.userVersion).toBe(14);
 
     const rows = db.all('SELECT id, login_name FROM users ORDER BY id');
     expect(rows).toEqual([
@@ -137,6 +145,13 @@ describe('the account identifier', () => {
       id,
     );
 
+  /**
+   * These were written against `guid`, the column v15 added to stage the
+   * identifier in. v16 moved it into `id` and dropped the column, because two
+   * columns holding one value is a pair that comes to disagree — so the same
+   * properties are asserted here against `id`, which is where the identifier
+   * lives now. Nothing claimed has been given up; only the column name moved.
+   */
   it('is different for every account that already existed', () => {
     migrate(db, 14);
     db.run(
@@ -150,55 +165,60 @@ describe('the account identifier', () => {
 
     migrate(db);
 
-    const guids = db.all('SELECT guid FROM users ORDER BY id').map((row) => String(row['guid']));
+    const ids = db.all('SELECT id FROM users ORDER BY login_name').map((row) => String(row['id']));
     // `randomblob` is evaluated per row and not per statement. If it were not,
     // the backfill would hand two accounts one identifier — and the unique
     // index would stop it, which is the point of asserting it here rather than
     // trusting the documentation.
-    expect(new Set(guids).size).toBe(2);
-    for (const guid of guids) expect(guid).toMatch(/^acc_[0-9a-f]{32}$/);
+    expect(new Set(ids).size).toBe(2);
+    for (const id of ids) expect(id).toMatch(/^acc_[0-9a-f]{32}$/);
+    // And the names they were made with are still what they sign in with.
+    expect(db.all('SELECT login_name FROM users ORDER BY login_name').map((row) => row['login_name'])).toEqual([
+      'julian',
+      'ramona',
+    ]);
   });
 
-  it('is given to a row written without one', () => {
+  it('is drawn for an account the service makes', async () => {
     migrate(db);
-    insert('julian');
-    insert('ramona');
+    const users = new UserService(db, new Vault(dir));
+    const julian = (await users.create('julian', 'sein gutes passwort')).id;
+    const ramona = (await users.create('ramona', 'ihr gutes passwort')).id;
 
-    const guids = db.all('SELECT guid FROM users ORDER BY id').map((row) => String(row['guid']));
-    expect(new Set(guids).size).toBe(2);
-    for (const guid of guids) expect(guid).toMatch(/^acc_[0-9a-f]{32}$/);
+    for (const id of [julian, ramona]) expect(id).toMatch(/^acc_[0-9a-f]{32}$/);
+    expect(julian).not.toBe(ramona);
   });
 
   it('survives a rename of everything that is readable', async () => {
     migrate(db);
     const vault = new Vault(path.join(dir));
     const users = new UserService(db, vault);
-    await users.create('ramona', 'ihr gutes passwort');
-    const first = users.get('ramona')?.guid;
+    const ramona = (await users.create('ramona', 'ihr gutes passwort')).id;
 
-    users.setLoginName('ramona', 'ramona-b');
-    users.setDisplayName('ramona', 'Ramona Bachmann');
+    users.setLoginName(ramona, 'ramona-b');
+    users.setDisplayName(ramona, 'Ramona Bachmann');
 
-    expect(users.get('ramona')?.guid).toBe(first);
-    expect(first).toMatch(/^acc_[0-9a-f]{32}$/);
+    const after = users.byLogin('ramona-b');
+    expect(after?.id).toBe(ramona);
+    expect(ramona).toMatch(/^acc_[0-9a-f]{32}$/);
   });
 });
 
 describe('renaming the login', () => {
-  async function service(): Promise<UserService> {
+  async function service(): Promise<{ users: UserService; ramona: string }> {
     migrate(db);
     const vault = new Vault(dir);
     const users = new UserService(db, vault);
-    await users.create('ramona', 'ihr gutes passwort');
-    return users;
+    const ramona = (await users.create('ramona', 'ihr gutes passwort')).id;
+    return { users, ramona };
   }
 
   it('writes one row and moves nothing else', async () => {
-    const users = await service();
-    const before = users.get('ramona');
+    const { users, ramona } = await service();
+    const before = users.get(ramona);
 
-    users.setLoginName('ramona', 'ramona-b');
-    const after = users.get('ramona');
+    users.setLoginName(ramona, 'ramona-b');
+    const after = users.get(ramona);
 
     expect(after?.loginName).toBe('ramona-b');
     // The id, which is the vault's directory and every foreign key's target.
@@ -206,17 +226,17 @@ describe('renaming the login', () => {
     expect(after?.displayName).toBe(before?.displayName);
     expect(after?.createdAt).toBe(before?.createdAt);
     // And the vault is where it was: nothing on disk is named after the login.
-    await expect(fs.stat(path.join(dir, 'vaults', 'ramona'))).resolves.toBeDefined();
+    await expect(fs.stat(path.join(dir, 'vaults', ramona))).resolves.toBeDefined();
   });
 
   it('is what the login then accepts — along with the id it used to be', async () => {
-    const users = await service();
-    users.setLoginName('ramona', 'ramona-b');
+    const { users, ramona } = await service();
+    users.setLoginName(ramona, 'ramona-b');
 
     expect(await users.authenticate('ramona-b', 'ihr gutes passwort')).not.toBeNull();
     // The id was the login until v14, and the account is still that row.
     // Refusing it would take something away from everybody who never renamed.
-    expect(await users.authenticate('ramona', 'ihr gutes passwort')).not.toBeNull();
+    expect(await users.authenticate(ramona, 'ihr gutes passwort')).not.toBeNull();
     expect(await users.authenticate('ramona-b', 'falsch')).toBeNull();
   });
 
@@ -226,44 +246,44 @@ describe('renaming the login', () => {
    * exact match the only match there could have been.
    */
   it('resolves no login of another case', async () => {
-    const users = await service();
-    users.setLoginName('ramona', 'ramona-b');
+    const { users, ramona } = await service();
+    users.setLoginName(ramona, 'ramona-b');
 
     expect(await users.authenticate('Ramona-B', 'ihr gutes passwort')).toBeNull();
     expect(await users.authenticate('RAMONA', 'ihr gutes passwort')).toBeNull();
   });
 
   it('refuses a login another account already answers to, by id or by login', async () => {
-    const users = await service();
-    await users.create('julian', 'sein gutes passwort');
-    users.setLoginName('julian', 'jb');
+    const { users, ramona } = await service();
+    const julian = (await users.create('julian', 'sein gutes passwort')).id;
+    users.setLoginName(julian, 'jb');
 
     // Somebody else's id.
-    expect(() => users.setLoginName('ramona', 'julian')).toThrow();
+    expect(() => users.setLoginName(ramona, julian)).toThrow();
     // And somebody else's login.
-    expect(() => users.setLoginName('ramona', 'jb')).toThrow();
-    expect(users.get('ramona')?.loginName).toBe('ramona');
+    expect(() => users.setLoginName(ramona, 'jb')).toThrow();
+    expect(users.get(ramona)?.loginName).toBe('ramona');
   });
 
   it('lets an account keep its own login, in another case', async () => {
-    const users = await service();
+    const { users, ramona } = await service();
     // Not a clash with itself, which a check written without the exception
     // would have made it.
-    expect(() => users.setLoginName('ramona', 'Ramona')).not.toThrow();
-    expect(users.get('ramona')?.loginName).toBe('Ramona');
+    expect(() => users.setLoginName(ramona, 'Ramona')).not.toThrow();
+    expect(users.get(ramona)?.loginName).toBe('Ramona');
   });
 
   it('refuses a login that could not be a directory name', async () => {
-    const users = await service();
+    const { users, ramona } = await service();
 
     for (const bad of ['../anderswo', 'mit leerzeichen', '', '.versteckt']) {
-      expect(() => users.setLoginName('ramona', bad), bad).toThrow();
+      expect(() => users.setLoginName(ramona, bad), bad).toThrow();
     }
-    expect(users.get('ramona')?.loginName).toBe('ramona');
+    expect(users.get(ramona)?.loginName).toBe('ramona');
   });
 
   it('says so about an account that is not there', async () => {
-    const users = await service();
+    const { users } = await service();
     expect(() => users.setLoginName('niemand', 'wer')).toThrow();
   });
 });

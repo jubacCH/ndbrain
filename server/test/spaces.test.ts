@@ -18,12 +18,15 @@ import { runSpaceCommand } from '../src/cliSpaces.js';
 import { startHarness, type Harness, type Reply } from './support/harness.js';
 
 let h: Harness;
+let admin: string;
+let julian: string;
+let ramona: string;
 
 beforeEach(async () => {
   h = await startHarness('spaces');
-  await h.runtime.users.create('admin', 'ein gutes passwort', { role: 'admin' });
-  await h.runtime.users.create('julian', 'sein gutes passwort');
-  await h.runtime.users.create('ramona', 'ihr gutes passwort');
+  admin = (await h.runtime.users.create('admin', 'ein gutes passwort', { role: 'admin' })).id;
+  julian = (await h.runtime.users.create('julian', 'sein gutes passwort')).id;
+  ramona = (await h.runtime.users.create('ramona', 'ihr gutes passwort')).id;
   await h.login('admin', 'ein gutes passwort');
   await h.login('julian', 'sein gutes passwort');
   await h.login('ramona', 'ihr gutes passwort');
@@ -33,11 +36,14 @@ afterEach(async () => {
   await h.close();
 });
 
-async function createSpace(id = 'familie', displayName = 'Familie'): Promise<void> {
-  const reply = await h.as('admin', { method: 'POST', url: '/api/v1/admin/spaces', payload: { id, displayName } });
+/** Creates a space from its handle, and returns the account's real id. */
+async function createSpace(handle = 'familie', displayName = 'Familie'): Promise<string> {
+  const reply = await h.as('admin', { method: 'POST', url: '/api/v1/admin/spaces', payload: { id: handle, displayName } });
   expect(reply.status).toBe(201);
+  return reply.body.id;
 }
 
+/** `space` is the account's real id, as `createSpace` returns it. */
 async function addMember(
   space: string,
   payload: { grantee: string; kind: string; path: string; canWrite: boolean },
@@ -60,13 +66,14 @@ describe('a space cannot sign in', () => {
   });
 
   it('is refused even when its row carries a real password hash', async () => {
-    await createSpace();
+    const familie = await createSpace();
     // However that row came about — a restored backup, a hand edit — the kind
     // decides, not whether the hash happens to verify.
     const { hashPassword } = await import('../src/auth/password.js');
     h.runtime.db.run(
-      "UPDATE users SET password_hash = ? WHERE id = 'familie'",
+      'UPDATE users SET password_hash = ? WHERE id = ?',
       await hashPassword('ein echtes passwort'),
+      familie,
     );
     const asSpace = await h.login('familie', 'ein echtes passwort');
     const wrong = await h.login('julian', 'falsches passwort');
@@ -75,11 +82,11 @@ describe('a space cannot sign in', () => {
   });
 
   it('has no password that could be set', async () => {
-    await createSpace();
-    await expect(h.runtime.users.setPassword('familie', 'ein neues passwort')).rejects.toThrow();
+    const familie = await createSpace();
+    await expect(h.runtime.users.setPassword(familie, 'ein neues passwort')).rejects.toThrow();
     const reply = await h.as('admin', {
       method: 'POST',
-      url: '/api/v1/admin/users/familie/password',
+      url: `/api/v1/admin/users/${familie}/password`,
       payload: { password: 'ein neues passwort' },
     });
     expect(reply.status).toBe(404);
@@ -87,8 +94,8 @@ describe('a space cannot sign in', () => {
   });
 
   it('is never the caller, even with a session row that names it', async () => {
-    await createSpace();
-    const { token } = h.runtime.sessions.create('familie');
+    const familie = await createSpace();
+    const { token } = h.runtime.sessions.create(familie);
     const reply = await h.server.inject({ url: '/api/v1/auth/me', headers: { cookie: `ndbrain_session=${token}` } });
     expect(reply.statusCode).toBe(401);
   });
@@ -109,7 +116,7 @@ describe('administering spaces', () => {
   ] as const;
 
   it('answers somebody who is not an administrator like every refused admin route', async () => {
-    await createSpace();
+    const familie = await createSpace();
     const reference = await h.as('julian', { url: '/api/v1/admin/users' });
     expect(reference.status).toBe(404);
 
@@ -123,21 +130,27 @@ describe('administering spaces', () => {
     }
     // And nothing happened.
     expect(h.runtime.users.get('neu')).toBeUndefined();
-    expect(h.runtime.users.get('familie')?.disabled).toBe(false);
-    expect(h.runtime.shares.byOwner('familie')).toEqual([]);
+    expect(h.runtime.users.get(familie)?.disabled).toBe(false);
+    expect(h.runtime.shares.byOwner(familie)).toEqual([]);
   });
 
   it('creates a space with an empty vault and lists it', async () => {
-    await createSpace();
-    await fs.access(path.join(h.dataDir, 'vaults', 'familie'));
+    const familie = await createSpace();
+    await fs.access(path.join(h.dataDir, 'vaults', familie));
 
     const list = await h.as('admin', { url: '/api/v1/admin/spaces' });
     expect(list.body).toEqual({
-      spaces: [{ id: 'familie', displayName: 'Familie', disabled: false, noteCount: 0, members: 0 }],
+      spaces: [{ id: familie, displayName: 'Familie', disabled: false, noteCount: 0, members: 0 }],
     });
 
     const users = await h.as('admin', { url: '/api/v1/admin/users' });
-    expect(users.body.users.map((user: { id: string }) => user.id)).toEqual(['admin', 'julian', 'ramona']);
+    // `users.list()` orders by id, which is now a random string rather than the
+    // typed name, so the listing itself is sorted here for a stable comparison.
+    expect(users.body.users.map((user: { loginName: string }) => user.loginName).sort()).toEqual([
+      'admin',
+      'julian',
+      'ramona',
+    ]);
   });
 
   it('shares one namespace with people, both ways', async () => {
@@ -166,30 +179,32 @@ describe('administering spaces', () => {
   });
 
   it('renames and disables a space, and answers a person or a stranger as missing', async () => {
-    await createSpace();
+    const familie = await createSpace();
     const renamed = await h.as('admin', {
       method: 'PATCH',
-      url: '/api/v1/admin/spaces/familie',
+      url: `/api/v1/admin/spaces/${familie}`,
       payload: { displayName: 'Familie Bachmann', disabled: true },
     });
-    expect(renamed.body).toMatchObject({ id: 'familie', displayName: 'Familie Bachmann', disabled: true });
+    expect(renamed.body).toMatchObject({ id: familie, displayName: 'Familie Bachmann', disabled: true });
 
-    for (const id of ['julian', 'niemand']) {
+    // `julian` here is a real account, the wrong kind for this route; `niemand`
+    // is nobody at all — both answer the space route as missing.
+    for (const id of [julian, 'niemand']) {
       const reply = await h.as('admin', { method: 'PATCH', url: `/api/v1/admin/spaces/${id}`, payload: { disabled: true } });
       expect(reply.status).toBe(404);
       const members = await h.as('admin', { url: `/api/v1/admin/spaces/${id}/members` });
       expect(members.status).toBe(404);
     }
-    expect(h.runtime.users.get('julian')?.disabled).toBe(false);
+    expect(h.runtime.users.get(julian)?.disabled).toBe(false);
   });
 
   it('adds, lists and removes members of every kind', async () => {
-    await createSpace();
-    await h.runtime.app.createNote('familie', 'Ferien/Packliste.md', '# Packliste\n', 'admin');
+    const familie = await createSpace();
+    await h.runtime.app.createNote(familie, 'Ferien/Packliste.md', '# Packliste\n', admin);
 
-    const vault = await addMember('familie', { grantee: 'julian', kind: 'vault', path: '', canWrite: true });
-    const folder = await addMember('familie', { grantee: 'ramona', kind: 'folder', path: 'Ferien', canWrite: false });
-    const note = await addMember('familie', {
+    const vault = await addMember(familie, { grantee: 'julian', kind: 'vault', path: '', canWrite: true });
+    const folder = await addMember(familie, { grantee: 'ramona', kind: 'folder', path: 'Ferien', canWrite: false });
+    const note = await addMember(familie, {
       grantee: 'ramona',
       kind: 'note',
       path: 'Ferien/Packliste.md',
@@ -197,43 +212,48 @@ describe('administering spaces', () => {
     });
     expect([vault.status, folder.status, note.status]).toEqual([201, 201, 201]);
 
-    const members = await h.as('admin', { url: '/api/v1/admin/spaces/familie/members' });
+    // The route orders by (grantee, prefix); grantee is now a random id rather
+    // than the typed name, so the three rows are compared sorted by prefix,
+    // which is unique here and unaffected by that randomness.
+    const members = await h.as('admin', { url: `/api/v1/admin/spaces/${familie}/members` });
     expect(
-      members.body.members.map((share: any) => ({ kind: share.kind, prefix: share.prefix, grantee: share.grantee, canWrite: share.canWrite })),
+      members.body.members
+        .map((share: any) => ({ kind: share.kind, prefix: share.prefix, grantee: share.grantee, canWrite: share.canWrite }))
+        .sort((a: any, b: any) => a.prefix.localeCompare(b.prefix)),
     ).toEqual([
-      { kind: 'vault', prefix: '', grantee: 'julian', canWrite: true },
-      { kind: 'folder', prefix: 'Ferien/', grantee: 'ramona', canWrite: false },
-      { kind: 'note', prefix: 'Ferien/Packliste.md', grantee: 'ramona', canWrite: true },
+      { kind: 'vault', prefix: '', grantee: julian, canWrite: true },
+      { kind: 'folder', prefix: 'Ferien/', grantee: ramona, canWrite: false },
+      { kind: 'note', prefix: 'Ferien/Packliste.md', grantee: ramona, canWrite: true },
     ]);
 
     const list = await h.as('admin', { url: '/api/v1/admin/spaces' });
     expect(list.body.spaces[0]).toMatchObject({ noteCount: 1, members: 3 });
-    expect(note.body).toMatchObject({ kind: 'note', prefix: 'Ferien/Packliste.md', grantee: 'ramona', canWrite: true });
-    expect(members.body.members[0]).toEqual(vault.body);
+    expect(note.body).toMatchObject({ kind: 'note', prefix: 'Ferien/Packliste.md', grantee: ramona, canWrite: true });
+    expect(members.body.members.find((share: any) => share.id === vault.body.id)).toEqual(vault.body);
 
     const removed = await h.as('admin', {
       method: 'DELETE',
-      url: `/api/v1/admin/spaces/familie/members/${folder.body.id}`,
+      url: `/api/v1/admin/spaces/${familie}/members/${folder.body.id}`,
     });
     expect(removed.status).toBe(204);
-    expect(h.runtime.shares.byOwner('familie')).toHaveLength(2);
+    expect(h.runtime.shares.byOwner(familie)).toHaveLength(2);
   });
 
   it('refuses members that cannot be: a space, a missing note, a share of another vault', async () => {
-    await createSpace();
+    const familie = await createSpace();
     await createSpace('verein', 'Verein');
-    const space = await addMember('familie', { grantee: 'verein', kind: 'vault', path: '', canWrite: false });
-    const nobody = await addMember('familie', { grantee: 'niemand', kind: 'vault', path: '', canWrite: false });
+    const space = await addMember(familie, { grantee: 'verein', kind: 'vault', path: '', canWrite: false });
+    const nobody = await addMember(familie, { grantee: 'niemand', kind: 'vault', path: '', canWrite: false });
     expect(space.status).toBe(404);
     expect(space.raw).toBe(nobody.raw);
 
-    const missing = await addMember('familie', { grantee: 'julian', kind: 'note', path: 'Gibtsnicht.md', canWrite: false });
+    const missing = await addMember(familie, { grantee: 'julian', kind: 'note', path: 'Gibtsnicht.md', canWrite: false });
     expect(missing.status).toBe(404);
 
-    const foreign = h.runtime.shares.grant('julian', '', 'ramona', false);
+    const foreign = h.runtime.shares.grant(julian, '', ramona, false);
     const reply = await h.as('admin', {
       method: 'DELETE',
-      url: `/api/v1/admin/spaces/familie/members/${foreign.id}`,
+      url: `/api/v1/admin/spaces/${familie}/members/${foreign.id}`,
     });
     expect(reply.status).toBe(404);
     expect(h.runtime.shares.get(foreign.id)).toBeDefined();
@@ -244,36 +264,43 @@ describe('administering spaces', () => {
     await runSpaceCommand(h.runtime, ['create', 'verein', '--display', 'Turnverein'], (text) => out.push(text));
     await runSpaceCommand(h.runtime, ['list'], (text) => out.push(text));
 
-    expect(h.runtime.users.get('verein')).toMatchObject({ kind: 'space', displayName: 'Turnverein' });
-    expect(out.join('')).toContain('created space verein (Turnverein)');
-    expect(out.join('')).toMatch(/verein\s+Turnverein\s+0 notes, 0 members/);
+    // `get` is strict by real id; the CLI only hands this test the handle it
+    // typed, so the lookup goes by login the way the HTTP grantee field does.
+    const verein = h.runtime.users.byLogin('verein');
+    expect(verein).toMatchObject({ kind: 'space', displayName: 'Turnverein' });
+    // The CLI itself reports the space by its real id, not the handle typed to
+    // create it — see `runSpaceCommand`, which writes `space.id`.
+    expect(out.join('')).toContain(`created space ${verein!.id} (Turnverein)`);
+    expect(out.join('')).toMatch(new RegExp(`${verein!.id}\\s+Turnverein\\s+0 notes, 0 members`));
     await expect(runSpaceCommand(h.runtime, ['create', 'julian'], () => undefined)).rejects.toThrow();
   });
 });
 
 describe('members', () => {
+  let familie: string;
+
   beforeEach(async () => {
-    await createSpace();
-    await h.runtime.app.createNote('familie', 'Ferien/Packliste.md', '# Packliste\n\nSonnencreme\n', 'admin');
-    await h.runtime.app.createNote('familie', 'Budget.md', '# Budget\n\nSonnencreme teuer\n', 'admin');
-    await addMember('familie', { grantee: 'julian', kind: 'vault', path: '', canWrite: true });
-    await addMember('familie', { grantee: 'ramona', kind: 'folder', path: 'Ferien', canWrite: false });
+    familie = await createSpace();
+    await h.runtime.app.createNote(familie, 'Ferien/Packliste.md', '# Packliste\n\nSonnencreme\n', admin);
+    await h.runtime.app.createNote(familie, 'Budget.md', '# Budget\n\nSonnencreme teuer\n', admin);
+    await addMember(familie, { grantee: 'julian', kind: 'vault', path: '', canWrite: true });
+    await addMember(familie, { grantee: 'ramona', kind: 'folder', path: 'Ferien', canWrite: false });
   });
 
   it('see the space as a root of its own, with its kind and name', async () => {
     const tree = await h.as('julian', { url: '/api/v1/tree' });
     expect(tree.body.owners).toEqual([
-      { id: 'julian', kind: 'person', displayName: 'julian' },
-      { id: 'familie', kind: 'space', displayName: 'Familie' },
+      { id: julian, kind: 'person', displayName: 'julian' },
+      { id: familie, kind: 'space', displayName: 'Familie' },
     ]);
-    expect(tree.body.notes.filter((note: any) => note.owner === 'familie').map((note: any) => note.path).sort()).toEqual([
+    expect(tree.body.notes.filter((note: any) => note.owner === familie).map((note: any) => note.path).sort()).toEqual([
       'Budget.md',
       'Ferien/Packliste.md',
     ]);
 
     const shares = await h.as('ramona', { url: '/api/v1/shares' });
     expect(shares.body.received.map((share: any) => ({ owner: share.owner, kind: share.kind, prefix: share.prefix }))).toEqual([
-      { owner: 'familie', kind: 'folder', prefix: 'Ferien/' },
+      { owner: familie, kind: 'folder', prefix: 'Ferien/' },
     ]);
     const search = await h.as('ramona', { url: '/api/v1/search?q=Sonnencreme' });
     expect(search.body.hits.map((hit: any) => hit.path)).toEqual(['Ferien/Packliste.md']);
@@ -282,70 +309,72 @@ describe('members', () => {
   it('are recorded as themselves when they write into the space', async () => {
     const reply = await h.as('julian', {
       method: 'PUT',
-      url: '/api/v1/notes/Budget.md?owner=familie',
+      url: `/api/v1/notes/Budget.md?owner=${familie}`,
       payload: { content: '# Budget\n\ngeändert\n' },
     });
     expect(reply.status).toBe(200);
     await h.as('julian', {
       method: 'POST',
       url: '/api/v1/rename',
-      payload: { owner: 'familie', from: 'Budget.md', to: 'Finanzen.md' },
+      payload: { owner: familie, from: 'Budget.md', to: 'Finanzen.md' },
     });
 
     const actors = h.runtime.db
-      .all("SELECT actor, action FROM edits WHERE owner = 'familie' AND actor <> 'admin' ORDER BY at")
+      .all('SELECT actor, action FROM edits WHERE owner = ? AND actor <> ? ORDER BY at', familie, admin)
       .map((row) => ({ ...row }));
     expect(actors).toEqual([
-      { actor: 'julian', action: 'update' },
-      { actor: 'julian', action: 'rename' },
+      { actor: julian, action: 'update' },
+      { actor: julian, action: 'rename' },
     ]);
     const overview = await h.as('julian', { url: '/api/v1/overview' });
     expect(overview.body.activity.find((row: any) => row.path === 'Finanzen.md')).toMatchObject({
-      owner: 'familie',
-      actor: 'julian',
+      owner: familie,
+      actor: julian,
     });
   });
 
   it('stop seeing a disabled space, and see it again when it is enabled', async () => {
     const disable = (disabled: boolean) =>
-      h.as('admin', { method: 'PATCH', url: '/api/v1/admin/spaces/familie', payload: { disabled } });
+      h.as('admin', { method: 'PATCH', url: `/api/v1/admin/spaces/${familie}`, payload: { disabled } });
 
     await disable(true);
-    expect((await h.as('julian', { url: '/api/v1/notes/Budget.md?owner=familie' })).status).toBe(404);
+    expect((await h.as('julian', { url: `/api/v1/notes/Budget.md?owner=${familie}` })).status).toBe(404);
     const tree = await h.as('julian', { url: '/api/v1/tree' });
-    expect(tree.body.notes.some((note: any) => note.owner === 'familie')).toBe(false);
-    expect(tree.body.owners.map((owner: any) => owner.id)).toEqual(['julian']);
+    expect(tree.body.notes.some((note: any) => note.owner === familie)).toBe(false);
+    expect(tree.body.owners.map((owner: any) => owner.id)).toEqual([julian]);
     expect((await h.as('julian', { url: '/api/v1/shares' })).body.received).toEqual([]);
     expect((await h.as('ramona', { url: '/api/v1/search?q=Sonnencreme' })).body.hits).toEqual([]);
     const write = await h.as('julian', {
       method: 'PUT',
-      url: '/api/v1/notes/Budget.md?owner=familie',
+      url: `/api/v1/notes/Budget.md?owner=${familie}`,
       payload: { content: 'x' },
     });
     expect(write.status).toBe(404);
 
     await disable(false);
-    expect((await h.as('julian', { url: '/api/v1/notes/Budget.md?owner=familie' })).status).toBe(200);
+    expect((await h.as('julian', { url: `/api/v1/notes/Budget.md?owner=${familie}` })).status).toBe(200);
   });
 });
 
 describe('agent keys of a space', () => {
+  let familie: string;
+
   beforeEach(async () => {
-    await createSpace();
-    await h.runtime.app.createNote('familie', 'Ferien/Packliste.md', '# Packliste\n\nSonnencreme\n', 'admin');
-    await h.runtime.app.createNote('familie', 'Budget.md', '# Budget\n\nSonnencreme teuer\n', 'admin');
-    await h.runtime.app.createNote('julian', 'Privat.md', '# Privat\n\nSonnencreme privat\n', 'julian');
-    await addMember('familie', { grantee: 'julian', kind: 'vault', path: '', canWrite: true });
+    familie = await createSpace();
+    await h.runtime.app.createNote(familie, 'Ferien/Packliste.md', '# Packliste\n\nSonnencreme\n', admin);
+    await h.runtime.app.createNote(familie, 'Budget.md', '# Budget\n\nSonnencreme teuer\n', admin);
+    await h.runtime.app.createNote(julian, 'Privat.md', '# Privat\n\nSonnencreme privat\n', julian);
+    await addMember(familie, { grantee: 'julian', kind: 'vault', path: '', canWrite: true });
   });
 
   async function spaceKey(scope?: string): Promise<string> {
     const reply = await h.as('admin', {
       method: 'POST',
       url: '/api/v1/admin/keys',
-      payload: { owner: 'familie', name: 'familien-agent', canWrite: true, ...(scope === undefined ? {} : { scope }) },
+      payload: { owner: familie, name: 'familien-agent', canWrite: true, ...(scope === undefined ? {} : { scope }) },
     });
     expect(reply.status).toBe(201);
-    expect(reply.body.owner).toBe('familie');
+    expect(reply.body.owner).toBe(familie);
     return reply.body.secret;
   }
 
@@ -363,26 +392,26 @@ describe('agent keys of a space', () => {
   it('record their key name when they write, never a member', async () => {
     const secret = await spaceKey();
     await h.tool(secret, 'append_note', { path: 'Budget.md', content: 'vom agenten' });
-    const row = h.runtime.db.get("SELECT actor FROM edits WHERE owner = 'familie' ORDER BY at DESC LIMIT 1");
+    const row = h.runtime.db.get('SELECT actor FROM edits WHERE owner = ? ORDER BY at DESC LIMIT 1', familie);
     expect(row?.['actor']).toBe('familien-agent');
   });
 
   it('are refused while the space is disabled, and work again after', async () => {
     const secret = await spaceKey();
-    await h.as('admin', { method: 'PATCH', url: '/api/v1/admin/spaces/familie', payload: { disabled: true } });
+    await h.as('admin', { method: 'PATCH', url: `/api/v1/admin/spaces/${familie}`, payload: { disabled: true } });
     const refused = await h.tool(secret, 'get_note', { path: 'Budget.md' });
     const unknown = await h.tool('ndb_0000', 'get_note', { path: 'Budget.md' });
     expect({ status: refused.status, raw: refused.raw }).toEqual({ status: unknown.status, raw: unknown.raw });
     expect(refused.status).toBe(401);
 
-    await h.as('admin', { method: 'PATCH', url: '/api/v1/admin/spaces/familie', payload: { disabled: false } });
+    await h.as('admin', { method: 'PATCH', url: `/api/v1/admin/spaces/${familie}`, payload: { disabled: false } });
     expect((await h.tool(secret, 'get_note', { path: 'Budget.md' })).status).toBe(200);
   });
 });
 
 describe('agent keys of a disabled person', () => {
   it('are refused exactly like an unknown key, and work again once the account is enabled', async () => {
-    await h.runtime.app.createNote('julian', 'Privat.md', '# Privat\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Privat.md', '# Privat\n', julian);
     // Made by Julian, because that is now the only way a person's key comes
     // into being: the administrator's key routes reach spaces and nothing else.
     // What this checks is unchanged and is the reason that is affordable — an
@@ -400,7 +429,7 @@ describe('agent keys of a disabled person', () => {
     const setDisabled = async (disabled: boolean): Promise<void> => {
       const reply = await h.as('admin', {
         method: 'POST',
-        url: '/api/v1/admin/users/julian/disabled',
+        url: `/api/v1/admin/users/${julian}/disabled`,
         payload: { disabled },
       });
       expect(reply.status).toBe(200);
@@ -420,7 +449,7 @@ describe('agent keys of a disabled person', () => {
 
 describe('one namespace, whatever the letter case', () => {
   it('refuses a space or a person named like another account in a different case, from every door', async () => {
-    await h.runtime.app.createNote('julian', 'Privat/Tagebuch.md', '# Tagebuch\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Privat/Tagebuch.md', '# Tagebuch\n', julian);
 
     // The API, for a space and for a person.
     const space = await h.as('admin', { method: 'POST', url: '/api/v1/admin/spaces', payload: { id: 'Julian', displayName: 'J' } });
@@ -438,8 +467,10 @@ describe('one namespace, whatever the letter case', () => {
     await createSpace('familie', 'Familie');
     await expect(h.runtime.users.create('Familie', 'ein gutes passwort')).rejects.toThrow('already exists');
 
-    expect(h.runtime.users.list().map((user) => user.id).sort()).toEqual(['admin', 'familie', 'julian', 'ramona']);
-    // Nothing reached julian's vault under another spelling.
+    expect(h.runtime.users.list().map((user) => user.loginName).sort()).toEqual(['admin', 'familie', 'julian', 'ramona']);
+    // Nothing reached julian's vault under another spelling — `owner` is
+    // compared verbatim against the real id, so a wrong-case name is not a
+    // wrong-case id, just a string that matches nobody at all.
     const read = await h.as('ramona', { url: '/api/v1/notes/Privat/Tagebuch.md?owner=Julian' });
     expect(read.status).toBe(404);
   });
@@ -470,7 +501,7 @@ describe('one namespace, whatever the letter case', () => {
     ]);
     expect([person.status, space.status].sort()).toEqual([201, 409]);
 
-    const ids = h.runtime.users.list().map((user) => user.id.toLowerCase());
+    const ids = h.runtime.users.list().map((user) => user.loginName.toLowerCase());
     expect(ids).toEqual([...new Set(ids)]);
     expect(ids.filter((id) => id === 'kim' || id === 'lea').sort()).toEqual(['kim', 'lea']);
   });
@@ -489,35 +520,35 @@ describe('one namespace, whatever the letter case', () => {
 
 describe('the files of a space', () => {
   it('are listed to a member as far as the membership reaches, the same whatever lies beside it', async () => {
-    await createSpace();
-    await h.runtime.app.createNote('familie', 'Ferien/Packliste.md', '# Packliste\n', 'admin');
-    await h.runtime.app.writeFile('familie', 'Ferien/karte.png', Buffer.from('png'), 'admin');
-    expect((await addMember('familie', { grantee: 'julian', kind: 'folder', path: 'Ferien', canWrite: false })).status).toBe(201);
+    const familie = await createSpace();
+    await h.runtime.app.createNote(familie, 'Ferien/Packliste.md', '# Packliste\n', admin);
+    await h.runtime.app.writeFile(familie, 'Ferien/karte.png', Buffer.from('png'), admin);
+    expect((await addMember(familie, { grantee: 'julian', kind: 'folder', path: 'Ferien', canWrite: false })).status).toBe(201);
 
     const list = async (): Promise<Reply> => {
-      const reply = await h.as('julian', { url: '/api/v1/files?owner=familie' });
+      const reply = await h.as('julian', { url: `/api/v1/files?owner=${familie}` });
       return { ...reply, raw: reply.raw.replace(/"mtimeMs":[0-9.]+/g, '"mtimeMs":0') };
     };
     const first = await list();
     expect(first.status).toBe(200);
     expect(first.body.files.map((file: { path: string }) => file.path)).toEqual(['Ferien/karte.png', 'Ferien/Packliste.md']);
-    expect(first.body.files.every((file: { owner: string }) => file.owner === 'familie')).toBe(true);
+    expect(first.body.files.every((file: { owner: string }) => file.owner === familie)).toBe(true);
 
-    await h.runtime.app.createNote('familie', 'Budget.md', '# Budget\n', 'admin');
-    await h.runtime.app.writeFile('familie', 'Ferien2/geheim.pdf', Buffer.from('pdf'), 'admin');
-    await h.runtime.app.createFolder('familie', 'Leer');
+    await h.runtime.app.createNote(familie, 'Budget.md', '# Budget\n', admin);
+    await h.runtime.app.writeFile(familie, 'Ferien2/geheim.pdf', Buffer.from('pdf'), admin);
+    await h.runtime.app.createFolder(familie, 'Leer');
     expect((await list()).raw).toBe(first.raw);
 
     // Not a member: as if the space were not there.
-    const stranger = await h.as('ramona', { url: '/api/v1/files?owner=familie' });
+    const stranger = await h.as('ramona', { url: `/api/v1/files?owner=${familie}` });
     const nobody = await h.as('ramona', { url: '/api/v1/files?owner=niemand' });
     expect({ status: stranger.status, raw: stranger.raw }).toEqual({ status: nobody.status, raw: nobody.raw });
   });
 
   it('are not listed while the space is disabled', async () => {
-    await createSpace();
-    await addMember('familie', { grantee: 'julian', kind: 'vault', path: '', canWrite: false });
-    await h.as('admin', { method: 'PATCH', url: '/api/v1/admin/spaces/familie', payload: { disabled: true } });
-    expect((await h.as('julian', { url: '/api/v1/files?owner=familie' })).status).toBe(404);
+    const familie = await createSpace();
+    await addMember(familie, { grantee: 'julian', kind: 'vault', path: '', canWrite: false });
+    await h.as('admin', { method: 'PATCH', url: `/api/v1/admin/spaces/${familie}`, payload: { disabled: true } });
+    expect((await h.as('julian', { url: `/api/v1/files?owner=${familie}` })).status).toBe(404);
   });
 });

@@ -20,6 +20,9 @@ import { startHarness, type Harness } from './support/harness.js';
 const run = promisify(execFile);
 
 let h: Harness;
+/** Real account ids behind the login names, captured once the accounts exist. */
+let julianId: string;
+let ramonaId: string;
 
 const GIT_ENV = {
   ...process.env,
@@ -30,7 +33,8 @@ const GIT_ENV = {
 };
 
 function vaultDir(owner: string): string {
-  return path.join(h.dataDir, 'vaults', owner);
+  const id = h.runtime.users.byLogin(owner)?.id ?? owner;
+  return path.join(h.dataDir, 'vaults', id);
 }
 
 async function initRepo(owner: string): Promise<void> {
@@ -47,9 +51,10 @@ async function commit(owner: string): Promise<void> {
 }
 
 async function del(user: string, owner: string, notePath: string): Promise<void> {
+  const ownerId = h.runtime.users.byLogin(owner)?.id ?? owner;
   const reply = await h.as(user, {
     method: 'DELETE',
-    url: `/api/v1/notes/${encodeURI(notePath)}?owner=${owner}`,
+    url: `/api/v1/notes/${encodeURI(notePath)}?owner=${ownerId}`,
   });
   expect(reply.status).toBe(204);
 }
@@ -59,11 +64,13 @@ async function list(user: string) {
 }
 
 async function restore(user: string, owner: string, notePath: string) {
-  return h.as(user, { method: 'POST', url: '/api/v1/deleted/restore', payload: { owner, path: notePath } });
+  const ownerId = h.runtime.users.byLogin(owner)?.id ?? owner;
+  return h.as(user, { method: 'POST', url: '/api/v1/deleted/restore', payload: { owner: ownerId, path: notePath } });
 }
 
 async function read(user: string, owner: string, notePath: string) {
-  return h.as(user, { url: `/api/v1/notes/${encodeURI(notePath)}?owner=${owner}` });
+  const ownerId = h.runtime.users.byLogin(owner)?.id ?? owner;
+  return h.as(user, { url: `/api/v1/notes/${encodeURI(notePath)}?owner=${ownerId}` });
 }
 
 beforeEach(async () => {
@@ -73,8 +80,10 @@ beforeEach(async () => {
     ['julian', 'sein gutes passwort', 'user'],
     ['ramona', 'ihr gutes passwort', 'user'],
   ] as const) {
-    await harness.runtime.users.create(id, password, { role });
+    const created = await harness.runtime.users.create(id, password, { role });
     await harness.login(id, password);
+    if (id === 'julian') julianId = created.id;
+    if (id === 'ramona') ramonaId = created.id;
   }
   h = harness;
 }, 60_000);
@@ -102,7 +111,7 @@ describe('with a history on the host', () => {
   });
 
   it('lists a deleted note with its folder, the moment and who deleted it, and brings it back', async () => {
-    await h.runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n\nDer letzte Stand.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Projekt/Plan.md', '# Plan\n\nDer letzte Stand.\n', 'julian');
     await commit('julian');
     const before = Date.now();
     await del('julian', 'julian', 'Projekt/Plan.md');
@@ -112,11 +121,11 @@ describe('with a history on the host', () => {
     expect(listed.body.notes).toHaveLength(1);
     const [row] = listed.body.notes;
     expect(row).toMatchObject({
-      owner: 'julian',
+      owner: julianId,
       path: 'Projekt/Plan.md',
       title: 'Plan',
       folder: 'Projekt',
-      actor: 'julian',
+      actor: julianId,
       restore: 'ready',
     });
     expect(row.at).toBeGreaterThanOrEqual(before);
@@ -133,18 +142,18 @@ describe('with a history on the host', () => {
     // Back, so no longer deleted — and indexed like any new note.
     expect((await list('julian')).body.notes).toEqual([]);
     expect((await read('julian', 'julian', 'Projekt/Plan.md')).status).toBe(200);
-    expect(h.runtime.app.queries.getNote('julian', 'julian', 'Projekt/Plan.md')).toBeDefined();
+    expect(h.runtime.app.queries.getNote(julianId, julianId, 'Projekt/Plan.md')).toBeDefined();
 
     // A second restore finds nothing to restore.
     expect((await restore('julian', 'julian', 'Projekt/Plan.md')).status).toBe(404);
   });
 
   it('brings back the last saved version before the delete, not a later note of that name', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Erste Notiz, gelöscht.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'Erste Notiz, gelöscht.\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Plan.md');
     await commit('julian');
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Zweite Notiz mit dem Namen.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'Zweite Notiz mit dem Namen.\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Plan.md');
 
@@ -154,7 +163,7 @@ describe('with a history on the host', () => {
   });
 
   it('never brings back what was saved at the path after the delete', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Vor dem Löschen.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'Vor dem Löschen.\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Plan.md');
     // Written behind ndBrain's back and saved by a later tick.
@@ -173,17 +182,17 @@ describe('with a history on the host', () => {
   });
 
   it('skips a saved state that recorded the note as gone, and shows when the version it brings was saved', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Erste Fassung.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'Erste Fassung.\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Plan.md');
     await commit('julian');
-    const [first] = (await h.runtime.history.versions('julian', 'Plan.md')).versions;
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Nie gesichert.\n', 'julian');
+    const [first] = (await h.runtime.history.versions(julianId, 'Plan.md')).versions;
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'Nie gesichert.\n', 'julian');
     await del('julian', 'julian', 'Plan.md');
 
     const [row] = (await list('julian')).body.notes;
     expect(row.restore).toBe('ready');
-    const { versions } = await h.runtime.history.versions('julian', 'Plan.md');
+    const { versions } = await h.runtime.history.versions(julianId, 'Plan.md');
     expect(versions[0]?.id).toBe(first?.id);
     expect(row.savedAt).toBe(versions[1]?.at);
     const restored = await restore('julian', 'julian', 'Plan.md');
@@ -192,7 +201,7 @@ describe('with a history on the host', () => {
   });
 
   it('comes back under a free name when the path is taken, and leaves what is there alone', async () => {
-    await h.runtime.app.createNote('julian', 'Projekt/Plan.md', 'Alter Plan.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Projekt/Plan.md', 'Alter Plan.\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Projekt/Plan.md');
     // Taken behind ndBrain's back: no edit is logged, so the note stays deleted.
@@ -212,7 +221,7 @@ describe('with a history on the host', () => {
   });
 
   it('takes the next free name when the first one is taken too, also by letter case', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Alter Plan.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'Alter Plan.\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Plan.md');
     await fs.writeFile(path.join(vaultDir('julian'), 'plan.md'), 'anders geschrieben\n');
@@ -226,7 +235,7 @@ describe('with a history on the host', () => {
   });
 
   it('restores a note once when asked twice at the same moment', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Einmal bitte.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'Einmal bitte.\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Plan.md');
 
@@ -237,21 +246,21 @@ describe('with a history on the host', () => {
   });
 
   it('gives no share back: a restored note is a new file', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', '# Plan\n\nGeteilt, dann gelöscht.\n', 'julian');
-    await h.runtime.app.grantShare('julian', 'ramona', { kind: 'note', path: 'Plan.md' }, true);
+    await h.runtime.app.createNote(julianId, 'Plan.md', '# Plan\n\nGeteilt, dann gelöscht.\n', 'julian');
+    await h.runtime.app.grantShare(julianId, ramonaId, { kind: 'note', path: 'Plan.md' }, true);
     expect((await read('ramona', 'julian', 'Plan.md')).status).toBe(200);
     await commit('julian');
     await del('julian', 'julian', 'Plan.md');
 
     expect((await restore('julian', 'julian', 'Plan.md')).status).toBe(200);
-    expect(h.runtime.shares.byOwner('julian')).toEqual([]);
+    expect(h.runtime.shares.byOwner(julianId)).toEqual([]);
     expect((await read('ramona', 'julian', 'Plan.md')).status).toBe(404);
   });
 
   it('marks a note no saved version holds, and refuses to invent one', async () => {
-    await h.runtime.app.createNote('julian', 'Alt.md', 'gesichert\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Alt.md', 'gesichert\n', 'julian');
     await commit('julian');
-    await h.runtime.app.createNote('julian', 'Flüchtig.md', 'zwischen zwei Takten\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Flüchtig.md', 'zwischen zwei Takten\n', 'julian');
     await del('julian', 'julian', 'Flüchtig.md');
 
     const [row] = (await list('julian')).body.notes;
@@ -263,7 +272,7 @@ describe('with a history on the host', () => {
   });
 
   it('lists a note created and deleted within the same millisecond', async () => {
-    await h.runtime.app.createNote('julian', 'Schnell.md', 'im selben Takt\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Schnell.md', 'im selben Takt\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Schnell.md');
     // A fast machine writes both edits with the same stamp; the order of the
@@ -275,12 +284,12 @@ describe('with a history on the host', () => {
   });
 
   it('leaves out deletes older than the window and notes that are back', async () => {
-    await h.runtime.app.createNote('julian', 'Alt.md', 'alt\n', 'julian');
-    await h.runtime.app.createNote('julian', 'Wieder.md', 'wieder\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Alt.md', 'alt\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Wieder.md', 'wieder\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Alt.md');
     await del('julian', 'julian', 'Wieder.md');
-    await h.runtime.app.createNote('julian', 'Wieder.md', 'neu angelegt\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Wieder.md', 'neu angelegt\n', 'julian');
     // The whole note, moved out of the window: its create as well, or the
     // create would be the last thing that happened to the path anyway.
     h.runtime.db.run("UPDATE edits SET at = ? WHERE path = 'Alt.md'", Date.now() - DELETED_WINDOW_MS - 60_000);
@@ -292,7 +301,7 @@ describe('with a history on the host', () => {
 
 describe('without a history on the host', () => {
   it('lists the note but cannot restore it, and says why', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'ohne Verlauf\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'ohne Verlauf\n', 'julian');
     await del('julian', 'julian', 'Plan.md');
 
     const [row] = (await list('julian')).body.notes;
@@ -313,7 +322,7 @@ describe('without a history on the host', () => {
 
   it('tells a repository without a commit apart from none', async () => {
     await initRepo('julian');
-    await h.runtime.app.createNote('julian', 'Plan.md', 'noch kein Takt\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'noch kein Takt\n', 'julian');
     await del('julian', 'julian', 'Plan.md');
 
     const [row] = (await list('julian')).body.notes;
@@ -324,7 +333,7 @@ describe('without a history on the host', () => {
   it('does not take a repository the vault merely sits inside for its history', async () => {
     // The whole data directory is a repository with commits; the vault has none of its own.
     await run('git', ['init', '-q', '-b', 'main'], { cwd: h.dataDir });
-    await h.runtime.app.createNote('julian', 'Plan.md', 'fremdes Repo\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'fremdes Repo\n', 'julian');
     await run('git', ['add', '-A'], { cwd: h.dataDir });
     await run('git', ['commit', '-q', '-m', 'außen'], { cwd: h.dataDir, env: GIT_ENV });
     await del('julian', 'julian', 'Plan.md');
@@ -345,7 +354,7 @@ describe('who may see and restore a deleted note', () => {
     const preview = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/deleted/preview',
-      payload: { owner: 'julian', paths: ['Projekt/Plan.md'] },
+      payload: { owner: julianId, paths: ['Projekt/Plan.md'] },
     });
     return {
       list: { status: listed.status, raw: listed.raw },
@@ -363,14 +372,14 @@ describe('who may see and restore a deleted note', () => {
   it('hides a deleted note from somebody who held only a note share on it — as if it never existed', async () => {
     const empty = await probe();
 
-    await h.runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n\nGeheimer Inhalt.\n', 'julian');
-    await h.runtime.app.grantShare('julian', 'ramona', { kind: 'note', path: 'Projekt/Plan.md' }, true);
+    await h.runtime.app.createNote(julianId, 'Projekt/Plan.md', '# Plan\n\nGeheimer Inhalt.\n', 'julian');
+    await h.runtime.app.grantShare(julianId, ramonaId, { kind: 'note', path: 'Projekt/Plan.md' }, true);
     await commit('julian');
     // Ramona deletes it herself, with the write access the share gave her.
     await del('ramona', 'julian', 'Projekt/Plan.md');
 
     // Julian, the owner, sees it and who deleted it.
-    expect((await list('julian')).body.notes[0]).toMatchObject({ path: 'Projekt/Plan.md', actor: 'ramona' });
+    expect((await list('julian')).body.notes[0]).toMatchObject({ path: 'Projekt/Plan.md', actor: ramonaId });
 
     const after = await probe();
     expect(after).toEqual(empty);
@@ -379,13 +388,15 @@ describe('who may see and restore a deleted note', () => {
   });
 
   it('keeps a note share that somehow outlived its note from becoming a key to it', async () => {
-    await h.runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n\nGeheimer Inhalt.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Projekt/Plan.md', '# Plan\n\nGeheimer Inhalt.\n', 'julian');
     await commit('julian');
     const empty = await probe();
     await del('julian', 'julian', 'Projekt/Plan.md');
     // A stale row, as a crash between the delete and the share clean-up would leave it.
     h.runtime.db.run(
-      "INSERT INTO shares (id, owner, kind, prefix, grantee, can_write, created_at, bound_at) VALUES ('shr_stale', 'julian', 'note', 'Projekt/Plan.md', 'ramona', 1, 0, 0)",
+      "INSERT INTO shares (id, owner, kind, prefix, grantee, can_write, created_at, bound_at) VALUES ('shr_stale', ?, 'note', 'Projekt/Plan.md', ?, 1, 0, 0)",
+      julianId,
+      ramonaId,
     );
 
     expect(await probe()).toEqual(empty);
@@ -393,9 +404,9 @@ describe('who may see and restore a deleted note', () => {
 
   it('hides it from a read-only folder share and from other folders', async () => {
     const empty = await probe();
-    h.runtime.shares.grant('julian', 'Projekt', 'ramona', false);
-    h.runtime.shares.grant('julian', 'Anderes', 'ramona', true);
-    await h.runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n', 'julian');
+    h.runtime.shares.grant(julianId, 'Projekt', ramonaId, false);
+    h.runtime.shares.grant(julianId, 'Anderes', ramonaId, true);
+    await h.runtime.app.createNote(julianId, 'Projekt/Plan.md', '# Plan\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Projekt/Plan.md');
 
@@ -403,9 +414,9 @@ describe('who may see and restore a deleted note', () => {
   });
 
   it('shows and restores it to a folder share with write access over the path', async () => {
-    h.runtime.shares.grant('julian', 'Projekt', 'ramona', true);
-    await h.runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n\nIm geteilten Ordner.\n', 'julian');
-    await h.runtime.app.createNote('julian', 'Privat/Tagebuch.md', '# Tagebuch\n', 'julian');
+    h.runtime.shares.grant(julianId, 'Projekt', ramonaId, true);
+    await h.runtime.app.createNote(julianId, 'Projekt/Plan.md', '# Plan\n\nIm geteilten Ordner.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Privat/Tagebuch.md', '# Tagebuch\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Projekt/Plan.md');
     await del('julian', 'julian', 'Privat/Tagebuch.md');
@@ -420,20 +431,20 @@ describe('who may see and restore a deleted note', () => {
     const [edit] = h.runtime.db.all(
       "SELECT actor FROM edits WHERE path = 'Projekt/Plan.md' AND action = 'create' ORDER BY at DESC LIMIT 1",
     );
-    expect(edit?.['actor']).toBe('ramona');
+    expect(edit?.['actor']).toBe(ramonaId);
   });
 
   it('in a space, only members who may write the path', async () => {
-    await h.runtime.users.createSpace('familie', 'Familie');
+    const familieId = (await h.runtime.users.createSpace('familie', 'Familie')).id;
     await initRepo('familie');
-    h.runtime.shares.grant('familie', { kind: 'folder', path: 'Ferien' }, 'ramona', false);
-    h.runtime.shares.grant('familie', { kind: 'folder', path: 'Ferien' }, 'julian', true);
-    await h.runtime.app.createNote('familie', 'Ferien/Packliste.md', '# Packliste\n', 'julian');
+    h.runtime.shares.grant(familieId, { kind: 'folder', path: 'Ferien' }, ramonaId, false);
+    h.runtime.shares.grant(familieId, { kind: 'folder', path: 'Ferien' }, julianId, true);
+    await h.runtime.app.createNote(familieId, 'Ferien/Packliste.md', '# Packliste\n', 'julian');
     await commit('familie');
     await del('julian', 'familie', 'Ferien/Packliste.md');
 
     expect((await list('julian')).body.notes[0]).toMatchObject({
-      owner: 'familie',
+      owner: familieId,
       path: 'Ferien/Packliste.md',
       restore: 'ready',
     });
@@ -448,16 +459,21 @@ describe('who may see and restore a deleted note', () => {
 
 describe('the delete preview', () => {
   async function preview(user: string, owner: string, paths: string[]) {
-    const reply = await h.as(user, { method: 'POST', url: '/api/v1/deleted/preview', payload: { owner, paths } });
+    const ownerId = h.runtime.users.byLogin(owner)?.id ?? owner;
+    const reply = await h.as(user, {
+      method: 'POST',
+      url: '/api/v1/deleted/preview',
+      payload: { owner: ownerId, paths },
+    });
     expect(reply.status).toBe(200);
     return reply.body;
   }
 
   it('says whether a saved version exists', async () => {
     await initRepo('julian');
-    await h.runtime.app.createNote('julian', 'Gesichert.md', 'a\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Gesichert.md', 'a\n', 'julian');
     await commit('julian');
-    await h.runtime.app.createNote('julian', 'Neu.md', 'b\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Neu.md', 'b\n', 'julian');
 
     expect(await preview('julian', 'julian', ['Gesichert.md', 'Neu.md'])).toEqual({
       restorable: 1,
@@ -469,7 +485,7 @@ describe('the delete preview', () => {
   });
 
   it('says there is no history where the host keeps none', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'a\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'a\n', 'julian');
     expect(await preview('julian', 'julian', ['Plan.md'])).toEqual({
       restorable: 0,
       unsaved: 1,
@@ -481,9 +497,9 @@ describe('the delete preview', () => {
 
   it('counts a note the caller could not bring back as not theirs, without looking', async () => {
     await initRepo('julian');
-    await h.runtime.app.createNote('julian', 'Plan.md', 'a\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'a\n', 'julian');
     await commit('julian');
-    await h.runtime.app.grantShare('julian', 'ramona', { kind: 'note', path: 'Plan.md' }, true);
+    await h.runtime.app.grantShare(julianId, ramonaId, { kind: 'note', path: 'Plan.md' }, true);
 
     expect(await preview('ramona', 'julian', ['Plan.md'])).toEqual({
       restorable: 0,
@@ -512,14 +528,19 @@ describe('with a history the server cannot read', () => {
   }
 
   async function preview(user: string, owner: string, paths: string[]) {
-    const reply = await h.as(user, { method: 'POST', url: '/api/v1/deleted/preview', payload: { owner, paths } });
+    const ownerId = h.runtime.users.byLogin(owner)?.id ?? owner;
+    const reply = await h.as(user, {
+      method: 'POST',
+      url: '/api/v1/deleted/preview',
+      payload: { owner: ownerId, paths },
+    });
     expect(reply.status).toBe(200);
     return reply.body;
   }
 
   it('says the way back is unknown rather than that there is none', async () => {
     await initRepo('julian');
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Vor dem Löschen.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'Vor dem Löschen.\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Plan.md');
     await breakRepo('julian');
@@ -530,7 +551,7 @@ describe('with a history the server cannot read', () => {
 
   it('refuses the restore as unreadable, not as nothing to restore', async () => {
     await initRepo('julian');
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Vor dem Löschen.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'Vor dem Löschen.\n', 'julian');
     await commit('julian');
     await del('julian', 'julian', 'Plan.md');
     await breakRepo('julian');
@@ -547,12 +568,12 @@ describe('with a history the server cannot read', () => {
     // The list spans every vault the caller can restore in, so a throw would
     // take the working ones down with the broken one.
     await initRepo('julian');
-    await h.runtime.users.createSpace('familie', 'Familie');
+    const familieId = (await h.runtime.users.createSpace('familie', 'Familie')).id;
     await initRepo('familie');
-    h.runtime.shares.grant('familie', { kind: 'folder', path: 'Ferien' }, 'julian', true);
-    await h.runtime.app.createNote('familie', 'Ferien/Plan.md', 'geteilt\n', 'julian');
+    h.runtime.shares.grant(familieId, { kind: 'folder', path: 'Ferien' }, julianId, true);
+    await h.runtime.app.createNote(familieId, 'Ferien/Plan.md', 'geteilt\n', 'julian');
     await commit('familie');
-    await h.runtime.app.createNote('julian', 'Eigen.md', 'meins\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Eigen.md', 'meins\n', 'julian');
     await commit('julian');
     await del('julian', 'familie', 'Ferien/Plan.md');
     await del('julian', 'julian', 'Eigen.md');
@@ -566,8 +587,8 @@ describe('with a history the server cannot read', () => {
 
   it('counts the notes it could not look up separately in the delete question', async () => {
     await initRepo('julian');
-    await h.runtime.app.createNote('julian', 'Eins.md', 'a\n', 'julian');
-    await h.runtime.app.createNote('julian', 'Zwei.md', 'b\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Eins.md', 'a\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Zwei.md', 'b\n', 'julian');
     await commit('julian');
     await breakRepo('julian');
 
@@ -606,7 +627,7 @@ describe('with a history that reads at the top and not below it', () => {
 
   beforeEach(async () => {
     await initRepo('julian');
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Vor dem Löschen.\n', 'julian');
+    await h.runtime.app.createNote(julianId, 'Plan.md', 'Vor dem Löschen.\n', 'julian');
     await commit('julian');
   });
 
@@ -616,7 +637,7 @@ describe('with a history that reads at the top and not below it', () => {
 
     // The state probe is satisfied, which is the whole reason the per-note
     // paths need their own answer rather than relying on it.
-    expect(await h.runtime.history.state('julian')).toBe('ready');
+    expect(await h.runtime.history.state(julianId)).toBe('ready');
 
     const [row] = (await list('julian')).body.notes;
     expect(row).toMatchObject({ path: 'Plan.md', restore: 'broken', savedAt: null });
@@ -637,7 +658,7 @@ describe('with a history that reads at the top and not below it', () => {
     const reply = await h.as('julian', {
       method: 'POST',
       url: '/api/v1/deleted/preview',
-      payload: { owner: 'julian', paths: ['Plan.md'] },
+      payload: { owner: julianId, paths: ['Plan.md'] },
     });
 
     // The confirmation still has to appear — refusing to answer would leave the

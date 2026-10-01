@@ -127,6 +127,9 @@ let runtime: Runtime;
 let server: FastifyInstance;
 let julian: string;
 let ramona: string;
+/** The account ids, as distinct from `julian`/`ramona` above, which hold session cookies. */
+let julianId: string;
+let ramonaId: string;
 
 async function login(user: string, password: string): Promise<string> {
   const response = await server.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { user, password } });
@@ -166,8 +169,8 @@ beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-journal-'));
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
-  await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julianId = (await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' })).id;
+  ramonaId = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -198,14 +201,14 @@ describe('creating a note only if it is absent', () => {
 
     expect(response.statusCode).toBe(201);
     expect(response.json().created).toBe(true);
-    expect((await runtime.app.notes.getNote('julian', TODAY_PATH)).content).toBe(dailyNoteTemplate(TODAY));
+    expect((await runtime.app.notes.getNote(julianId, TODAY_PATH)).content).toBe(dailyNoteTemplate(TODAY));
   });
 
   it('opens what is there instead of writing over it', async () => {
     await ensure(julian, TODAY_PATH, dailyNoteTemplate(TODAY));
     // Somebody writes into it in one tab…
-    await runtime.app.putNote('julian', TODAY_PATH, 'Was heute geschah.\n', 'julian');
-    const before = await runtime.app.notes.getNote('julian', TODAY_PATH);
+    await runtime.app.putNote(julianId, TODAY_PATH, 'Was heute geschah.\n', julianId);
+    const before = await runtime.app.notes.getNote(julianId, TODAY_PATH);
 
     // …while another tab, still thinking the day is empty, asks for it again.
     const again = await ensure(julian, TODAY_PATH, dailyNoteTemplate(TODAY), { baseMtimeMs: 1 });
@@ -214,10 +217,10 @@ describe('creating a note only if it is absent', () => {
     expect(again.json().created).toBe(false);
     expect(again.json().conflictCopy).toBeUndefined();
     expect(again.json().note.content).toBe('Was heute geschah.\n');
-    const after = await runtime.app.notes.getNote('julian', TODAY_PATH);
+    const after = await runtime.app.notes.getNote(julianId, TODAY_PATH);
     expect(after.content).toBe('Was heute geschah.\n');
     expect(after.mtimeMs).toBe(before.mtimeMs);
-    expect(await vaultFiles('julian')).toEqual([path.join('50_Journal', '2026', '09', '2026-09-17.md')]);
+    expect(await vaultFiles(julianId)).toEqual([path.join('50_Journal', '2026', '09', '2026-09-17.md')]);
   });
 
   it('writes exactly once when many ask at the same moment', async () => {
@@ -232,7 +235,7 @@ describe('creating a note only if it is absent', () => {
     // Every caller got the one note that was written, not its own version.
     const winner = created[0]!.json().note.content as string;
     for (const response of responses) expect(response.json().note.content).toBe(winner);
-    expect(await vaultFiles('julian')).toEqual([path.join('50_Journal', '2026', '09', '2026-09-17.md')]);
+    expect(await vaultFiles(julianId)).toEqual([path.join('50_Journal', '2026', '09', '2026-09-17.md')]);
   });
 
   it('logs a create once, not once per click', async () => {
@@ -248,7 +251,7 @@ describe('creating a note only if it is absent', () => {
   });
 
   it('refuses a name that differs only in letter case from an existing note', async () => {
-    await runtime.app.createNote('julian', '50_Journal/2026/09/Notiz.md', 'x');
+    await runtime.app.createNote(julianId, '50_Journal/2026/09/Notiz.md', 'x');
     const response = await ensure(julian, '50_Journal/2026/09/notiz.md', 'y');
     expect(response.statusCode).toBe(409);
     expect(response.json().code).toBe('case_collision');
@@ -260,16 +263,16 @@ describe('creating a note only if it is absent', () => {
       expect(response.statusCode).toBe(400);
       expect(response.json().code).toBe('unlinkable_name');
     }
-    expect(await vaultFiles('julian')).toEqual([]);
+    expect(await vaultFiles(julianId)).toEqual([]);
   });
 
   it('is held to the same permission as any other write', async () => {
     // Read-only share: the grantee may look, not create.
-    runtime.shares.grant('julian', '50_Journal', 'ramona', false);
-    const response = await ensure(ramona, `${TODAY_PATH}?owner=julian`, 'nope');
+    runtime.shares.grant(julianId, '50_Journal', ramonaId, false);
+    const response = await ensure(ramona, `${TODAY_PATH}?owner=${julianId}`, 'nope');
     // Refused the way every write outside a share is refused.
     expect([403, 404]).toContain(response.statusCode);
-    expect(await vaultFiles('julian')).toEqual([]);
+    expect(await vaultFiles(julianId)).toEqual([]);
   });
 });
 
@@ -277,9 +280,9 @@ describe('findings around daily notes', () => {
   beforeEach(async () => {
     // A small vault with its own honest findings, so the comparison below has a
     // baseline to stay equal to rather than a row of zeros.
-    await runtime.app.createNote('julian', 'Hub.md', '---\ntags: [x]\n---\nSiehe [[Proxmox]] und [[Fehlt]].\n');
-    await runtime.app.createNote('julian', 'Proxmox.md', '---\ntags: [x]\n---\nZurück zu [[Hub]].\n');
-    await runtime.app.createNote('julian', 'Allein.md', '---\ntags: [x]\n---\nNichts verweist hierher.\n');
+    await runtime.app.createNote(julianId, 'Hub.md', '---\ntags: [x]\n---\nSiehe [[Proxmox]] und [[Fehlt]].\n');
+    await runtime.app.createNote(julianId, 'Proxmox.md', '---\ntags: [x]\n---\nZurück zu [[Hub]].\n');
+    await runtime.app.createNote(julianId, 'Allein.md', '---\ntags: [x]\n---\nNichts verweist hierher.\n');
   });
 
   it('leaves every finding as it was when a daily note with empty neighbours arrives', async () => {
@@ -307,7 +310,7 @@ describe('findings around daily notes', () => {
     await ensure(julian, TODAY_PATH, dailyNoteTemplate(TODAY));
     // A note with the same title nearer the top of the vault: the shortest-path
     // rule would pick it for a bare [[2026-09-16]].
-    await runtime.app.createNote('julian', '2026-09-16.md', 'Ein Irrläufer.\n');
+    await runtime.app.createNote(julianId, '2026-09-16.md', 'Ein Irrläufer.\n');
 
     const links = (
       await server.inject({ url: `/api/v1/backlinks/${TODAY_PATH}`, headers: { cookie: julian } })
@@ -324,7 +327,7 @@ describe('findings around daily notes', () => {
   });
 
   it('still reports a date link outside the journal as broken', async () => {
-    await runtime.app.createNote('julian', 'Plan.md', '---\ntags: [x]\n---\nAm [[2026-09-18]] und [[Hub]].\n');
+    await runtime.app.createNote(julianId, 'Plan.md', '---\ntags: [x]\n---\nAm [[2026-09-18]] und [[Hub]].\n');
     const c = await counts();
     expect(c.deadLinks).toBe(2);
   });
@@ -333,12 +336,12 @@ describe('findings around daily notes', () => {
     const lastSpring = { year: 2026, month: 3, day: 2 };
     const dayPath = journalPath(lastSpring);
     await ensure(julian, dayPath, dailyNoteTemplate(lastSpring));
-    await runtime.app.createNote('julian', 'Alt.md', '---\ntags: [x]\n---\nSiehe [[Hub]].\n');
+    await runtime.app.createNote(julianId, 'Alt.md', '---\ntags: [x]\n---\nSiehe [[Hub]].\n');
     // Both last touched half a year ago.
     const old = new Date(2026, 2, 2, 20, 0);
     for (const p of [dayPath, 'Alt.md']) {
-      await fs.utimes(path.join(dataDir, 'vaults', 'julian', p), old, old);
-      await runtime.indexer.indexNote('julian', p);
+      await fs.utimes(path.join(dataDir, 'vaults', julianId, p), old, old);
+      await runtime.indexer.indexNote(julianId, p);
     }
 
     const tidy = (await server.inject({ url: '/api/v1/tidy', headers: { cookie: julian } })).json();
@@ -353,7 +356,7 @@ describe('findings around daily notes', () => {
 
   it('does not treat a mis-filed day as a daily note', async () => {
     const misfiled = '50_Journal/2026/10/2026-09-17.md';
-    await runtime.app.createNote('julian', misfiled, dailyNoteTemplate(TODAY));
+    await runtime.app.createNote(julianId, misfiled, dailyNoteTemplate(TODAY));
     const tidy = (await server.inject({ url: '/api/v1/tidy', headers: { cookie: julian } })).json();
     expect((tidy.deadLinks as Array<{ source: string }>).filter((l) => l.source === misfiled)).toHaveLength(2);
     expect((tidy.orphans as Array<{ path: string }>).map((n) => n.path)).toContain(misfiled);

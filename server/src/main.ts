@@ -82,6 +82,22 @@ async function main(): Promise<void> {
 
   warn = (message: string): void => server.log.warn(message);
 
+  for (const done of runtime.moves.moved) {
+    server.log.info(
+      `vault directory "${done.from}" is now "${done.to}" — a vault is named by its ` +
+        'account identifier since v16, and vaults/by-name holds a link under each login',
+    );
+  }
+  for (const clash of runtime.moves.conflicted) {
+    // Both directories hold notes. Picking one would throw the other away in
+    // silence, which is the single outcome worth refusing to decide.
+    server.log.error(
+      `cannot move vault "${clash.from}" to "${clash.to}": both directories exist. ` +
+        'Nothing was touched. One of them is this account\'s vault and the other is ' +
+        'not — look at both, keep one, and remove the row from vault_moves.',
+    );
+  }
+
   if (runtime.users.count() === 0) {
     server.log.warn(
       'no accounts exist yet — create one with: ndbrain-user create <name>. ' +

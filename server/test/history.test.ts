@@ -37,6 +37,10 @@ let dataDir: string;
 let runtime: Runtime;
 let server: FastifyInstance;
 let cookie: string;
+/** The real account id behind the login `julian` types in at the prompt. */
+let julian: string;
+/** Same, for `ramona`. */
+let ramona: string;
 
 /** Commits whatever is in the vault right now, as the host timer would. */
 async function commit(owner: string, subject: string): Promise<void> {
@@ -75,8 +79,8 @@ beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-history-'));
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
-  await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' })).id;
+  ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -103,7 +107,7 @@ afterEach(async () => {
 describe('without a sidecar', () => {
   it('says there is no history rather than failing', async () => {
     // The ordinary state of a fresh install: the feature is absent, not broken.
-    await runtime.app.createNote('julian', 'Neu.md', 'Erste Fassung.\n');
+    await runtime.app.createNote(julian, 'Neu.md', 'Erste Fassung.\n');
 
     const response = await server.inject({ url: '/api/v1/history/Neu.md', headers: { cookie } });
 
@@ -116,13 +120,13 @@ describe('without a sidecar', () => {
 
 describe('with a sidecar', () => {
   beforeEach(async () => {
-    await initRepo('julian');
-    await runtime.app.createNote('julian', 'Notiz.md', 'Fassung eins.\n');
-    await commit('julian', 'Vault-Stand 2026-08-13 21:05 · 1 geändert');
-    await runtime.app.putNote('julian', 'Notiz.md', 'Fassung zwei.\n', 'julian');
-    await commit('julian', 'Vault-Stand 2026-08-14 09:00 · 1 geändert');
-    await runtime.app.putNote('julian', 'Notiz.md', 'Fassung drei.\n', 'julian');
-    await commit('julian', 'Vault-Stand 2026-08-15 18:30 · 1 geändert');
+    await initRepo(julian);
+    await runtime.app.createNote(julian, 'Notiz.md', 'Fassung eins.\n');
+    await commit(julian, 'Vault-Stand 2026-08-13 21:05 · 1 geändert');
+    await runtime.app.putNote(julian, 'Notiz.md', 'Fassung zwei.\n', 'julian');
+    await commit(julian, 'Vault-Stand 2026-08-14 09:00 · 1 geändert');
+    await runtime.app.putNote(julian, 'Notiz.md', 'Fassung drei.\n', 'julian');
+    await commit(julian, 'Vault-Stand 2026-08-15 18:30 · 1 geändert');
   });
 
   /**
@@ -148,7 +152,7 @@ describe('with a sidecar', () => {
       payload: { from: 'Notiz.md', to: 'Umbenannt.md' },
     });
     expect(renamed.statusCode).toBe(200);
-    await commit('julian', 'Vault-Stand 2026-08-16 08:00 · 1 umbenannt');
+    await commit(julian, 'Vault-Stand 2026-08-16 08:00 · 1 umbenannt');
 
     const response = await server.inject({
       url: '/api/v1/history/Umbenannt.md',
@@ -183,7 +187,7 @@ describe('with a sidecar', () => {
       headers: { cookie },
       payload: { from: 'Notiz.md', to: 'Umbenannt.md' },
     });
-    await commit('julian', 'Vault-Stand 2026-08-16 08:00 · 1 umbenannt');
+    await commit(julian, 'Vault-Stand 2026-08-16 08:00 · 1 umbenannt');
 
     const list = S.HistoryResponse.parse(
       (await server.inject({ url: '/api/v1/history/Umbenannt.md', headers: { cookie } })).json(),
@@ -235,8 +239,8 @@ describe('with a sidecar', () => {
   });
 
   it('lists only the versions that touched this note', async () => {
-    await runtime.app.createNote('julian', 'Andere.md', 'Etwas anderes.\n');
-    await commit('julian', 'Vault-Stand · 1 geändert');
+    await runtime.app.createNote(julian, 'Andere.md', 'Etwas anderes.\n');
+    await commit(julian, 'Vault-Stand · 1 geändert');
 
     const response = await server.inject({ url: '/api/v1/history/Andere.md', headers: { cookie } });
     expect(S.HistoryResponse.parse(response.json()).versions).toHaveLength(1);
@@ -252,11 +256,11 @@ describe('with a sidecar', () => {
       method: 'POST',
       url: '/api/v1/history/restore',
       headers: { cookie },
-      payload: { owner: 'julian', path: 'Notiz.md', version: oldest.id },
+      payload: { owner: julian, path: 'Notiz.md', version: oldest.id },
     });
 
     expect(response.statusCode).toBe(200);
-    expect(await runtime.app.notes.getNote('julian', 'Notiz.md')).toMatchObject({
+    expect(await runtime.app.notes.getNote(julian, 'Notiz.md')).toMatchObject({
       content: 'Fassung eins.\n',
     });
 
@@ -267,8 +271,8 @@ describe('with a sidecar', () => {
   });
 
   it('refuses a version id that belongs to a different note', async () => {
-    await runtime.app.createNote('julian', 'Fremd.md', 'Andere Notiz.\n');
-    await commit('julian', 'Vault-Stand · 1 geändert');
+    await runtime.app.createNote(julian, 'Fremd.md', 'Andere Notiz.\n');
+    await commit(julian, 'Vault-Stand · 1 geändert');
 
     const otherHistory = S.HistoryResponse.parse(
       (await server.inject({ url: '/api/v1/history/Fremd.md', headers: { cookie } })).json(),
@@ -296,16 +300,16 @@ describe('with a sidecar', () => {
 
 describe('the tenant boundary', () => {
   beforeEach(async () => {
-    await initRepo('julian');
-    await runtime.app.createNote('julian', 'Privat.md', 'Nur für mich.\n');
-    await commit('julian', 'Vault-Stand · 1 geändert');
+    await initRepo(julian);
+    await runtime.app.createNote(julian, 'Privat.md', 'Nur für mich.\n');
+    await commit(julian, 'Vault-Stand · 1 geändert');
   });
 
   it('hides another vault behind the same answer as a missing note', async () => {
     const hers = await signIn('ramona', 'ihr gutes passwort');
 
     const response = await server.inject({
-      url: '/api/v1/history/Privat.md?owner=julian',
+      url: `/api/v1/history/Privat.md?owner=${julian}`,
       headers: { cookie: hers },
     });
 
@@ -313,13 +317,13 @@ describe('the tenant boundary', () => {
   });
 
   it('refuses a restore into a share that is read-only', async () => {
-    runtime.shares.grant('julian', '', 'ramona', false);
+    runtime.shares.grant(julian, '', ramona, false);
     const hers = await signIn('ramona', 'ihr gutes passwort');
 
     const list = S.HistoryResponse.parse(
       (
         await server.inject({
-          url: '/api/v1/history/Privat.md?owner=julian',
+          url: `/api/v1/history/Privat.md?owner=${julian}`,
           headers: { cookie: hers },
         })
       ).json(),
@@ -329,7 +333,7 @@ describe('the tenant boundary', () => {
       method: 'POST',
       url: '/api/v1/history/restore',
       headers: { cookie: hers },
-      payload: { owner: 'julian', path: 'Privat.md', version: list.versions[0]!.id },
+      payload: { owner: julian, path: 'Privat.md', version: list.versions[0]!.id },
     });
 
     // Reading a shared note's history is allowed; rolling it back is not.
@@ -375,9 +379,9 @@ describe('a sidecar that cannot be read', () => {
   }
 
   beforeEach(async () => {
-    await initRepo('julian');
-    await runtime.app.createNote('julian', 'Notiz.md', 'Fassung eins.\n');
-    await commit('julian', 'Vault-Stand · 1 geändert');
+    await initRepo(julian);
+    await runtime.app.createNote(julian, 'Notiz.md', 'Fassung eins.\n');
+    await commit(julian, 'Vault-Stand · 1 geändert');
   });
 
   it('is broken, not a note that was never changed', async () => {
@@ -385,7 +389,7 @@ describe('a sidecar that cannot be read', () => {
     // the note: three versions here would be as wrong as none afterwards.
     expect((await history()).parsed.state).toBe('ready');
 
-    await stripObjects('julian');
+    await stripObjects(julian);
 
     const { statusCode, parsed } = await history();
     // Still a 200 and still an empty list — the note editor must not break
@@ -401,17 +405,17 @@ describe('a sidecar that cannot be read', () => {
     // parent. The only evidence is on disk, and this pair is what proves it is
     // being read: one assertion cannot pass without the other failing under any
     // implementation that goes by the message.
-    await stripObjects('julian');
+    await stripObjects(julian);
     expect((await history()).parsed.state).toBe('broken');
 
-    await fs.rm(path.join(dataDir, 'vaults', 'julian', '.git'), { recursive: true, force: true });
+    await fs.rm(path.join(dataDir, 'vaults', julian, '.git'), { recursive: true, force: true });
     expect((await history()).parsed.state).toBe('none');
   });
 
   it('refuses to read a version rather than call it a version that never existed', async () => {
     const id = (await history()).parsed.versions[0]!.id;
 
-    await stripObjects('julian');
+    await stripObjects(julian);
 
     const response = await server.inject({
       url: `/api/v1/history/Notiz.md?version=${id}`,
@@ -427,18 +431,18 @@ describe('a sidecar that cannot be read', () => {
 
   it('refuses a restore of a version it cannot read, and leaves the note alone', async () => {
     const id = (await history()).parsed.versions[0]!.id;
-    await stripObjects('julian');
+    await stripObjects(julian);
 
     const response = await server.inject({
       method: 'POST',
       url: '/api/v1/history/restore',
       headers: { cookie },
-      payload: { owner: 'julian', path: 'Notiz.md', version: id },
+      payload: { owner: julian, path: 'Notiz.md', version: id },
     });
 
     expect(response.statusCode).toBe(503);
     expect(response.json()).toMatchObject({ code: 'history_unreadable' });
-    expect(await runtime.app.notes.getNote('julian', 'Notiz.md')).toMatchObject({
+    expect(await runtime.app.notes.getNote(julian, 'Notiz.md')).toMatchObject({
       content: 'Fassung eins.\n',
     });
   });
@@ -452,7 +456,7 @@ describe('a sidecar that cannot be read', () => {
     process.env['GIT_TEST_ASSUME_DIFFERENT_OWNER'] = '1';
     try {
       expect((await history()).parsed.state).toBe('broken');
-      expect(await runtime.history.state('julian')).toBe('broken');
+      expect(await runtime.history.state(julian)).toBe('broken');
     } finally {
       if (original === undefined) delete process.env['GIT_TEST_ASSUME_DIFFERENT_OWNER'];
       else process.env['GIT_TEST_ASSUME_DIFFERENT_OWNER'] = original;
@@ -467,20 +471,20 @@ describe('a sidecar that cannot be read', () => {
     // anything yet, so there is no version to restore". `git log` says "bad
     // object HEAD" here and "does not have any commits yet" there, which is why
     // it is the probe now.
-    await danglingBranch('julian');
+    await danglingBranch(julian);
 
-    expect(await runtime.history.state('julian')).toBe('broken');
+    expect(await runtime.history.state(julian)).toBe('broken');
     expect((await history()).parsed.state).toBe('broken');
   });
 
   it('is still empty, not broken, for a repository the timer has not committed into', async () => {
     // The other side of that boundary, so that the fix above cannot be "call
     // everything broken". This is a legitimate state and has to stay one.
-    await initRepo('ramona');
-    expect(await runtime.history.state('ramona')).toBe('empty');
+    await initRepo(ramona);
+    expect(await runtime.history.state(ramona)).toBe('empty');
 
     const hers = await signIn('ramona', 'ihr gutes passwort');
-    await runtime.app.createNote('ramona', 'Neu.md', 'a\n');
+    await runtime.app.createNote(ramona, 'Neu.md', 'a\n');
     const response = await server.inject({ url: '/api/v1/history/Neu.md', headers: { cookie: hers } });
     expect(S.HistoryResponse.parse(response.json()).state).toBe('empty');
   });
@@ -493,8 +497,8 @@ describe('a sidecar that cannot be read', () => {
     const original = process.env['PATH'];
     process.env['PATH'] = '';
     try {
-      expect(await own.state('julian')).toBe('broken');
-      expect((await own.versions('julian', 'Notiz.md')).state).toBe('broken');
+      expect(await own.state(julian)).toBe('broken');
+      expect((await own.versions(julian, 'Notiz.md')).state).toBe('broken');
       expect(await own.state('niemand-hier')).toBe('none');
     } finally {
       process.env['PATH'] = original;
@@ -519,8 +523,8 @@ describe('a sidecar that cannot be read', () => {
     // Prepended rather than replacing: the shim needs `sleep` on its own PATH.
     process.env['PATH'] = `${bin}${path.delimiter}${original ?? ''}`;
     try {
-      expect((await own.versions('julian', 'Notiz.md')).state).toBe('broken');
-      expect(await own.state('julian')).toBe('broken');
+      expect((await own.versions(julian, 'Notiz.md')).state).toBe('broken');
+      expect(await own.state(julian)).toBe('broken');
       expect(seen.join(' ')).toContain('did not answer');
     } finally {
       process.env['PATH'] = original;
@@ -532,12 +536,12 @@ describe('a sidecar that cannot be read', () => {
     // `lastVersionBefore` and `recorded` answered empty, and empty there reads
     // as "no saved version holds this note" — which is put in front of somebody
     // deciding whether to delete it.
-    await stripObjects('julian');
+    await stripObjects(julian);
 
-    await expect(runtime.history.lastVersionBefore('julian', 'Notiz.md', Date.now())).rejects.toThrow(
+    await expect(runtime.history.lastVersionBefore(julian, 'Notiz.md', Date.now())).rejects.toThrow(
       HistoryUnreadableError,
     );
-    await expect(runtime.history.recorded('julian', ['Notiz.md'])).rejects.toThrow(HistoryUnreadableError);
+    await expect(runtime.history.recorded(julian, ['Notiz.md'])).rejects.toThrow(HistoryUnreadableError);
   });
 
   it('says so in the log, once per vault, with a marker to grep for', async () => {
@@ -552,9 +556,9 @@ describe('a sidecar that cannot be read', () => {
     });
     const own = await startHarness('history-log', {}, { logStream: sink });
     try {
-      await own.runtime.users.create('julian', 'ein gutes passwort');
-      await own.runtime.app.createNote('julian', 'Notiz.md', 'a\n');
-      const cwd = path.join(own.dataDir, 'vaults', 'julian');
+      const ownJulian = (await own.runtime.users.create('julian', 'ein gutes passwort')).id;
+      await own.runtime.app.createNote(ownJulian, 'Notiz.md', 'a\n');
+      const cwd = path.join(own.dataDir, 'vaults', ownJulian);
       await run('git', ['init', '-q', '-b', 'main'], { cwd });
       await run('git', ['add', '-A'], { cwd });
       await run('git', ['commit', '-q', '-m', 'Vault-Stand · 1 geändert'], {
@@ -574,7 +578,7 @@ describe('a sidecar that cannot be read', () => {
 
       const lines = said.filter((line) => line.includes('history unreadable'));
       expect(lines).toHaveLength(1);
-      expect(lines[0]).toContain('"account":"julian"');
+      expect(lines[0]).toContain(`"account":"${ownJulian}"`);
       // git's own words, so an operator does not have to guess which of the
       // half-dozen ways this can break they are looking at.
       expect(lines[0]).toContain('not a git repository');
@@ -615,14 +619,14 @@ describe('a sidecar missing only the bytes of a version', () => {
   }
 
   beforeEach(async () => {
-    await initRepo('julian');
-    await runtime.app.createNote('julian', 'Notiz.md', 'Fassung eins.\n');
-    await commit('julian', 'Vault-Stand · 1 geändert');
+    await initRepo(julian);
+    await runtime.app.createNote(julian, 'Notiz.md', 'Fassung eins.\n');
+    await commit(julian, 'Vault-Stand · 1 geändert');
     const listed = S.HistoryResponse.parse(
       (await server.inject({ url: '/api/v1/history/Notiz.md', headers: { cookie } })).json(),
     );
     id = listed.versions[0]!.id;
-    await dropBlob('julian', 'Notiz.md');
+    await dropBlob(julian, 'Notiz.md');
   });
 
   it('still lists the version, because the commit and the tree are readable', async () => {
@@ -655,7 +659,7 @@ describe('a sidecar missing only the bytes of a version', () => {
       method: 'POST',
       url: '/api/v1/history/restore',
       headers: { cookie },
-      payload: { owner: 'julian', path: 'Notiz.md', version: id },
+      payload: { owner: julian, path: 'Notiz.md', version: id },
     });
 
     expect(response.statusCode).toBe(503);
@@ -668,7 +672,7 @@ describe('a sidecar missing only the bytes of a version', () => {
     // why the reason is read rather than the exit status. Taking this for a
     // deletion would walk past the one version there is and answer "no saved
     // version holds this note".
-    await expect(runtime.history.lastVersionBefore('julian', 'Notiz.md', Date.now())).rejects.toThrow(
+    await expect(runtime.history.lastVersionBefore(julian, 'Notiz.md', Date.now())).rejects.toThrow(
       HistoryUnreadableError,
     );
   });

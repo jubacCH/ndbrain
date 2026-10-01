@@ -121,6 +121,8 @@ describe('conflictPath and parseConflictPath', () => {
 let dataDir: string;
 let runtime: Runtime;
 let server: FastifyInstance;
+let julian: string;
+let ramona: string;
 const cookies: Record<string, string> = {};
 
 async function login(user: string, password: string): Promise<string> {
@@ -161,8 +163,8 @@ beforeEach(async () => {
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
 
-  await runtime.users.create('julian', 'ein gutes passwort');
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort')).id;
+  ramona = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -189,14 +191,14 @@ afterEach(async () => {
 
 describe('the conflict-copy finding', () => {
   it('names the copy, the original it displaced, and that the original is still there', async () => {
-    await runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n', 'julian');
+    await runtime.app.createNote(julian, 'Projekt/Plan.md', '# Plan\n', julian);
     const when = new Date(2026, 8, 11, 10, 58);
-    const copyPath = await plantConflict('julian', 'Projekt/Plan.md', when);
+    const copyPath = await plantConflict(julian, 'Projekt/Plan.md', when);
 
-    const conflicts = runtime.app.queries.conflictCopies('julian');
+    const conflicts = runtime.app.queries.conflictCopies(julian);
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0]).toMatchObject({
-      owner: 'julian',
+      owner: julian,
       path: copyPath,
       originalPath: 'Projekt/Plan.md',
       originalTitle: 'Plan',
@@ -208,9 +210,9 @@ describe('the conflict-copy finding', () => {
   it('reports the original as gone once it really is, not as an error', async () => {
     // No "Projekt/Plan.md" is ever created — the copy is the only trace, the
     // way it looks once somebody has deleted the note it was measured against.
-    await plantConflict('julian', 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
+    await plantConflict(julian, 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
 
-    const conflicts = runtime.app.queries.conflictCopies('julian');
+    const conflicts = runtime.app.queries.conflictCopies(julian);
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0]?.originalExists).toBe(false);
     expect(conflicts[0]?.originalTitle).toBeNull();
@@ -223,10 +225,10 @@ describe('the conflict-copy finding', () => {
     // recover which case the original really had; it always guesses
     // lowercase. A case-sensitive existence lookup on that guess would then
     // call this original "gone" for no reason but a letter's case.
-    await runtime.app.createNote('julian', 'Projekt/Plan.MD', '# Plan\n', 'julian');
-    await plantConflict('julian', 'Projekt/Plan.MD', new Date(2026, 8, 11, 10, 58));
+    await runtime.app.createNote(julian, 'Projekt/Plan.MD', '# Plan\n', julian);
+    await plantConflict(julian, 'Projekt/Plan.MD', new Date(2026, 8, 11, 10, 58));
 
-    const conflicts = runtime.app.queries.conflictCopies('julian');
+    const conflicts = runtime.app.queries.conflictCopies(julian);
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0]?.originalPath).toBe('Projekt/Plan.md');
     expect(conflicts[0]?.originalExists).toBe(true);
@@ -234,31 +236,31 @@ describe('the conflict-copy finding', () => {
   });
 
   it('leaves an ordinary note that merely has "Konflikt" in its title alone', async () => {
-    await runtime.app.createNote('julian', 'Notizen zum Konflikt im Team.md', 'Text\n', 'julian');
+    await runtime.app.createNote(julian, 'Notizen zum Konflikt im Team.md', 'Text\n', julian);
 
-    expect(runtime.app.queries.conflictCopies('julian')).toHaveLength(0);
+    expect(runtime.app.queries.conflictCopies(julian)).toHaveLength(0);
   });
 
   it('surfaces a copy a genuine concurrent write produced, not just a planted one', async () => {
-    await runtime.app.createNote('julian', 'Projekt/Plan.md', 'Ursprung\n', 'julian');
-    const before = await runtime.notes.getNote('julian', 'Projekt/Plan.md');
+    await runtime.app.createNote(julian, 'Projekt/Plan.md', 'Ursprung\n', julian);
+    const before = await runtime.notes.getNote(julian, 'Projekt/Plan.md');
 
     await new Promise((resolve) => setTimeout(resolve, 20));
-    await runtime.app.updateNote('julian', 'Projekt/Plan.md', 'Anderswo geändert\n', 'julian');
-    const result = await runtime.app.updateNote('julian', 'Projekt/Plan.md', 'Meine Fassung\n', 'julian', {
+    await runtime.app.updateNote(julian, 'Projekt/Plan.md', 'Anderswo geändert\n', julian);
+    const result = await runtime.app.updateNote(julian, 'Projekt/Plan.md', 'Meine Fassung\n', julian, {
       baseMtimeMs: before.mtimeMs,
     });
 
     expect(result.conflictCopy).toBeDefined();
-    const conflicts = runtime.app.queries.conflictCopies('julian');
+    const conflicts = runtime.app.queries.conflictCopies(julian);
     expect(conflicts.map((c) => c.path)).toContain(result.conflictCopy);
   });
 
   it('counts the copy once toward attention, however many other findings it also carries', async () => {
     // Untagged and orphaned as well as a conflict copy — three findings, one note.
-    await plantConflict('julian', 'Verirrt.md', new Date(2026, 8, 11, 10, 58));
+    await plantConflict(julian, 'Verirrt.md', new Date(2026, 8, 11, 10, 58));
 
-    expect(runtime.app.queries.attentionCount('julian')).toBe(1);
+    expect(runtime.app.queries.attentionCount(julian)).toBe(1);
   });
 });
 
@@ -281,8 +283,8 @@ describe('two conflict copies in the same minute', () => {
 
   /** Somebody else writes, and a tab holding `base` saves over them. */
   async function displace(base: string, byThem: string, byTheTab: string): Promise<string> {
-    await runtime.app.updateNote('julian', 'Projekt/Plan.md', byThem, 'julian');
-    const result = await runtime.app.updateNote('julian', 'Projekt/Plan.md', byTheTab, 'julian', {
+    await runtime.app.updateNote(julian, 'Projekt/Plan.md', byThem, julian);
+    const result = await runtime.app.updateNote(julian, 'Projekt/Plan.md', byTheTab, julian, {
       baseHash: base,
     });
     expect(result.conflictCopy).toBeDefined();
@@ -292,7 +294,7 @@ describe('two conflict copies in the same minute', () => {
   beforeEach(async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(MINUTE);
-    await runtime.app.createNote('julian', 'Projekt/Plan.md', 'Ursprung\n', 'julian');
+    await runtime.app.createNote(julian, 'Projekt/Plan.md', 'Ursprung\n', julian);
   });
 
   afterEach(() => {
@@ -300,44 +302,44 @@ describe('two conflict copies in the same minute', () => {
   });
 
   it('keeps both, rather than the second overwriting the first', async () => {
-    const firstTab = (await runtime.notes.getNote('julian', 'Projekt/Plan.md')).hash;
+    const firstTab = (await runtime.notes.getNote(julian, 'Projekt/Plan.md')).hash;
     const first = await displace(firstTab, 'Fassung von Anna\n', 'Erster Tab\n');
 
-    const secondTab = (await runtime.notes.getNote('julian', 'Projekt/Plan.md')).hash;
+    const secondTab = (await runtime.notes.getNote(julian, 'Projekt/Plan.md')).hash;
     const second = await displace(secondTab, 'Fassung von Bruno\n', 'Zweiter Tab\n');
 
     expect(first).toBe('Projekt/Plan (Konflikt 2026-09-22 14.07).md');
     expect(second).toBe('Projekt/Plan (Konflikt 2026-09-22 14.07-2).md');
-    expect((await runtime.notes.getNote('julian', first)).content).toBe('Fassung von Anna\n');
-    expect((await runtime.notes.getNote('julian', second)).content).toBe('Fassung von Bruno\n');
+    expect((await runtime.notes.getNote(julian, first)).content).toBe('Fassung von Anna\n');
+    expect((await runtime.notes.getNote(julian, second)).content).toBe('Fassung von Bruno\n');
   });
 
   it('steps past a name that is already taken, whatever put it there', async () => {
     // The autumn hour, a copy restored from a backup, a file somebody wrote by
     // hand: the question is only whether the name is free, not who took it.
     await runtime.app.createNote(
-      'julian',
+      julian,
       conflictPath('Projekt/Plan.md', MINUTE),
       'Von vorhin\n',
-      'julian',
+      julian,
     );
 
-    const tab = (await runtime.notes.getNote('julian', 'Projekt/Plan.md')).hash;
+    const tab = (await runtime.notes.getNote(julian, 'Projekt/Plan.md')).hash;
     const copy = await displace(tab, 'Fassung von Anna\n', 'Erster Tab\n');
 
     expect(copy).toBe('Projekt/Plan (Konflikt 2026-09-22 14.07-2).md');
     expect(
-      (await runtime.notes.getNote('julian', conflictPath('Projekt/Plan.md', MINUTE))).content,
+      (await runtime.notes.getNote(julian, conflictPath('Projekt/Plan.md', MINUTE))).content,
     ).toBe('Von vorhin\n');
   });
 
   it('shows both copies in the tidy view, each against the note it displaced', async () => {
-    const firstTab = (await runtime.notes.getNote('julian', 'Projekt/Plan.md')).hash;
+    const firstTab = (await runtime.notes.getNote(julian, 'Projekt/Plan.md')).hash;
     const first = await displace(firstTab, 'Fassung von Anna\n', 'Erster Tab\n');
-    const secondTab = (await runtime.notes.getNote('julian', 'Projekt/Plan.md')).hash;
+    const secondTab = (await runtime.notes.getNote(julian, 'Projekt/Plan.md')).hash;
     const second = await displace(secondTab, 'Fassung von Bruno\n', 'Zweiter Tab\n');
 
-    const conflicts = runtime.app.queries.conflictCopies('julian');
+    const conflicts = runtime.app.queries.conflictCopies(julian);
     expect(conflicts.map((c) => c.path).sort()).toEqual([first, second].sort());
     for (const row of conflicts) {
       expect(row.originalPath).toBe('Projekt/Plan.md');
@@ -349,8 +351,8 @@ describe('two conflict copies in the same minute', () => {
 
 describe('the conflict-copy finding through the API', () => {
   it('lists conflicts in /api/v1/tidy alongside the other findings', async () => {
-    await runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n', 'julian');
-    const copyPath = await plantConflict('julian', 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
+    await runtime.app.createNote(julian, 'Projekt/Plan.md', '# Plan\n', julian);
+    const copyPath = await plantConflict(julian, 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
 
     const { body } = await as('julian', { url: '/api/v1/tidy' });
     expect(body.conflicts).toHaveLength(1);
@@ -360,7 +362,7 @@ describe('the conflict-copy finding through the API', () => {
   });
 
   it('counts conflicts in the overview, folded into attention without double-counting', async () => {
-    await plantConflict('julian', 'Verirrt.md', new Date(2026, 8, 11, 10, 58));
+    await plantConflict(julian, 'Verirrt.md', new Date(2026, 8, 11, 10, 58));
 
     const { body } = await as('julian', { url: '/api/v1/overview' });
     expect(body.counts.conflicts).toBe(1);
@@ -368,8 +370,8 @@ describe('the conflict-copy finding through the API', () => {
   });
 
   it('deletes a conflict copy through the existing bulk action — no dedicated endpoint', async () => {
-    await runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n', 'julian');
-    const copyPath = await plantConflict('julian', 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
+    await runtime.app.createNote(julian, 'Projekt/Plan.md', '# Plan\n', julian);
+    const copyPath = await plantConflict(julian, 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
 
     const { status, body } = await as('julian', {
       method: 'POST',
@@ -379,9 +381,9 @@ describe('the conflict-copy finding through the API', () => {
 
     expect(status).toBe(200);
     expect(body.ok).toEqual([copyPath]);
-    expect(runtime.app.queries.conflictCopies('julian')).toHaveLength(0);
+    expect(runtime.app.queries.conflictCopies(julian)).toHaveLength(0);
     // The original is untouched — only the copy was ever selected.
-    expect((await runtime.notes.getNote('julian', 'Projekt/Plan.md')).content).toBe('# Plan\n');
+    expect((await runtime.notes.getNote(julian, 'Projekt/Plan.md')).content).toBe('# Plan\n');
   });
 });
 
@@ -395,10 +397,10 @@ describe('a folder share and the conflict-copy finding', () => {
   });
 
   it('shows a grantee a conflict copy that lies inside the shared folder', async () => {
-    await runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n', 'julian');
-    const copyPath = await plantConflict('julian', 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
+    await runtime.app.createNote(julian, 'Projekt/Plan.md', '# Plan\n', julian);
+    const copyPath = await plantConflict(julian, 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
 
-    const view = runtime.shares.view('ramona');
+    const view = runtime.shares.view(ramona);
     const conflicts = runtime.app.queries.conflictCopies(view);
 
     expect(conflicts.map((c) => c.path)).toContain(copyPath);
@@ -414,10 +416,10 @@ describe('a folder share and the conflict-copy finding', () => {
    * all in her view — not the path, not a count, nothing.
    */
   it('never lists a conflict copy from outside the shared folder', async () => {
-    await runtime.app.createNote('julian', 'Privat/Tagebuch.md', 'geheim\n', 'julian');
-    const hiddenCopy = await plantConflict('julian', 'Privat/Tagebuch.md', new Date(2026, 8, 11, 10, 58));
+    await runtime.app.createNote(julian, 'Privat/Tagebuch.md', 'geheim\n', julian);
+    const hiddenCopy = await plantConflict(julian, 'Privat/Tagebuch.md', new Date(2026, 8, 11, 10, 58));
 
-    const view = runtime.shares.view('ramona');
+    const view = runtime.shares.view(ramona);
     const conflicts = runtime.app.queries.conflictCopies(view);
 
     expect(conflicts.map((c) => c.path)).not.toContain(hiddenCopy);
@@ -425,10 +427,10 @@ describe('a folder share and the conflict-copy finding', () => {
   });
 
   it("does not leak Julian's conflicts into Ramona's own tidy view or overview", async () => {
-    await runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n', 'julian');
-    await plantConflict('julian', 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
-    await runtime.app.createNote('julian', 'Privat/Tagebuch.md', 'geheim\n', 'julian');
-    await plantConflict('julian', 'Privat/Tagebuch.md', new Date(2026, 8, 11, 10, 58));
+    await runtime.app.createNote(julian, 'Projekt/Plan.md', '# Plan\n', julian);
+    await plantConflict(julian, 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
+    await runtime.app.createNote(julian, 'Privat/Tagebuch.md', 'geheim\n', julian);
+    await plantConflict(julian, 'Privat/Tagebuch.md', new Date(2026, 8, 11, 10, 58));
 
     // The tidy-up view and the finding counts are the caller's own vault only —
     // the same product rule `orphans`/`untagged`/`stale` already follow, and it
@@ -442,10 +444,10 @@ describe('a folder share and the conflict-copy finding', () => {
   });
 
   it("leaves Julian's own view of his conflicts whole, share or not", async () => {
-    await runtime.app.createNote('julian', 'Projekt/Plan.md', '# Plan\n', 'julian');
-    await plantConflict('julian', 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
-    await runtime.app.createNote('julian', 'Privat/Tagebuch.md', 'geheim\n', 'julian');
-    await plantConflict('julian', 'Privat/Tagebuch.md', new Date(2026, 8, 11, 10, 58));
+    await runtime.app.createNote(julian, 'Projekt/Plan.md', '# Plan\n', julian);
+    await plantConflict(julian, 'Projekt/Plan.md', new Date(2026, 8, 11, 10, 58));
+    await runtime.app.createNote(julian, 'Privat/Tagebuch.md', 'geheim\n', julian);
+    await plantConflict(julian, 'Privat/Tagebuch.md', new Date(2026, 8, 11, 10, 58));
 
     const { body } = await as('julian', { url: '/api/v1/tidy' });
     expect(body.conflicts).toHaveLength(2);

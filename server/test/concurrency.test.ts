@@ -36,6 +36,7 @@ import { UnlinkableNameError } from '../src/errors.js';
 let dataDir: string;
 let runtime: Runtime;
 let context: ToolContext;
+let julian: string;
 
 const tool = (name: string) => {
   const found = TOOLS.find((t) => t.name === name);
@@ -72,7 +73,7 @@ async function personSavesDuringNextRead(notePath: string, content: string): Pro
     if (armed && p === notePath) {
       armed = false;
       await tick();
-      await runtime.app.putNote(owner, p, content, 'julian');
+      await runtime.app.putNote(owner, p, content, julian);
     }
     return note;
   };
@@ -109,22 +110,22 @@ function personSavesFirst(
     return write(owner, p, text);
   };
 
-  return { saved: runtime.app.putNote('julian', notePath, content, 'julian'), release };
+  return { saved: runtime.app.putNote(julian, notePath, content, julian), release };
 }
 
 beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-conc-'));
   runtime = await createRuntime({ ...loadConfig(), dataDir });
-  await runtime.users.create('julian', 'ein gutes passwort');
+  julian = (await runtime.users.create('julian', 'ein gutes passwort')).id;
 
-  const key = runtime.keys.create('julian', 'test-agent', { canWrite: true });
+  const key = runtime.keys.create(julian, 'test-agent', { canWrite: true });
   context = {
     app: runtime.app,
     keys: runtime.keys,
     key: runtime.keys.resolve(key.secret)!,
   } as ToolContext;
 
-  await runtime.app.createNote('julian', 'Plan.md', 'Ausgangsfassung.\n');
+  await runtime.app.createNote(julian, 'Plan.md', 'Ausgangsfassung.\n');
 });
 
 afterEach(async () => {
@@ -133,7 +134,7 @@ afterEach(async () => {
 });
 
 const conflictCopies = async (): Promise<string[]> =>
-  (await runtime.app.notes.listNotes('julian'))
+  (await runtime.app.notes.listNotes(julian))
     .map((n) => n.path)
     .filter((p) => p.includes('Konflikt'));
 
@@ -166,7 +167,7 @@ describe('an agent writing over somebody', () => {
     person.release();
     const [, answer] = await Promise.all([person.saved, agent]);
 
-    const note = await runtime.app.notes.getNote('julian', 'Plan.md');
+    const note = await runtime.app.notes.getNote(julian, 'Plan.md');
     expect(note.content).toContain('Julians Absatz');
     expect(note.content).toContain('Vom Agenten ergänzt');
     // Hers first: the append went on top of her save, it did not overwrite it.
@@ -187,18 +188,18 @@ describe('an agent writing over somebody', () => {
    * mechanism that already existed, not by a second one inside the append.
    */
   it('keeps the appended text when a tab from before it saves over it', async () => {
-    const whatTheTabIsHolding = await runtime.app.notes.getNote('julian', 'Plan.md');
+    const whatTheTabIsHolding = await runtime.app.notes.getNote(julian, 'Plan.md');
 
     await tick();
     await tool('append_note').handler(context, { path: 'Plan.md', content: 'Vom Agenten ergänzt.' });
 
     await tick();
-    const saved = await runtime.app.putNote('julian', 'Plan.md', 'Julians Fassung.\n', 'julian', {
+    const saved = await runtime.app.putNote(julian, 'Plan.md', 'Julians Fassung.\n', julian, {
       baseMtimeMs: whatTheTabIsHolding.mtimeMs,
     });
 
     expect(saved.conflictCopy).toBeDefined();
-    const copy = await runtime.app.notes.getNote('julian', saved.conflictCopy!);
+    const copy = await runtime.app.notes.getNote(julian, saved.conflictCopy!);
     expect(copy.content).toContain('Vom Agenten ergänzt');
   });
 
@@ -234,7 +235,7 @@ describe('an agent writing over somebody', () => {
 
     const copies = await conflictCopies();
     expect(copies).toHaveLength(1);
-    const copy = await runtime.app.notes.getNote('julian', copies[0]!);
+    const copy = await runtime.app.notes.getNote(julian, copies[0]!);
     expect(copy.content).toContain('Julians Nachtrag');
   });
 
@@ -249,7 +250,7 @@ describe('an agent writing over somebody', () => {
       replace: 'Vom Agenten.',
     });
 
-    const hits = runtime.app.queries.search('julian', 'unverwechselbarer');
+    const hits = runtime.app.queries.search(julian, 'unverwechselbarer');
     expect(hits.some((h) => h.path.includes('Konflikt'))).toBe(true);
   });
 });
@@ -270,13 +271,13 @@ describe('an agent writing over somebody', () => {
  */
 describe('a note that changed behind the clock’s back', () => {
   const vaultFile = (notePath: string): string =>
-    path.join(dataDir, 'vaults', 'julian', notePath);
+    path.join(dataDir, 'vaults', julian, notePath);
 
   /** What a tab holds after reading a note: the version, as the server names it. */
   async function asOpenedInATab(
     notePath: string,
   ): Promise<{ baseMtimeMs: number; baseHash: string }> {
-    const note = await runtime.app.notes.getNote('julian', notePath);
+    const note = await runtime.app.notes.getNote(julian, notePath);
     return { baseMtimeMs: note.mtimeMs, baseHash: note.hash };
   }
 
@@ -285,14 +286,14 @@ describe('a note that changed behind the clock’s back', () => {
 
     // A restore, past the service the way `git checkout` or rsync would do it:
     // other text, and a stamp from before the tab ever read the note.
-    await runtime.app.notes.vault.writeNote('julian', 'Plan.md', 'Aus dem Backup geholt.\n');
+    await runtime.app.notes.vault.writeNote(julian, 'Plan.md', 'Aus dem Backup geholt.\n');
     const past = new Date(Date.now() - 7 * 24 * 3600 * 1000);
     await fs.utimes(vaultFile('Plan.md'), past, past);
 
-    const saved = await runtime.app.putNote('julian', 'Plan.md', 'Was im Tab stand.\n', 'julian', tab);
+    const saved = await runtime.app.putNote(julian, 'Plan.md', 'Was im Tab stand.\n', julian, tab);
 
     expect(saved.conflictCopy).toBeDefined();
-    const copy = await runtime.app.notes.getNote('julian', saved.conflictCopy!);
+    const copy = await runtime.app.notes.getNote(julian, saved.conflictCopy!);
     expect(copy.content).toContain('Aus dem Backup geholt');
   });
 
@@ -303,11 +304,11 @@ describe('a note that changed behind the clock’s back', () => {
   it('keeps it for a tab from before the deploy, which sends only a stamp', async () => {
     const tab = await asOpenedInATab('Plan.md');
 
-    await runtime.app.notes.vault.writeNote('julian', 'Plan.md', 'Aus dem Backup geholt.\n');
+    await runtime.app.notes.vault.writeNote(julian, 'Plan.md', 'Aus dem Backup geholt.\n');
     const past = new Date(Date.now() - 7 * 24 * 3600 * 1000);
     await fs.utimes(vaultFile('Plan.md'), past, past);
 
-    const saved = await runtime.app.putNote('julian', 'Plan.md', 'Was im Tab stand.\n', 'julian', {
+    const saved = await runtime.app.putNote(julian, 'Plan.md', 'Was im Tab stand.\n', julian, {
       baseMtimeMs: tab.baseMtimeMs,
     });
 
@@ -335,15 +336,15 @@ describe('a note that changed behind the clock’s back', () => {
 
     const tab = await asOpenedInATab('Plan.md');
 
-    await runtime.app.notes.vault.writeNote('julian', 'Plan.md', 'Jemand anders.\n');
+    await runtime.app.notes.vault.writeNote(julian, 'Plan.md', 'Jemand anders.\n');
     await fs.utimes(vaultFile('Plan.md'), stamp, stamp);
-    const now = await runtime.app.notes.getNote('julian', 'Plan.md');
+    const now = await runtime.app.notes.getNote(julian, 'Plan.md');
     expect(now.mtimeMs).toBe(tab.baseMtimeMs);
 
-    const saved = await runtime.app.putNote('julian', 'Plan.md', 'Was im Tab stand.\n', 'julian', tab);
+    const saved = await runtime.app.putNote(julian, 'Plan.md', 'Was im Tab stand.\n', julian, tab);
 
     expect(saved.conflictCopy).toBeDefined();
-    const copy = await runtime.app.notes.getNote('julian', saved.conflictCopy!);
+    const copy = await runtime.app.notes.getNote(julian, saved.conflictCopy!);
     expect(copy.content).toContain('Jemand anders');
   });
 
@@ -360,7 +361,7 @@ describe('a note that changed behind the clock’s back', () => {
     const later = new Date(Date.now() + 60_000);
     await fs.utimes(vaultFile('Plan.md'), later, later);
 
-    const saved = await runtime.app.putNote('julian', 'Plan.md', 'Ergänzt.\n', 'julian', tab);
+    const saved = await runtime.app.putNote(julian, 'Plan.md', 'Ergänzt.\n', julian, tab);
 
     expect(saved.conflictCopy).toBeUndefined();
     expect(await conflictCopies()).toEqual([]);
@@ -374,17 +375,17 @@ describe('names nothing could link to', () => {
     ['[CT 110] phpIPAM.md', 'eckige Klammern'],
     ['Thema #1.md', 'Raute'],
   ])('refuses to create %s (%s)', async (notePath) => {
-    await expect(runtime.app.createNote('julian', notePath, 'x')).rejects.toThrow(UnlinkableNameError);
+    await expect(runtime.app.createNote(julian, notePath, 'x')).rejects.toThrow(UnlinkableNameError);
   });
 
   it('refuses the same names through the create-or-update path', async () => {
-    await expect(runtime.app.putNote('julian', '[CT 110] phpIPAM.md', 'x')).rejects.toThrow(
+    await expect(runtime.app.putNote(julian, '[CT 110] phpIPAM.md', 'x')).rejects.toThrow(
       UnlinkableNameError,
     );
   });
 
   it('refuses renaming a note into such a name', async () => {
-    await expect(runtime.app.renameNote('julian', 'Plan.md', '[Plan] alt.md', { view: 'julian' })).rejects.toThrow(
+    await expect(runtime.app.renameNote(julian, 'Plan.md', '[Plan] alt.md', { view: julian })).rejects.toThrow(
       UnlinkableNameError,
     );
   });
@@ -396,22 +397,22 @@ describe('names nothing could link to', () => {
    */
   it('leaves a note that already has such a name usable', async () => {
     // Written past the service, the way an import or a sync would put it there.
-    await runtime.app.notes.vault.writeNote('julian', '[CT 110] phpIPAM.md', 'Bestand.\n');
-    await runtime.indexer.indexNote('julian', '[CT 110] phpIPAM.md');
+    await runtime.app.notes.vault.writeNote(julian, '[CT 110] phpIPAM.md', 'Bestand.\n');
+    await runtime.indexer.indexNote(julian, '[CT 110] phpIPAM.md');
 
-    const note = await runtime.app.notes.getNote('julian', '[CT 110] phpIPAM.md');
+    const note = await runtime.app.notes.getNote(julian, '[CT 110] phpIPAM.md');
     expect(note.content).toContain('Bestand');
 
     // Editing it still works…
-    await runtime.app.putNote('julian', '[CT 110] phpIPAM.md', 'Geändert.\n', 'julian');
+    await runtime.app.putNote(julian, '[CT 110] phpIPAM.md', 'Geändert.\n', julian);
 
     // …and renaming it out of the problem is allowed.
-    const renamed = await runtime.app.renameNote('julian', '[CT 110] phpIPAM.md', 'CT 110 — phpIPAM.md', { view: 'julian' });
+    const renamed = await runtime.app.renameNote(julian, '[CT 110] phpIPAM.md', 'CT 110 — phpIPAM.md', { view: julian });
     expect(renamed.note.path).toBe('CT 110 — phpIPAM.md');
   });
 
   it('allows the characters in a folder name, where they are not a link target', async () => {
-    const note = await runtime.app.createNote('julian', 'Projekt #1/Plan.md', 'x');
+    const note = await runtime.app.createNote(julian, 'Projekt #1/Plan.md', 'x');
     expect(note.path).toBe('Projekt #1/Plan.md');
   });
 });

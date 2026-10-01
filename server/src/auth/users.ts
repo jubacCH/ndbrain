@@ -28,19 +28,17 @@ export type AccountKind = 'person' | 'space';
 
 export interface User {
   /**
-   * The vault's directory name and the key every share, session and agent key
-   * hangs off. Written once, when the account is made, and never again.
+   * The identifier, which was never anybody's name.
+   *
+   * Random, unique and meaningless on purpose, because every readable name is a
+   * name somebody eventually wants changed — and this is the vault's directory
+   * and the key every share, session and agent key hangs off. Written once,
+   * when the account is made, and never again.
+   *
+   * It used to be a separate `guid` column beside a readable id. v16 made it
+   * the id, and keeping both would have been two columns holding one value.
    */
   id: string;
-  /**
-   * The identifier that was never anybody's name.
-   *
-   * Random, unique, and meaningless on purpose: every readable name is a name
-   * somebody eventually wants changed, so the thing other rows will point at is
-   * one nobody chose. Shown to an administrator and to nobody else — it is how
-   * an account is identified, not how it is addressed.
-   */
-  guid: string;
   /**
    * What somebody types at the login. Starts as a copy of the id and is free to
    * change afterwards — which is the whole point of it being a separate column:
@@ -61,6 +59,19 @@ export interface Session {
 }
 
 export class UserExistsError extends NdbrainError {}
+
+/**
+ * A fresh account identifier.
+ *
+ * `acc_` and sixteen random bytes, which is the shape the v15 migration gave
+ * every account that already existed. Readable enough to recognise in a log or
+ * a path as an account and nothing else, and meaningless on purpose: this is
+ * what shares, sessions, agent keys and the vault's own directory hang off, so
+ * it can never be the word somebody typed.
+ */
+function newAccountId(): string {
+  return `acc_${randomBytes(16).toString('hex')}`;
+}
 export class UnknownUserError extends NdbrainError {}
 
 /** Thirty days. Long enough not to be annoying on a personal tool, short enough to expire. */
@@ -76,7 +87,6 @@ function tokenHash(token: string): string {
 function toUser(row: Record<string, unknown>): User {
   return {
     id: String(row['id']),
-    guid: String(row['guid'] ?? ''),
     // Falls back to the id, for a row read by a build whose migration has not
     // run — the two were the same thing until v14.
     loginName: String(row['login_name'] ?? row['id']),
@@ -128,8 +138,30 @@ export class UserService {
     return Number(row?.n ?? 0);
   }
 
+  /**
+   * The account somebody means when they type a name.
+   *
+   * Since the id became a random identifier, every place that used to take an
+   * account name and use it directly — the CLI, a test, an operator at a shell
+   * — needs this between the word and the row. Exact, like the login itself:
+   * the unique indexes make a case-folded lookup unnecessary and an inexact one
+   * would resolve a name nobody granted.
+   */
+  byLogin(name: string): User | undefined {
+    const row = this.#db.get('SELECT * FROM users WHERE login_name = ? OR id = ?', name, name);
+    return row ? toUser(row) : undefined;
+  }
+
+  /**
+   * Every account, in an order somebody can follow.
+   *
+   * By login and not by id: the id became a random identifier, so ordering by
+   * it put the administrator's accounts table in an arbitrary order that
+   * changed whenever an account was added. `lower` so that `Anna` and `anna`
+   * sort together rather than by their code points.
+   */
   list(): User[] {
-    return this.#db.all('SELECT * FROM users ORDER BY id').map(toUser);
+    return this.#db.all('SELECT * FROM users ORDER BY lower(login_name)').map(toUser);
   }
 
   get(id: string): User | undefined {
@@ -207,15 +239,26 @@ export class UserService {
     }
   }
 
-  /** Creates an account and its vault directory. */
+  /**
+   * Creates an account and its vault directory.
+   *
+   * `name` is what somebody will sign in with — it is **not** the id. The id is
+   * drawn here and never means anything, because every readable name is a name
+   * somebody eventually wants changed, and the id is what every share, session
+   * and agent key hangs off as well as being the vault's directory. Choosing it
+   * from a word somebody typed is how it came to be unchangeable in the first
+   * place.
+   */
   async create(
-    id: string,
+    name: string,
     password: string,
     options: { displayName?: string; role?: Role } = {},
   ): Promise<User> {
-    // The id becomes a directory name, so it goes through the same validation the
-    // vault layer applies — otherwise an account name is a traversal vector.
-    assertUserId(id);
+    // It becomes the login, which is checked the same way: it has to be
+    // typeable, unique, and — because the signpost on disk is a link under this
+    // name — a legal path segment.
+    assertUserId(name);
+    const id = newAccountId();
 
     // Hashing a password takes long enough for a second request to run from
     // start to finish, and this is the only `await` in the method: checked
@@ -223,16 +266,13 @@ export class UserService {
     // row is written. Checked here, the check and the insert are one
     // uninterrupted stretch of synchronous work.
     const hash = await hashPassword(password);
-    this.#assertNameFree(id);
+    this.#assertNameFree(name);
     this.#insertAccount(
-      // `login_name` starts as the id and is free afterwards. Named rather than
-      // left to the column's default, which is the empty string — and the
-      // unique index on it would then let exactly one account exist.
       `INSERT INTO users (id, login_name, display_name, password_hash, role, created_at, disabled_at)
        VALUES (?, ?, ?, ?, ?, ?, NULL)`,
       id,
-      id,
-      options.displayName ?? id,
+      name,
+      options.displayName ?? name,
       hash,
       options.role ?? 'user',
       Date.now(),
@@ -253,17 +293,21 @@ export class UserService {
    * all, so no password can ever match it — and `authenticate` does not even
    * try, see there.
    */
-  async createSpace(id: string, displayName?: string): Promise<User> {
-    assertUserId(id);
+  async createSpace(handle: string, displayName?: string): Promise<User> {
+    assertUserId(handle);
+    this.#assertNameFree(handle);
 
-    this.#assertNameFree(id);
-
-    const name = displayName === undefined ? id : checkedDisplayName(displayName);
+    // Drawn, as for a person. A space has no login to speak of, but its handle
+    // is what the signpost on disk is written under and what an administrator
+    // names it by — and it is the same kind of word somebody later wants
+    // changed.
+    const id = newAccountId();
+    const name = displayName === undefined ? handle : checkedDisplayName(displayName);
     this.#insertAccount(
       `INSERT INTO users (id, login_name, display_name, password_hash, role, kind, created_at, disabled_at)
        VALUES (?, ?, ?, '!space', 'user', 'space', ?, NULL)`,
       id,
-      id,
+      handle,
       name,
       Date.now(),
     );

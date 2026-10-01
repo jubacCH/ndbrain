@@ -29,22 +29,24 @@ import { startHarness, type Harness } from './support/harness.js';
 vi.setConfig({ testTimeout: 30_000 });
 
 let h: Harness;
+// The real account ids behind the login names 'julian' and 'ramona', captured
+// once per test since the refactor made `User.id` a random `acc_<hex>` string
+// rather than the typed login.
+let julian: string;
+let ramona: string;
 
 beforeEach(async () => {
   h = await startHarness('guard');
-  for (const [id, password] of [
-    ['julian', 'ein gutes passwort'],
-    ['ramona', 'ihr gutes passwort'],
-  ] as const) {
-    await h.runtime.users.create(id, password);
-    await h.login(id, password);
-  }
+  julian = (await h.runtime.users.create('julian', 'ein gutes passwort')).id;
+  await h.login('julian', 'ein gutes passwort');
+  ramona = (await h.runtime.users.create('ramona', 'ihr gutes passwort')).id;
+  await h.login('ramona', 'ihr gutes passwort');
   const app = h.runtime.app;
-  await app.createNote('julian', 'Projekt/Plan.md', '# Plan\n\ngeteilt [[Alt]]\n\n- [ ] eins\n', 'julian');
-  await app.createNote('julian', 'Projekt/Alt.md', '# Alt\n', 'julian');
-  await app.createNote('julian', 'Projekt/Geheim.md', '# Geheim\n\nnur für Julian\n', 'julian');
-  await app.createNote('julian', 'Archiv/x.md', '# x\n', 'julian');
-  await app.createNote('julian', 'x.md', '# x im Wurzelordner\n', 'julian');
+  await app.createNote(julian, 'Projekt/Plan.md', '# Plan\n\ngeteilt [[Alt]]\n\n- [ ] eins\n', julian);
+  await app.createNote(julian, 'Projekt/Alt.md', '# Alt\n', julian);
+  await app.createNote(julian, 'Projekt/Geheim.md', '# Geheim\n\nnur für Julian\n', julian);
+  await app.createNote(julian, 'Archiv/x.md', '# x\n', julian);
+  await app.createNote(julian, 'x.md', '# x im Wurzelordner\n', julian);
 });
 
 afterEach(async () => {
@@ -52,7 +54,7 @@ afterEach(async () => {
   await h.close();
 });
 
-const onDisk = (notePath: string): string => path.join(h.dataDir, 'vaults', 'julian', notePath);
+const onDisk = (notePath: string): string => path.join(h.dataDir, 'vaults', julian, notePath);
 const exists = (notePath: string): Promise<boolean> => fs.stat(onDisk(notePath)).then(() => true, () => false);
 
 async function share(grantee: string, kind: 'note' | 'folder', sharePath: string, canWrite: boolean): Promise<void> {
@@ -66,13 +68,13 @@ async function share(grantee: string, kind: 'note' | 'folder', sharePath: string
 
 function noteShares(): string[] {
   return h.runtime.shares
-    .byOwner('julian')
+    .byOwner(julian)
     .filter((s) => s.kind === 'note')
     .map((s) => `${s.grantee}:${s.prefix}`);
 }
 
 const reads = async (user: string, notePath: string): Promise<number> =>
-  (await h.as(user, { url: `/api/v1/notes/${encodeURI(notePath)}?owner=julian` })).status;
+  (await h.as(user, { url: `/api/v1/notes/${encodeURI(notePath)}?owner=${julian}` })).status;
 
 /** Puts a different file at `notePath` in one step, as `mv` over it does. */
 async function replaceBehindTheBack(notePath: string, content: string): Promise<void> {
@@ -93,7 +95,7 @@ describe('B1: a bulk move checks where each note really goes', () => {
     const reply = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/bulk',
-      payload: { owner: 'julian', action: 'move', paths: ['Projekt/Geheim.md'], dir: 'Archiv' },
+      payload: { owner: julian, action: 'move', paths: ['Projekt/Geheim.md'], dir: 'Archiv' },
     });
     expect(reply.body.ok).toEqual([]);
     expect(reply.body.failed).toEqual([{ path: 'Projekt/Geheim.md', reason: 'note does not exist' }]);
@@ -108,7 +110,7 @@ describe('B1: a bulk move checks where each note really goes', () => {
     const reply = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/bulk',
-      payload: { owner: 'julian', action: 'move', paths: ['Projekt/Geheim.md'], dir: '' },
+      payload: { owner: julian, action: 'move', paths: ['Projekt/Geheim.md'], dir: '' },
     });
     expect(reply.body.ok).toEqual([]);
     expect(await exists('Geheim.md')).toBe(false);
@@ -116,12 +118,12 @@ describe('B1: a bulk move checks where each note really goes', () => {
 
   it('still moves between two folders the grantee may write', async () => {
     await share('ramona', 'folder', 'Projekt', true);
-    h.runtime.shares.grant('julian', 'Archiv', 'ramona', true);
+    h.runtime.shares.grant(julian, 'Archiv', ramona, true);
 
     const reply = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/bulk',
-      payload: { owner: 'julian', action: 'move', paths: ['Projekt/Geheim.md'], dir: 'Archiv' },
+      payload: { owner: julian, action: 'move', paths: ['Projekt/Geheim.md'], dir: 'Archiv' },
     });
     expect(reply.body.ok).toEqual(['Archiv/Geheim.md']);
   });
@@ -129,15 +131,15 @@ describe('B1: a bulk move checks where each note really goes', () => {
   it('checks each note on its own: one allowed destination does not carry another', async () => {
     await share('ramona', 'folder', 'Projekt', true);
     // A note share on exactly where Geheim.md would land, nothing for Alt.md.
-    await h.runtime.app.createNote('julian', 'Archiv/Geheim.md', '# Platzhalter\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Archiv/Geheim.md', '# Platzhalter\n', julian);
     await share('ramona', 'note', 'Archiv/Geheim.md', true);
-    await h.runtime.app.deleteNote('julian', 'Archiv/Geheim.md', 'julian');
-    h.runtime.shares.grant('julian', { kind: 'note', path: 'Archiv/Geheim.md' }, 'ramona', true);
+    await h.runtime.app.deleteNote(julian, 'Archiv/Geheim.md', julian);
+    h.runtime.shares.grant(julian, { kind: 'note', path: 'Archiv/Geheim.md' }, ramona, true);
 
     const reply = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/bulk',
-      payload: { owner: 'julian', action: 'move', paths: ['Projekt/Alt.md'], dir: 'Archiv' },
+      payload: { owner: julian, action: 'move', paths: ['Projekt/Alt.md'], dir: 'Archiv' },
     });
     expect(reply.body.ok).toEqual([]);
     expect(await exists('Archiv/Alt.md')).toBe(false);
@@ -147,13 +149,13 @@ describe('B1: a bulk move checks where each note really goes', () => {
 describe('B1: a folder operation is never covered by a note share', () => {
   it('refuses to rename a folder to a path spelled like a shared note', async () => {
     await share('ramona', 'folder', 'Projekt', true);
-    await h.runtime.app.createNote('julian', 'Projekt/Sub/Tief.md', '# Tief\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Projekt/Sub/Tief.md', '# Tief\n', julian);
     await share('ramona', 'note', 'Archiv/x.md', true);
 
     const reply = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/folders/rename',
-      payload: { owner: 'julian', from: 'Projekt/Sub', to: 'Archiv/x.md' },
+      payload: { owner: julian, from: 'Projekt/Sub', to: 'Archiv/x.md' },
     });
     expect(reply.status).toBe(404);
     expect(await exists('Projekt/Sub/Tief.md')).toBe(true);
@@ -164,9 +166,9 @@ describe('B1: a folder operation is never covered by a note share', () => {
     const created = await h.as('ramona', {
       method: 'POST',
       url: '/api/v1/folders',
-      payload: { owner: 'julian', path: 'Archiv/x.md' },
+      payload: { owner: julian, path: 'Archiv/x.md' },
     });
-    const deleted = await h.as('ramona', { method: 'DELETE', url: '/api/v1/folders/Archiv/x.md?owner=julian' });
+    const deleted = await h.as('ramona', { method: 'DELETE', url: `/api/v1/folders/Archiv/x.md?owner=${julian}` });
     expect([created.status, deleted.status]).toEqual([404, 404]);
   });
 });
@@ -188,12 +190,12 @@ describe('B2: a write before the watcher has spoken carries no share to a strang
     ],
     [
       'an agent appending',
-      () => h.tool(h.runtime.keys.create('julian', 'agent', { canWrite: true }).secret, 'append_note', { path: 'Projekt/Plan.md', content: 'vom agenten' }),
+      () => h.tool(h.runtime.keys.create(julian, 'agent', { canWrite: true }).secret, 'append_note', { path: 'Projekt/Plan.md', content: 'vom agenten' }),
     ],
     [
       'an agent editing',
       () =>
-        h.tool(h.runtime.keys.create('julian', 'agent', { canWrite: true }).secret, 'edit_note', {
+        h.tool(h.runtime.keys.create(julian, 'agent', { canWrite: true }).secret, 'edit_note', {
           path: 'Projekt/Plan.md',
           find: 'eins',
           replace: 'zwei',
@@ -250,7 +252,7 @@ describe('B2: a write before the watcher has spoken carries no share to a strang
   it('keeps a share that was the file all along through the same writes', async () => {
     await share('ramona', 'note', 'Projekt/Plan.md', false);
     for (const [, write] of writes) await write();
-    expect(noteShares()).toEqual(['ramona:Projekt/Plan.md']);
+    expect(noteShares()).toEqual([`${ramona}:Projekt/Plan.md`]);
     expect(await reads('ramona', 'Projekt/Plan.md')).toBe(200);
   });
 
@@ -259,9 +261,9 @@ describe('B2: a write before the watcher has spoken carries no share to a strang
     await replaceBehindTheBack('Projekt/Plan.md', FOREIGN);
 
     for (const url of [
-      '/api/v1/notes/Projekt/Plan.md?owner=julian',
-      '/api/v1/files/Projekt/Plan.md?owner=julian',
-      '/api/v1/history/Projekt/Plan.md?owner=julian',
+      `/api/v1/notes/Projekt/Plan.md?owner=${julian}`,
+      `/api/v1/files/Projekt/Plan.md?owner=${julian}`,
+      `/api/v1/history/Projekt/Plan.md?owner=${julian}`,
     ]) {
       const reply = await h.as('ramona', { url });
       expect({ url, status: reply.status }).toEqual({ url, status: 404 });
@@ -292,7 +294,7 @@ describe('B3: without a birth time, a reused inode is not the same file', () => 
 
     await fs.rm(onDisk('Projekt/Plan.md'));
     await fs.writeFile(onDisk('Projekt/Plan.md'), '# ganz andere Notiz\n', 'utf8');
-    await h.runtime.app.noteChanged('julian', 'Projekt/Plan.md');
+    await h.runtime.app.noteChanged(julian, 'Projekt/Plan.md');
 
     expect(noteShares()).toEqual([]);
   });
@@ -301,23 +303,23 @@ describe('B3: without a birth time, a reused inode is not the same file', () => 
     withoutBirthTime();
     await share('ramona', 'note', 'Projekt/Plan.md', true);
 
-    const saved = await h.as('ramona', { method: 'PUT', url: '/api/v1/notes/Projekt/Plan.md?owner=julian', payload: { content: '# Plan\n\nneu\n' } });
+    const saved = await h.as('ramona', { method: 'PUT', url: `/api/v1/notes/Projekt/Plan.md?owner=${julian}`, payload: { content: '# Plan\n\nneu\n' } });
     expect(saved.status).toBe(200);
-    await h.runtime.app.noteChanged('julian', 'Projekt/Plan.md');
-    expect(noteShares()).toEqual(['ramona:Projekt/Plan.md']);
+    await h.runtime.app.noteChanged(julian, 'Projekt/Plan.md');
+    expect(noteShares()).toEqual([`${ramona}:Projekt/Plan.md`]);
   });
 });
 
 describe('B5: an equal hash vouches only for substantial content', () => {
   it('does not keep a share through an empty file put in place and filled later', async () => {
     await share('ramona', 'note', 'Projekt/Plan.md', true);
-    const emptied = await h.as('ramona', { method: 'PUT', url: '/api/v1/notes/Projekt/Plan.md?owner=julian', payload: { content: '# Plan\n\nkurz\n' } });
+    const emptied = await h.as('ramona', { method: 'PUT', url: `/api/v1/notes/Projekt/Plan.md?owner=${julian}`, payload: { content: '# Plan\n\nkurz\n' } });
     expect(emptied.status).toBe(200);
 
     await replaceBehindTheBack('Projekt/Plan.md', '# Plan\n\nkurz\n');
-    await h.runtime.app.noteChanged('julian', 'Projekt/Plan.md');
+    await h.runtime.app.noteChanged(julian, 'Projekt/Plan.md');
     await fs.writeFile(onDisk('Projekt/Plan.md'), '# Plan\n\nkurz\n\nund jetzt eine neue private Notiz\n', 'utf8');
-    await h.runtime.app.noteChanged('julian', 'Projekt/Plan.md');
+    await h.runtime.app.noteChanged(julian, 'Projekt/Plan.md');
 
     expect(noteShares()).toEqual([]);
     expect(await reads('ramona', 'Projekt/Plan.md')).toBe(404);
@@ -334,7 +336,7 @@ describe('B5: an equal hash vouches only for substantial content', () => {
 describe('R5: the file is looked at twice around its content', () => {
   it('withdraws a share when the file changes while it is read', async () => {
     const text = `# Plan\n\n${'wiederhergestellt '.repeat(8)}\n`;
-    await h.runtime.app.putNote('julian', 'Projekt/Plan.md', text, 'julian');
+    await h.runtime.app.putNote(julian, 'Projekt/Plan.md', text, julian);
     await share('ramona', 'note', 'Projekt/Plan.md', false);
     // Same substantial content in a new file, so the hash alone would keep it —
     // but the file is swapped once more between the two looks.
@@ -348,7 +350,7 @@ describe('R5: the file is looked at twice around its content', () => {
       return calls === 2 ? `${identity}-swapped` : identity;
     });
 
-    await h.runtime.app.noteChanged('julian', 'Projekt/Plan.md');
+    await h.runtime.app.noteChanged(julian, 'Projekt/Plan.md');
     expect(noteShares()).toEqual([]);
   });
 });
@@ -374,14 +376,14 @@ describe('B4: a save that names its version never creates a note', () => {
         h.as('julian', { method: 'POST', url: '/api/v1/rename', payload: { from, to } }),
         h.as('ramona', {
           method: 'PUT',
-          url: `/api/v1/notes/${encodeURI(from)}?owner=julian`,
+          url: `/api/v1/notes/${encodeURI(from)}?owner=${julian}`,
           payload: { content: `# Plan\n\nramona ${i}\n`, baseMtimeMs: Date.now() },
         }),
       ]);
       expect(renamed.status).toBe(200);
       expect([200, 404]).toContain(saved.status);
       if (await exists(from)) stray += 1;
-      expect(noteShares()).toEqual([`ramona:${to}`]);
+      expect(noteShares()).toEqual([`${ramona}:${to}`]);
       from = to;
     }
     expect(stray).toBe(0);
@@ -398,14 +400,14 @@ describe('B7: the path of a conflict copy', () => {
     await share('ramona', 'note', 'Projekt/Plan.md', true);
     const asRamona = await h.as('ramona', {
       method: 'PUT',
-      url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+      url: `/api/v1/notes/Projekt/Plan.md?owner=${julian}`,
       payload: { content: '# Plan\n\nramona\n', baseMtimeMs: 1 },
     });
     expect(asRamona.status).toBe(200);
     expect(asRamona.body.conflictCopy).toBeUndefined();
     expect(asRamona.raw).not.toContain('Konflikt');
     // The copy was made all the same.
-    expect(h.runtime.app.queries.conflictCopies('julian')).toHaveLength(1);
+    expect(h.runtime.app.queries.conflictCopies(julian)).toHaveLength(1);
 
     const asJulian = await h.as('julian', {
       method: 'PUT',
@@ -419,7 +421,7 @@ describe('B7: the path of a conflict copy', () => {
     await share('ramona', 'folder', 'Projekt', true);
     const reply = await h.as('ramona', {
       method: 'PUT',
-      url: '/api/v1/notes/Projekt/Plan.md?owner=julian',
+      url: `/api/v1/notes/Projekt/Plan.md?owner=${julian}`,
       payload: { content: '# Plan\n\nramona\n', baseMtimeMs: 1 },
     });
     expect(typeof reply.body.conflictCopy).toBe('string');
@@ -432,7 +434,7 @@ describe('a shell replacing the file in one command', () => {
   it('withdraws the share at the next look', async () => {
     await share('ramona', 'note', 'Projekt/Plan.md', false);
     execFileSync('sh', ['-c', 'rm "$1" && printf "# fremd\\n" > "$1"', 'sh', onDisk('Projekt/Plan.md')]);
-    await h.runtime.app.dropDanglingShares('julian');
+    await h.runtime.app.dropDanglingShares(julian);
     expect(noteShares()).toEqual([]);
   });
 });
@@ -461,7 +463,7 @@ describe('a read confirms only for somebody who holds a note share on that path'
     // The grantee of the note herself pays it, and learns nothing from it that
     // she does not already hold.
     expect(await reads('ramona', 'Projekt/Plan.md')).toBe(200);
-    expect(confirm).toHaveBeenCalledWith('julian', 'Projekt/Plan.md');
+    expect(confirm).toHaveBeenCalledWith(julian, 'Projekt/Plan.md');
   });
 
   it('still keeps the replacement from the grantee', async () => {
@@ -490,14 +492,14 @@ describe('a read confirms only for somebody who holds a note share on that path'
 describe('the file listing of a shared vault', () => {
   it('describes no note whose file was replaced behind ndBrain’s back', async () => {
     await share('ramona', 'note', 'Projekt/Plan.md', false);
-    const before = await h.as('ramona', { url: '/api/v1/files?owner=julian' });
+    const before = await h.as('ramona', { url: `/api/v1/files?owner=${julian}` });
     expect(before.body.files.map((file: { path: string }) => file.path)).toEqual(['Projekt/Plan.md']);
 
     await replaceBehindTheBack('Projekt/Plan.md', FOREIGN);
 
     // Not its size, not its modification time, not its name: the listing is a
     // read of the file like any other.
-    const after = await h.as('ramona', { url: '/api/v1/files?owner=julian' });
+    const after = await h.as('ramona', { url: `/api/v1/files?owner=${julian}` });
     expect(after.status).toBe(404);
     expect(noteShares()).toEqual([]);
   });
@@ -510,7 +512,7 @@ describe('the file listing of a shared vault', () => {
       truncated: true,
     });
 
-    const listed = await h.runtime.app.listFilesIn('ramona', 'julian');
+    const listed = await h.runtime.app.listFilesIn(ramona, julian);
     expect(listed?.truncated).toBe(true);
   });
 });
@@ -530,7 +532,7 @@ describe('the reconcile and the start confirm before they index', () => {
     const realSync = indexer.sync.bind(indexer);
     const sharesWhenIndexed: string[][] = [];
     vi.spyOn(indexer, 'sync').mockImplementation(async (owner: string) => {
-      if (owner === 'julian') sharesWhenIndexed.push(noteShares());
+      if (owner === julian) sharesWhenIndexed.push(noteShares());
       return realSync(owner);
     });
 

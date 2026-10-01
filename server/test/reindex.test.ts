@@ -48,52 +48,53 @@ afterEach(async () => {
 
 describe('reindex', () => {
   it('rebuilds one account from its files and reports what it indexed', async () => {
-    await runtime.users.create('anna', 'passwort-eins-zwei');
-    await runtime.notes.createNote('anna', 'Notiz.md', '# Notiz\n');
-    await runtime.notes.createNote('anna', 'Zweite.md', '# Zweite\n');
+    const anna = (await runtime.users.create('anna', 'passwort-eins-zwei')).id;
+    await runtime.notes.createNote(anna, 'Notiz.md', '# Notiz\n');
+    await runtime.notes.createNote(anna, 'Zweite.md', '# Zweite\n');
 
+    // By login, the way an operator would type it at the shell.
     await runReindexCommand(runtime, ['anna'], write);
 
-    expect(printed()).toContain('anna');
+    expect(printed()).toContain(anna);
     expect(printed()).toContain('2 indexed');
-    expect(runtime.app.queries.countNotes('anna')).toBe(2);
+    expect(runtime.app.queries.countNotes(anna)).toBe(2);
   });
 
   it('names every file it had to skip, so the operator knows what to rename', async () => {
-    await runtime.users.create('anna', 'passwort-eins-zwei');
-    await runtime.notes.createNote('anna', 'Notiz.md', '# Notiz\n');
-    await dropFile('anna', 'Was ist ein VLAN?.md', '# VLAN\n');
+    const anna = (await runtime.users.create('anna', 'passwort-eins-zwei')).id;
+    await runtime.notes.createNote(anna, 'Notiz.md', '# Notiz\n');
+    await dropFile(anna, 'Was ist ein VLAN?.md', '# VLAN\n');
 
     await runReindexCommand(runtime, ['anna'], write);
 
     expect(printed()).toContain('1 indexed');
     expect(printed()).toContain('1 skipped');
     expect(printed()).toContain('Was ist ein VLAN?.md');
-    expect(runtime.app.queries.countNotes('anna')).toBe(1);
+    expect(runtime.app.queries.countNotes(anna)).toBe(1);
   });
 
   it('does every account when none is named', async () => {
-    await runtime.users.create('anna', 'passwort-eins-zwei');
-    await runtime.users.create('bruno', 'passwort-eins-zwei');
-    await runtime.notes.createNote('anna', 'Notiz.md', '# Notiz\n');
-    await runtime.notes.createNote('bruno', 'Andere.md', '# Andere\n');
+    const anna = (await runtime.users.create('anna', 'passwort-eins-zwei')).id;
+    const bruno = (await runtime.users.create('bruno', 'passwort-eins-zwei')).id;
+    await runtime.notes.createNote(anna, 'Notiz.md', '# Notiz\n');
+    await runtime.notes.createNote(bruno, 'Andere.md', '# Andere\n');
 
     await runReindexCommand(runtime, [], write);
 
-    expect(printed()).toContain('anna');
-    expect(printed()).toContain('bruno');
-    expect(runtime.app.queries.countNotes('anna')).toBe(1);
-    expect(runtime.app.queries.countNotes('bruno')).toBe(1);
+    expect(printed()).toContain(anna);
+    expect(printed()).toContain(bruno);
+    expect(runtime.app.queries.countNotes(anna)).toBe(1);
+    expect(runtime.app.queries.countNotes(bruno)).toBe(1);
   });
 
   it('repairs an index that disagrees with the vault', async () => {
-    await runtime.users.create('anna', 'passwort-eins-zwei');
-    await runtime.app.createNote('anna', 'Notiz.md', '# Notiz\n');
+    const anna = (await runtime.users.create('anna', 'passwort-eins-zwei')).id;
+    await runtime.app.createNote(anna, 'Notiz.md', '# Notiz\n');
     // A row for a note that is not in the vault — what a lost event leaves behind.
     runtime.db.run(
       `INSERT INTO notes (owner, path, title, path_key, title_key, size, mtime_ms, hash, indexed_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      'anna',
+      anna,
       'Geist.md',
       'Geist',
       'geist.md',
@@ -103,11 +104,11 @@ describe('reindex', () => {
       'x',
       0,
     );
-    expect(runtime.app.queries.countNotes('anna')).toBe(2);
+    expect(runtime.app.queries.countNotes(anna)).toBe(2);
 
     await runReindexCommand(runtime, ['anna'], write);
 
-    expect(runtime.app.queries.countNotes('anna')).toBe(1);
+    expect(runtime.app.queries.countNotes(anna)).toBe(1);
   });
 
   it('refuses an account that does not exist rather than reporting nothing to do', async () => {
@@ -115,17 +116,17 @@ describe('reindex', () => {
   });
 
   it('leaves the accounts, keys and shares alone — they are not in the vault', async () => {
-    await runtime.users.create('anna', 'passwort-eins-zwei');
-    await runtime.users.create('bruno', 'passwort-eins-zwei');
-    await runtime.notes.createNote('anna', 'Notiz.md', '# Notiz\n');
-    const { key } = runtime.keys.create('anna', 'agent');
-    runtime.shares.grant('anna', 'Notiz.md', 'bruno');
+    const anna = (await runtime.users.create('anna', 'passwort-eins-zwei')).id;
+    const bruno = (await runtime.users.create('bruno', 'passwort-eins-zwei')).id;
+    await runtime.notes.createNote(anna, 'Notiz.md', '# Notiz\n');
+    const { key } = runtime.keys.create(anna, 'agent');
+    runtime.shares.grant(anna, 'Notiz.md', bruno);
 
     await runReindexCommand(runtime, [], write);
 
-    expect(runtime.users.list().map((user) => user.id).sort()).toEqual(['anna', 'bruno']);
-    expect(runtime.keys.list('anna').map((entry) => entry.id)).toContain(key.id);
-    expect(runtime.shares.byOwner('anna').length).toBe(1);
+    expect(runtime.users.list().map((user) => user.id).sort()).toEqual([anna, bruno].sort());
+    expect(runtime.keys.list(anna).map((entry) => entry.id)).toContain(key.id);
+    expect(runtime.shares.byOwner(anna).length).toBe(1);
   });
 });
 

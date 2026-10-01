@@ -536,17 +536,14 @@ export const DeletePreviewResponse = z.object({
 /* ---- administration ------------------------------------------------------ */
 
 export const AdminUser = z.object({
-  /** The vault's directory name. Never changes; shown where it differs. */
-  id: z.string(),
   /**
-   * The identifier that was never anybody's name.
+   * The identifier: random, unique, and the vault's directory name.
    *
-   * On this schema and on no other: `User`, which is what `/api/v1/auth/me` and
-   * every other route hands back, has no `guid` and is not to grow one. An
-   * account is addressed by its display name everywhere a person can see; the
-   * identifier is for whoever administers the server.
+   * Every route carries it, because a client cannot tell its own notes from
+   * somebody else's without one. What an ordinary caller never learns is
+   * *another* account's — this listing is the administrator's.
    */
-  guid: z.string(),
+  id: z.string(),
   /** What this account signs in with. */
   loginName: z.string(),
   displayName: z.string(),

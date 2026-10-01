@@ -29,16 +29,15 @@ import { appended } from '../src/markdown/edit.js';
 import { startHarness, type Harness } from './support/harness.js';
 
 let h: Harness;
+let julian: string;
+let ramona: string;
 
 beforeEach(async () => {
   h = await startHarness('append');
-  for (const [id, password] of [
-    ['julian', 'ein gutes passwort'],
-    ['ramona', 'ihr gutes passwort'],
-  ] as const) {
-    await h.runtime.users.create(id, password);
-    await h.login(id, password);
-  }
+  julian = (await h.runtime.users.create('julian', 'ein gutes passwort')).id;
+  await h.login('julian', 'ein gutes passwort');
+  ramona = (await h.runtime.users.create('ramona', 'ihr gutes passwort')).id;
+  await h.login('ramona', 'ihr gutes passwort');
 });
 
 afterEach(async () => {
@@ -46,7 +45,7 @@ afterEach(async () => {
 });
 
 const read = (notePath: string): Promise<string> =>
-  h.runtime.app.notes.getNote('julian', notePath).then((note) => note.content);
+  h.runtime.app.notes.getNote(julian, notePath).then((note) => note.content);
 
 const append = (
   user: string,
@@ -98,7 +97,7 @@ describe('where the text goes', () => {
 
 describe('POST /api/v1/append/*', () => {
   it('appends to a note that is there', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Bestand.\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Plan.md', 'Bestand.\n', julian);
 
     const reply = await append('julian', 'Plan.md', { content: 'Zusatz.' });
 
@@ -126,15 +125,15 @@ describe('POST /api/v1/append/*', () => {
       ifAbsent: TEMPLATE,
     });
 
-    const hits = h.runtime.app.queries.search('julian', 'unverwechselbarer');
+    const hits = h.runtime.app.queries.search(julian, 'unverwechselbarer');
     expect(hits.map((hit) => hit.path)).toContain('50_Journal/2026/09/2026-09-22.md');
   });
 
   it('indexes an append into a note that was already there', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Bestand.\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Plan.md', 'Bestand.\n', julian);
     await append('julian', 'Plan.md', { content: 'unverwechselbarer Zusatz' });
 
-    const hits = h.runtime.app.queries.search('julian', 'unverwechselbarer');
+    const hits = h.runtime.app.queries.search(julian, 'unverwechselbarer');
     expect(hits.map((hit) => hit.path)).toContain('Plan.md');
   });
 
@@ -149,7 +148,7 @@ describe('POST /api/v1/append/*', () => {
    * a read-modify-write from the browser would lose whichever finished first.
    */
   it('loses nothing when two appends race', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Bestand.\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Plan.md', 'Bestand.\n', julian);
 
     const replies = await Promise.all([
       append('julian', 'Plan.md', { content: 'Erster.' }),
@@ -163,7 +162,7 @@ describe('POST /api/v1/append/*', () => {
   });
 
   it('loses nothing when two appends race into the same section', async () => {
-    await h.runtime.app.createNote('julian', 'Tag.md', TEMPLATE, 'julian');
+    await h.runtime.app.createNote(julian, 'Tag.md', TEMPLATE, julian);
 
     await Promise.all([
       append('julian', 'Tag.md', { content: 'Erster.', section: 'Notizen' }),
@@ -179,10 +178,10 @@ describe('POST /api/v1/append/*', () => {
   });
 
   it('never leaves a conflict copy: nothing is displaced by an append', async () => {
-    await h.runtime.app.createNote('julian', 'Plan.md', 'Bestand.\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Plan.md', 'Bestand.\n', julian);
     await append('julian', 'Plan.md', { content: 'Zusatz.' });
 
-    const copies = (await h.runtime.app.notes.listNotes('julian'))
+    const copies = (await h.runtime.app.notes.listNotes(julian))
       .map((entry) => entry.path)
       .filter((notePath) => notePath.includes('Konflikt'));
     expect(copies).toEqual([]);
@@ -191,7 +190,7 @@ describe('POST /api/v1/append/*', () => {
 
 describe('refusal looks like absence', () => {
   it('answers a grantee without write access as it answers a note that is not there', async () => {
-    await h.runtime.app.createNote('julian', 'Projekt/Plan.md', 'Bestand.\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Projekt/Plan.md', 'Bestand.\n', julian);
     const granted = await h.as('julian', {
       method: 'POST',
       url: '/api/v1/shares',
@@ -202,12 +201,12 @@ describe('refusal looks like absence', () => {
     const refused = await h.as('ramona', {
       method: 'POST',
       url: `/api/v1/append/${encodeURI('Projekt/Plan.md')}`,
-      payload: { content: 'Zusatz.', owner: 'julian' },
+      payload: { content: 'Zusatz.', owner: julian },
     });
     const absent = await h.as('ramona', {
       method: 'POST',
       url: `/api/v1/append/${encodeURI('Projekt/Gibtsnicht.md')}`,
-      payload: { content: 'Zusatz.', owner: 'julian' },
+      payload: { content: 'Zusatz.', owner: julian },
     });
 
     expect(refused.status).toBe(404);
@@ -220,11 +219,11 @@ describe('refusal looks like absence', () => {
     const reply = await h.as('ramona', {
       method: 'POST',
       url: `/api/v1/append/${encodeURI('Privat/Neu.md')}`,
-      payload: { content: 'Zusatz.', ifAbsent: TEMPLATE, owner: 'julian' },
+      payload: { content: 'Zusatz.', ifAbsent: TEMPLATE, owner: julian },
     });
 
     expect(reply.status).toBe(404);
-    await expect(h.runtime.app.notes.getNote('julian', 'Privat/Neu.md')).rejects.toThrow();
+    await expect(h.runtime.app.notes.getNote(julian, 'Privat/Neu.md')).rejects.toThrow();
   });
 
   /**
@@ -237,31 +236,31 @@ describe('refusal looks like absence', () => {
    * the share, is the only thing between her text and a stranger's file.
    */
   it('refuses the write when the file was replaced since the route said yes', async () => {
-    await h.runtime.app.createNote('julian', 'Projekt/Plan.md', 'Bestand.\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Projekt/Plan.md', 'Bestand.\n', julian);
     await h.as('julian', {
       method: 'POST',
       url: '/api/v1/shares',
       payload: { grantee: 'ramona', kind: 'note', path: 'Projekt/Plan.md', canWrite: true },
     });
 
-    const onDisk = path.join(h.dataDir, 'vaults', 'julian', 'Projekt', 'Plan.md');
-    const stranger = path.join(h.dataDir, 'vaults', 'julian', 'Projekt', 'Fremd.tmp');
+    const onDisk = path.join(h.dataDir, 'vaults', julian, 'Projekt', 'Plan.md');
+    const stranger = path.join(h.dataDir, 'vaults', julian, 'Projekt', 'Fremd.tmp');
     await fs.writeFile(stranger, '# Fremd\n\nfremder, privater Text\n', 'utf8');
     await fs.rename(stranger, onDisk);
 
     const reply = await h.as('ramona', {
       method: 'POST',
       url: `/api/v1/append/${encodeURI('Projekt/Plan.md')}`,
-      payload: { content: 'Von Ramona.', owner: 'julian' },
+      payload: { content: 'Von Ramona.', owner: julian },
     });
 
     expect(reply.status).toBe(404);
     expect(await read('Projekt/Plan.md')).not.toContain('Von Ramona.');
-    expect(h.runtime.shares.byOwner('julian').filter((entry) => entry.kind === 'note')).toEqual([]);
+    expect(h.runtime.shares.byOwner(julian).filter((entry) => entry.kind === 'note')).toEqual([]);
   });
 
   it('lets a grantee with write access append', async () => {
-    await h.runtime.app.createNote('julian', 'Projekt/Plan.md', 'Bestand.\n', 'julian');
+    await h.runtime.app.createNote(julian, 'Projekt/Plan.md', 'Bestand.\n', julian);
     await h.as('julian', {
       method: 'POST',
       url: '/api/v1/shares',
@@ -271,7 +270,7 @@ describe('refusal looks like absence', () => {
     const reply = await h.as('ramona', {
       method: 'POST',
       url: `/api/v1/append/${encodeURI('Projekt/Plan.md')}`,
-      payload: { content: 'Von Ramona.', owner: 'julian' },
+      payload: { content: 'Von Ramona.', owner: julian },
     });
 
     expect(reply.status).toBe(200);

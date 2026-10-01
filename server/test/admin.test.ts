@@ -32,6 +32,13 @@ let runtime: Runtime;
 let server: FastifyInstance;
 let adminCookie: string;
 let plainCookie: string;
+// The accounts' real ids, captured where they are made: the id is now a
+// random `acc_<hex>` string handed back by `create`/`createSpace`, not the
+// login word a test types, so every call that means "this account" needs the
+// id rather than the literal name.
+let julianId: string;
+let ramonaId: string;
+let vereinId: string;
 
 async function signIn(user: string, password: string): Promise<string> {
   const response = await server.inject({
@@ -46,11 +53,11 @@ beforeEach(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ndbrain-admin-'));
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
-  await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julianId = (await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' })).id;
+  ramonaId = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
   // A space, because the administrator's key routes now reach spaces and
   // nothing else. See the describe below.
-  await runtime.users.createSpace('verein', 'Verein');
+  vereinId = (await runtime.users.createSpace('verein', 'Verein')).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -114,12 +121,12 @@ describe('who may reach any of this', () => {
 
 describe('accounts', () => {
   it('lists them with what each one holds', async () => {
-    await runtime.app.createNote('ramona', 'Eine.md', 'Text.\n');
+    await runtime.app.createNote(ramonaId, 'Eine.md', 'Text.\n');
 
     const response = await server.inject({ url: '/api/v1/admin/users', headers: { cookie: adminCookie } });
     const parsed = S.AdminUsersResponse.parse(response.json());
 
-    const ramona = parsed.users.find((u) => u.id === 'ramona');
+    const ramona = parsed.users.find((u) => u.id === ramonaId);
     expect(ramona?.notes).toBe(1);
     expect(ramona?.role).toBe('user');
     expect(ramona?.disabled).toBe(false);
@@ -175,7 +182,7 @@ describe('accounts', () => {
 
     await server.inject({
       method: 'POST',
-      url: '/api/v1/admin/users/ramona/password',
+      url: `/api/v1/admin/users/${ramonaId}/password`,
       headers: { cookie: adminCookie },
       payload: { password: 'ein anderes gutes passwort' },
     });
@@ -192,7 +199,7 @@ describe('accounts', () => {
   it('disables an account and turns it off at the door', async () => {
     await server.inject({
       method: 'POST',
-      url: '/api/v1/admin/users/ramona/disabled',
+      url: `/api/v1/admin/users/${ramonaId}/disabled`,
       headers: { cookie: adminCookie },
       payload: { disabled: true },
     });
@@ -209,7 +216,7 @@ describe('accounts', () => {
     for (const disabled of [true, false]) {
       await server.inject({
         method: 'POST',
-        url: '/api/v1/admin/users/ramona/disabled',
+        url: `/api/v1/admin/users/${ramonaId}/disabled`,
         headers: { cookie: adminCookie },
         payload: { disabled },
       });
@@ -228,14 +235,14 @@ describe('nobody can lock everybody out', () => {
   it('refuses to disable your own account', async () => {
     const response = await server.inject({
       method: 'POST',
-      url: '/api/v1/admin/users/julian/disabled',
+      url: `/api/v1/admin/users/${julianId}/disabled`,
       headers: { cookie: adminCookie },
       payload: { disabled: true },
     });
 
     expect(response.statusCode).toBe(400);
     expect((response.json() as { code: string }).code).toBe('self_disable');
-    expect(runtime.users.get('julian')?.disabled).toBe(false);
+    expect(runtime.users.get(julianId)?.disabled).toBe(false);
   });
 
   it('refuses to disable the last administrator', async () => {
@@ -245,7 +252,7 @@ describe('nobody can lock everybody out', () => {
 
     const first = await server.inject({
       method: 'POST',
-      url: '/api/v1/admin/users/julian/disabled',
+      url: `/api/v1/admin/users/${julianId}/disabled`,
       headers: { cookie: zweitCookie },
       payload: { disabled: true },
     });
@@ -264,44 +271,72 @@ describe('the account identifier', () => {
    * that identifies an account is one nobody chose. It belongs to whoever
    * administers the server.
    */
-  it('is on the administrator’s listing', async () => {
+  /**
+   * The listing has to come back in an order somebody can follow.
+   *
+   * It was ordered by id, which was the account name and is now random — so
+   * without this the administrator's table would be in an arbitrary order that
+   * changed whenever an account was added. Found by a test that had stopped
+   * being able to assert the order at all.
+   */
+  it('lists accounts by what they sign in with, not by the identifier', async () => {
+    await runtime.users.create('anna', 'ihr gutes passwort');
+    await runtime.users.create('Bert', 'sein gutes passwort');
+
     const listed = await server.inject({ url: '/api/v1/admin/users', headers: { cookie: adminCookie } });
     const { users: rows } = S.AdminUsersResponse.parse(listed.json());
 
-    for (const row of rows) expect(row.guid).toMatch(/^acc_[0-9a-f]{32}$/);
-    expect(new Set(rows.map((row) => row.guid)).size).toBe(rows.length);
+    expect(rows.map((row) => row.loginName)).toEqual(['anna', 'Bert', 'julian', 'ramona']);
+  });
+
+  it('is what an account is keyed by, and is never a word somebody typed', async () => {
+    const listed = await server.inject({ url: '/api/v1/admin/users', headers: { cookie: adminCookie } });
+    const { users: rows } = S.AdminUsersResponse.parse(listed.json());
+
+    for (const row of rows) expect(row.id).toMatch(/^acc_[0-9a-f]{32}$/);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+    // And the words somebody did type are beside it, not instead of it.
+    expect(rows.map((row) => row.loginName).sort()).toEqual(['julian', 'ramona']);
   });
 
   /**
-   * And on no other route. `/api/v1/auth/me` is what every signed-in page reads
-   * about itself, and an account is addressed by its display name everywhere a
-   * person can see.
+   * The promise that can be kept, which is not the one first written here.
+   *
+   * "Only an administrator sees it" cannot mean an account does not see its
+   * own: the client compares its id against every note's owner to know which
+   * notes are its, and keys what it remembers by it. `/api/v1/auth/me` has to
+   * answer with it, and a test demanding otherwise was describing a product
+   * that could not work.
+   *
+   * What an ordinary caller never learns is **somebody else's** — a different
+   * promise, and the one a route could actually leak.
    */
-  it('reaches nobody through the routes an ordinary account can call', async () => {
+  it('tells an account its own, and never another account’s', async () => {
+    const julian = runtime.users.byLogin('julian');
+
     const me = await server.inject({ url: '/api/v1/auth/me', headers: { cookie: plainCookie } });
     expect(me.statusCode).toBe(200);
-    expect(JSON.stringify(me.json())).not.toContain('acc_');
+    expect(me.json()).toMatchObject({ user: { id: ramonaId } });
 
-    const renamed = await server.inject({
-      method: 'PATCH',
-      url: '/api/v1/admin/users/ramona',
-      headers: { cookie: adminCookie },
-      payload: { displayName: 'Ramona B.' },
-    });
-    expect(JSON.stringify(renamed.json())).not.toContain('acc_');
+    // The administrator's id appears nowhere in what Ramona can read about
+    // herself, and the listing that would carry it is not hers to call.
+    expect(me.body).not.toContain(String(julian?.id));
+    expect(
+      (await server.inject({ url: '/api/v1/admin/users', headers: { cookie: plainCookie } })).statusCode,
+    ).toBe(404);
   });
 
   it('does not change when everything readable about the account does', async () => {
-    const before = runtime.users.get('ramona')?.guid;
-
     await server.inject({
       method: 'PATCH',
-      url: '/api/v1/admin/users/ramona',
+      url: `/api/v1/admin/users/${ramonaId}`,
       headers: { cookie: adminCookie },
       payload: { displayName: 'Ramona Bachmann', loginName: 'ramona-b' },
     });
 
-    expect(runtime.users.get('ramona')?.guid).toBe(before);
+    const after = runtime.users.byLogin('ramona-b');
+    expect(after?.id).toBe(ramonaId);
+    expect(after?.displayName).toBe('Ramona Bachmann');
   });
 });
 
@@ -314,24 +349,24 @@ describe('renaming an account', () => {
   it('changes somebody else’s display name', async () => {
     const renamed = await server.inject({
       method: 'PATCH',
-      url: '/api/v1/admin/users/ramona',
+      url: `/api/v1/admin/users/${ramonaId}`,
       headers: { cookie: adminCookie },
       payload: { displayName: 'Ramona Bachmann' },
     });
 
     expect(renamed.statusCode).toBe(200);
-    expect(runtime.users.get('ramona')?.displayName).toBe('Ramona Bachmann');
+    expect(runtime.users.get(ramonaId)?.displayName).toBe('Ramona Bachmann');
   });
 
   it('leaves the account itself alone: the id is the vault’s folder', async () => {
-    const before = runtime.users.get('ramona');
+    const before = runtime.users.get(ramonaId);
     await server.inject({
       method: 'PATCH',
-      url: '/api/v1/admin/users/ramona',
+      url: `/api/v1/admin/users/${ramonaId}`,
       headers: { cookie: adminCookie },
       payload: { displayName: 'Andere' },
     });
-    const after = runtime.users.get('ramona');
+    const after = runtime.users.get(ramonaId);
 
     expect(after?.id).toBe(before?.id);
     expect(after?.role).toBe(before?.role);
@@ -341,13 +376,13 @@ describe('renaming an account', () => {
   it('refuses a body that names an id', async () => {
     const tried = await server.inject({
       method: 'PATCH',
-      url: '/api/v1/admin/users/ramona',
+      url: `/api/v1/admin/users/${ramonaId}`,
       headers: { cookie: adminCookie },
       payload: { id: 'ramona2', displayName: 'Andere' },
     });
 
     expect(tried.statusCode).toBe(400);
-    expect(runtime.users.get('ramona')?.displayName).not.toBe('Andere');
+    expect(runtime.users.get(ramonaId)?.displayName).not.toBe('Andere');
   });
 
   it('says so about an account that is not there, rather than reporting success', async () => {
@@ -373,15 +408,15 @@ describe('renaming an account', () => {
   it('changes what an account signs in with, and leaves its id alone', async () => {
     const renamed = await server.inject({
       method: 'PATCH',
-      url: '/api/v1/admin/users/ramona',
+      url: `/api/v1/admin/users/${ramonaId}`,
       headers: { cookie: adminCookie },
       payload: { loginName: 'ramona-b' },
     });
 
     expect(renamed.statusCode).toBe(200);
-    const after = runtime.users.get('ramona');
+    const after = runtime.users.get(ramonaId);
     expect(after?.loginName).toBe('ramona-b');
-    expect(after?.id).toBe('ramona');
+    expect(after?.id).toBe(ramonaId);
 
     // And the new name is the one that signs in, while the old one does not.
     expect(await runtime.users.authenticate('ramona-b', 'ihr gutes passwort')).not.toBeNull();
@@ -395,14 +430,14 @@ describe('renaming an account', () => {
    * never renamed anything.
    */
   it('still accepts the id at the login after a rename', async () => {
-    runtime.users.setLoginName('ramona', 'ramona-b');
-    expect(await runtime.users.authenticate('ramona', 'ihr gutes passwort')).not.toBeNull();
+    runtime.users.setLoginName(ramonaId, 'ramona-b');
+    expect(await runtime.users.authenticate(ramonaId, 'ihr gutes passwort')).not.toBeNull();
   });
 
   it('refuses a login another account already answers to', async () => {
     const taken = await server.inject({
       method: 'PATCH',
-      url: '/api/v1/admin/users/ramona',
+      url: `/api/v1/admin/users/${ramonaId}`,
       headers: { cookie: adminCookie },
       payload: { loginName: 'julian' },
     });
@@ -413,7 +448,7 @@ describe('renaming an account', () => {
     // turns it into one, and asserting "some error" would not notice it going.
     expect(taken.statusCode).toBe(409);
     expect(taken.json()).toMatchObject({ code: 'user_exists' });
-    expect(runtime.users.get('ramona')?.loginName).toBe('ramona');
+    expect(runtime.users.get(ramonaId)?.loginName).toBe('ramona');
   });
 
   /**
@@ -424,21 +459,21 @@ describe('renaming an account', () => {
    * from the CLI, which has no schema in front of it.
    */
   it('refuses a login that could not be a directory name, in the service itself', () => {
-    expect(() => runtime.users.setLoginName('ramona', '../anderswo')).toThrow();
-    expect(() => runtime.users.setLoginName('ramona', 'mit leerzeichen')).toThrow();
-    expect(runtime.users.get('ramona')?.loginName).toBe('ramona');
+    expect(() => runtime.users.setLoginName(ramonaId, '../anderswo')).toThrow();
+    expect(() => runtime.users.setLoginName(ramonaId, 'mit leerzeichen')).toThrow();
+    expect(runtime.users.get(ramonaId)?.loginName).toBe('ramona');
   });
 
   it('refuses a login that could not be a directory name', async () => {
     const bad = await server.inject({
       method: 'PATCH',
-      url: '/api/v1/admin/users/ramona',
+      url: `/api/v1/admin/users/${ramonaId}`,
       headers: { cookie: adminCookie },
       payload: { loginName: '../anderswo' },
     });
 
     expect(bad.statusCode).toBeGreaterThanOrEqual(400);
-    expect(runtime.users.get('ramona')?.loginName).toBe('ramona');
+    expect(runtime.users.get(ramonaId)?.loginName).toBe('ramona');
   });
 
   /**
@@ -448,7 +483,7 @@ describe('renaming an account', () => {
   it('refuses a body that names neither', async () => {
     const empty = await server.inject({
       method: 'PATCH',
-      url: '/api/v1/admin/users/ramona',
+      url: `/api/v1/admin/users/${ramonaId}`,
       headers: { cookie: adminCookie },
       payload: {},
     });
@@ -459,7 +494,7 @@ describe('renaming an account', () => {
   it('refuses an empty name', async () => {
     const empty = await server.inject({
       method: 'PATCH',
-      url: '/api/v1/admin/users/ramona',
+      url: `/api/v1/admin/users/${ramonaId}`,
       headers: { cookie: adminCookie },
       payload: { displayName: '  ' },
     });
@@ -474,7 +509,7 @@ describe('agent keys, which here means a space’s', () => {
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: adminCookie },
-      payload: { owner: 'verein', name: 'Claude' },
+      payload: { owner: vereinId, name: 'Claude' },
     });
 
     expect(created.statusCode).toBe(201);
@@ -483,7 +518,7 @@ describe('agent keys, which here means a space’s', () => {
 
     // Nothing else ever carries it: only the hash is stored.
     const listed = await server.inject({
-      url: '/api/v1/admin/keys?owner=verein',
+      url: `/api/v1/admin/keys?owner=${vereinId}`,
       headers: { cookie: adminCookie },
     });
     const all = S.AdminKeysResponse.parse(listed.json());
@@ -496,11 +531,11 @@ describe('agent keys, which here means a space’s', () => {
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: adminCookie },
-      payload: { owner: 'verein', name: 'Claude' },
+      payload: { owner: vereinId, name: 'Claude' },
     });
     const { secret } = S.CreatedKeyResponse.parse(created.json());
 
-    expect(runtime.keys.resolve(secret)?.owner).toBe('verein');
+    expect(runtime.keys.resolve(secret)?.owner).toBe(vereinId);
   });
 
   it('revokes one, and the secret stops working', async () => {
@@ -508,7 +543,7 @@ describe('agent keys, which here means a space’s', () => {
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: adminCookie },
-      payload: { owner: 'verein', name: 'Claude' },
+      payload: { owner: vereinId, name: 'Claude' },
     });
     const key = S.CreatedKeyResponse.parse(created.json());
 
@@ -545,10 +580,10 @@ describe('agent keys, which here means a space’s', () => {
    * ask about it.
    */
   it('does not list a person’s keys, nor say that the person is one', async () => {
-    runtime.keys.create('ramona', 'Ihrer');
+    runtime.keys.create(ramonaId, 'Ihrer');
 
     const asked = await server.inject({
-      url: '/api/v1/admin/keys?owner=ramona',
+      url: `/api/v1/admin/keys?owner=${ramonaId}`,
       headers: { cookie: adminCookie },
     });
     const invented = await server.inject({
@@ -565,15 +600,15 @@ describe('agent keys, which here means a space’s', () => {
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: adminCookie },
-      payload: { owner: 'ramona', name: 'Claude' },
+      payload: { owner: ramonaId, name: 'Claude' },
     });
 
     expect(tried.statusCode).toBe(404);
-    expect(runtime.keys.list('ramona')).toHaveLength(0);
+    expect(runtime.keys.list(ramonaId)).toHaveLength(0);
   });
 
   it('does not revoke a person’s key, and the key goes on working', async () => {
-    const { key, secret } = runtime.keys.create('ramona', 'Ihrer');
+    const { key, secret } = runtime.keys.create(ramonaId, 'Ihrer');
 
     const tried = await server.inject({
       method: 'DELETE',
@@ -593,12 +628,12 @@ describe('agent keys, which here means a space’s', () => {
    * has to stop a leaked key they cannot see still can.
    */
   it('stops a person’s keys by disabling the account, which it still may do', async () => {
-    const { secret } = runtime.keys.create('ramona', 'Ihrer');
+    const { secret } = runtime.keys.create(ramonaId, 'Ihrer');
     expect(runtime.keys.resolve(secret)).not.toBeNull();
 
     const off = await server.inject({
       method: 'POST',
-      url: '/api/v1/admin/users/ramona/disabled',
+      url: `/api/v1/admin/users/${ramonaId}/disabled`,
       headers: { cookie: adminCookie },
       payload: { disabled: true },
     });
@@ -612,7 +647,7 @@ describe('agent keys, which here means a space’s', () => {
       method: 'POST',
       url: '/api/v1/admin/keys',
       headers: { cookie: adminCookie },
-      payload: { owner: 'verein', name: 'Claude', scope: 'Projekte', canWrite: true },
+      payload: { owner: vereinId, name: 'Claude', scope: 'Projekte', canWrite: true },
     });
 
     const key = S.CreatedKeyResponse.parse(created.json());

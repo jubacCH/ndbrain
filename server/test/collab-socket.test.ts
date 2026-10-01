@@ -25,14 +25,16 @@ import {
 import { startHarness, type Harness } from './support/harness.js';
 
 let h: Harness;
+let julian: string;
+let ramona: string;
 
 beforeEach(async () => {
   h = await startHarness('collab-socket', { collab: true });
-  await h.runtime.users.create('julian', 'ein gutes passwort', { displayName: 'Julian' });
-  await h.runtime.users.create('ramona', 'ihr gutes passwort', { displayName: 'Ramona' });
+  julian = (await h.runtime.users.create('julian', 'ein gutes passwort', { displayName: 'Julian' })).id;
+  ramona = (await h.runtime.users.create('ramona', 'ihr gutes passwort', { displayName: 'Ramona' })).id;
   await h.login('julian', 'ein gutes passwort');
   await h.login('ramona', 'ihr gutes passwort');
-  await h.runtime.app.createNote('julian', 'N.md', 'hello\n');
+  await h.runtime.app.createNote(julian, 'N.md', 'hello\n');
 });
 
 afterEach(async () => {
@@ -116,15 +118,15 @@ const textOf = (client: Client): string => client.doc.getText('content').toStrin
 
 describe('the collab socket', () => {
   it('syncs the note and says hello first', async () => {
-    const c = await connect('julian', url('julian', 'N.md'));
+    const c = await connect('julian', url(julian, 'N.md'));
     await until(() => textOf(c) === 'hello\n');
     expect(c.controls[0]?.type).toBe('hello');
     expect(c.controls[0]).toMatchObject({ canWrite: true, persistedHash: expect.any(String) });
   });
 
   it('carries typing from one editor to another and into the file', async () => {
-    const a = await connect('julian', url('julian', 'N.md'));
-    const b = await connect('julian', url('julian', 'N.md'));
+    const a = await connect('julian', url(julian, 'N.md'));
+    const b = await connect('julian', url(julian, 'N.md'));
     await until(() => textOf(b).length > 0);
     a.doc.getText('content').insert(0, 'A: ');
     await until(() => textOf(b) === 'A: hello\n');
@@ -136,22 +138,22 @@ describe('the collab socket', () => {
     a.ws.terminate();
     b.ws.terminate();
     await until(() => h.runtime.rooms!.size === 0);
-    expect((await h.runtime.app.notes.getNote('julian', 'N.md')).content).toBe('A: hello\n');
+    expect((await h.runtime.app.notes.getNote(julian, 'N.md')).content).toBe('A: hello\n');
   });
 
   it('refuses a foreign origin', async () => {
-    await expect(connect('julian', url('julian', 'N.md'), 'https://evil.example')).rejects.toThrow();
+    await expect(connect('julian', url(julian, 'N.md'), 'https://evil.example')).rejects.toThrow();
   });
 
   it('refuses an upgrade with no origin at all', async () => {
     await expect(
-      h.server.injectWS(url('julian', 'N.md'), { headers: { cookie: h.cookieOf('julian'), host: 'localhost:80' } }),
+      h.server.injectWS(url(julian, 'N.md'), { headers: { cookie: h.cookieOf('julian'), host: 'localhost:80' } }),
     ).rejects.toThrow();
   });
 
   it('answers a missing and a forbidden note byte-identically', async () => {
-    const missing = await connect('ramona', url('ramona', 'Nope.md'));
-    const forbidden = await connect('ramona', url('julian', 'N.md'));
+    const missing = await connect('ramona', url(ramona, 'Nope.md'));
+    const forbidden = await connect('ramona', url(julian, 'N.md'));
     const a = await missing.closed;
     const b = await forbidden.closed;
     // Not merely both 4404: refusal looks like absence down to the reason string.
@@ -160,62 +162,62 @@ describe('the collab socket', () => {
   });
 
   it('answers a path that is not a note the same way', async () => {
-    const c = await connect('julian', url('julian', 'Folder/'));
+    const c = await connect('julian', url(julian, 'Folder/'));
     expect(await c.closed).toEqual({ code: CLOSE.gone, reason: 'not found' });
   });
 
   it('drops updates from a read-only share but still syncs it the text', async () => {
-    h.runtime.shares.grant('julian', '', 'ramona', false);
-    const reader = await connect('ramona', url('julian', 'N.md'));
+    h.runtime.shares.grant(julian, '', ramona, false);
+    const reader = await connect('ramona', url(julian, 'N.md'));
     await until(() => reader.controls.some((c) => c.type === 'hello'));
     expect(reader.controls[0]).toMatchObject({ type: 'hello', canWrite: false });
     await until(() => textOf(reader) === 'hello\n');
 
     reader.doc.getText('content').insert(0, 'sneaky ');
     await new Promise((r) => setTimeout(r, 150));
-    expect(h.runtime.rooms!.get('julian', 'N.md')!.text.toString()).toBe('hello\n');
+    expect(h.runtime.rooms!.get(julian, 'N.md')!.text.toString()).toBe('hello\n');
   });
 
   it('closes when the share is withdrawn', async () => {
-    const share = h.runtime.shares.grant('julian', '', 'ramona', true);
-    const c = await connect('ramona', url('julian', 'N.md'));
+    const share = h.runtime.shares.grant(julian, '', ramona, true);
+    const c = await connect('ramona', url(julian, 'N.md'));
     await until(() => c.controls.length > 0);
     h.runtime.shares.revoke(share.id);
     expect(await c.closed).toEqual({ code: CLOSE.gone, reason: 'not found' });
   });
 
   it('downgrades to read-only when a share loses write', async () => {
-    h.runtime.shares.grant('julian', '', 'ramona', true);
-    const c = await connect('ramona', url('julian', 'N.md'));
+    h.runtime.shares.grant(julian, '', ramona, true);
+    const c = await connect('ramona', url(julian, 'N.md'));
     await until(() => c.controls.length > 0);
-    h.runtime.shares.grant('julian', '', 'ramona', false);
+    h.runtime.shares.grant(julian, '', ramona, false);
     await until(() => c.controls.some((m) => m.type === 'access' && !m.canWrite));
 
     await until(() => textOf(c).length > 0);
     c.doc.getText('content').insert(0, 'after the downgrade ');
     await new Promise((r) => setTimeout(r, 150));
-    expect(h.runtime.rooms!.get('julian', 'N.md')!.text.toString()).toBe('hello\n');
+    expect(h.runtime.rooms!.get(julian, 'N.md')!.text.toString()).toBe('hello\n');
   });
 
   it('closes on logout', async () => {
-    const c = await connect('julian', url('julian', 'N.md'));
+    const c = await connect('julian', url(julian, 'N.md'));
     await until(() => c.controls.length > 0);
     await h.as('julian', { method: 'POST', url: '/api/v1/auth/logout' });
     expect(await c.closed).toEqual({ code: CLOSE.gone, reason: 'not found' });
   });
 
   it('closes when the account is disabled', async () => {
-    h.runtime.shares.grant('julian', '', 'ramona', true);
-    const c = await connect('ramona', url('julian', 'N.md'));
+    h.runtime.shares.grant(julian, '', ramona, true);
+    const c = await connect('ramona', url(julian, 'N.md'));
     await until(() => c.controls.length > 0);
-    h.runtime.users.setDisabled('ramona', true);
+    h.runtime.users.setDisabled(ramona, true);
     expect(await c.closed).toEqual({ code: CLOSE.gone, reason: 'not found' });
   });
 
   it('shows an agent append live, marked as a robot', async () => {
-    const c = await connect('julian', url('julian', 'N.md'));
+    const c = await connect('julian', url(julian, 'N.md'));
     await until(() => textOf(c).length > 0);
-    await h.runtime.app.appendNote('julian', 'N.md', 'agent line', 'claude-code', { agent: true });
+    await h.runtime.app.appendNote(julian, 'N.md', 'agent line', 'claude-code', { agent: true });
     await until(() => textOf(c).includes('agent line'));
     await until(() =>
       [...c.awareness.getStates().values()].some(
@@ -225,8 +227,8 @@ describe('the collab socket', () => {
   });
 
   it("overwrites a forged awareness name and colour with the session's own", async () => {
-    const watcher = await connect('julian', url('julian', 'N.md'));
-    const forger = await connect('julian', url('julian', 'N.md'));
+    const watcher = await connect('julian', url(julian, 'N.md'));
+    const forger = await connect('julian', url(julian, 'N.md'));
     await until(() => watcher.controls.length > 0 && forger.controls.length > 0);
 
     sendAwareness(forger, {
@@ -249,9 +251,9 @@ describe('the collab socket', () => {
     // A third socket does the looking: a client is not sent the server's
     // sanitised version of its *own* state back into its awareness map, so
     // neither tab can see what the room made of it.
-    const watcher = await connect('julian', url('julian', 'N.md'));
-    const a = await connect('julian', url('julian', 'N.md'));
-    const b = await connect('julian', url('julian', 'N.md'));
+    const watcher = await connect('julian', url(julian, 'N.md'));
+    const a = await connect('julian', url(julian, 'N.md'));
+    const b = await connect('julian', url(julian, 'N.md'));
     await until(() => watcher.controls.length > 0 && a.controls.length > 0 && b.controls.length > 0);
     sendAwareness(a, { cursor: null });
     sendAwareness(b, { cursor: null });
@@ -274,11 +276,11 @@ describe('the collab socket', () => {
     // about the harness instead.
     const small = await startHarness('collab-sockets', { collab: true, collabMaxSocketsPerUser: 2 });
     try {
-      await small.runtime.users.create('julian', 'ein gutes passwort');
+      const smallJulian = (await small.runtime.users.create('julian', 'ein gutes passwort')).id;
       await small.login('julian', 'ein gutes passwort');
-      await small.runtime.app.createNote('julian', 'N.md', 'hello\n');
+      await small.runtime.app.createNote(smallJulian, 'N.md', 'hello\n');
       const open = (): Promise<WebSocket> =>
-        small.server.injectWS(url('julian', 'N.md'), {
+        small.server.injectWS(url(smallJulian, 'N.md'), {
           headers: { cookie: small.cookieOf('julian'), origin: 'http://localhost:80', host: 'localhost:80' },
         });
 
@@ -287,12 +289,12 @@ describe('the collab socket', () => {
       // `injectWS` resolves the moment the client is open, which is before the
       // route handler has finished joining the room; wait for the room to
       // actually hold both before taking one away.
-      await until(() => small.runtime.rooms!.get('julian', 'N.md')?.peers.size === 2);
+      await until(() => small.runtime.rooms!.get(smallJulian, 'N.md')?.peers.size === 2);
       await expect(open()).rejects.toThrow('429');
 
       // The cap counts what is open now, not what has ever connected.
       second.terminate();
-      await until(() => small.runtime.rooms!.get('julian', 'N.md')?.peers.size === 1);
+      await until(() => small.runtime.rooms!.get(smallJulian, 'N.md')?.peers.size === 1);
       const third = await open();
       expect(third.readyState).toBe(third.OPEN);
 
@@ -306,17 +308,17 @@ describe('the collab socket', () => {
   it('refuses a room beyond the process limit with its own code', async () => {
     const small = await startHarness('collab-rooms', { collab: true, collabMaxRooms: 1 });
     try {
-      await small.runtime.users.create('julian', 'ein gutes passwort');
+      const smallJulian = (await small.runtime.users.create('julian', 'ein gutes passwort')).id;
       await small.login('julian', 'ein gutes passwort');
-      await small.runtime.app.createNote('julian', 'One.md', '1\n');
-      await small.runtime.app.createNote('julian', 'Two.md', '2\n');
+      await small.runtime.app.createNote(smallJulian, 'One.md', '1\n');
+      await small.runtime.app.createNote(smallJulian, 'Two.md', '2\n');
 
       const first = await small.server.injectWS(
-        `${COLLAB_PATH}?owner=julian&path=One.md`,
+        `${COLLAB_PATH}?owner=${smallJulian}&path=One.md`,
         { headers: { cookie: small.cookieOf('julian'), origin: 'http://localhost:80', host: 'localhost:80' } },
       );
       const second = await small.server.injectWS(
-        `${COLLAB_PATH}?owner=julian&path=Two.md`,
+        `${COLLAB_PATH}?owner=${smallJulian}&path=Two.md`,
         { headers: { cookie: small.cookieOf('julian'), origin: 'http://localhost:80', host: 'localhost:80' } },
       );
       const code = await new Promise<number>((resolve) => second.on('close', (c: number) => resolve(c)));
@@ -330,11 +332,11 @@ describe('the collab socket', () => {
   it('does not exist at all when collaboration is off', async () => {
     const off = await startHarness('collab-off', { collab: false });
     try {
-      await off.runtime.users.create('julian', 'ein gutes passwort');
+      const offJulian = (await off.runtime.users.create('julian', 'ein gutes passwort')).id;
       await off.login('julian', 'ein gutes passwort');
-      await off.runtime.app.createNote('julian', 'N.md', 'hello\n');
+      await off.runtime.app.createNote(offJulian, 'N.md', 'hello\n');
       expect(off.runtime.rooms).toBeNull();
-      const reply = await off.as('julian', { url: url('julian', 'N.md') });
+      const reply = await off.as('julian', { url: url(offJulian, 'N.md') });
       expect(reply.status).toBe(404);
     } finally {
       await off.close();

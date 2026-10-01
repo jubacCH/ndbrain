@@ -14,6 +14,8 @@ let runtime: Runtime;
 let server: FastifyInstance;
 let julianCookie: string;
 let ramonaCookie: string;
+let julianId: string;
+let ramonaId: string;
 
 async function login(user: string, password: string): Promise<string | null> {
   const response = await server.inject({
@@ -35,8 +37,8 @@ beforeEach(async () => {
   const config = { ...loadConfig(), dataDir, cookieSecure: false };
   runtime = await createRuntime(config);
 
-  await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' });
-  await runtime.users.create('ramona', 'ihr gutes passwort');
+  julianId = (await runtime.users.create('julian', 'ein gutes passwort', { role: 'admin' })).id;
+  ramonaId = (await runtime.users.create('ramona', 'ihr gutes passwort')).id;
 
   server = await buildServer({
     app: runtime.app,
@@ -54,7 +56,7 @@ beforeEach(async () => {
   julianCookie = (await login('julian', 'ein gutes passwort'))!;
   ramonaCookie = (await login('ramona', 'ihr gutes passwort'))!;
 
-  await runtime.app.createNote('ramona', 'Privat/Tagebuch.md', 'Ramonas geheimes stichwort\n');
+  await runtime.app.createNote(ramonaId, 'Privat/Tagebuch.md', 'Ramonas geheimes stichwort\n');
 });
 
 afterEach(async () => {
@@ -107,7 +109,7 @@ describe('the authentication gate', () => {
 
   it('stops working the moment the account is disabled', async () => {
     expect((await server.inject({ url: '/api/v1/tree', headers: as(julianCookie) })).statusCode).toBe(200);
-    runtime.users.setDisabled('julian', true);
+    runtime.users.setDisabled(julianId, true);
     expect((await server.inject({ url: '/api/v1/tree', headers: as(julianCookie) })).statusCode).toBe(401);
   });
 
@@ -256,8 +258,8 @@ describe('notes', () => {
   });
 
   it('renames and reports which notes were rewritten', async () => {
-    await runtime.app.createNote('julian', 'Ziel.md', '# Z\n');
-    await runtime.app.createNote('julian', 'A.md', 'Siehe [[Ziel]].\n');
+    await runtime.app.createNote(julianId, 'Ziel.md', '# Z\n');
+    await runtime.app.createNote(julianId, 'A.md', 'Siehe [[Ziel]].\n');
 
     const response = await server.inject({
       method: 'POST',
@@ -312,7 +314,7 @@ describe('renaming a note and renaming a folder', () => {
 describe('task list', () => {
   beforeEach(async () => {
     await runtime.app.createNote(
-      'julian',
+      julianId,
       'Homelab/Proxmox.md',
       '- [ ] RAM prüfen\n- [x] Quorum ok\n',
     );
@@ -359,7 +361,7 @@ describe('task list', () => {
   });
 
   it('refuses a toggle whose expected text no longer matches, and writes nothing', async () => {
-    const before = await runtime.notes.getNote('julian', 'Homelab/Proxmox.md');
+    const before = await runtime.notes.getNote(julianId, 'Homelab/Proxmox.md');
 
     const response = await server.inject({
       method: 'POST',
@@ -376,7 +378,7 @@ describe('task list', () => {
 
     expect(response.statusCode).toBe(409);
     expect(response.json().code).toBe('task_changed');
-    expect((await runtime.notes.getNote('julian', 'Homelab/Proxmox.md')).content).toBe(before.content);
+    expect((await runtime.notes.getNote(julianId, 'Homelab/Proxmox.md')).content).toBe(before.content);
   });
 
   it('refuses a toggle in a vault the caller has no write access to', async () => {
@@ -385,7 +387,7 @@ describe('task list', () => {
       url: '/api/v1/tasks/toggle',
       headers: as(ramonaCookie),
       payload: {
-        owner: 'julian',
+        owner: julianId,
         path: 'Homelab/Proxmox.md',
         line: 1,
         expectedText: 'RAM prüfen',
@@ -408,7 +410,7 @@ describe('task list', () => {
  */
 describe('a malformed save cannot blank a note', () => {
   beforeEach(async () => {
-    await runtime.app.putNote('julian', 'Homelab/Proxmox.md', '# Proxmox\n\nQdevice.\n');
+    await runtime.app.putNote(julianId, 'Homelab/Proxmox.md', '# Proxmox\n\nQdevice.\n');
   });
 
   it.each([
@@ -424,7 +426,7 @@ describe('a malformed save cannot blank a note', () => {
     });
 
     expect(response.statusCode).toBe(400);
-    expect((await runtime.notes.getNote('julian', 'Homelab/Proxmox.md')).content).toBe(
+    expect((await runtime.notes.getNote(julianId, 'Homelab/Proxmox.md')).content).toBe(
       '# Proxmox\n\nQdevice.\n',
     );
   });
@@ -448,7 +450,7 @@ describe('error taxonomy', () => {
   });
 
   it('reports a case collision as such', async () => {
-    await runtime.app.createNote('julian', 'Proxmox.md', 'a');
+    await runtime.app.createNote(julianId, 'Proxmox.md', 'a');
     const response = await server.inject({
       method: 'PUT',
       url: '/api/v1/notes/proxmox.md',
@@ -562,7 +564,7 @@ describe('one user never sees another', () => {
   });
 
   it('counts only the caller\'s own notes', async () => {
-    await runtime.app.createNote('julian', 'Eigen.md', 'x');
+    await runtime.app.createNote(julianId, 'Eigen.md', 'x');
     const overview = await server.inject({ url: '/api/v1/overview', headers: as(julianCookie) });
     expect(overview.json().counts.notes).toBe(1);
   });
@@ -592,7 +594,7 @@ describe('one user never sees another', () => {
 describe('asked for, never written', () => {
   it('counts every note that asks, even when the dead-link list was capped', async () => {
     for (const note of ['A', 'B', 'C']) {
-      await runtime.app.createNote('julian', `${note}.md`, `# ${note}\n\nSiehe [[Pricing]].\n`);
+      await runtime.app.createNote(julianId, `${note}.md`, `# ${note}\n\nSiehe [[Pricing]].\n`);
     }
 
     const reply = await server.inject({ url: '/api/v1/tidy?limit=1', headers: as(julianCookie) });
@@ -601,13 +603,13 @@ describe('asked for, never written', () => {
     expect(body.deadLinks).toHaveLength(1);
     expect(body.totals.deadLinks).toBe(3);
     expect(body.missing).toEqual([
-      { owner: 'julian', name: 'Pricing', asked: ['A.md', 'B.md', 'C.md'] },
+      { owner: julianId, name: 'Pricing', asked: ['A.md', 'B.md', 'C.md'] },
     ]);
     expect(body.totals.missing).toBe(1);
   });
 
   it('is empty, not absent, where nothing was asked for twice', async () => {
-    await runtime.app.createNote('julian', 'A.md', '# A\n\nSiehe [[Pricing]].\n');
+    await runtime.app.createNote(julianId, 'A.md', '# A\n\nSiehe [[Pricing]].\n');
 
     const body = (await server.inject({ url: '/api/v1/tidy', headers: as(julianCookie) })).json();
     expect(body.totals.deadLinks).toBe(1);
