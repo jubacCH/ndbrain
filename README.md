@@ -67,6 +67,7 @@ the theme bootstrap in `web/index.html` is allowed by digest, so `script-src` ne
 server/    Node + Fastify, TypeScript. Vault access, index, REST, MCP.
 web/       React + Vite UI, installable as an app.
 shared/    The API schemas both sides compile against.
+desktop/   macOS menu-bar app: the global capture shortcut, in Rust — see desktop/README.md.
 ops/       History and backup on the hosts — see ops/README.md.
 ```
 
@@ -333,9 +334,11 @@ Worth knowing before reading the code, because some of it is conspicuous by its 
   the honest state rather than an oversight waiting to be fixed. Search is SQLite FTS5 over title
   and body plus the link structure; the brain view is a layout of that link graph, not a model.
   Agents come to ndBrain through MCP and bring their own intelligence with them.
-- **No desktop shell.** Phase 8 planned a Tauri v2 application beside the PWA. Only the half that
-  could be verified was built, so ndBrain installs to a home screen or a taskbar from the browser
-  and there is no `desktop/` directory.
+- **No desktop application that shows notes.** `desktop/` is a Tauri v2 menu-bar app, and it is
+  only the global capture shortcut — it has no window that loads ndBrain. An installed PWA is
+  already a chromeless window with its own icon, so a WebView there would have been a second place
+  to be signed in and a second cache to go stale in exchange for nothing. Its menu opens ndBrain in
+  the browser. See [desktop/README.md](desktop/README.md).
 - **No offline notes.** The service worker exists for startup speed and installability. Anything
   under `/api/` never touches the cache in either direction, because serving a cached note would
   be showing somebody text that may have changed with no way for them to tell.
@@ -372,6 +375,18 @@ the interface against a server started separately on port 3000.
 
 Requires Node 22 or newer. There is no native dependency: SQLite comes from Node's built-in
 `node:sqlite`, deliberately, so that self-hosting never requires a C++ toolchain.
+
+The Mac client in `desktop/` is the one part that needs a compiler, which is what it is for, and it
+is not needed to run or host ndBrain:
+
+```bash
+cd desktop
+cargo test        # all three crates
+cargo build       # an unsigned debug binary
+```
+
+Rust 1.90 or newer. `cargo test -p ndbrain-capture` is the fast loop — that crate holds the
+decisions and depends on nothing, so it does not compile Tauri.
 
 ## Licence
 

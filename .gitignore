@@ -3,6 +3,11 @@ dist/
 coverage/
 *.log
 
+# Rust build output for the Mac client. `gen/schemas` is written by
+# tauri-build on every build from the capabilities and the installed plugins.
+desktop/target/
+desktop/app/gen/schemas/
+
 # runtime data — never commit a vault or an index
 data/
 vaults/

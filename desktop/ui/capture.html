@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      No words in this file.
+
+      Every label is an empty element the panel fills from `copy.rs`, which is
+      what makes "the interface speaks one language" checkable here rather than
+      aspirational — see `tests/one_language.rs`. `web/test/one-language.test.ts`
+      does the same for the browser interface and only walks `web/src`.
+    -->
+    <title>ndBrain</title>
+    <link rel="stylesheet" href="capture.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <textarea id="thought" rows="4" autofocus spellcheck="false"></textarea>
+
+      <!-- Shown under the field rather than instead of it: a thought already
+           typed has to still be there after signing in. -->
+      <form id="sign-in" class="sign-in" hidden>
+        <h1 id="sign-in-title"></h1>
+        <label class="field">
+          <span id="account-label"></span>
+          <input id="account" type="text" autocomplete="username" />
+        </label>
+        <label class="field">
+          <span id="password-label"></span>
+          <input id="password" type="password" autocomplete="current-password" />
+        </label>
+        <button id="sign-in-button" type="submit"></button>
+      </form>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="capture.js"></script>
+  </body>
+</html>

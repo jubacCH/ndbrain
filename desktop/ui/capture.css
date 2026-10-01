@@ -1,0 +1,126 @@
+/*
+ * The panel's look: ndBrain's own, dark or light by the system.
+ *
+ * Deliberately small. This is a surface somebody looks at for four seconds while
+ * doing something else, so there is one field, one line of text under it and
+ * nothing to read.
+ */
+
+:root {
+  --ground: #f7f7f8;
+  --raised: #ffffff;
+  --ink: #16181c;
+  --quiet: #6b7280;
+  --edge: rgb(0 0 0 / 12%);
+  --accent: #2563eb;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0e1013;
+    --raised: #171a1f;
+    --ink: #f1f2f4;
+    --quiet: #9aa1ac;
+    --edge: rgb(255 255 255 / 14%);
+    --accent: #7aa2f7;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  /* The window is decorationless, so the rounding has to come from here. */
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  padding: 14px;
+}
+
+#thought {
+  flex: 1 1 auto;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--raised);
+  color: inherit;
+  font: inherit;
+  resize: none;
+}
+
+#thought:focus-visible,
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sign-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+}
+
+.sign-in h1 {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field {
+  display: flex;
+  flex: 1 1 140px;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--quiet);
+}
+
+input {
+  padding: 6px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--ink);
+  font: inherit;
+}
+
+button {
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 500;
+}
+
+.status {
+  margin: 0;
+  min-height: 1.45em;
+  color: var(--quiet);
+  font-size: 12px;
+}
