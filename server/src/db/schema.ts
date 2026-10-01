@@ -555,11 +555,24 @@ const MIGRATIONS: Array<(db: Database) => void> = [
       ['shares', 'grantee'],
       ['user_settings', 'user_id'],
     ];
+    // One plain statement per account per table, rather than one correlated
+    // subquery with an `IN (SELECT …)` over every row.
+    //
+    // There are a handful of accounts and there can be a great many rows:
+    // `access_log` on the live instance holds six hundred and sixty thousand.
+    // The subquery form asks SQLite to work that out for each of them and to
+    // materialise the `IN` list; this form is an indexed lookup per account,
+    // against the index each of these columns already has. Same result, and it
+    // asks the database for nothing it has to build first.
+    const accounts = db.all('SELECT id, guid FROM users');
     for (const [table, column] of pointsAtAUser) {
-      db.exec(
-        `UPDATE ${table} SET ${column} = (SELECT u.guid FROM users u WHERE u.id = ${table}.${column})
-          WHERE ${column} IN (SELECT id FROM users)`,
-      );
+      for (const account of accounts) {
+        db.run(
+          `UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`,
+          String(account['guid']),
+          String(account['id']),
+        );
+      }
     }
 
     db.exec('UPDATE users SET id = guid;');
