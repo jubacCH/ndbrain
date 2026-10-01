@@ -23,7 +23,6 @@ import {
   onUnauthenticated,
   refKey,
   type NoteRow,
-  type SearchHit,
   type GraphData,
   type PulseEvent,
   type Share,
@@ -38,6 +37,7 @@ import { ContextPanel } from './Context';
 import { Editor } from './Editor';
 import { copy } from './copy';
 import { useFilesPane } from './useFilesPane';
+import { useSearch } from './useSearch';
 import { discardLegacy, dropRecent, forgetAccount, loadRecents, pushRecent, type Recent } from './accountStorage';
 import { SESSION_SIGNAL_KEY, announceSessionChange, closeSession, openSession } from './session';
 import { applyPrefs, loadPrefs, savePrefs, type Prefs, type Theme } from './prefs';
@@ -102,15 +102,6 @@ import {
 import { useNoteBuffer, type SaveState } from './useNoteBuffer';
 import { Presence } from './collab/Presence';
 import { useCollab } from './collab/useCollab';
-
-export interface Filters {
-  tag?: string;
-  dir?: string;
-  days?: number;
-  /** A frontmatter key, optionally pinned to one of its values. */
-  prop?: string;
-  propValue?: string;
-}
 
 type View =
   | 'note'
@@ -303,17 +294,6 @@ function Shell({
   viewNow.current = view;
   /** Where to place the cursor on the next open — a task's line, or nowhere. */
   const [jumpLine, setJumpLine] = useState<number | null>(null);
-  const [query, setQuery] = useState('');
-  const [filters, setFilters] = useState<Filters>({});
-  const [hits, setHits] = useState<SearchHit[]>([]);
-  /**
-   * Which search is the current one.
-   *
-   * Typing fires a request per keystroke and they do not come back in order. The
-   * old code had no guard at all, so a slow answer for "prox" could land after a
-   * fast one for "proxmox" and leave the wrong results under the right query.
-   */
-  const searchSeq = useRef(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   /**
    * The network frame, while it is in full screen.
@@ -339,8 +319,6 @@ function Shell({
   const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
   /** The vault the new-note dialog is open on, or null. */
   const [newNote, setNewNote] = useState<NewNoteTarget | null>(null);
-  const [props, setProps] = useState<Array<{ key: string; count: number }>>([]);
-  const [propValues, setPropValues] = useState<Array<{ value: string; count: number }>>([]);
   const [pulse, setPulse] = useState<PulseEvent[]>([]);
   /** The server's timestamp to ask from next time. */
   const pulseSince = useRef<number | undefined>(undefined);
@@ -1263,62 +1241,21 @@ function Shell({
     [narrow],
   );
 
-  const runSearch = useCallback(
-    async (value: string, active: Filters): Promise<void> => {
-      // A query with only filters is legitimate — "everything tagged #homelab" —
-      // so the search runs whenever either part is present.
-      const hasFilter = active.tag !== undefined || active.dir !== undefined || active.days !== undefined;
-      if (value.trim() === '' && !hasFilter) {
-        searchSeq.current += 1; // an in-flight search must not refill the list
-        setHits([]);
-        return;
-      }
-
-      setView('search');
-      const seq = (searchSeq.current += 1);
-      const { hits: found } = await api.search(value.trim(), active);
-      // Answers do not arrive in the order they were asked for. Without this,
-      // a slow response for "prox" lands after a fast one for "proxmox" and
-      // leaves the wrong results sitting under the right query.
-      if (seq !== searchSeq.current) return;
-      setHits(found);
-    },
-    [],
-  );
-
-  const onQueryChange = (value: string): void => {
-    setQuery(value);
-    void runSearch(value, filters).catch(() => setError(copy.errors.searchFailed));
-  };
-
-  const toggleFilter = (patch: Filters): void => {
-    const next: Filters = { ...filters };
-    for (const [key, value] of Object.entries(patch) as Array<[keyof Filters, unknown]>) {
-      if (next[key] === value) delete next[key];
-      else Object.assign(next, { [key]: value });
-    }
-    // A value only means something under its key. Dropping the key has to drop
-    // the value with it, or the next search filters on a pair that is no longer
-    // on screen.
-    if (next.prop === undefined) delete next.propValue;
-    setFilters(next);
-    void runSearch(query, next).catch(() => setError(copy.errors.searchFailed));
-
-    if (next.prop !== undefined && next.prop !== filters.prop) {
-      api
-        .propValues(next.prop)
-        .then(({ values }) => setPropValues(values))
-        .catch(() => setPropValues([]));
-    } else if (next.prop === undefined) {
-      setPropValues([]);
-    }
-  };
-
-  const clearFilters = (): void => {
-    setFilters({});
-    setPropValues([]);
-    void runSearch(query, {}).catch(() => undefined);
-  };
+  /**
+   * The search view's query, filters and results, in `useSearch`.
+   *
+   * Nothing outside that view reads any of it, and the request needs only a
+   * place to put an error and a way to say "show the search view" — so the seam
+   * is narrow enough that the sequence guard travels with the code it guards.
+   */
+  // Stable, or `runSearch` is rebuilt on every render and the callbacks that
+  // depend on it with it.
+  const showSearchView = useCallback(() => setView('search'), []);
+  const { query, setQuery, filters, hits, props, propValues, runSearch, onQueryChange, toggleFilter, clearFilters } = useSearch({
+    showSearchView,
+    setError,
+    notes,
+  });
 
   /**
    * Opens the palette, leaving full screen first.
@@ -1372,15 +1309,6 @@ function Shell({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [openPalette]);
-
-  useEffect(() => {
-    // The vault's own vocabulary, re-read whenever its notes changed: a key
-    // exists exactly as long as some note declares it.
-    api
-      .propKeys()
-      .then(({ props: list }) => setProps(list))
-      .catch(() => undefined);
-  }, [notes]);
 
   /**
    * The pulse: ask every two seconds what happened.
