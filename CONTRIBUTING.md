@@ -71,6 +71,28 @@ A commit message explains the change to somebody who will meet it in `git blame`
 in two years with no other context: what was wrong, why this is the fix, and
 what was considered and rejected. The history here is long-form on purpose.
 
+## Cutting a release
+
+```bash
+# 1. Move the Unreleased section of CHANGELOG.md under the new number, commit.
+# 2. Tag it. The tag is what publishes; nothing else does.
+git tag -a v0.1.0 -m "0.1.0" && git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` then runs the whole test suite, builds the
+image for `linux/amd64` and `linux/arm64` on native runners, and tags both under
+one name in GHCR. It publishes nothing if the suite fails: an image built from a
+commit nothing verified is worse than no image, because somebody else runs it.
+
+**The first release needs one thing done by hand.** A package GHCR has never
+seen is created private, so the first push makes an image nobody can pull. Make
+it public under the repository's *Packages*, once; after that every release
+inherits it.
+
+Versions are `0.x` while the API can still change. The database migrates itself
+forward on start and there is no path back, so a release is also a thing people
+restore a backup to undo — which is why there is no floating `:1` tag.
+
 ## Security
 
 Please do not open a public issue for a vulnerability — see
