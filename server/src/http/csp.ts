@@ -19,8 +19,20 @@
  *    to run before the first paint or a dark-mode launch flashes white. It is
  *    named by digest rather than waved through with `'unsafe-inline'` — see
  *    `inlineScriptHashes`.
- *  - **No `eval` and no `new Function`** anywhere in the bundle, verified
- *    against the built assets, so `script-src` needs no `'unsafe-eval'`.
+ *  - **Nothing evaluates a string at runtime**, so `script-src` needs no
+ *    `'unsafe-eval'`. This used to read "no `eval` and no `new Function`
+ *    anywhere in the bundle, verified against the built assets" — and nothing
+ *    verified it. The sentence had quietly become false: Zod 4 probes for a JIT
+ *    with `try { Function("") } catch {}` on first use, so every single load was
+ *    raising a violation that Zod caught and shrugged off. Zod is configured
+ *    `jitless` now (`web/src/main.tsx`), which skips the probe.
+ *
+ *    The claim is checked where it applies, by `web/scripts/check-csp.mjs`,
+ *    which `npm run build` runs: no `eval(` at all, and `new Function` only in
+ *    the two places that are known and listed. Zod's probe stays in the bundle
+ *    as dead code — the switch is read at runtime, so it cannot be shaken out —
+ *    and CodeMirror's Pug mode compiles attribute values that way, which is
+ *    loaded only for a `pug` code block and does less under this policy.
  *  - **Images from this origin only**: an embed resolves to
  *    `/api/v1/files/…?owner=…` (see `web/src/editor/livePreview.ts`), and the
  *    icons are files in `web/public`. No `data:` and no `blob:` anywhere.
