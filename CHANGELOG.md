@@ -15,6 +15,34 @@ forwards only. Upgrading is pulling a newer image; downgrading is restoring a
 backup. Take a copy of `data/index/ndbrain.db` before an upgrade, with
 `sqlite3 … ".backup"` rather than `cp`.
 
+## [0.1.1] — 2026-10-02
+
+Two fixes from the same outage, on the day of the first release. Nothing here
+changes what ndBrain does; it changes what it survives.
+
+### Fixed
+
+- **A service that would not start, over a directory nothing reads.** The
+  signposts under `vaults/by-name` are cleared and rebuilt on every start, and
+  `writeSignposts` promises in its own docstring that a link it cannot write is
+  not a reason to fail. That held for the links and not for the two lines that
+  clear the directory they live in. On the author's own instance a sidecar had
+  written files in there as root, the application cleared them as another user,
+  and it went into a restart loop while every note beside it was intact and
+  servable. An incomplete signpost directory is now a line in the log.
+- **`ops/vault-history.sh` treated the signpost directory as a vault**, giving it
+  a git repository that it then committed into as root, which is where those
+  root-owned files came from. It also checked `.git` for ownership without
+  looking inside it, so every commit it made left new objects behind that the
+  application could read but not remove — 1305 of them on the live instance,
+  unnoticed for weeks, because reading them works.
+
+### Changed
+
+- Dependencies: the grouped minor and patch updates for `server/` and `web/`,
+  the pinned GitHub Actions, and jsdom 30 in the web test environment. Nothing
+  here changes behaviour.
+
 ## [0.1.0] — 2026-10-02
 
 The first release. ndBrain had been running from `main` for two months before
