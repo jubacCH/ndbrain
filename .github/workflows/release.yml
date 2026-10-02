@@ -90,6 +90,10 @@ jobs:
     name: publish
     needs: build
     runs-on: ubuntu-latest
+    # Beyond the workflow's `contents: read`, for the release entry at the end.
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -115,3 +119,54 @@ jobs:
             --tag "${IMAGE}:latest" \
             $(printf "${IMAGE}@sha256:%s " *)
           docker buildx imagetools inspect "${IMAGE}:${version}"
+
+      # Pushing a tag published two images and left the repository's own
+      # Releases page empty, so from the outside it looked as though there were
+      # none. Both of the first two had to be written by hand afterwards, which
+      # is the kind of step that gets skipped once and then always.
+      #
+      # Last, and only once the manifest exists: the note tells people to pull
+      # an image, and a note that says so before the image is there is worse
+      # than a late note.
+      #
+      # The body is the tag's own message, which is where the release notes are
+      # written anyway (see "Cutting a release" in CONTRIBUTING.md). Checked out
+      # for exactly that reason — `--notes-from-tag` reads the annotation, so it
+      # needs the tag object locally and not just the API.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: The release entry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo '## Installieren'
+            echo
+            echo '```'
+            echo "docker pull ${IMAGE}:${version}"
+            echo '```'
+            echo
+            echo "Für amd64 und arm64. Eine vollständige Installation steht in"
+            echo "[docs/install/compose.yaml](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/install/compose.yaml)."
+            echo
+            echo '---'
+            echo
+            git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" | tail -n +3
+          } > /tmp/notes.md
+          # Updated if it is already there rather than failing. A tag can be
+          # pushed again — one was on 02.10.2026, when the history was rewritten
+          # and every tag object changed — and this step runs after the image is
+          # published. Failing here would mark a release red that had in fact
+          # done everything that matters.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" \
+              --title "${version}" \
+              --notes-file /tmp/notes.md
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --verify-tag \
+              --title "${version}" \
+              --notes-file /tmp/notes.md
+          fi
