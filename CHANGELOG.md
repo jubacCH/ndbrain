@@ -15,7 +15,11 @@ forwards only. Upgrading is pulling a newer image; downgrading is restoring a
 backup. Take a copy of `data/index/ndbrain.db` before an upgrade, with
 `sqlite3 … ".backup"` rather than `cp`.
 
-## [Unreleased]
+## [0.1.0] — 2026-10-02
+
+The first release. ndBrain had been running from `main` for two months before
+this; what makes today different is that there is now an image somebody else can
+pull and a test suite that runs before it is published.
 
 ### Added
 
