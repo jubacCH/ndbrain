@@ -50,8 +50,10 @@ there is no native dependency anywhere in it, because SQLite comes from Node its
 stdin rather than from an argument that would be left behind in `ps` and in a shell history. Run
 it with no arguments for the rest — passwords, agent keys, spaces, reindex.
 
-Your notes land in `./data/vaults/<account>` as ordinary Markdown files and stay there; the
-container holds nothing. `./data/index` is a cache that can be deleted and rebuilt from them —
+Your notes land in `./data/vaults/<id>` as ordinary Markdown files and stay there; the
+container holds nothing. The directory is named by the account's identifier rather than by a
+name, so that a name can be changed — `./data/vaults/WHOSE-NOTES.txt` says which is whose, and
+is written again on every start. `./data/index` is a cache that can be deleted and rebuilt from them —
 except for `ndbrain.db`, which also holds the accounts, the shares and the agent keys, and those
 are not derivable from anything. **Back up `./data`.**
 
@@ -138,7 +140,7 @@ flowchart LR
     q[index/queries.ts]
   end
 
-  vault[(vaults/&lt;owner&gt;/*.md<br/>the truth)]
+  vault[(vaults/&lt;id&gt;/*.md<br/>the truth)]
   db[(SQLite index<br/>a cache)]
   git[(.git in each vault<br/>written by ops/ only)]
 

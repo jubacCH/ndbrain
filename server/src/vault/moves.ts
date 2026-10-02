@@ -20,20 +20,24 @@
  *
  * **The signpost.** With the directory named by the identifier, nothing on disk
  * says whose notes these are: a backup, an `rsync`, somebody with a shell. So
- * `vaults/by-name/<login> -> ../<id>` is written beside them. No code reads it
- * — the application resolves vaults by id and nothing else — and it is rebuilt
- * from scratch on every start, so a rename or a deleted account cannot leave a
- * link pointing at a name that is gone.
+ * `vaults/WHOSE-NOTES.txt` names the login beside each identifier. No code
+ * reads it — the application resolves vaults by id and nothing else — and it is
+ * written again from the database on every start, so a rename or a deleted
+ * account cannot leave a line claiming a vault. Why a file and not the
+ * directory of symlinks this started as: see `writeSignposts`.
  */
 
-import { readdir, rename, rm, stat, symlink, mkdir } from 'node:fs/promises';
+import { readdir, rename, rm, stat, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Database } from '../db/database.js';
 import { assertUserId } from './paths.js';
 
 /** Where the signpost lives. Not a vault, and skipped by everything that walks them. */
-export const BY_NAME = 'by-name';
+export const WHOSE_NOTES = 'WHOSE-NOTES.txt';
+
+/** The directory of symlinks this replaced in v16. Removed on start; see `writeSignposts`. */
+export const LEGACY_BY_NAME = 'by-name';
 
 export interface MoveReport {
   moved: Array<{ from: string; to: string }>;
@@ -104,67 +108,97 @@ export async function runVaultMoves(db: Database, dataDir: string): Promise<Move
 }
 
 /**
- * Rebuilds `vaults/by-name` so the disk says whose notes are whose.
+ * Rebuilds `vaults/WHOSE-NOTES.txt` so the disk says whose notes are whose.
  *
- * Thrown away and written again rather than reconciled: the directory holds
- * nothing but links, making it costs nothing, and a link left behind from a
- * rename is worse than no link at all — it is a name that resolves to somebody
- * else's vault.
+ * **A file, not a directory of symlinks, and that is the design rather than a
+ * detail.** Until 02.10.2026 this was `vaults/by-name/<login> -> ../<id>`, and
+ * being a directory with a legal account name in the place where vaults live,
+ * it needed an exception in four separate places: chokidar's `ignored`, the
+ * watcher's own sweep, `vaultDirectories`, and the history timer's loop. Three
+ * of those were written on purpose. The fourth was missing, and it cost an
+ * outage — the timer versioned the signposts as though they held notes, as
+ * root, and the application then could not clear them on start.
  *
- * A link that cannot be written is not a reason to fail: nothing reads these.
- * Neither is a directory that cannot be cleared, and that half was missing —
- * see below. Returns how many links are there, which is less than the number of
- * accounts whenever something got in the way.
+ * A file needs none of the four, because "is not a directory" is already the
+ * rule in every one of those places. It also explains itself to whoever meets
+ * it, which a column of symlinks does not, and that was the whole point of
+ * writing anything here. What is given up is `cd vaults/by-name/julian`.
+ *
+ * It stays inside `vaults/` rather than moving up beside it, which would have
+ * removed the exceptions just as well: only `vaults/` and `index/` are mounted,
+ * and under `read_only: true` a sibling of them is not writable. It would have
+ * failed quietly, in the one place nobody looks.
+ *
+ * Thrown away and written again rather than reconciled: a line left behind from
+ * a rename is worse than no line — it is a name claiming somebody else's vault.
+ *
+ * A signpost that cannot be written is not a reason to fail, because nothing
+ * reads it. Returns how many accounts are named in the file, which is fewer
+ * than were asked for whenever something got in the way; the caller says so in
+ * the log rather than letting it pass unnoticed.
  */
 export async function writeSignposts(
   dataDir: string,
   accounts: ReadonlyArray<{ id: string; loginName: string }>,
 ): Promise<number> {
-  const root = path.join(dataDir, 'vaults', BY_NAME);
-
-  // The guarantee in the docstring covered the links and not these two lines,
-  // and on 02.10.2026 that took the live instance down. The history timer had
-  // treated this directory as a vault and committed a git repository into it as
-  // root; the application cleared it as uid 1000, the unlink failed with EACCES,
-  // and the container went into a restart loop. Over a directory that nothing
-  // reads, while every note in the vaults beside it was intact and served.
+  // Installations that ran v16 before this change have the directory of
+  // symlinks. It was rebuilt on every start, so there is nothing to migrate and
+  // only something to remove — left there, the history timer goes on versioning
+  // it.
   //
-  // Returning instead of throwing leaves whatever is in there alone. That is
-  // worse than a rebuilt directory, because a link left from a rename resolves
-  // to somebody else's vault — but the caller says so in the log, and a stale
-  // signpost that nothing reads is still a smaller thing than a service that
-  // will not start.
-  try {
-    await rm(root, { recursive: true, force: true });
-    await mkdir(root, { recursive: true });
-  } catch {
-    return 0;
-  }
+  // The `catch` is the load-bearing part, not the position: the old directory
+  // is exactly the thing that may be unremovable, because that is what the
+  // outage was, and an upgrade must not hang on the installations that hit it.
+  // Where the removal fails, the directory stays and the timer keeps skipping
+  // it by name, which is the one reason that exception is still in the script.
+  await rm(path.join(dataDir, 'vaults', LEGACY_BY_NAME), { recursive: true, force: true }).catch(() => {});
 
-  let written = 0;
+  const named: Array<{ id: string; loginName: string }> = [];
   for (const account of accounts) {
-    // The login is free text as far as a filesystem is concerned — it is
-    // checked on the way in, and checked again here because this is the place
-    // it becomes a path.
+    // Still validated, for a different reason than before. It is no longer
+    // becoming a path, but it is becoming one line in a file of one line per
+    // account, and a newline in a login would forge a line of its own.
     try {
       assertUserId(account.loginName);
       assertUserId(account.id);
+      named.push(account);
     } catch {
       continue;
     }
-    try {
-      await symlink(path.join('..', account.id), path.join(root, account.loginName));
-      written += 1;
-    } catch {
-      // A name that clashes with another link, a filesystem without symlinks,
-      // a read-only mount. None of them is a reason not to serve notes.
-    }
   }
-  return written;
+
+  const width = named.reduce((widest, account) => Math.max(widest, account.loginName.length), 0);
+  const body = named.map((account) => `${account.loginName.padEnd(width)}  ${account.id}`).join('\n');
+
+  try {
+    await writeFile(
+      path.join(dataDir, 'vaults', WHOSE_NOTES),
+      `# Which vault belongs to which login.\n` +
+        `#\n` +
+        `# Written from the database on every start, because a directory named by a\n` +
+        `# random identifier does not say whose notes are in it — and a backup, an\n` +
+        `# rsync or somebody with a shell has nothing else to go on. Nothing reads\n` +
+        `# this file; editing it changes nothing and it will be overwritten.\n` +
+        `#\n` +
+        `# A login can be changed. The identifier beside it never does.\n` +
+        `\n${body}\n`,
+      'utf8',
+    );
+  } catch {
+    // A read-only mount, a full disk, a directory that is not there. None of
+    // them is a reason not to serve notes.
+    return 0;
+  }
+  return named.length;
 }
 
-/** The vault directories, with the signpost left out. */
+/**
+ * The vault directories.
+ *
+ * No exception for the signpost any more: it is a sibling of this directory
+ * rather than something in it, so there is nothing here to leave out.
+ */
 export async function vaultDirectories(dataDir: string): Promise<string[]> {
   const entries = await readdir(path.join(dataDir, 'vaults'), { withFileTypes: true });
-  return entries.filter((entry) => entry.isDirectory() && entry.name !== BY_NAME).map((entry) => entry.name);
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
 }

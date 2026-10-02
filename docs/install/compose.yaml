@@ -10,8 +10,10 @@
 # `ndbrain-user`, which reads the password from stdin rather than from an
 # argument that would be left behind in `ps` and in a shell history.
 #
-# Your notes end up in `./data/vaults/<account>` as ordinary Markdown files, and
+# Your notes end up in `./data/vaults/<id>` as ordinary Markdown files, and
 # `./data/index` holds a cache that can be thrown away and rebuilt from them.
+# The directory is named by the account's identifier, not by a name, so that a
+# name stays changeable; `./data/vaults/WHOSE-NOTES.txt` says which is whose.
 # That is the promise the whole project is arranged around: the files are the
 # truth. Back up `./data` and you have backed up everything that matters —
 # though `./data/index/ndbrain.db` also holds the accounts, the shares and the

@@ -85,7 +85,7 @@ async function main(): Promise<void> {
   for (const done of runtime.moves.moved) {
     server.log.info(
       `vault directory "${done.from}" is now "${done.to}" — a vault is named by its ` +
-        'account identifier since v16, and vaults/by-name holds a link under each login',
+        'account identifier since v16, and vaults/WHOSE-NOTES.txt names the login for each one',
     );
   }
   for (const clash of runtime.moves.conflicted) {

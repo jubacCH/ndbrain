@@ -159,7 +159,7 @@ export async function createRuntime(config: Config, options: RuntimeOptions = {}
     // before it; the collab registry above logs the same way. It reaches stdout
     // either way, which is where `docker logs` looks.
     console.warn(
-      `vaults/by-name is incomplete: ${written} of ${signposted.length} signposts written. ` +
+      `vaults/WHOSE-NOTES.txt is incomplete: ${written} of ${signposted.length} accounts named. ` +
         'Nothing reads it, so notes and sharing are unaffected, but a name in there may be stale.',
     );
   }

@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { Database } from '../src/db/database.js';
 import { SCHEMA_VERSION, migrate } from '../src/db/schema.js';
-import { runVaultMoves, writeSignposts, vaultDirectories, BY_NAME } from '../src/vault/moves.js';
+import { runVaultMoves, writeSignposts, vaultDirectories, WHOSE_NOTES } from '../src/vault/moves.js';
 
 let dir: string;
 let db: Database;
@@ -276,69 +276,143 @@ describe('the half on disk', () => {
 });
 
 describe('the signpost', () => {
-  it('points each login at its vault', async () => {
-    const accounts = [
+  const file = (): string => path.join(dir, 'vaults', WHOSE_NOTES);
+
+  it('names the vault each login belongs to', async () => {
+    await writeSignposts(dir, [
       { id: 'acc_aaaa', loginName: 'julian' },
       { id: 'acc_bbbb', loginName: 'ramona' },
-    ];
-    await writeSignposts(dir, accounts);
+    ]);
 
-    for (const account of accounts) {
-      const link = path.join(dir, 'vaults', BY_NAME, account.loginName);
-      expect(await fs.readlink(link)).toBe(path.join('..', account.id));
-    }
+    const written = await fs.readFile(file(), 'utf8');
+    expect(written).toMatch(/^julian\s+acc_aaaa$/m);
+    expect(written).toMatch(/^ramona\s+acc_bbbb$/m);
   });
 
   /**
-   * Thrown away and written again rather than reconciled: a link left behind
-   * from a rename is worse than no link at all — it is a name that resolves to
-   * somebody else's vault.
+   * It says what it is, in the file, because the whole purpose is somebody
+   * meeting it cold: in a backup, over rsync, in a shell. A column of
+   * identifiers that does not explain itself would need the explanation to live
+   * somewhere else, and then the directory still would not say whose notes
+   * these are.
    */
-  it('leaves nothing behind from a login that has changed', async () => {
+  it('explains itself to whoever opens it', async () => {
     await writeSignposts(dir, [{ id: 'acc_aaaa', loginName: 'julian' }]);
-    await writeSignposts(dir, [{ id: 'acc_aaaa', loginName: 'jb' }]);
 
-    const links = await fs.readdir(path.join(dir, 'vaults', BY_NAME));
-    expect(links).toEqual(['jb']);
+    const written = await fs.readFile(file(), 'utf8');
+    const head = written
+      .split('\n')
+      .filter((line) => line.startsWith('#'))
+      .join(' ')
+      .toLowerCase();
+
+    // The three things a reader has to be told, and each asserted because
+    // leaving any one of them out produces a file that misleads rather than one
+    // that is merely terse: what the two columns are, that editing it
+    // accomplishes nothing, and that nothing depends on it. A first version of
+    // this test asserted that the file began with `#` and survived having the
+    // explanation deleted.
+    expect(head).toContain('which vault belongs to which login');
+    expect(head).toContain('overwritten');
+    expect(head).toContain('nothing reads');
   });
 
-  it('is not mistaken for a vault', async () => {
+  /**
+   * A file, not a directory, and that is the design rather than a detail. As a
+   * directory in among the vaults it needed an exception in four separate
+   * places — chokidar's `ignored`, the watcher's sweep, `vaultDirectories`, and
+   * the history timer's loop — because it was a directory with a legal account
+   * name where vaults live. Three of those were written on purpose; the fourth
+   * was missing and cost an outage on 02.10.2026.
+   *
+   * As a file it needs none of them: "is not a directory" is already the rule
+   * in every one of those places. `vaultDirectories` is the one asserted here
+   * because it is the one in this module.
+   */
+  it('is not something that walks the vaults has to know about', async () => {
     await fs.mkdir(path.join(dir, 'vaults', 'acc_aaaa'), { recursive: true });
     await writeSignposts(dir, [{ id: 'acc_aaaa', loginName: 'julian' }]);
 
     expect(await vaultDirectories(dir)).toEqual(['acc_aaaa']);
   });
 
-  it('skips a name that could not be a path, rather than failing the start', async () => {
-    const written = await writeSignposts(dir, [
-      { id: 'acc_aaaa', loginName: 'julian' },
-      { id: 'acc_bbbb', loginName: '../anderswo' },
-    ]);
+  /**
+   * The flip side, and the proof that the exceptions are gone rather than
+   * relocated: `by-name` is an ordinary login now. It used to collide with the
+   * signpost directory, so every walker had to special-case the string.
+   */
+  it('no longer makes `by-name` a name an account cannot have', async () => {
+    await fs.mkdir(path.join(dir, 'vaults', 'acc_aaaa'), { recursive: true });
+    await writeSignposts(dir, [{ id: 'acc_aaaa', loginName: 'by-name' }]);
 
-    expect(written).toBe(1);
-    expect(await fs.readdir(path.join(dir, 'vaults', BY_NAME))).toEqual(['julian']);
+    expect(await vaultDirectories(dir)).toEqual(['acc_aaaa']);
+    expect(await fs.readFile(file(), 'utf8')).toMatch(/^by-name\s+acc_aaaa$/m);
   });
 
   /**
-   * The promise above held for the links and not for the directory they live in,
-   * which is cleared and remade on every start. That took the live instance down
-   * on 02.10.2026: the history timer had committed a git repository into this
-   * directory as root, the application cleared it as uid 1000, the unlink failed
-   * with EACCES, and the container went into a restart loop over a directory
-   * nothing reads.
+   * Thrown away and written again rather than reconciled: a line left behind
+   * from a rename is worse than no line at all — it is a name that claims
+   * somebody else's vault.
    */
-  it('starts even when the directory cannot be cleared', async (ctx) => {
-    const root = path.join(dir, 'vaults', BY_NAME);
-    await fs.mkdir(root, { recursive: true });
-    await fs.writeFile(path.join(root, 'im-weg'), 'owned by root on the live instance');
-    await fs.chmod(root, 0o500);
+  it('leaves nothing behind from a login that has changed', async () => {
+    await writeSignposts(dir, [{ id: 'acc_aaaa', loginName: 'julian' }]);
+    await writeSignposts(dir, [{ id: 'acc_aaaa', loginName: 'jb' }]);
+
+    const written = await fs.readFile(file(), 'utf8');
+    expect(written).toMatch(/^jb\s+acc_aaaa$/m);
+    expect(written).not.toContain('julian');
+  });
+
+  /**
+   * Installations that ran v16 before this change have a directory of symlinks
+   * at `vaults/by-name`. It was rebuilt from scratch on every start, so there
+   * is nothing to migrate and only something to remove — left there, the
+   * history timer goes on versioning it as though it held notes.
+   */
+  it('removes the directory of symlinks it replaces', async () => {
+    const old = path.join(dir, 'vaults', 'by-name');
+    await fs.mkdir(old, { recursive: true });
+    await fs.mkdir(path.join(dir, 'vaults', 'acc_aaaa'), { recursive: true });
+    await fs.symlink(path.join('..', 'acc_aaaa'), path.join(old, 'julian'));
+
+    await writeSignposts(dir, [{ id: 'acc_aaaa', loginName: 'julian' }]);
+
+    await expect(fs.stat(old)).rejects.toThrow();
+    expect(await vaultDirectories(dir)).toEqual(['acc_aaaa']);
+  });
+
+  it('skips a name that could not be written safely, rather than failing the start', async () => {
+    const written = await writeSignposts(dir, [
+      { id: 'acc_aaaa', loginName: 'julian' },
+      // A newline would forge a line of its own in a file of one per account.
+      { id: 'acc_bbbb', loginName: 'ramona\nroot acc_aaaa' },
+    ]);
+
+    expect(written).toBe(1);
+    const text = await fs.readFile(file(), 'utf8');
+    expect(text).toMatch(/^julian\s+acc_aaaa$/m);
+    expect(text).not.toContain('root');
+  });
+
+  /**
+   * The 02.10.2026 outage, in the shape it can still take: something in the
+   * old location that this process may not remove. Before, that stopped the
+   * start; now the old directory is a tidy-up and the file is written anyway.
+   * If this ever fails, an upgrade hangs on exactly the installations that hit
+   * the original bug.
+   */
+  it('writes the file even when the old directory cannot be removed', async (ctx) => {
+    const old = path.join(dir, 'vaults', 'by-name');
+    await fs.mkdir(old, { recursive: true });
+    await fs.writeFile(path.join(old, 'im-weg'), 'owned by root on the live instance');
+    await fs.chmod(old, 0o500);
 
     try {
       // root ignores the mode, and so does a filesystem that has none. The
       // refusal this is about cannot be produced there, and a green run would
       // be saying nothing rather than saying it passed.
       const stillRemovable = await fs
-        .unlink(path.join(root, 'im-weg'))
+        .unlink(path.join(old, 'im-weg'))
         .then(() => true)
         .catch(() => false);
 
@@ -350,9 +424,10 @@ describe('the signpost', () => {
         return;
       }
 
-      await expect(writeSignposts(dir, [{ id: 'acc_aaaa', loginName: 'julian' }])).resolves.toBe(0);
+      expect(await writeSignposts(dir, [{ id: 'acc_aaaa', loginName: 'julian' }])).toBe(1);
+      expect(await fs.readFile(file(), 'utf8')).toMatch(/^julian\s+acc_aaaa$/m);
     } finally {
-      await fs.chmod(root, 0o700);
+      await fs.chmod(old, 0o700);
     }
   });
 });

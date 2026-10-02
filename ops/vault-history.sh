@@ -73,15 +73,20 @@ for vault in "$VAULTS"/*/; do
   path=${vault%/}
   owner=$(basename "$path")
 
-  # `by-name` is not a vault. It holds the readable-name signposts, which are
-  # symlinks into the account directories, so everything under it is already
-  # versioned in the vault it points at. Giving it a repository is not merely
-  # redundant, it is what took the service down on 02.10.2026: the application
-  # rewrites this directory on every start, as uid 1000, while this script runs
-  # as root — so `.git/logs/HEAD`, written by a commit from here, could not be
-  # unlinked and the container went into a restart loop with EACCES. The
-  # application excludes the same directory from its watcher, for the same
-  # reason that it is signposts and not notes.
+  # A leftover, not a rule. The signposts are a file now,
+  # `vaults/WHOSE-NOTES.txt`, and `"$VAULTS"/*/` does not match files — so this
+  # loop no longer has to know they exist. Needing an exception in four separate
+  # places was the sign that a directory of symlinks sat where vaults live, and
+  # the one exception missing here is what took the service down on 02.10.2026.
+  #
+  # This stays for the installations that ran v16 before that change. The
+  # application removes the old directory on start, but it can fail to: the
+  # files in there belong to root, written by commits from this script, while
+  # the application runs as uid 1000. Where that happens the directory stays,
+  # and without this line it would go on being versioned and go on growing.
+  #
+  # Removable once no installation can still have it. Not worth the thought
+  # until then.
   if [ "$owner" = 'by-name' ]; then
     continue
   fi

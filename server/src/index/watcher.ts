@@ -19,7 +19,6 @@ import path from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 
 import type { Indexer } from './indexer.js';
-import { BY_NAME } from '../vault/moves.js';
 import { assertUserId, isNotePath } from '../vault/paths.js';
 
 /**
@@ -152,12 +151,6 @@ export class VaultWatcher {
         const relative = path.relative(this.#vaultsDir, target);
         if (relative.startsWith('..')) return true;
         const segments = relative.split(path.sep);
-        // The signpost `vault/moves.ts` writes — links from each account's
-        // login to its vault, so the disk says whose notes are whose now that a
-        // vault is named by a random identifier. Its links are not followed
-        // either way, but an event from inside it would read as a note of an
-        // account called `by-name`; see `#owners`.
-        if (segments[0] === BY_NAME) return true;
         // Hidden directories (.git, .obsidian) and our own atomic-write temp files.
         return segments.some((segment) => segment.startsWith('.')) || target.endsWith('.tmp');
       },
@@ -286,13 +279,7 @@ export class VaultWatcher {
     }
 
     return entries
-      // `by-name` is the signpost `vault/moves.ts` writes — links from each
-      // account's login to its vault, so the disk says whose notes are whose
-      // now that a vault is named by a random identifier. It is a directory and
-      // its name is a legal account name, so without this it would be swept as
-      // a vault of its own and would gather index rows under an owner that does
-      // not exist.
-      .filter((entry) => entry.isDirectory() && entry.name !== BY_NAME)
+      .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .filter((name) => {
         try {

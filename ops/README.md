@@ -57,7 +57,8 @@ Fehler im Backup.
 Eine einzelne Notiz, aus dem Spiegel auf dem NAS:
 
 ```bash
-D=/mnt/pve/nfs-backup/ndbrain/vaults/julian
+# Welche ID zu welchem Login gehört, steht in vaults/WHOSE-NOTES.txt.
+D=/mnt/pve/nfs-backup/ndbrain/vaults/acc_41086bdb137e12485e21f09586aeda9d
 git -c safe.directory=$D -C $D log --oneline -- 'Pfad/Zur/Notiz.md'
 git -c safe.directory=$D -C $D show <commit>:'Pfad/Zur/Notiz.md'
 ```
