@@ -73,6 +73,19 @@ for vault in "$VAULTS"/*/; do
   path=${vault%/}
   owner=$(basename "$path")
 
+  # `by-name` is not a vault. It holds the readable-name signposts, which are
+  # symlinks into the account directories, so everything under it is already
+  # versioned in the vault it points at. Giving it a repository is not merely
+  # redundant, it is what took the service down on 02.10.2026: the application
+  # rewrites this directory on every start, as uid 1000, while this script runs
+  # as root — so `.git/logs/HEAD`, written by a commit from here, could not be
+  # unlinked and the container went into a restart loop with EACCES. The
+  # application excludes the same directory from its watcher, for the same
+  # reason that it is signposts and not notes.
+  if [ "$owner" = 'by-name' ]; then
+    continue
+  fi
+
   if [ ! -d "$path/.git" ]; then
     vgit "$path" init --quiet --initial-branch=main || continue
     vgit "$path" config user.name 'ndBrain'
@@ -82,22 +95,32 @@ for vault in "$VAULTS"/*/; do
     echo "Repository für $owner angelegt"
   fi
 
-  # Dasselbe "dubious ownership" noch einmal, aus der anderen Richtung — und
-  # diese Hälfte fehlte. Oben gibt sich dieses Skript die Ausnahme selbst, weil
-  # es als root über Notizen von uid 1000 läuft. Das .git, das es dabei anlegt,
-  # gehört aber root, und die Anwendung liest dasselbe Repository als uid 1000:
-  # sie bekommt genau denselben Abbruch, nur ohne Ausnahme. Für sie sah das aus
-  # wie ein defektes Repository, und jedes neu angelegte Konto bekam im Verlauf
-  # eine rote Meldung statt einer leeren Liste.
+  # The same "dubious ownership" once more, from the other direction, and this
+  # half was missing. Above, this script grants itself the exception because it
+  # runs as root over notes owned by uid 1000. The `.git` it creates belongs to
+  # root, and the application reads the same repository as uid 1000: it gets
+  # exactly the same refusal, only without an exception. To it that looked like
+  # a broken repository, and every newly created account got a red message in
+  # its history instead of an empty list.
   #
-  # Bei jedem Lauf geprüft und nicht nur beim Anlegen, damit die Vaults, die es
-  # schon falsch haben, beim nächsten Tick von selbst richtig werden.
-  want=$(stat -c '%u:%g' "$path")
-  if [ "$(stat -c '%u:%g' "$path/.git")" != "$want" ]; then
-    if chown -R "$want" "$path/.git"; then
-      echo "$owner: .git gehört jetzt $want, die Anwendung kann die Historie lesen"
+  # Checked on every run rather than only at creation, so that vaults which
+  # already have it wrong come right by themselves on the next tick.
+  #
+  # **Looked for across the whole tree, not just at `.git` itself.** Checking
+  # the directory alone was the first version of this and it did not hold: every
+  # commit from here writes new objects and a new reflog *under* a `.git` that
+  # the previous run had already handed to uid 1000, and those belong to root
+  # again. The directory then matches while 1305 files below it do not. That
+  # went unnoticed for weeks because reading them works — git objects are
+  # world-readable — and it surfaces only the moment something wants to delete
+  # one.
+  wantu=$(stat -c '%u' "$path")
+  wantg=$(stat -c '%g' "$path")
+  if [ -n "$(find "$path/.git" \( ! -uid "$wantu" -o ! -gid "$wantg" \) -print -quit 2>/dev/null)" ]; then
+    if chown -R "$wantu:$wantg" "$path/.git"; then
+      echo "$owner: .git gehört jetzt $wantu:$wantg, die Anwendung kann die Historie lesen"
     else
-      echo "$owner: .git konnte nicht auf $want gesetzt werden" >&2
+      echo "$owner: .git konnte nicht auf $wantu:$wantg gesetzt werden" >&2
     fi
   fi
 
