@@ -145,10 +145,24 @@ export async function createRuntime(config: Config, options: RuntimeOptions = {}
   // start, so a rename or a removed account cannot leave a link pointing at a
   // name that is gone. Nothing reads it; it is there so the disk explains
   // itself to a backup and to whoever has a shell.
-  await writeSignposts(
-    config.dataDir,
-    users.list().map((user) => ({ id: user.id, loginName: user.loginName })),
-  );
+  //
+  // The count is checked rather than discarded. A signpost that cannot be
+  // written is deliberately not a reason to fail the start, and the quiet
+  // version of that is how this project has been bitten before: `history.ts`
+  // translated every git error into "no versions", so a broken sidecar looked
+  // exactly like a note without a past. A line in the log is what makes the
+  // difference between tolerating something and not knowing about it.
+  const signposted = users.list().map((user) => ({ id: user.id, loginName: user.loginName }));
+  const written = await writeSignposts(config.dataDir, signposted);
+  if (written < signposted.length) {
+    // `console` and not pino, because pino lives in the HTTP layer and this runs
+    // before it; the collab registry above logs the same way. It reaches stdout
+    // either way, which is where `docker logs` looks.
+    console.warn(
+      `vaults/by-name is incomplete: ${written} of ${signposted.length} signposts written. ` +
+        'Nothing reads it, so notes and sharing are unaffected, but a name in there may be stale.',
+    );
+  }
 
   return {
     config,

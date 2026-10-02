@@ -318,4 +318,41 @@ describe('the signpost', () => {
     expect(written).toBe(1);
     expect(await fs.readdir(path.join(dir, 'vaults', BY_NAME))).toEqual(['julian']);
   });
+
+  /**
+   * The promise above held for the links and not for the directory they live in,
+   * which is cleared and remade on every start. That took the live instance down
+   * on 02.10.2026: the history timer had committed a git repository into this
+   * directory as root, the application cleared it as uid 1000, the unlink failed
+   * with EACCES, and the container went into a restart loop over a directory
+   * nothing reads.
+   */
+  it('starts even when the directory cannot be cleared', async (ctx) => {
+    const root = path.join(dir, 'vaults', BY_NAME);
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(path.join(root, 'im-weg'), 'owned by root on the live instance');
+    await fs.chmod(root, 0o500);
+
+    try {
+      // root ignores the mode, and so does a filesystem that has none. The
+      // refusal this is about cannot be produced there, and a green run would
+      // be saying nothing rather than saying it passed.
+      const stillRemovable = await fs
+        .unlink(path.join(root, 'im-weg'))
+        .then(() => true)
+        .catch(() => false);
+
+      if (stillRemovable) {
+        ctx.skip(
+          'a mode of 500 does not deny removal here, probably because the tests ' +
+            'run as root, so the EACCES this is about cannot be produced',
+        );
+        return;
+      }
+
+      await expect(writeSignposts(dir, [{ id: 'acc_aaaa', loginName: 'julian' }])).resolves.toBe(0);
+    } finally {
+      await fs.chmod(root, 0o700);
+    }
+  });
 });

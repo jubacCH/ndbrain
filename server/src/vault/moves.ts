@@ -112,14 +112,34 @@ export async function runVaultMoves(db: Database, dataDir: string): Promise<Move
  * else's vault.
  *
  * A link that cannot be written is not a reason to fail: nothing reads these.
+ * Neither is a directory that cannot be cleared, and that half was missing —
+ * see below. Returns how many links are there, which is less than the number of
+ * accounts whenever something got in the way.
  */
 export async function writeSignposts(
   dataDir: string,
   accounts: ReadonlyArray<{ id: string; loginName: string }>,
 ): Promise<number> {
   const root = path.join(dataDir, 'vaults', BY_NAME);
-  await rm(root, { recursive: true, force: true });
-  await mkdir(root, { recursive: true });
+
+  // The guarantee in the docstring covered the links and not these two lines,
+  // and on 02.10.2026 that took the live instance down. The history timer had
+  // treated this directory as a vault and committed a git repository into it as
+  // root; the application cleared it as uid 1000, the unlink failed with EACCES,
+  // and the container went into a restart loop. Over a directory that nothing
+  // reads, while every note in the vaults beside it was intact and served.
+  //
+  // Returning instead of throwing leaves whatever is in there alone. That is
+  // worse than a rebuilt directory, because a link left from a rename resolves
+  // to somebody else's vault — but the caller says so in the log, and a stale
+  // signpost that nothing reads is still a smaller thing than a service that
+  // will not start.
+  try {
+    await rm(root, { recursive: true, force: true });
+    await mkdir(root, { recursive: true });
+  } catch {
+    return 0;
+  }
 
   let written = 0;
   for (const account of accounts) {
