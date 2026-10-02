@@ -306,6 +306,17 @@ describe('opening today from the shell', () => {
       </QueryClientProvider>,
     );
     await screen.findByRole('button', { name: copy.nav.todayHint });
+    // The button being on screen says the render happened, not that the effects
+    // after it have run — and ⌘K lives in one of them, on `window`. An event
+    // fired into that gap is simply dropped: no listener, no palette, and the
+    // test then fails looking for a row inside a dialog that never opened.
+    //
+    // CI found this twice on the same morning, in two different tests, and the
+    // DOM it printed had no dialog in it at all. Locally the gap closes before
+    // anything can fall into it, which is why it reproduced on nobody's machine.
+    // Awaiting an empty `act` drains React's queue and the microtasks behind it,
+    // so the listener is registered rather than probably registered.
+    await act(async () => {});
   }
 
   const todayButton = (): HTMLElement => screen.getByRole('button', { name: copy.nav.todayHint });
@@ -425,6 +436,10 @@ describe('opening today from the shell', () => {
 
     // Standing in Anna's note, and with Anna's day in view, today is still Julian's.
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    // The palette first, the row in it second. Both in one step reports a
+    // missing row when what is missing is the dialog, which is the wrong half of
+    // the sentence to go looking in.
+    await screen.findByRole('dialog', { name: copy.palette.label });
     await userEvent.click(await screen.findByRole('option', { name: /Plan/ }));
     await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-owner', 'anna'));
 
@@ -453,6 +468,7 @@ describe('opening today from the shell', () => {
     server.contents.set('anna 50_Journal/2026/09/2026-09-17.md', 'Annas Tag');
     await renderApp();
     fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    await screen.findByRole('dialog', { name: copy.palette.label });
     await userEvent.click(await screen.findByRole('option', { name: /2026-09-17/ }));
     await waitFor(() => expect(screen.getByTestId('editor')).toHaveAttribute('data-owner', 'anna'));
 
