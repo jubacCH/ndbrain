@@ -6,7 +6,7 @@
 # Node itself, so this builds on any architecture Node supports without a
 # toolchain.
 
-FROM node:24-bookworm-slim AS web
+FROM node:26-bookworm-slim AS web
 WORKDIR /build/web
 COPY web/package.json web/package-lock.json* ./
 RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
@@ -15,7 +15,7 @@ COPY web/ ./
 COPY shared/ /build/shared/
 RUN npx vite build
 
-FROM node:24-bookworm-slim AS server
+FROM node:26-bookworm-slim AS server
 WORKDIR /build/server
 COPY server/package.json server/package-lock.json* ./
 RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
@@ -23,7 +23,7 @@ COPY server/ ./
 COPY shared/ /build/shared/
 RUN npx tsc -p tsconfig.json && npm prune --omit=dev
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 
 # tini reaps zombies and forwards signals, so SIGTERM from `docker stop` actually
 # reaches the process and the shutdown handler runs instead of being killed.
