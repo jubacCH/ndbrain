@@ -17,7 +17,7 @@ import { EditorSelection } from '@codemirror/state';
 import type { KeyBinding } from '@codemirror/view';
 
 /** Wraps or unwraps each selection range in a marker such as `**`. */
-function toggleWrap(marker: string): StateCommand {
+export function toggleWrap(marker: string): StateCommand {
   return ({ state, dispatch }) => {
     const width = marker.length;
 
@@ -82,7 +82,7 @@ function setHeading(level: number): StateCommand {
  * goes in the parentheses and the cursor waits in the label, anything else is
  * the label and the cursor waits for the address.
  */
-const insertLink: StateCommand = ({ state, dispatch }) => {
+export const insertLink: StateCommand = ({ state, dispatch }) => {
   // Pressing the shortcut a second time lands on the empty half of the link
   // just created — the label or the address. Wrapping that empty selection
   // again would nest a link inside a link (`[Welt]([]())`), which is never what
@@ -116,6 +116,153 @@ const insertLink: StateCommand = ({ state, dispatch }) => {
 };
 
 /**
+ * Turns the selection into a link to a note.
+ *
+ * The selected words become the target, so `Proxmox Cluster` selected and
+ * linked reads `[[Proxmox Cluster]]` — a link to the note of that name if there
+ * is one, and an honest dangling link the tidy view will report if there is not.
+ * Already bracketed text is unwrapped again, for the same reason bold toggles.
+ */
+export const linkNote: StateCommand = ({ state, dispatch }) => {
+  if (state.selection.ranges.every((range) => range.empty)) return false;
+
+  const update = state.changeByRange((range) => {
+    const text = state.sliceDoc(range.from, range.to);
+    // A link spans one line; a selection over two would become a link nobody
+    // can resolve, so it is left as it is.
+    if (range.empty || text.includes('\n')) return { range };
+
+    const wrapped =
+      state.sliceDoc(range.from - 2, range.from) === '[[' &&
+      state.sliceDoc(range.to, range.to + 2) === ']]';
+    if (wrapped) {
+      return {
+        changes: [
+          { from: range.from - 2, to: range.from },
+          { from: range.to, to: range.to + 2 },
+        ],
+        range: EditorSelection.range(range.from - 2, range.to - 2),
+      };
+    }
+
+    return {
+      changes: [
+        { from: range.from, insert: '[[' },
+        { from: range.to, insert: ']]' },
+      ],
+      range: EditorSelection.range(range.from + 2, range.to + 2),
+    };
+  });
+
+  dispatch(state.update(update, { scrollIntoView: true, userEvent: 'input' }));
+  return true;
+};
+
+/**
+ * What a line can be turned into.
+ *
+ * Each is nothing but a prefix, which is what makes "turn into" safe here when
+ * it is the most dangerous command in a block editor: the words of the line are
+ * never touched, only the few characters in front of them.
+ */
+export type LineKind =
+  | 'paragraph'
+  | 'h1'
+  | 'h2'
+  | 'h3'
+  | 'task'
+  | 'bullet'
+  | 'numbered'
+  | 'quote'
+  | 'callout';
+
+const PREFIX: Record<LineKind, string> = {
+  paragraph: '',
+  h1: '# ',
+  h2: '## ',
+  h3: '### ',
+  task: '- [ ] ',
+  bullet: '- ',
+  numbered: '1. ',
+  quote: '> ',
+  callout: '> [!note] ',
+};
+
+/**
+ * Every prefix a line can already carry, longest first so that `- [ ] ` is not
+ * read as a bullet with `[ ] ` in its text, and `> [!tip]` not as a quote.
+ */
+const EXISTING =
+  /^(#{1,6} |[-*+] \[[ xX]] |[-*+] |\d+[.)] |> ?\[![\w-]+\][+-]? ?|> ?)/;
+
+/** The kind a line is now, for toggling and for the menu's tick. */
+export function lineKind(text: string): LineKind {
+  const body = text.replace(/^\s*/, '');
+  const prefix = EXISTING.exec(body)?.[0] ?? '';
+  if (prefix === '') return 'paragraph';
+  if (prefix.startsWith('#')) {
+    const level = prefix.trim().length;
+    return level === 1 ? 'h1' : level === 2 ? 'h2' : 'h3';
+  }
+  if (/^> ?\[!/.test(prefix)) return 'callout';
+  if (prefix.startsWith('>')) return 'quote';
+  if (/\[[ xX]]/.test(prefix)) return 'task';
+  if (/^\d/.test(prefix)) return 'numbered';
+  return 'bullet';
+}
+
+/**
+ * Gives every line the selection touches the same kind.
+ *
+ * Asking for the kind all of them already have means "back to text", like the
+ * heading shortcuts. Indentation stays where it is, so a nested list item turned
+ * into a task stays nested. A checked task changed into another kind loses its
+ * tick — the tick is part of the prefix, and there is nowhere left to keep it.
+ */
+export function setLineKind(
+  kind: LineKind,
+  lines?: { from: number; to: number },
+  toggle = true,
+): StateCommand {
+  return ({ state, dispatch }) => {
+    const numbers = new Set<number>();
+    const ranges = lines === undefined ? state.selection.ranges : [lines];
+    for (const range of ranges) {
+      const first = state.doc.lineAt(range.from).number;
+      const last = state.doc.lineAt(range.to).number;
+      for (let n = first; n <= last; n++) numbers.add(n);
+    }
+
+    const sorted = [...numbers].sort((a, b) => a - b);
+    // A menu that ticks the current kind should not untick it when clicked
+    // again — that is what `toggle` is for. The bar and the keys do toggle.
+    const all = toggle && sorted.every((n) => lineKind(state.doc.line(n).text) === kind);
+    const prefix = all ? '' : PREFIX[kind];
+
+    const changes = sorted.map((n) => {
+      const line = state.doc.line(n);
+      const indent = /^\s*/.exec(line.text)?.[0] ?? '';
+      const existing = EXISTING.exec(line.text.slice(indent.length))?.[0] ?? '';
+      const from = line.from + indent.length;
+      return { from, to: from + existing.length, insert: prefix };
+    });
+
+    const changeSet = state.changes(changes);
+    dispatch(
+      state.update({
+        changes: changeSet,
+        // Without a selection given the cursor would stay in front of a prefix
+        // that just grew, which is in the middle of the notation.
+        selection: lines === undefined ? state.selection.map(changeSet, 1) : undefined,
+        scrollIntoView: lines === undefined,
+        userEvent: 'input',
+      }),
+    );
+    return true;
+  };
+}
+
+/**
  * `Mod-e` carries inline code rather than the more obvious backtick: `Mod-\``
  * is unreachable on a Swiss keyboard, where the backtick is a dead key.
  */
@@ -123,7 +270,10 @@ export const formatKeymap: readonly KeyBinding[] = [
   { key: 'Mod-b', run: toggleWrap('**') },
   { key: 'Mod-i', run: toggleWrap('*') },
   { key: 'Mod-e', run: toggleWrap('`') },
+  { key: 'Mod-Shift-x', run: toggleWrap('~~') },
+  { key: 'Mod-Shift-h', run: toggleWrap('==') },
   { key: 'Mod-k', run: insertLink },
+  { key: 'Mod-Shift-k', run: linkNote },
   { key: 'Mod-1', run: setHeading(1) },
   { key: 'Mod-2', run: setHeading(2) },
   { key: 'Mod-3', run: setHeading(3) },

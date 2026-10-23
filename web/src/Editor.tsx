@@ -33,11 +33,17 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import type { Awareness } from 'y-protocols/awareness';
 import * as Y from 'yjs';
 
+import { blockHandle } from './editor/blockHandle';
 import { tagContext } from './editor/commands';
 import { completion } from './editor/completion';
+import { blockEmbeds, embedHost, type EmbedHost } from './editor/embeds';
+import { folding, initialFolds } from './editor/folding';
 import { formatKeymap } from './editor/format';
+import { formatBar } from './editor/formatBar';
+import { createEmbedHost } from './editor/host';
 import { embedContext, livePreview } from './editor/livePreview';
 import { contentStart, frontmatter } from './editor/frontmatterView';
+import { linkPreview } from './editor/preview';
 import { tables } from './editor/tableView';
 import { markdownTheme } from './editor/theme';
 import { VIM_OFF, setVimEditing, vimEditing, type VimSettings } from './editor/vim';
@@ -119,6 +125,12 @@ export interface EditorProps {
    * locked until it arrives.
    */
   collab?: { text: Y.Text; awareness: Awareness } | null;
+  /**
+   * Opens the note a link points at — from an embed's "Open", a link
+   * preview, or Ctrl/Cmd-click on a `[[wikilink]]`. Left out, those stay
+   * previews and nothing navigates.
+   */
+  onOpenLink?: (owner: string, path: string) => void;
 }
 
 export interface NoteExtensions {
@@ -128,6 +140,8 @@ export interface NoteExtensions {
   /** Read through a getter, so a later answer reaches an editor already built. */
   attach?: () => ((file: File) => Promise<string | null>) | undefined;
   tags?: () => readonly string[] | null;
+  /** Resolves links for embeds and previews. Left out, those show nothing. */
+  host?: () => EmbedHost | null;
   onChange?: (content: string) => void;
   /**
    * Modal editing, as it stands when the editor is built.
@@ -162,6 +176,7 @@ export function noteExtensions({
   readOnly = false,
   attach,
   tags,
+  host,
   onChange,
   vim,
   collab,
@@ -237,10 +252,19 @@ export function noteExtensions({
     // The frontmatter fold, a state field for the same reason: it replaces line
     // breaks, which a view plugin may not do.
     frontmatter(),
+    // Diagrams and display math replace whole lines, so like tables they come
+    // from a state field rather than from live preview's view plugin.
+    blockEmbeds(),
+    folding(),
+    formatBar(),
+    linkPreview(),
+    // Not for a note that cannot be written: every one of its commands edits.
+    ...(readOnly ? [] : [blockHandle()]),
     // Which note this is, so an embed can be turned into a URL against the
     // folder the note lives in.
     embedContext.of({ owner, dir: path.slice(0, Math.max(0, path.lastIndexOf('/'))) }),
     tagContext.of(tags ?? (() => null)),
+    embedHost.of(host ?? (() => null)),
     attachments(attach ?? (() => undefined), readOnly),
     completion(),
     EditorView.lineWrapping,
@@ -268,6 +292,7 @@ export function Editor({
   vimMode = false,
   vimLeaveInsert = 'Escape',
   collab = null,
+  onOpenLink,
 }: EditorProps): React.JSX.Element {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -286,6 +311,8 @@ export function Editor({
   // rebuilding would throw away the cursor mid-sentence.
   const tagsRef = useRef(tags);
   tagsRef.current = tags;
+  const onOpenLinkRef = useRef(onOpenLink);
+  onOpenLinkRef.current = onOpenLink;
   // Read through a ref for the same reason: the build effect must not list the
   // vim setting among its dependencies, or switching it would rebuild the
   // editor and lose whatever has not been saved.
@@ -294,6 +321,12 @@ export function Editor({
 
   useEffect(() => {
     if (host.current === null) return;
+
+    // One per open note: its cache of resolved links belongs to that note's
+    // outgoing links and would be wrong for the next one.
+    const links = createEmbedHost(owner, path, (linkOwner, linkPath) =>
+      onOpenLinkRef.current?.(linkOwner, linkPath),
+    );
 
     // One undo manager per editor, because undo is per tab: it is built here
     // rather than passed in so that it lives and dies with the view it serves.
@@ -318,6 +351,7 @@ export function Editor({
           readOnly,
           attach: () => onAttachRef.current,
           tags: () => tagsRef.current,
+          host: () => links,
           onChange: (content) => onChangeRef.current(content),
           vim: vimRef.current,
           ...(live === undefined ? {} : { collab: live }),
@@ -327,6 +361,10 @@ export function Editor({
 
     const instance = new EditorView({ state, parent: host.current });
     view.current = instance;
+    // Callouts their author wrote as `[!type]-` open folded. Once, here, and
+    // never on a later change — see `initialFolds`.
+    const folds = initialFolds(instance.state);
+    if (folds.length > 0) instance.dispatch({ effects: folds });
     if (!readOnly) instance.focus();
 
     return () => {
