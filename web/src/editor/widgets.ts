@@ -1,7 +1,7 @@
 /**
  * The few places where a piece of Markdown is replaced by a real control.
  *
- * Everything else in live preview only hides or restyles text. These four go
+ * Everything else in live preview only hides or restyles text. These go
  * further and put a DOM element in the document's place, so each one has to
  * earn it: a checkbox you can click, a bullet that reads as a bullet, a rule
  * that looks like a rule, and an image that is actually the image.
@@ -78,6 +78,34 @@ export class BulletWidget extends WidgetType {
     dot.className = 'cm-bullet';
     dot.textContent = '•';
     return dot;
+  }
+}
+
+/**
+ * The `[!warning]` of a callout, shown as the word it is.
+ *
+ * The note's own word, capitalised, rather than a translation from `copy.ts`:
+ * the type is content somebody chose to write, and an unknown one such as
+ * `[!rezept]` should read back as exactly that.
+ */
+export class CalloutLabelWidget extends WidgetType {
+  constructor(
+    readonly kind: string,
+    /** No title follows, so the label is the whole heading. */
+    readonly alone: boolean,
+  ) {
+    super();
+  }
+
+  override eq(other: WidgetType): boolean {
+    return other instanceof CalloutLabelWidget && other.kind === this.kind && other.alone === this.alone;
+  }
+
+  override toDOM(): HTMLElement {
+    const label = document.createElement('span');
+    label.className = this.alone ? 'cm-callout-label is-alone' : 'cm-callout-label';
+    label.textContent = this.kind.charAt(0).toUpperCase() + this.kind.slice(1).toLowerCase();
+    return label;
   }
 }
 

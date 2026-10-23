@@ -44,6 +44,7 @@ import { toProblem } from './errors.js';
 import { HistoryUnreadableError, NoteNotFoundError } from '../errors.js';
 import { isNotePath, normalizeVaultPath } from '../vault/paths.js';
 import { LoginThrottle } from './throttle.js';
+import { UnfurlRefused, checkUrl, unfurl } from './unfurl.js';
 import { ZipFile } from 'yazl';
 import type { ZodType } from 'zod';
 import * as S from '../../../shared/schema.js';
@@ -799,6 +800,28 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const q = typeof query.q === 'string' ? query.q : '';
 
     return { notes: app.queries.quickFind(view, q, 12) };
+  });
+
+  /**
+   * The title, description and picture of a web page, for a link card.
+   *
+   * Signed-in users only, like everything under `/api`: an open version of this
+   * would be a free proxy into the internet from the server's address. The
+   * address rules are in `./unfurl` — this route answers 400 for a URL that is
+   * refused outright, and `preview: null` for everything that merely did not
+   * work, without saying which.
+   */
+  fastify.get('/api/v1/unfurl', async (request, reply) => {
+    requireUser(request);
+    const query = (request.query ?? {}) as { url?: unknown };
+    const url = typeof query.url === 'string' ? query.url : '';
+    try {
+      checkUrl(url);
+    } catch (error) {
+      if (!(error instanceof UnfurlRefused)) throw error;
+      return reply.code(400).send({ code: 'invalid_url', message: error.message });
+    }
+    return { preview: await unfurl(url) };
   });
 
   /**

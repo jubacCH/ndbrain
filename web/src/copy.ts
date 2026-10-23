@@ -240,6 +240,70 @@ export const copy = {
       replace: 'REPLACE',
       leaveWith: (keys: string) => `${keys} leaves`,
     },
+
+    /**
+     * The bar over a selection. Faces are what the button shows, labels what
+     * it is called — the hover title and what a screen reader says.
+     */
+    bar: {
+      label: 'Format selection',
+      bold: 'Bold (Ctrl/⌘ B)',
+      italic: 'Italic (Ctrl/⌘ I)',
+      strike: 'Strikethrough (Ctrl/⌘ Shift X)',
+      code: 'Inline code (Ctrl/⌘ E)',
+      codeFace: 'Code',
+      mark: 'Highlight (Ctrl/⌘ Shift H)',
+      markFace: 'Mark',
+      link: 'Link (Ctrl/⌘ K)',
+      linkFace: 'Link',
+      noteLink: 'Link to a note (Ctrl/⌘ Shift K)',
+      h1: 'Heading 1',
+      h2: 'Heading 2',
+      h3: 'Heading 3',
+      task: 'Task',
+      taskFace: 'Task',
+      quote: 'Quote',
+      quoteFace: 'Quote',
+    },
+
+    /** The handle beside a block and the menu it opens. */
+    block: {
+      handle: 'Drag to move · click for options',
+      menu: 'Block',
+      turnInto: 'Turn into',
+      kinds: {
+        paragraph: 'Text',
+        h1: 'Heading 1',
+        h2: 'Heading 2',
+        h3: 'Heading 3',
+        task: 'Task',
+        bullet: 'Bullet list',
+        numbered: 'Numbered list',
+        quote: 'Quote',
+        callout: 'Callout',
+      },
+      moveUp: 'Move up',
+      moveDown: 'Move down',
+      duplicate: 'Duplicate',
+      remove: 'Delete',
+    },
+
+    fold: {
+      open: 'Expand',
+      close: 'Collapse',
+    },
+
+    /** Diagrams, formulas, embedded notes, attachments and link cards. */
+    embed: {
+      loading: 'Loading…',
+      open: 'Open',
+      noteMissing: 'No such note — the link points nowhere yet.',
+      diagram: 'Diagram',
+      drawing: 'Drawing diagram…',
+      diagramFailed: 'This diagram could not be drawn',
+      file: 'FILE',
+      download: 'Download',
+    },
   },
 
   /**

@@ -126,6 +126,17 @@ function commands(): Command[] {
       insert: `## ${today()} — |`,
     },
     { label: 'Warning', detail: '> ⚠️ **Achtung:**', insert: '> ⚠️ **Achtung:** |' },
+    { label: 'Callout', detail: '> [!note]', insert: '> [!note] |\n> ' },
+    {
+      // Starts closed: the minus is the author's "fold this", read when the
+      // note opens. The body line is there so there is something to fold.
+      label: 'Collapsible',
+      detail: '> [!note]-',
+      insert: '> [!note]- |\n> ',
+    },
+    { label: 'Diagram', detail: '```mermaid', insert: '```mermaid\n|\n```' },
+    { label: 'Math', detail: '$$', insert: '$$\n|\n$$' },
+    { label: 'Embed a note', detail: '![[ ]]', insert: '![[|' },
     {
       label: 'Tag',
       detail: 'from the registry',

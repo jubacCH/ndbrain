@@ -373,6 +373,16 @@ export const RenameNoteResponse = z.object({
 
 export const QuickFindResponse = z.object({ notes: z.array(NoteRow) });
 
+/** What a link card shows: read off the page's head by the server. */
+export const LinkPreview = z.object({
+  url: z.string(),
+  title: z.string().nullable(),
+  description: z.string().nullable(),
+  site: z.string().nullable(),
+});
+
+export const UnfurlResponse = z.object({ preview: LinkPreview.nullable() });
+
 export const MapResponse = z.object({
   notes: z.array(z.unknown()),
   props: z.array(z.object({ key: z.string(), count: z.number() })),

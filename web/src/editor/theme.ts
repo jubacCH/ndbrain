@@ -98,10 +98,24 @@ const completionTheme = EditorView.theme({
 });
 
 /**
+ * The selection bar and the link preview, for the same reason as the menu
+ * above: both are tooltips, and the base theme's grey box would otherwise win.
+ */
+const tooltipTheme = EditorView.theme({
+  '.cm-tooltip.cm-formatbar, .cm-tooltip.cm-link-preview': {
+    border: '1px solid var(--line-2)',
+    borderRadius: '6px',
+    background: 'var(--surface)',
+    boxShadow: '0 1px 2px rgb(0 0 0 / 12%), 0 12px 28px -12px rgb(0 0 0 / 40%)',
+    backdropFilter: 'blur(14px)',
+  },
+});
+
+/**
  * Everything else that is plain CSS — the prose font, the measure, the blocks
  * and widgets — lives in `styles.css` alongside the rest of the interface, so
  * the design tokens keep one home.
  */
 export function markdownTheme(): Extension {
-  return [syntaxHighlighting(markdownHighlight), completionTheme];
+  return [syntaxHighlighting(markdownHighlight), completionTheme, tooltipTheme];
 }

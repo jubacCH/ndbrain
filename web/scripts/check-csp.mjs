@@ -40,9 +40,22 @@ const ASSETS = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'asse
 const ALLOWED = new Map([
   ['index', 'Zod 4 probes for a JIT and catches the failure; dead code under `jitless`'],
   ['pug', "CodeMirror's Pug mode compiles attribute values; lazy-loaded, degrades under CSP"],
+  // Mermaid, lazy-loaded for a ```mermaid block. All three are lodash's way of
+  // finding the global object, `freeGlobal || freeSelf || Function('return this')()`:
+  // in a browser `self` is always there, so the call is never reached.
+  ['chunk-FOHPRMQF', "Mermaid's bundled lodash: global lookup fallback, never reached in a browser"],
+  ['cytoscape.esm', "Mermaid's cytoscape: the same lodash global lookup, never reached"],
+  ['graphlib', "Mermaid's graphlib: the same lodash global lookup, never reached"],
 ]);
 
-const stem = (name) => name.replace(/-[A-Za-z0-9_-]{6,}\.js$/, '').replace(/\.js$/, '');
+/**
+ * The name without its content hash.
+ *
+ * Exactly the eight characters Vite appends, and nothing before them: a looser
+ * pattern turned `chunk-FOHPRMQF-<hash>.js` into `chunk`, and an entry of that
+ * would have waved through every chunk ever built.
+ */
+const stem = (name) => name.replace(/-[A-Za-z0-9_-]{8}\.js$/, '').replace(/\.js$/, '');
 
 let failed = false;
 const say = (ok, what) => {

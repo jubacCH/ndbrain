@@ -520,6 +520,10 @@ export const api = {
 
   tags: () => request('/api/v1/tags', S.TagsResponse),
 
+  /** The page behind a link, for a card — null when it could not be read. */
+  unfurl: (url: string) =>
+    request(`/api/v1/unfurl?url=${encodeURIComponent(url)}`, S.UnfurlResponse),
+
   /**
    * One vault per call, on purpose: the server refuses a selection that spans
    * two, and "move these into Archiv" has no meaning across a vault boundary.

@@ -2119,6 +2119,7 @@ function Shell({
                       if (!live) scheduleSave(open.owner, open.note.path, content);
                     }}
                     onAttach={attachFile}
+                    onOpenLink={(owner, path) => void openNote(owner, path)}
                     vimMode={prefs.vimMode}
                     vimLeaveInsert={prefs.vimLeaveInsert}
                   />

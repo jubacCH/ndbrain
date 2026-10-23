@@ -15,6 +15,43 @@ forwards only. Upgrading is pulling a newer image; downgrading is restoring a
 backup. Take a copy of `data/index/ndbrain.db` before an upgrade, with
 `sqlite3 … ".backup"` rather than `cp`.
 
+## [0.2.0] — 2026-10-23
+
+The editor learns what AFFiNE's does — as Markdown. Every addition here either
+changes what is drawn or makes an ordinary edit; the file stays something any
+other editor reads the same way.
+
+### Added
+
+- **A bar over a selection** with bold, italic, strikethrough, inline code,
+  highlight (`==text==`), link, link to a note, and turning the line into a
+  heading, task or quote. New shortcuts: Ctrl/⌘ Shift X, H and K.
+- **Callouts**, `> [!warning] Title`, in the form Obsidian and GitHub write.
+  `[!type]-` opens folded.
+- **Folding** headings and callouts from a triangle in the margin. A fold is
+  the view's and never written to the file.
+- **A handle beside each block**: drag to move it, or click for a menu to turn
+  it into another kind, move it up or down, duplicate or delete it. A list item
+  moves with its children. Not shown on touch screens.
+- **Embeds**: Mermaid diagrams and KaTeX formulas (`$…$`, `$$…$$`), both loaded
+  only when a note uses them; `![[Note]]` as a card with the note's opening;
+  other attachments as a download chip; a URL alone in its paragraph as a card
+  with the page's title; a preview when hovering a `[[wikilink]]`, and Ctrl/⌘
+  click to open it.
+- `GET /api/v1/unfurl` for those cards. It fetches public addresses only,
+  checked at connection time, on ports 80 and 443, and returns title,
+  description and site name — no image, which the content security policy
+  would refuse and which would tell the linked site who is reading.
+
+### Changed
+
+- **The signposts are one file.** `vaults/by-name/`, a directory of symlinks,
+  is replaced by `vaults/WHOSE-NOTES.txt`, one line per account. The directory
+  disappears by itself on the first start of this version; nothing to do, it
+  only looks unexpected if you do not know.
+- The web build inlines no asset as a `data:` URL any more, so fonts and images
+  all come from this origin, as the content security policy requires.
+
 ## [0.1.1] — 2026-10-02
 
 Two fixes from the same outage, on the day of the first release. Nothing here

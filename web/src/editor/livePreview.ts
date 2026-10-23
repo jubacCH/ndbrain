@@ -26,9 +26,19 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 
+import {
+  AttachmentWidget,
+  BARE_URL,
+  HIGHLIGHT,
+  INLINE_MATH,
+  LinkCardWidget,
+  MathWidget,
+  NoteEmbedWidget,
+  linkTarget,
+} from './embeds';
 import { frontmatterEnd } from './frontmatterView';
 import { tableBlocks } from './tableView';
-import { BulletWidget, CheckboxWidget, ImageWidget, RuleWidget } from './widgets';
+import { BulletWidget, CalloutLabelWidget, CheckboxWidget, ImageWidget, RuleWidget } from './widgets';
 
 /** Syntactic markers that simply vanish while the line is at rest. */
 const PLAIN_MARKS = new Set(['EmphasisMark', 'StrikethroughMark', 'LinkMark', 'CodeMark']);
@@ -42,13 +52,64 @@ const LINE_DECORATIONS = {
   quote: Decoration.line({ class: 'cm-block-quote' }),
   table: Decoration.line({ class: 'cm-block-table' }),
   frontmatter: Decoration.line({ class: 'cm-block-frontmatter' }),
+  calloutHead: Decoration.line({ class: 'cm-callout-head' }),
 };
+
+/**
+ * `> [!note] Title` — a callout, in the form Obsidian and GitHub write and
+ * AFFiNE exports. The `+` or `-` after the type says whether it starts open or
+ * folded; the fold is the view's business, the sign stays in the file.
+ */
+export const CALLOUT = /^(\s*>\s?)\[!([\w-]+)\]([+-]?)[ \t]*(.*)$/;
+
+/**
+ * Which family a callout type belongs to, for its look.
+ *
+ * Obsidian's aliases are folded in, so a note written there keeps meaning the
+ * same thing here. Anything unknown is a note: an unfamiliar word in the
+ * brackets is still somebody marking a paragraph as set apart.
+ */
+const CALLOUT_FAMILY: Record<string, string> = {
+  note: 'note',
+  info: 'note',
+  todo: 'note',
+  abstract: 'note',
+  summary: 'note',
+  tldr: 'note',
+  tip: 'tip',
+  hint: 'tip',
+  important: 'tip',
+  success: 'tip',
+  check: 'tip',
+  done: 'tip',
+  question: 'question',
+  help: 'question',
+  faq: 'question',
+  warning: 'warning',
+  caution: 'warning',
+  attention: 'warning',
+  danger: 'danger',
+  error: 'danger',
+  failure: 'danger',
+  fail: 'danger',
+  missing: 'danger',
+  bug: 'danger',
+  example: 'quote',
+  quote: 'quote',
+  cite: 'quote',
+};
+
+export function calloutFamily(kind: string): string {
+  return CALLOUT_FAMILY[kind.toLowerCase()] ?? 'note';
+}
 
 const MARK_DECORATIONS = {
   inlineCode: Decoration.mark({ class: 'cm-inline-code' }),
   wikilink: Decoration.mark({ class: 'cm-wikilink' }),
   tableDelimiter: Decoration.mark({ class: 'cm-table-delimiter' }),
   tableHeader: Decoration.mark({ class: 'cm-table-header' }),
+  highlight: Decoration.mark({ class: 'cm-highlight' }),
+  calloutTitle: Decoration.mark({ class: 'cm-callout-title' }),
 };
 
 /** `[[Target]]`, `[[Target|Label]]` and the `![[…]]` embed form. */
@@ -56,6 +117,15 @@ const WIKILINK = /(!?)\[\[([^\]\n]+)]]/g;
 
 /** Extensions an embed will actually be shown for. */
 const EMBEDDABLE = /\.(png|jpe?g|gif|webp)$/i;
+
+/**
+ * An embed of something that is not a note: it has an extension, and the
+ * extension is not `.md`. Everything else in `![[…]]` names a note.
+ */
+const ATTACHMENT = /\.(?!md$)[a-z0-9]{1,8}$/i;
+
+/** `$$…$$` as a line of its own — display math, which `./embeds` draws. */
+const DISPLAY_MATH_LINE = /^\s*\$\$.*\$\$\s*$/;
 
 /**
  * Where the open note lives, so an embed can be turned into a URL.
@@ -217,14 +287,15 @@ export function buildDecorations(
           const target = inner.split('|')[0]?.trim() ?? '';
           // Same rule the rest of the file uses: notation gives way only while
           // the cursor is elsewhere, so an embed you are editing stays text.
-          if (!isActive(start) && EMBEDDABLE.test(target)) {
-            const context = state.facet(embedContext);
-            replace(
-              start,
-              innerTo + 2,
-              Decoration.replace({ widget: new ImageWidget(embedUrl(context, target), target) }),
-            );
-          }
+          if (isActive(start) || target === '') continue;
+
+          const context = state.facet(embedContext);
+          const widget = EMBEDDABLE.test(target)
+            ? new ImageWidget(embedUrl(context, target), target)
+            : ATTACHMENT.test(linkTarget(inner).note)
+              ? new AttachmentWidget(target, embedUrl(context, target))
+              : new NoteEmbedWidget(inner);
+          replace(start, innerTo + 2, Decoration.replace({ widget }));
           continue;
         }
 
@@ -245,7 +316,74 @@ export function buildDecorations(
     }
   }
 
+  // --- pass 2b: notation the grammar does not know ------------------------
+  //
+  // `==mark==`, `$math$` and a URL standing alone are not CommonMark, so like
+  // wikilinks they are found in the text. Each claims its span, so that pass
+  // three does not also hide an asterisk inside a formula.
+  const claimed: Array<[number, number]> = [];
+  for (const { from, to } of ranges) {
+    const firstLine = state.doc.lineAt(from).number;
+    const lastLine = state.doc.lineAt(to).number;
+
+    for (let n = firstLine; n <= lastLine; n++) {
+      const line = state.doc.line(n);
+      if (isDrawn(line.from)) continue;
+      const rest = !active.has(n);
+
+      if (line.text.includes('==')) {
+        HIGHLIGHT.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = HIGHLIGHT.exec(line.text)) !== null) {
+          const start = line.from + match.index;
+          const end = start + match[0].length;
+          if (within(code, start) || within(wikilinks, start)) continue;
+          all.push(MARK_DECORATIONS.highlight.range(start + 2, end - 2));
+          if (rest) {
+            hide(start, start + 2);
+            hide(end - 2, end);
+          }
+        }
+      }
+
+      // `$$…$$` on a line of its own is display math, drawn as a block by
+      // `./embeds`; only the inline form is this pass's business.
+      if (rest && line.text.includes('$') && !DISPLAY_MATH_LINE.test(line.text)) {
+        INLINE_MATH.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = INLINE_MATH.exec(line.text)) !== null) {
+          const start = line.from + match.index;
+          const end = start + match[0].length;
+          if (within(code, start) || within(wikilinks, start)) continue;
+          claimed.push([start, end]);
+          replace(start, end, Decoration.replace({ widget: new MathWidget(match[1] ?? '', false) }));
+        }
+      }
+
+      if (rest && line.text.includes('://')) {
+        const url = BARE_URL.exec(line.text)?.[1];
+        // Alone in its paragraph, so a URL that ends a sentence's line or sits
+        // in a list of links stays a link: a card is a block, and only a line
+        // that already is one reads right as one.
+        const alone =
+          (n === 1 || state.doc.line(n - 1).text.trim() === '') &&
+          (n === state.doc.lines || state.doc.line(n + 1).text.trim() === '');
+        if (url !== undefined && alone && !within(code, line.from)) {
+          claimed.push([line.from, line.to]);
+          replace(line.from, line.to, Decoration.replace({ widget: new LinkCardWidget(url) }));
+        }
+      }
+    }
+  }
+
   // --- pass 3: everything the grammar knows about -------------------------
+  //
+  // A fold splits the visible text into two ranges, and a quote or a code block
+  // around the fold reaches into both. Its lines are decorated on the first
+  // visit only — the second would draw a callout's label twice. Its children
+  // are still entered, since each range reaches different ones.
+  const containers = new Set<number>();
+  const CONTAINERS = new Set(['Blockquote', 'FencedCode', 'CodeBlock', 'Table']);
   for (const { from, to } of ranges) {
     syntaxTree(state).iterate({
       from,
@@ -255,8 +393,15 @@ export function buildDecorations(
         const parent = node.node.parent?.name ?? '';
         const rest = !isActive(node.from);
 
+        if (CONTAINERS.has(name)) {
+          if (containers.has(node.from)) return undefined;
+          containers.add(node.from);
+        }
+
         // Nothing inside a drawn table: the widget replaces those lines whole.
         if (isDrawn(node.from)) return false;
+        // Nor inside a formula or a link card, which pass 2b already drew.
+        if (within(claimed, node.from)) return false;
 
         switch (name) {
           case 'InlineCode':
@@ -268,9 +413,44 @@ export function buildDecorations(
             decorateLines(node.from, node.to, LINE_DECORATIONS.code);
             return;
 
-          case 'Blockquote':
-            decorateLines(node.from, node.to, LINE_DECORATIONS.quote);
+          case 'Blockquote': {
+            const first = state.doc.lineAt(node.from);
+            const callout = CALLOUT.exec(first.text);
+            if (callout === null) {
+              decorateLines(node.from, node.to, LINE_DECORATIONS.quote);
+              return;
+            }
+
+            const kind = callout[2] ?? 'note';
+            const title = callout[4] ?? '';
+            decorateLines(
+              node.from,
+              node.to,
+              Decoration.line({
+                class: 'cm-callout',
+                attributes: { 'data-callout': calloutFamily(kind) },
+              }),
+            );
+            all.push(LINE_DECORATIONS.calloutHead.range(first.from));
+            // The title is bold, not the line: the measure is set in `ch`, and
+            // a bold line would be wider than the callout's other lines.
+            if (title !== '') {
+              all.push(MARK_DECORATIONS.calloutTitle.range(first.to - title.length, first.to));
+            }
+
+            if (!active.has(first.number)) {
+              // `[!warning]-` and the space after it give way to the type's name.
+              const markerFrom = first.from + (callout[1] ?? '').length;
+              const markerTo = first.to - title.length;
+              replace(
+                markerFrom,
+                markerTo,
+                Decoration.replace({ widget: new CalloutLabelWidget(kind, title === '') }),
+              );
+            }
+            // On into the children: the quote markers still have to go.
             return;
+          }
 
           case 'Table':
             decorateLines(node.from, node.to, LINE_DECORATIONS.table);
