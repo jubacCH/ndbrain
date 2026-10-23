@@ -31,6 +31,11 @@ export default defineConfig({
     // The server serves this directory statically.
     outDir: 'dist',
     emptyOutDir: true,
+    // Never inline an asset as a `data:` URL. The content security policy
+    // (`server/src/http/csp.ts`) allows fonts and images from this origin only,
+    // and Vite inlines anything under 4 KB by default — which is how KaTeX's
+    // smaller fonts were refused in the browser while the larger ones loaded.
+    assetsInlineLimit: 0,
   },
   test: {
     environment: 'jsdom',
