@@ -618,10 +618,135 @@ input {
  * of the application, so this product has one table rather than two. */
 
 .cm-editor .cm-table {
+  position: relative;
   margin: var(--s-2) auto var(--s-3);
   /* Wide because it is wide — the same allowance a code block gets, and the
      scrolling happens inside the frame rather than moving the pane. */
   max-width: min(100%, 140ch);
+  /* Room below and to the right for the bars that add a row and a column. */
+  padding: 0 18px 18px 0;
+  outline: none;
+}
+
+/* ---- the table's controls: handles, add bars, drop line, picked cells ----
+ *
+ * All of it hidden until the pointer is on the table, so a note at rest shows
+ * a table and nothing else — the same rule as the block handle in the margin. */
+
+.cm-editor .cm-table-grip {
+  position: absolute;
+  z-index: 2;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--text-3);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.cm-editor .cm-table-grip-column {
+  top: 3px;
+  left: 50%;
+  width: 22px;
+  height: 5px;
+  transform: translateX(-50%);
+}
+
+.cm-editor .cm-table-grip-row {
+  top: 50%;
+  left: 3px;
+  width: 5px;
+  height: 22px;
+  transform: translateY(-50%);
+}
+
+.cm-editor .cm-table-grip.is-hot,
+.cm-editor .cm-table-grip:focus-visible {
+  opacity: 0.55;
+}
+
+.cm-editor .cm-table-grip:hover,
+.cm-editor .cm-table-grip[aria-expanded='true'],
+.cm-editor .cm-table.is-dragging .cm-table-grip.is-hot {
+  opacity: 1;
+  background: var(--accent);
+}
+
+.cm-editor .cm-table.is-dragging {
+  cursor: grabbing;
+}
+
+.cm-editor .cm-table-add {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font: inherit;
+  font-size: 0.9em;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.cm-editor .cm-table-add-row {
+  left: 0;
+  right: 18px;
+  bottom: 2px;
+  height: 14px;
+}
+
+.cm-editor .cm-table-add-column {
+  top: 0;
+  bottom: 18px;
+  right: 2px;
+  width: 14px;
+}
+
+.cm-editor .cm-table:hover .cm-table-add {
+  opacity: 1;
+}
+
+.cm-editor .cm-table-add:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* A note that cannot be written shows the table and none of the furniture
+   for changing it. */
+.cm-editor .cm-table.is-readonly .cm-table-grip,
+.cm-editor .cm-table.is-readonly .cm-table-add {
+  display: none;
+}
+
+.cm-editor .cm-table-drop {
+  position: absolute;
+  z-index: 3;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.cm-editor .cm-table .cm-cell.is-picked,
+.cm-editor .cm-table tbody tr:hover td.is-picked {
+  background: var(--selected);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+/* Inside a range the cells are what is selected, not their text. */
+.cm-editor .cm-table.has-range .cm-cellinput {
+  caret-color: transparent;
+  user-select: none;
+}
+
+.cm-editor .cm-block-menu button.is-danger {
+  color: var(--crit);
 }
 
 .cm-editor .cm-table table {
@@ -702,8 +827,10 @@ input {
 }
 
 /* Hidden rather than removed, so that entering a cell does not make the column
-   jump to a different width. */
-.cm-editor .cm-cell:focus-within .cm-cellview {
+   jump to a different width. Only while the cell's own field has the focus: a
+   cell also holds a row or column handle, and a focused handle must not blank
+   the text. */
+.cm-editor .cm-cell:has(> .cm-cellinput:focus) .cm-cellview {
   visibility: hidden;
 }
 
