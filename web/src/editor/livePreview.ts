@@ -37,6 +37,7 @@ import {
   linkTarget,
 } from './embeds';
 import { frontmatterEnd } from './frontmatterView';
+import { MENTION, MentionWidget, mentionContext, mentionName } from './mentions';
 import { tableBlocks } from './tableView';
 import { BulletWidget, CalloutLabelWidget, CheckboxWidget, ImageWidget, RuleWidget } from './widgets';
 
@@ -522,6 +523,27 @@ export function buildDecorations(
             }
             // Either way the children stay untouched: half-hidden image syntax
             // reads as a typo rather than as an image that cannot be shown.
+            return false;
+          }
+
+          case 'Link': {
+            // A mention is a link to a person, drawn as a chip under the
+            // name the person goes by now. Any other link carries on below.
+            if (!rest) return;
+            const mention = MENTION.exec(state.doc.sliceString(node.from, node.to));
+            if (mention === null) return;
+            const id = mention[2] ?? '';
+            const people = state.facet(mentionContext)();
+            replace(
+              node.from,
+              node.to,
+              Decoration.replace({
+                widget: new MentionWidget(
+                  mentionName(people, id, mention[1] ?? ''),
+                  people.some((person) => person.id === id),
+                ),
+              }),
+            );
             return false;
           }
 

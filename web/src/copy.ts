@@ -288,6 +288,16 @@ export const copy = {
       remove: 'Delete',
     },
 
+    /** `@` and the chip a mention is drawn as — see `web/src/editor/mentions.ts`. */
+    mention: {
+      self: 'you',
+      title: (name: string) => `Mentions ${name}`,
+      /* Somebody this client has no name for: an account it shares nothing
+         with, or one that has gone. The chip keeps the name written in the
+         note and says why it might be stale. */
+      unknown: 'A person you share nothing with — the name is as it was written',
+    },
+
     fold: {
       open: 'Expand',
       close: 'Collapse',

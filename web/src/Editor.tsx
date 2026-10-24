@@ -35,6 +35,7 @@ import * as Y from 'yjs';
 
 import { blockHandle } from './editor/blockHandle';
 import { tagContext } from './editor/commands';
+import { mentionContext, type Person } from './editor/mentions';
 import { completion } from './editor/completion';
 import { blockEmbeds, embedHost, type EmbedHost } from './editor/embeds';
 import { folding, initialFolds } from './editor/folding';
@@ -85,6 +86,11 @@ export interface EditorProps {
    * what the registry is for.
    */
   tags?: readonly string[] | null;
+  /**
+   * Who `@` offers: the people this client already knows, the writer included.
+   * Arrives after the editor is built, like the tags.
+   */
+  people?: readonly Person[];
   /**
    * A 1-based, file-relative line to put the cursor on and scroll into view —
    * the task list's "open at the right line". Re-applied whenever it changes,
@@ -140,6 +146,7 @@ export interface NoteExtensions {
   /** Read through a getter, so a later answer reaches an editor already built. */
   attach?: () => ((file: File) => Promise<string | null>) | undefined;
   tags?: () => readonly string[] | null;
+  people?: () => readonly Person[];
   /** Resolves links for embeds and previews. Left out, those show nothing. */
   host?: () => EmbedHost | null;
   onChange?: (content: string) => void;
@@ -176,6 +183,7 @@ export function noteExtensions({
   readOnly = false,
   attach,
   tags,
+  people,
   host,
   onChange,
   vim,
@@ -264,6 +272,7 @@ export function noteExtensions({
     // folder the note lives in.
     embedContext.of({ owner, dir: path.slice(0, Math.max(0, path.lastIndexOf('/'))) }),
     tagContext.of(tags ?? (() => null)),
+    mentionContext.of(people ?? (() => [])),
     embedHost.of(host ?? (() => null)),
     attachments(attach ?? (() => undefined), readOnly),
     completion(),
@@ -279,6 +288,9 @@ export function noteExtensions({
   ];
 }
 
+/** Nobody to mention: an editor without the shell, as in most tests. */
+const NOBODY: readonly Person[] = [];
+
 export function Editor({
   owner,
   path,
@@ -286,6 +298,7 @@ export function Editor({
   readOnly = false,
   locked = false,
   tags = null,
+  people = NOBODY,
   line,
   onChange,
   onAttach,
@@ -311,6 +324,8 @@ export function Editor({
   // rebuilding would throw away the cursor mid-sentence.
   const tagsRef = useRef(tags);
   tagsRef.current = tags;
+  const peopleRef = useRef(people);
+  peopleRef.current = people;
   const onOpenLinkRef = useRef(onOpenLink);
   onOpenLinkRef.current = onOpenLink;
   // Read through a ref for the same reason: the build effect must not list the
@@ -351,6 +366,7 @@ export function Editor({
           readOnly,
           attach: () => onAttachRef.current,
           tags: () => tagsRef.current,
+          people: () => peopleRef.current,
           host: () => links,
           onChange: (content) => onChangeRef.current(content),
           vim: vimRef.current,
