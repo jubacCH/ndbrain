@@ -35,6 +35,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Brain } from './Brain';
 import { ContextPanel } from './Context';
 import { Editor } from './Editor';
+import type { Person } from './editor/mentions';
 import { copy } from './copy';
 import { useFilesPane } from './useFilesPane';
 import { useTidyActions } from './useTidyActions';
@@ -505,9 +506,12 @@ function Shell({
   const settingsQuery = useSettings(view === 'settings');
   const topicsQuery = useTopics(view === 'tidy');
   const isAdmin = user.role === 'admin';
-  // Also while the share dialog is open, for its list of people: only an
-  // administrator can ask the server who has an account.
-  const adminUsersQuery = useAdminUsers(isAdmin && (view === 'admin' || shareTarget !== null));
+  // Also while the share dialog is open, for its list of people, and while a
+  // note is open, for the people `@` offers: only an administrator can ask the
+  // server who has an account.
+  const adminUsersQuery = useAdminUsers(
+    isAdmin && (view === 'admin' || shareTarget !== null || noteQuery.data != null),
+  );
   const adminSpacesQuery = useAdminSpaces(isAdmin && view === 'admin');
   // Keeps the picked space a space that exists. Without it the select shows the
   // first one while `keyOwner` still names something else, and the key is asked
@@ -1182,6 +1186,29 @@ function Shell({
     names.delete(user.id);
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [granted, received, owners, adminUsersQuery.data, user.id]);
+
+  /**
+   * Who `@` offers in the editor: the people this client already has a name
+   * for, and the writer. Somebody known only by id — a grantee the directory
+   * has never described — is left out, since a mention would then be written
+   * with the id where the name belongs.
+   */
+  const mentionPeople = useMemo((): Person[] => {
+    const named = new Map<string, string>();
+    for (const owner of owners.values()) {
+      if (owner.kind === 'person' && owner.displayName !== '') named.set(owner.id, owner.displayName);
+    }
+    for (const account of adminUsersQuery.data?.users ?? []) {
+      if (ownerKind(owners, account.id) === 'person' && !account.disabled) {
+        named.set(account.id, account.displayName !== '' ? account.displayName : account.loginName);
+      }
+    }
+    named.delete(user.id);
+    const others = [...named]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return [...others, { id: user.id, name: user.displayName !== '' ? user.displayName : user.id, self: true }];
+  }, [owners, adminUsersQuery.data, user.id, user.displayName]);
 
   /** Whether a note may be deleted from a place that holds only its path. */
   const mayDelete = useCallback(
@@ -2112,6 +2139,7 @@ function Shell({
                       deletingKeys.has(refKey(open.owner, open.note.path)) || collab.status === 'connecting'
                     }
                     tags={registryQuery.data ?? null}
+                    people={mentionPeople}
                     line={jumpLine ?? undefined}
                     // In a room the room persists; `scheduleSave` would be a
                     // second writer for the same text.

@@ -857,6 +857,25 @@ input {
   cursor: text;
 }
 
+/* A person mentioned with `@`. A chip rather than a link, because it points at
+   somebody, not at something to open: the accent's soft tint, the accent's
+   ink, and no underline. */
+.cm-editor .cm-mention {
+  padding: 0 0.3em;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: var(--w-strong);
+  white-space: nowrap;
+  cursor: text;
+}
+
+/* A name this client could not confirm: the same chip, quieter. */
+.cm-editor .cm-mention.is-unknown {
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+
 .cm-editor .cm-bullet {
   color: var(--text-3);
 }
