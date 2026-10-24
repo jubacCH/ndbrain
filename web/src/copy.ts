@@ -288,6 +288,40 @@ export const copy = {
       remove: 'Delete',
     },
 
+    /**
+     * The drawn table: its cells, the handles on its rows and columns, the bars
+     * that add one, and the menu they open. Rows and columns are counted from
+     * one, the way a person counts them.
+     */
+    table: {
+      cell: (row: number, column: number) => `Cell ${row}/${column}`,
+      rowHandle: (row: number) => `Row ${row} · drag to move, click for options`,
+      columnHandle: (column: number) => `Column ${column} · drag to move, click for options`,
+      addRow: 'Add a row',
+      addColumn: 'Add a column',
+      menu: 'Table',
+      row: 'Row',
+      column: 'Column',
+      insertAbove: 'Insert above',
+      insertBelow: 'Insert below',
+      insertLeft: 'Insert left',
+      insertRight: 'Insert right',
+      moveUp: 'Move up',
+      moveDown: 'Move down',
+      moveLeft: 'Move left',
+      moveRight: 'Move right',
+      alignLeft: 'Align left',
+      alignCenter: 'Align centre',
+      alignRight: 'Align right',
+      duplicate: 'Duplicate',
+      clear: 'Clear contents',
+      removeRow: 'Delete row',
+      removeColumn: 'Delete column',
+      cells: (count: number) => `${count} ${count === 1 ? 'cell' : 'cells'}`,
+      copyCells: 'Copy',
+      clearCells: 'Clear contents',
+    },
+
     fold: {
       open: 'Expand',
       close: 'Collapse',
