@@ -15,6 +15,29 @@ forwards only. Upgrading is pulling a newer image; downgrading is restoring a
 backup. Take a copy of `data/index/ndbrain.db` before an upgrade, with
 `sqlite3 … ".backup"` rather than `cp`.
 
+## [Unreleased]
+
+### Added
+
+- **Task lists, on the server.** A list is a `<List name>.tasks.json` file
+  anywhere in the vault, with its own statuses and tasks that carry a status,
+  priority, assignees, start and due dates, tags, a description, a parent and
+  a position. `GET`/`POST /api/v1/tasklists/*` read and create a list;
+  `POST`/`PATCH`/`DELETE /api/v1/tasklist-items/*` add, change and remove
+  tasks, field by field; `GET /api/v1/tasklists` names every list the caller
+  can see. Folder, vault and space shares cover the lists in them like any
+  other file. Design: `docs/superpowers/specs/2026-10-25-task-lists-design.md`.
+- **Task lists in the sidebar.** Every list you can see, and a new one at any
+  path. A list opens as a table grouped by status, priority or due date,
+  filtered by words, status, doneness or "assigned to me", and sorted by hand,
+  date, priority, title or last change. Status, priority and due date change
+  in the row; the rest — title, dates, assignees, tags, description, subtasks
+  — in a panel beside it. A `.tasks.json` in Files opens the same way.
+- **A board for every task list.** One column per status, a card per task
+  with its priority, due date, assignees and subtask count. Drag a card to
+  another column or to another place in its own; only that card is written.
+  The status menu on each card does the same from the keyboard.
+
 ## [0.3.0] — 2026-10-25
 
 Tables you can change the shape of, and people you can mention. Both stay

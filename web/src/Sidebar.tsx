@@ -41,20 +41,23 @@ import {
   NewNoteIcon,
   SearchIcon,
   SparkleIcon,
+  TasksIcon,
   TodayIcon,
 } from './icons';
 
 /** The views the sidebar navigates between. */
-export type NavView = 'overview' | 'journal' | 'brain' | 'tidy' | 'search' | 'files';
+export type NavView = 'overview' | 'journal' | 'tasklists' | 'brain' | 'tidy' | 'search' | 'files';
 
 /**
  * Files is not among them: attachments are looked after now and then, not
  * reached for all day, so it sits in the account menu under Settings. Nor are
- * tasks: they sit beside the calendar in the journal.
+ * the checkbox tasks: they sit beside the calendar in the journal. Task lists
+ * are, because planning is something reached for every day.
  */
 const ENTRIES: Array<{ view: NavView; label: string; icon: ReactNode }> = [
   { view: 'overview', label: copy.nav.overview, icon: <HomeIcon /> },
   { view: 'journal', label: copy.nav.journal, icon: <CalendarIcon /> },
+  { view: 'tasklists', label: copy.nav.taskLists, icon: <TasksIcon /> },
   { view: 'brain', label: copy.nav.network, icon: <NetworkIcon /> },
   { view: 'tidy', label: copy.nav.tidy, icon: <SparkleIcon /> },
   { view: 'search', label: copy.nav.search, icon: <SearchIcon /> },

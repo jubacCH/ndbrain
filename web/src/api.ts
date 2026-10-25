@@ -15,6 +15,7 @@
 import { z, type ZodType } from 'zod';
 
 import * as S from '../../shared/schema';
+import * as L from '../../shared/tasklist';
 
 /**
  * Types come from the shared schemas rather than being declared twice.
@@ -605,6 +606,44 @@ export const api = {
     request(
       `/api/v1/files${owner === undefined ? '' : `?owner=${encodeURIComponent(owner)}`}`,
       S.FilesResponse,
+    ),
+
+  /* ---- task lists --------------------------------------------------------
+   *
+   * A list is a `.tasks.json` file, read and changed through its own routes so
+   * the server can lock it and change one field at a time. `owner` travels in
+   * the body or the query, as for notes.
+   */
+
+  taskLists: () => request('/api/v1/tasklists', L.TaskListsResponse),
+
+  taskList: (owner: string, path: string) =>
+    request(`/api/v1/tasklists/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, L.TaskListResponse),
+
+  createTaskList: (owner: string, path: string) =>
+    request(`/api/v1/tasklists/${encodePath(path)}`, L.TaskListResponse, {
+      method: 'POST',
+      body: JSON.stringify({ owner }),
+    }),
+
+  addTask: (owner: string, path: string, task: L.AddTaskInput) =>
+    request(`/api/v1/tasklist-items/${encodePath(path)}`, L.TaskResponse, {
+      method: 'POST',
+      body: JSON.stringify({ owner, task }),
+    }),
+
+  /** Changes only the fields named in `set`; the rest of the task is the server's. */
+  patchTask: (owner: string, path: string, id: string, set: L.TaskPatch) =>
+    request(`/api/v1/tasklist-items/${encodePath(path)}`, L.TaskResponse, {
+      method: 'PATCH',
+      body: JSON.stringify({ owner, id, set }),
+    }),
+
+  removeTask: (owner: string, path: string, id: string) =>
+    request(
+      `/api/v1/tasklist-items/${encodePath(path)}?owner=${encodeURIComponent(owner)}&id=${encodeURIComponent(id)}`,
+      L.RemoveTaskResponse,
+      { method: 'DELETE' },
     ),
 
   /** The URL to download one file. Given to an anchor, never fetched. */

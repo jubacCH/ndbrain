@@ -7545,3 +7545,315 @@ ul.inspector-links,
 .ctx .ref-pending small {
   color: var(--text-3);
 }
+
+/* ---- task lists -------------------------------------------------------- */
+
+/*
+ * The table on the left, a task in full on the right when one is picked. On a
+ * phone the detail takes the whole width under the table instead: a side
+ * panel beside a table that already scrolls sideways leaves room for neither.
+ */
+.tasklist-pane {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tasklist-pane.with-detail {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+}
+
+@media (max-width: 820px) {
+  .tasklist-pane.with-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.tl-back {
+  font-size: var(--t-sm);
+  margin-bottom: var(--s-2);
+}
+
+.tl-input,
+.tasklists select,
+.tasklist select,
+.tl-detail select,
+.tl-date {
+  padding: var(--s-1) var(--s-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--t-sm);
+}
+
+.tl-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tl-filter {
+  width: auto;
+  min-width: 12rem;
+}
+
+.tl-add {
+  margin: var(--s-3) 0;
+}
+
+.tl-vault {
+  margin-top: var(--s-4);
+}
+
+.tl-vault-name {
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-3);
+  margin: 0 0 var(--s-2);
+}
+
+.tl-lists {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.tl-lists li + li {
+  border-top: 1px solid var(--line);
+}
+
+.tl-list {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-2) var(--s-3);
+  text-align: left;
+}
+
+.tl-list:hover {
+  background: var(--surface-2);
+}
+
+.tl-list-name {
+  font-weight: var(--w-strong);
+  color: var(--text);
+}
+
+.tl-new {
+  margin-top: var(--s-5);
+}
+
+.tl-new-row {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+}
+
+.tl-row.is-done .tl-title {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.tl-row[aria-selected='true'] td {
+  background: var(--surface-3);
+}
+
+.tl-title {
+  text-align: left;
+}
+
+.tl-people {
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+
+.tl-detail {
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+@media (max-width: 820px) {
+  .tl-detail {
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+}
+
+.tl-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tl-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tl-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+}
+
+.tl-check {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-sm);
+}
+
+.tl-description {
+  font-family: var(--mono);
+  resize: vertical;
+}
+
+.tl-subtasks {
+  list-style: none;
+  margin: 0 0 var(--s-2);
+  padding: 0;
+}
+
+.tl-subtasks li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) 0;
+}
+
+/* ---- task board -------------------------------------------------------- */
+
+/*
+ * Columns side by side, scrolled sideways when there are more than fit. The
+ * page itself never scrolls sideways; the board does, inside its own box.
+ */
+.tb-board {
+  display: flex;
+  gap: var(--s-3);
+  overflow-x: auto;
+  padding-bottom: var(--s-3);
+  align-items: flex-start;
+}
+
+.tb-column {
+  flex: 0 0 272px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s-2);
+  min-height: 6rem;
+}
+
+@media (max-width: 820px) {
+  .tb-column {
+    flex-basis: 78vw;
+  }
+}
+
+.tb-column-head {
+  font-size: var(--t-sm);
+  font-weight: var(--w-strong);
+  margin: var(--s-1) var(--s-1) var(--s-2);
+}
+
+.tb-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 2rem;
+}
+
+.tb-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--s-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+
+.tb-card.is-selected {
+  border-color: var(--accent);
+}
+
+.tb-card.is-done .tb-title {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+/* The card in the air: above everything, and transparent to the pointer so
+   the column under it can be found. */
+.tb-card.is-dragged {
+  position: relative;
+  z-index: 10;
+  pointer-events: none;
+  cursor: grabbing;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.tb-board.is-dragging {
+  cursor: grabbing;
+}
+
+.tb-marker {
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  margin-bottom: var(--s-2);
+}
+
+.tb-title {
+  text-align: left;
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.tb-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.tb-priority-urgent {
+  color: var(--crit);
+}
+
+.tb-priority-high {
+  color: var(--warn);
+}
+
+.tb-people {
+  font-size: var(--t-xs);
+  color: var(--text-2);
+}
+
+.tb-status {
+  align-self: flex-start;
+  font-size: var(--t-xs);
+  padding: 0 var(--s-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+}

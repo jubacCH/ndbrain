@@ -79,6 +79,8 @@ export const keys = {
   links: (owner: string, path: string) => ['links', owner, path] as const,
   history: (owner: string, path: string) => ['history', owner, path] as const,
   search: (q: string, filters: unknown) => ['search', q, filters] as const,
+  taskLists: ['tasklists'] as const,
+  taskList: (owner: string, path: string) => ['tasklists', owner, path] as const,
 };
 
 /**
@@ -576,4 +578,74 @@ export function useToggleTask() {
       void client.invalidateQueries({ queryKey: keys.note(vars.owner, vars.task.path) });
     },
   });
+}
+
+/* ---- task lists ------------------------------------------------------------ */
+
+type TaskListData = Awaited<ReturnType<typeof api.taskList>>;
+
+/** Every list the caller can see, across vaults. */
+export function useTaskLists(enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.taskLists>>> {
+  return useQuery({
+    queryKey: keys.taskLists,
+    queryFn: () => api.taskLists(),
+    // Read off the disk like the file listing, which can change under us.
+    staleTime: 5_000,
+    enabled,
+  });
+}
+
+/**
+ * One list.
+ *
+ * Short-lived on purpose: somebody else in a shared folder, or an agent, may
+ * be changing the same file, and the list view is where they would notice.
+ */
+export function useTaskList(ref: { owner: string; path: string } | null): UseQueryResult<TaskListData> {
+  return useQuery({
+    queryKey: keys.taskList(ref?.owner ?? '', ref?.path ?? ''),
+    queryFn: () => api.taskList(ref!.owner, ref!.path),
+    staleTime: 5_000,
+    enabled: ref !== null,
+  });
+}
+
+/**
+ * The changes to one list's tasks.
+ *
+ * Each writes the server's answer into the cached list at once, so the row
+ * changes when the write has landed rather than one more round trip later,
+ * and then asks again for the whole list — another writer may have changed
+ * other tasks meanwhile, and the answer to a patch only speaks for one.
+ */
+export function useTaskChanges(ref: { owner: string; path: string }) {
+  const client = useQueryClient();
+  const key = keys.taskList(ref.owner, ref.path);
+  const update = (fn: (data: TaskListData) => TaskListData): void => {
+    client.setQueryData<TaskListData>(key, (data) => (data === undefined ? data : fn(data)));
+    void client.invalidateQueries({ queryKey: key });
+  };
+
+  const add = useMutation({
+    mutationFn: (task: Parameters<typeof api.addTask>[2]) => api.addTask(ref.owner, ref.path, task),
+    onSuccess: ({ task }) => update((data) => ({ ...data, list: { ...data.list, tasks: [...data.list.tasks, task] } })),
+  });
+  const patch = useMutation({
+    mutationFn: (vars: { id: string; set: Parameters<typeof api.patchTask>[3] }) =>
+      api.patchTask(ref.owner, ref.path, vars.id, vars.set),
+    onSuccess: ({ task }) =>
+      update((data) => ({
+        ...data,
+        list: { ...data.list, tasks: data.list.tasks.map((item) => (item.id === task.id ? task : item)) },
+      })),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.removeTask(ref.owner, ref.path, id),
+    onSuccess: ({ removed }) =>
+      update((data) => ({
+        ...data,
+        list: { ...data.list, tasks: data.list.tasks.filter((item) => !removed.includes(item.id)) },
+      })),
+  });
+  return { add, patch, remove };
 }

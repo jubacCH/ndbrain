@@ -18,12 +18,15 @@ import {
   CaseCollisionError,
   HistoryUnreadableError,
   InvalidPathError,
+  InvalidTaskError,
   InvalidUserError,
   NotAFileError,
   NoteExistsError,
   NoteNotFoundError,
   NothingToRestoreError,
   TaskChangedError,
+  TaskListInvalidError,
+  TaskNotFoundError,
   UnlinkableNameError,
 } from '../errors.js';
 import { UnknownKeyError } from '../auth/keys.js';
@@ -79,6 +82,17 @@ export function toProblem(error: unknown): HttpProblem {
   }
   if (error instanceof TaskChangedError) {
     return { status: 409, code: 'task_changed', message: error.message };
+  }
+  // 422, not 500 and not 400: the request was fine and so is the server; the
+  // file is the problem, and it is the caller's to fix.
+  if (error instanceof TaskListInvalidError) {
+    return { status: 422, code: 'tasklist_invalid', message: error.message };
+  }
+  if (error instanceof InvalidTaskError) {
+    return { status: 400, code: 'invalid_task', message: error.message };
+  }
+  if (error instanceof TaskNotFoundError) {
+    return { status: 404, code: 'task_not_found', message: 'no such task in this list' };
   }
   if (error instanceof InvalidPathError || error instanceof NotAFileError) {
     return { status: 400, code: 'invalid_path', message: error.message };
