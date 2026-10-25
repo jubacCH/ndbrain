@@ -12,9 +12,11 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_STATUSES, type TaskListFile, type TaskListItem } from '../../shared/tasklist';
 import {
   NO_FILTER,
+  boardColumns,
   dueBucket,
   groupTasks,
   listPathFor,
+  orderForDrop,
   toggledStatus,
 } from '../src/taskListModel';
 
@@ -167,5 +169,41 @@ describe('small rules', () => {
     expect(listPathFor('Kunden/Acme/Website')).toBe('Kunden/Acme/Website.tasks.json');
     expect(listPathFor(' /Website.tasks.json/ ')).toBe('Website.tasks.json');
     expect(listPathFor('   ')).toBeNull();
+  });
+});
+
+describe('the board', () => {
+  it('has a column for every status, empty ones too, and cards only for tasks at the top', () => {
+    const columns = boardColumns(
+      list([task('b', { order: 'b' }), task('a', { order: 'a' }), task('child', { parent: 'a' })]),
+      NO_FILTER,
+      'me',
+    );
+    expect(columns.map((column) => [column.status, column.tasks.map((item) => item.id)])).toEqual([
+      ['todo', ['a', 'b']],
+      ['doing', []],
+      ['done', []],
+    ]);
+  });
+
+  it('keeps a task whose status the list no longer has, in a column at the end', () => {
+    const columns = boardColumns(list([task('a', { status: 'archived' })]), NO_FILTER, 'me');
+    expect(columns.at(-1)).toMatchObject({ status: 'archived', tasks: [{ id: 'a' }] });
+  });
+
+  it('places a dropped card between its new neighbours, counted without itself', () => {
+    const column = [task('a', { order: 'a' }), task('b', { order: 'b' }), task('c', { order: 'c' })];
+    // `c` dropped at index 1 among [a, b]: between a and b.
+    const between = orderForDrop(column, 1, 'c');
+    expect(between > 'a' && between < 'b').toBe(true);
+    // Into another column's empty list, and to the top and the bottom.
+    expect(orderForDrop([], 0, 'x')).toMatch(/^[0-9A-Za-z]+$/);
+    expect(orderForDrop(column, 0, 'c') < 'a').toBe(true);
+    expect(orderForDrop(column, 2, 'a') > 'c').toBe(true);
+  });
+
+  it('does not fail between two cards a hand edit gave the same place', () => {
+    const column = [task('a', { order: 'm' }), task('b', { order: 'm' }), task('c', { order: 'z' })];
+    expect(orderForDrop(column, 1, 'c') > 'm').toBe(true);
   });
 });

@@ -33,6 +33,10 @@ backup. Take a copy of `data/index/ndbrain.db` before an upgrade, with
   date, priority, title or last change. Status, priority and due date change
   in the row; the rest — title, dates, assignees, tags, description, subtasks
   — in a panel beside it. A `.tasks.json` in Files opens the same way.
+- **A board for every task list.** One column per status, a card per task
+  with its priority, due date, assignees and subtask count. Drag a card to
+  another column or to another place in its own; only that card is written.
+  The status menu on each card does the same from the keyboard.
 
 ## [0.3.0] — 2026-10-25
 

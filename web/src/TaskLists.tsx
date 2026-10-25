@@ -23,6 +23,7 @@ import {
   type TaskPatch,
 } from '../../shared/tasklist';
 import { copy } from './copy';
+import { TaskBoard } from './TaskBoard';
 import type { Person } from './editor/mentions';
 import { ownerLabel, useOwners } from './owners';
 import { refKey } from './refkey';
@@ -169,6 +170,7 @@ export function TaskListView({
   const [filter, setFilter] = useState<TaskFilter>(NO_FILTER);
   const [grouping, setGrouping] = useState<Grouping>('status');
   const [sorting, setSorting] = useState<Sorting>('order');
+  const [layout, setLayout] = useState<'list' | 'board'>('list');
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
 
@@ -263,26 +265,43 @@ export function TaskListView({
         </div>
 
         <div className="filters">
-          <label className="filter-label">
-            {copy.taskLists.groupBy}{' '}
-            <select value={grouping} onChange={(event) => setGrouping(event.target.value as Grouping)}>
-              {GROUPINGS.map((key) => (
-                <option key={key} value={key}>
-                  {copy.taskLists.grouping[key]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="filter-label">
-            {copy.taskLists.sortBy}{' '}
-            <select value={sorting} onChange={(event) => setSorting(event.target.value as Sorting)}>
-              {SORTINGS.map((key) => (
-                <option key={key} value={key}>
-                  {copy.taskLists.sorting[key]}
-                </option>
-              ))}
-            </select>
-          </label>
+          <span className="filter-label">{copy.taskLists.layout}</span>
+          {(['list', 'board'] as const).map((key) => (
+            <button
+              type="button"
+              key={key}
+              className="filter"
+              aria-pressed={layout === key}
+              onClick={() => setLayout(key)}
+            >
+              {copy.taskLists.layouts[key]}
+            </button>
+          ))}
+          {/* A board is grouped by status and ordered by hand, by definition. */}
+          {layout === 'list' && (
+            <>
+              <label className="filter-label">
+                {copy.taskLists.groupBy}{' '}
+                <select value={grouping} onChange={(event) => setGrouping(event.target.value as Grouping)}>
+                  {GROUPINGS.map((key) => (
+                    <option key={key} value={key}>
+                      {copy.taskLists.grouping[key]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="filter-label">
+                {copy.taskLists.sortBy}{' '}
+                <select value={sorting} onChange={(event) => setSorting(event.target.value as Sorting)}>
+                  {SORTINGS.map((key) => (
+                    <option key={key} value={key}>
+                      {copy.taskLists.sorting[key]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
         </div>
 
         {canWrite && (
@@ -297,7 +316,18 @@ export function TaskListView({
           </form>
         )}
 
-        {groups.length === 0 ? (
+        {layout === 'board' ? (
+          <TaskBoard
+            list={list}
+            filter={filter}
+            self={self}
+            canWrite={canWrite}
+            names={names}
+            selected={selected}
+            onSelect={setSelected}
+            onPatch={(id, set) => void changes.patch(id, set)}
+          />
+        ) : groups.length === 0 ? (
           <p className="empty">{list.tasks.length === 0 ? copy.taskLists.noTasks : copy.taskLists.noMatch}</p>
         ) : (
           <div className="tablewrap">

@@ -716,6 +716,11 @@ export const copy = {
     markOpen: (title: string) => `Mark “${title}” open`,
     open: (title: string) => `Open “${title}”`,
     subtaskCount: (count: number) => `${count} ${count === 1 ? 'subtask' : 'subtasks'}`,
+    subtasksDone: (done: number, total: number) => `${done}/${total} subtasks`,
+    /** The status menu on a board card: the keyboard's way to another column. */
+    moveTo: (title: string) => `Status of “${title}”`,
+    layout: 'View as',
+    layouts: { list: 'List', board: 'Board' },
 
     detail: 'Task',
     close: 'Close',

@@ -7731,3 +7731,129 @@ ul.inspector-links,
   gap: var(--s-2);
   padding: var(--s-1) 0;
 }
+
+/* ---- task board -------------------------------------------------------- */
+
+/*
+ * Columns side by side, scrolled sideways when there are more than fit. The
+ * page itself never scrolls sideways; the board does, inside its own box.
+ */
+.tb-board {
+  display: flex;
+  gap: var(--s-3);
+  overflow-x: auto;
+  padding-bottom: var(--s-3);
+  align-items: flex-start;
+}
+
+.tb-column {
+  flex: 0 0 272px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s-2);
+  min-height: 6rem;
+}
+
+@media (max-width: 820px) {
+  .tb-column {
+    flex-basis: 78vw;
+  }
+}
+
+.tb-column-head {
+  font-size: var(--t-sm);
+  font-weight: var(--w-strong);
+  margin: var(--s-1) var(--s-1) var(--s-2);
+}
+
+.tb-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 2rem;
+}
+
+.tb-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--s-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+
+.tb-card.is-selected {
+  border-color: var(--accent);
+}
+
+.tb-card.is-done .tb-title {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+/* The card in the air: above everything, and transparent to the pointer so
+   the column under it can be found. */
+.tb-card.is-dragged {
+  position: relative;
+  z-index: 10;
+  pointer-events: none;
+  cursor: grabbing;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.tb-board.is-dragging {
+  cursor: grabbing;
+}
+
+.tb-marker {
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  margin-bottom: var(--s-2);
+}
+
+.tb-title {
+  text-align: left;
+  font-weight: var(--w-medium);
+  color: var(--text);
+}
+
+.tb-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.tb-priority-urgent {
+  color: var(--crit);
+}
+
+.tb-priority-high {
+  color: var(--warn);
+}
+
+.tb-people {
+  font-size: var(--t-xs);
+  color: var(--text-2);
+}
+
+.tb-status {
+  align-self: flex-start;
+  font-size: var(--t-xs);
+  padding: 0 var(--s-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+}

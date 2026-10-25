@@ -8,7 +8,7 @@
  * somebody may only read offers nothing to change.
  */
 
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -163,5 +163,72 @@ describe('every list', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: /Website/ }));
     expect(onOpen).toHaveBeenCalledWith('julian', 'Kunden/Acme/Website.tasks.json');
+  });
+});
+
+describe('the board', () => {
+  async function toBoard(): Promise<void> {
+    await userEvent.click(screen.getByRole('button', { name: 'Board' }));
+  }
+
+  it('shows a column per status and moves a card by its status menu', async () => {
+    const changes = renderList([task('a'), task('b', { status: 'done' })]);
+    await toBoard();
+    expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-label'))).toEqual([
+      'To do',
+      'In progress',
+      'Done',
+    ]);
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Status of “Task a”' }), 'doing');
+    expect(changes.patch).toHaveBeenCalledWith('a', { status: 'doing' });
+  });
+
+  it('opens a card on a click, and a drag onto another column moves it there', async () => {
+    const changes = renderList([task('a'), task('b', { status: 'done', order: 'b' })]);
+    await toBoard();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open “Task a”' }));
+    expect(screen.getByRole('complementary')).toBeInTheDocument();
+
+    // jsdom lays nothing out, so the point under the pointer is said by hand:
+    // whatever is asked about, it is the Done column. Every card there has a
+    // zero-sized box, so the drop lands below them all.
+    const done = screen.getByRole('region', { name: 'Done' });
+    const original = document.elementFromPoint;
+    document.elementFromPoint = () => done;
+    try {
+      const card = screen.getByRole('button', { name: 'Open “Task a”' }).closest('article')!;
+      fireEvent.pointerDown(card, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(window, { clientX: 200, clientY: 40 });
+      fireEvent.pointerUp(window, { clientX: 200, clientY: 40 });
+    } finally {
+      document.elementFromPoint = original;
+    }
+
+    expect(changes.patch).toHaveBeenCalledTimes(1);
+    const [id, set] = (changes.patch as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(id).toBe('a');
+    expect(set.status).toBe('done');
+    // Below `b`, the one card already there.
+    expect(set.order > 'b').toBe(true);
+  });
+
+  it('writes nothing for a press that never became a drag', async () => {
+    const changes = renderList([task('a')]);
+    await toBoard();
+    // A column under the pointer, so that only the threshold stands between
+    // this wobble and a move into Done.
+    const done = screen.getByRole('region', { name: 'Done' });
+    const original = document.elementFromPoint;
+    document.elementFromPoint = () => done;
+    try {
+      const card = screen.getByRole('button', { name: 'Open “Task a”' }).closest('article')!;
+      fireEvent.pointerDown(card, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(window, { clientX: 12, clientY: 11 });
+      fireEvent.pointerUp(window, { clientX: 12, clientY: 11 });
+    } finally {
+      document.elementFromPoint = original;
+    }
+    expect(changes.patch).not.toHaveBeenCalled();
   });
 });

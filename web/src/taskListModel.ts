@@ -12,7 +12,7 @@
  * the parent, rather than being torn out into a group of its own.
  */
 
-import type { TaskListFile, TaskListItem } from '../../shared/tasklist';
+import { orderBetween, type TaskListFile, type TaskListItem } from '../../shared/tasklist';
 
 export type Grouping = 'status' | 'priority' | 'due' | 'none';
 export type Sorting = 'order' | 'due' | 'priority' | 'title' | 'updated';
@@ -198,4 +198,55 @@ export function listPathFor(input: string): string | null {
   const trimmed = input.trim().replace(/^\/+|\/+$/g, '');
   if (trimmed === '') return null;
   return /\.tasks\.json$/i.test(trimmed) ? trimmed : `${trimmed}.tasks.json`;
+}
+
+/* ---- board ------------------------------------------------------------------ */
+
+export interface BoardColumn {
+  /** The status this column is. */
+  status: string;
+  /** Its tasks at the top, in board order; subtasks are counted on their card. */
+  tasks: TaskListItem[];
+}
+
+/**
+ * One column per status of the list, in the list's own order.
+ *
+ * Only tasks at the top become cards. A subtask on a board of its own would
+ * be a card with no context, and ClickUp keeps them inside their parent's
+ * card too. A task in a status the list no longer has gets a column of its
+ * own at the end, so a hand edit cannot make it disappear.
+ */
+export function boardColumns(list: TaskListFile, filter: TaskFilter, self: string): BoardColumn[] {
+  const tops = list.tasks.filter(
+    (task) =>
+      (task.parent === null || !list.tasks.some((other) => other.id === task.parent)) &&
+      matches(list, task, filter, self),
+  );
+  const order = compare('order');
+  const statuses = [...list.statuses.map((status) => status.id), ...new Set(tops.map((task) => task.status))];
+  return [...new Set(statuses)]
+    .map((status) => ({ status, tasks: tops.filter((task) => task.status === status).sort(order) }))
+    .filter(
+      (column) => column.tasks.length > 0 || list.statuses.some((status) => status.id === column.status),
+    );
+}
+
+/**
+ * The `order` a card gets when it is dropped at `index` in `column`.
+ *
+ * `index` counts the cards as they are on screen *without* the one being
+ * moved, which is how the drop marker counts them too. Only the moved card
+ * changes: that is the point of fractional positions.
+ *
+ * Two neighbours with the same position can only come from a hand edit, and
+ * there is no key between equal keys. The card then goes after both of them,
+ * a place off by one rather than an error; moving it again settles it.
+ */
+export function orderForDrop(column: readonly TaskListItem[], index: number, moving: string): string {
+  const others = column.filter((task) => task.id !== moving);
+  const before = others[index - 1]?.order ?? null;
+  const after = others[index]?.order ?? null;
+  if (before !== null && after !== null && before >= after) return orderBetween(before, null);
+  return orderBetween(before, after);
 }
