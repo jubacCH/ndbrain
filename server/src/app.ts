@@ -39,6 +39,8 @@ import { InvalidPathError, NotAFileError, NoteNotFoundError, TaskChangedError } 
 import type { By, Persisted, Room } from './collab/room.js';
 import type { RoomRegistry } from './collab/rooms.js';
 import type { History } from './vault/history.js';
+import { TaskLists } from './tasklists/service.js';
+import { isTaskListPath } from '../../shared/tasklist.js';
 
 export interface RenameResult {
   note: Note;
@@ -114,6 +116,12 @@ export class App {
   /** Which file each note share names; see `NoteBindings`. */
   readonly bindings: NoteBindings;
 
+  /**
+   * The task list files. Held here so that the generic file operations below
+   * can take a list's lock when they touch one; see `#underListLock`.
+   */
+  readonly tasklists: TaskLists;
+
   constructor(db: Database, notes: NoteService, indexer: Indexer, shares: ShareService) {
     this.#db = db;
     this.notes = notes;
@@ -121,6 +129,19 @@ export class App {
     this.shares = shares;
     this.queries = new Queries(db);
     this.bindings = new NoteBindings(shares, notes.vault);
+    this.tasklists = new TaskLists(notes.vault);
+  }
+
+  /**
+   * Runs a generic file operation under a task list's lock when it names one.
+   *
+   * A list is changed by read-modify-write in `TaskLists`. An upload, a delete
+   * or a folder move landing between the read and the write would be undone by
+   * the write a moment later — the upload silently lost, the deleted list
+   * brought back — so they queue behind it instead.
+   */
+  async #underListLock<T>(owner: string, filePath: string, fn: () => Promise<T>): Promise<T> {
+    return isTaskListPath(filePath) ? this.tasklists.withLock(owner, filePath, fn) : fn();
   }
 
   #rooms: RoomRegistry | null = null;
@@ -766,7 +787,7 @@ export class App {
     };
     const replaced = isNotePath(canonical)
       ? await this.notes.withLock(owner, canonical, write)
-      : await write();
+      : await this.#underListLock(owner, canonical, write);
 
     if (isNotePath(canonical)) {
       await this.indexer.indexNote(owner, canonical);
@@ -785,7 +806,10 @@ export class App {
       return;
     }
 
-    await this.notes.vault.deleteNote(owner, canonical);
+    await this.#underListLock(owner, canonical, async () => {
+      options.authorize?.();
+      await this.notes.vault.deleteNote(owner, canonical);
+    });
   }
 
   async deleteNote(owner: string, notePath: string, actor?: string, options: Authorized = {}): Promise<void> {
@@ -1244,7 +1268,9 @@ export class App {
     // so that "the folder has moved" is true by the time they follow.
     for (const filePath of attachments) {
       try {
-        await this.notes.vault.moveFile(owner, filePath, rebase(filePath));
+        await this.#underListLock(owner, filePath, () =>
+          this.notes.vault.moveFile(owner, filePath, rebase(filePath)),
+        );
         movedFiles.push(rebase(filePath));
       } catch (error) {
         failed.push({ path: filePath, reason: reasonFor(error) });

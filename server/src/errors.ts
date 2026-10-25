@@ -105,3 +105,29 @@ export class NothingToRestoreError extends NdbrainError {}
  * was fine, and retrying is the right instinct.
  */
 export class HistoryUnreadableError extends NdbrainError {}
+
+/**
+ * A task list file that cannot be read as one: not JSON, or not this format.
+ *
+ * Its own class because the answer to it is different from every other read
+ * failure — the file is there, the caller may see it, and somebody has to fix
+ * it by hand. Writes to it are refused for as long as it stays broken, so the
+ * message names the place, which is the caller's own file and nothing of ours.
+ */
+export class TaskListInvalidError extends NdbrainError {}
+
+/**
+ * A task change that the list it is aimed at cannot take: a status the list
+ * does not have, a parent that is not there or would make a task its own
+ * ancestor.
+ */
+export class InvalidTaskError extends NdbrainError {}
+
+/**
+ * No task with that id in the list.
+ *
+ * Distinct from `NoteNotFoundError` without leaking anything: it is only ever
+ * raised after the caller was allowed into the list, which they can read in
+ * full anyway.
+ */
+export class TaskNotFoundError extends NdbrainError {}

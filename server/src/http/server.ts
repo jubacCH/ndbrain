@@ -48,6 +48,7 @@ import { UnfurlRefused, checkUrl, unfurl } from './unfurl.js';
 import { ZipFile } from 'yazl';
 import type { ZodType } from 'zod';
 import * as S from '../../../shared/schema.js';
+import * as T from '../../../shared/tasklist.js';
 import { NOTES_SECTION, dailyNoteTemplate, journalPath, parseIsoDate } from '../../../shared/journal.js';
 import { SESSION_COOKIE } from './cookie.js';
 
@@ -1099,6 +1100,63 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       authorize: recheck(caller, owner, filePath, 'write'),
     });
     return reply.code(204).send();
+  });
+
+  /* ---- task lists ------------------------------------------------------
+   *
+   * A list is a `.tasks.json` file, so it answers to the same gate as every
+   * other file: `target()` on the way in and `recheck()` inside the list's
+   * lock. Nothing about shares is new here — a folder share covers the lists
+   * in the folder — and a list the caller may not see is the same 404 as one
+   * that is not there. Design: docs/superpowers/specs/2026-10-25-task-lists-design.md.
+   */
+
+  fastify.get('/api/v1/tasklists/*', async (request) => {
+    const { owner, path: listPath } = target(request, 'read');
+    const list = await app.tasklists.read(owner, listPath);
+    const canonical = normalizeVaultPath(listPath);
+    return { owner, path: canonical, name: T.taskListName(canonical), list };
+  });
+
+  fastify.post('/api/v1/tasklists/*', async (request, reply) => {
+    const { owner, path: listPath } = target(request, 'write');
+    const body = T.CreateTaskListRequest.parse(request.body ?? {});
+    const caller = requireUser(request).id;
+    const list = await app.tasklists.create(owner, listPath, body.statuses, {
+      authorize: recheck(caller, owner, listPath, 'write'),
+    });
+    const canonical = normalizeVaultPath(listPath);
+    return reply.code(201).send({ owner, path: canonical, name: T.taskListName(canonical), list });
+  });
+
+  fastify.post('/api/v1/tasklist-items/*', async (request, reply) => {
+    const { owner, path: listPath } = target(request, 'write');
+    const body = T.AddTaskRequest.parse(request.body);
+    const caller = requireUser(request).id;
+    const task = await app.tasklists.addTask(owner, listPath, body.task, {
+      authorize: recheck(caller, owner, listPath, 'write'),
+    });
+    return reply.code(201).send({ task });
+  });
+
+  fastify.patch('/api/v1/tasklist-items/*', async (request) => {
+    const { owner, path: listPath } = target(request, 'write');
+    const body = T.PatchTaskRequest.parse(request.body);
+    const caller = requireUser(request).id;
+    const task = await app.tasklists.patchTask(owner, listPath, body.id, body.set, {
+      authorize: recheck(caller, owner, listPath, 'write'),
+    });
+    return { task };
+  });
+
+  fastify.delete('/api/v1/tasklist-items/*', async (request) => {
+    const { owner, path: listPath } = target(request, 'write');
+    const id = T.TaskId.parse((request.query as { id?: unknown }).id);
+    const caller = requireUser(request).id;
+    const removed = await app.tasklists.removeTask(owner, listPath, id, {
+      authorize: recheck(caller, owner, listPath, 'write'),
+    });
+    return { removed };
   });
 
   /**
