@@ -15,6 +15,19 @@ forwards only. Upgrading is pulling a newer image; downgrading is restoring a
 backup. Take a copy of `data/index/ndbrain.db` before an upgrade, with
 `sqlite3 … ".backup"` rather than `cp`.
 
+## [Unreleased]
+
+### Added
+
+- **Task lists, on the server.** A list is a `<List name>.tasks.json` file
+  anywhere in the vault, with its own statuses and tasks that carry a status,
+  priority, assignees, start and due dates, tags, a description, a parent and
+  a position. `GET`/`POST /api/v1/tasklists/*` read and create a list;
+  `POST`/`PATCH`/`DELETE /api/v1/tasklist-items/*` add, change and remove
+  tasks, field by field. Folder, vault and space shares cover the lists in
+  them like any other file. No interface yet; that is the next step. Design:
+  `docs/superpowers/specs/2026-10-25-task-lists-design.md`.
+
 ## [0.3.0] — 2026-10-25
 
 Tables you can change the shape of, and people you can mention. Both stay
