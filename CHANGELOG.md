@@ -15,6 +15,31 @@ forwards only. Upgrading is pulling a newer image; downgrading is restoring a
 backup. Take a copy of `data/index/ndbrain.db` before an upgrade, with
 `sqlite3 … ".backup"` rather than `cp`.
 
+## [0.3.0] — 2026-10-25
+
+Tables you can change the shape of, and people you can mention. Both stay
+Markdown: a table is a GFM table and a mention is an ordinary link.
+
+### Added
+
+- **Tables edited the way AFFiNE edits them.** A handle on every row and
+  column appears with the pointer: click it to insert, move, align (columns),
+  duplicate, clear or delete; drag it to move the row or column. Bars under
+  and beside the table add a row or a column. Arrow keys walk the cells and
+  carry on into the text above and below; a table that ends the note gets a
+  line after it. Drag across cells, or use Shift, to pick a range, which
+  Delete clears and copy or cut take as tab-separated text. A block pasted
+  from a spreadsheet fills the cells it lands on and grows the table where it
+  reaches past it. Right click, or Shift+F10, opens the same menu on a cell.
+  The first row is a row like any other: moving or deleting it makes another
+  row the header. Column widths are not offered, since GFM cannot store them.
+- **`@` mentions a person.** The menu offers the people this client already
+  knows — owners whose notes it can see and, for an administrator, every
+  account — never inside a word, so an e-mail address stays text, and never
+  in code. A mention is written as `[@Name](ndbrain:user/<account id>)` and
+  drawn as a chip with the name the person goes by now, so it survives a
+  rename; outside ndBrain it reads as `@Name`. No notification is sent.
+
 ## [0.2.0] — 2026-10-23
 
 The editor learns what AFFiNE's does — as Markdown. Every addition here either
