@@ -344,3 +344,25 @@ describe('the tenant boundary', () => {
     await expect(fs.stat(onDisk(julian, 'Privat/Neu.tasks.json'))).rejects.toThrow();
   });
 });
+
+describe('the lists a caller can see', () => {
+  it('are the owner\'s in full, and a grantee\'s only inside the share', async () => {
+    await create();
+    await h.as('julian', { method: 'POST', url: url('tasklists', 'Privat/Geheim.tasks.json'), payload: {} });
+    // A plain JSON file beside them is not a list.
+    await fs.writeFile(onDisk(julian, 'Kunden/Acme/notes.json'), '{}');
+
+    const own = await h.as('julian', { url: '/api/v1/tasklists' });
+    expect(own.status).toBe(200);
+    expect(own.body.lists.map((row: { path: string }) => row.path).sort()).toEqual([
+      LIST,
+      'Privat/Geheim.tasks.json',
+    ]);
+
+    expect((await h.as('ramona', { url: '/api/v1/tasklists' })).body.lists).toEqual([]);
+
+    h.runtime.shares.grant(julian, 'Kunden/', ramona, false);
+    const granted = await h.as('ramona', { url: '/api/v1/tasklists' });
+    expect(granted.body.lists).toEqual([{ owner: julian, path: LIST, canWrite: false }]);
+  });
+});

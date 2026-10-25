@@ -173,6 +173,16 @@ export const TaskListResponse = z.object({
 
 export const TaskResponse = z.object({ task: TaskListItem });
 
+export const TaskListRow = z.object({
+  owner: z.string(),
+  path: z.string(),
+  canWrite: z.boolean(),
+});
+
+export const TaskListsResponse = z.object({ lists: z.array(TaskListRow) });
+
+export type TaskListRow = z.infer<typeof TaskListRow>;
+
 export const RemoveTaskResponse = z.object({ removed: z.array(TaskId) });
 
 /* ---- the file ------------------------------------------------------------- */

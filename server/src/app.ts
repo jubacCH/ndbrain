@@ -735,6 +735,27 @@ export class App {
     };
   }
 
+  /**
+   * Every task list the caller can read, across the vaults they can reach.
+   *
+   * Built on the file listings rather than an index of its own, so it says
+   * exactly what the file browser says and nothing more: the caller's own vault
+   * in full, every other one through `listFilesIn`, which applies the same
+   * regions as every note query.
+   */
+  async taskListsVisibleTo(caller: string): Promise<Array<{ owner: string; path: string; canWrite: boolean }>> {
+    const out: Array<{ owner: string; path: string; canWrite: boolean }> = [];
+    for (const { id: owner } of this.shares.visibleOwners(caller)) {
+      const listed = owner === caller ? await this.listFiles(owner, 100_000) : await this.listFilesIn(caller, owner, 100_000);
+      if (listed === null) continue;
+      for (const file of listed.files) {
+        if (!isTaskListPath(file.path)) continue;
+        out.push({ owner, path: file.path, canWrite: this.shares.allows(caller, owner, file.path, 'write') });
+      }
+    }
+    return out;
+  }
+
   async readFile(owner: string, filePath: string): Promise<Buffer> {
     return this.notes.vault.readFileBytes(owner, filePath);
   }

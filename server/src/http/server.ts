@@ -1111,6 +1111,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    * that is not there. Design: docs/superpowers/specs/2026-10-25-task-lists-design.md.
    */
 
+  fastify.get('/api/v1/tasklists', async (request) => {
+    const caller = requireUser(request).id;
+    const lists = await app.taskListsVisibleTo(caller);
+    return { lists };
+  });
+
   fastify.get('/api/v1/tasklists/*', async (request) => {
     const { owner, path: listPath } = target(request, 'read');
     const list = await app.tasklists.read(owner, listPath);
