@@ -53,6 +53,7 @@ export const copy = {
     network: 'Whole network',
     tidy: 'Tidy up',
     tasks: 'Tasks',
+    taskLists: 'Task lists',
     search: 'Search',
     files: 'Files',
     settings: 'Settings',
@@ -529,6 +530,8 @@ export const copy = {
     network: 'the network',
     shares: 'what is shared',
     tasks: 'the tasks',
+    taskLists: 'the task lists',
+    taskList: 'this task list',
     overview: 'the overview',
   },
 
@@ -664,6 +667,80 @@ export const copy = {
     clear: 'clear',
     check: (text: string) => `Mark “${text}” done`,
     uncheck: (text: string) => `Mark “${text}” open`,
+  },
+
+  /**
+   * Task lists: the planning module, each list a `.tasks.json` file.
+   *
+   * Called "task lists" throughout rather than "tasks", because "Tasks" is
+   * already the checkboxes collected from notes, beside the journal calendar,
+   * and the two have to be told apart in one glance at the sidebar.
+   */
+  taskLists: {
+    title: 'Task lists',
+    count: (count: number) => `${count} ${count === 1 ? 'list' : 'lists'}`,
+    reading: 'Reading task lists…',
+    empty: 'No task lists yet. Start one below — it is a file in your vault like any other.',
+    newLabel: 'New task list',
+    newPlaceholder: 'Folder/List name',
+    newHint: 'Saved as a .tasks.json file at that path.',
+    create: 'Create',
+    vault: 'In',
+    readOnly: 'read only',
+    back: 'All task lists',
+
+    tasks: (shown: number, total: number) =>
+      shown === total
+        ? `${total} ${total === 1 ? 'task' : 'tasks'}`
+        : `${shown} of ${total} ${total === 1 ? 'task' : 'tasks'}`,
+    filterLabel: 'Filter the tasks by words',
+    filterPlaceholder: 'Filter by words…',
+    hideDone: 'Hide done',
+    mine: 'Assigned to me',
+    status: 'Status',
+    groupBy: 'Group by',
+    sortBy: 'Sort by',
+    grouping: { status: 'Status', priority: 'Priority', due: 'Due date', none: 'Nothing' },
+    sorting: { order: 'Manual', due: 'Due date', priority: 'Priority', title: 'Title', updated: 'Last changed' },
+    priority: { urgent: 'Urgent', high: 'High', normal: 'Normal', low: 'Low', none: 'No priority' },
+    due: { overdue: 'Overdue', today: 'Today', week: 'Next 7 days', later: 'Later', none: 'No due date' },
+    all: 'All tasks',
+    /** A status a task names that the list no longer has — a hand edit, usually. */
+    unknownStatus: (id: string) => `Unknown status “${id}”`,
+    addLabel: 'Add a task',
+    addPlaceholder: 'Add a task…',
+    noTasks: 'No tasks yet.',
+    noMatch: 'No task matches this filter.',
+    columns: { title: 'Task', status: 'Status', priority: 'Priority', due: 'Due', assignees: 'Assigned' },
+    markDone: (title: string) => `Mark “${title}” done`,
+    markOpen: (title: string) => `Mark “${title}” open`,
+    open: (title: string) => `Open “${title}”`,
+    subtaskCount: (count: number) => `${count} ${count === 1 ? 'subtask' : 'subtasks'}`,
+
+    detail: 'Task',
+    close: 'Close',
+    fields: {
+      title: 'Title',
+      status: 'Status',
+      priority: 'Priority',
+      start: 'Start',
+      due: 'Due',
+      tags: 'Tags',
+      tagsHint: 'Separated by commas',
+      assignees: 'Assigned to',
+      description: 'Description',
+      subtasks: 'Subtasks',
+    },
+    nobody: 'Nobody to assign yet.',
+    you: (name: string) => `${name} (you)`,
+    addSubtaskLabel: 'Add a subtask',
+    addSubtaskPlaceholder: 'Add a subtask…',
+    remove: 'Delete task',
+    askRemove: (title: string, subtasks: number) =>
+      subtasks === 0
+        ? `Delete “${title}”?`
+        : `Delete “${title}” and its ${subtasks} ${subtasks === 1 ? 'subtask' : 'subtasks'}?`,
+    failed: 'The change did not go through.',
   },
 
   search: {

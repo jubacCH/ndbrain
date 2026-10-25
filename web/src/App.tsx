@@ -76,6 +76,8 @@ import {
 import { Tree, displayPath, type Finding } from './Tree';
 import { lineOfHit } from './snippet';
 import { SearchView, SharesView, TasksView, TidyView } from './Views';
+import { TaskListView, TaskListsView, type TaskChanges } from './TaskLists';
+import { taskListName } from '../../shared/tasklist';
 import { RecentlyDeleted } from './RecentlyDeleted';
 import { OfflineBar, Trouble } from './Trouble';
 import { HomeView } from './Home';
@@ -96,6 +98,9 @@ import {
   useTagRegistry,
   useTags,
   useTasks,
+  useTaskChanges,
+  useTaskList,
+  useTaskLists,
   useSaveNote,
   useTidy,
   useToggleTask,
@@ -116,6 +121,7 @@ type View =
   | 'search'
   | 'shares'
   | 'files'
+  | 'tasklists'
   | 'settings'
   | 'admin';
 
@@ -298,6 +304,9 @@ function Shell({
   viewNow.current = view;
   /** Where to place the cursor on the next open — a task's line, or nowhere. */
   const [jumpLine, setJumpLine] = useState<number | null>(null);
+  /** The task list on screen in the task lists view; `null` shows every list. */
+  const [openList, setOpenList] = useState<{ owner: string; path: string } | null>(null);
+  const [taskListBusy, setTaskListBusy] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   /**
    * The network frame, while it is in full screen.
@@ -507,11 +516,14 @@ function Shell({
   const topicsQuery = useTopics(view === 'tidy');
   const isAdmin = user.role === 'admin';
   // Also while the share dialog is open, for its list of people, and while a
-  // note is open, for the people `@` offers: only an administrator can ask the
-  // server who has an account.
+  // note or a task list is open, for the people `@` and the assignee list
+  // offer: only an administrator can ask the server who has an account.
   const adminUsersQuery = useAdminUsers(
-    isAdmin && (view === 'admin' || shareTarget !== null || noteQuery.data != null),
+    isAdmin && (view === 'admin' || shareTarget !== null || noteQuery.data != null || view === 'tasklists'),
   );
+  const taskListsQuery = useTaskLists(view === 'tasklists' && openList === null);
+  const taskListQuery = useTaskList(view === 'tasklists' ? openList : null);
+  const taskChanges = useTaskChanges(openList ?? { owner: '', path: '' });
   const adminSpacesQuery = useAdminSpaces(isAdmin && view === 'admin');
   // Keeps the picked space a space that exists. Without it the select shows the
   // first one while `keyOwner` still names something else, and the key is asked
@@ -1635,6 +1647,47 @@ function Shell({
     setArriving((current) => (current === next ? null : current));
   };
 
+  /**
+   * A change to the open task list, with a failure said the way every other
+   * failed write here is said. The list itself is asked again by the hooks,
+   * so a refused change shows the list as it really is.
+   */
+  const changeTasks = async (change: () => Promise<unknown>): Promise<void> => {
+    try {
+      await change();
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : copy.taskLists.failed);
+    }
+  };
+  const taskListChanges: TaskChanges = {
+    add: (task) => changeTasks(() => taskChanges.add.mutateAsync(task)),
+    patch: (id, set) => changeTasks(() => taskChanges.patch.mutateAsync({ id, set })),
+    remove: (id) => changeTasks(() => taskChanges.remove.mutateAsync(id)),
+  };
+
+  const createTaskList = async (owner: string, path: string): Promise<void> => {
+    setTaskListBusy(true);
+    try {
+      const created = await api.createTaskList(owner, path);
+      // A list is a file, so the file browser has a new entry too.
+      await client.invalidateQueries({ queryKey: keys.taskLists });
+      await client.invalidateQueries({ queryKey: keys.files });
+      setOpenList({ owner, path: created.path });
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : copy.taskLists.failed);
+    } finally {
+      setTaskListBusy(false);
+    }
+  };
+
+  /** Opens one list in the task lists view, from wherever it was found. */
+  const openTaskList = (owner: string, path: string): void => {
+    setOpenList({ owner, path });
+    void showView('tasklists');
+  };
+
   const grantShare = async (grantee: string, kind: ShareKind, path: string, canWrite: boolean): Promise<void> => {
     setShareBusy(true);
     try {
@@ -1858,6 +1911,20 @@ function Shell({
             sub.journal(journalDays.size, inMonth) + (tasks === null ? '' : ` · ${sub.tasks(tasks.total)}`),
         };
       }
+      case 'tasklists':
+        return openList === null
+          ? {
+              title: copy.taskLists.title,
+              subtitle:
+                instead(troubleOf(taskListsQuery, online)) ??
+                (taskListsQuery.data === undefined
+                  ? sub.loading
+                  : copy.taskLists.count(taskListsQuery.data.lists.length)),
+            }
+          : {
+              title: taskListName(openList.path),
+              subtitle: displayPath(openList.path, prefs.hidePrefixes),
+            };
       case 'settings':
         return { title: copy.nav.settings, subtitle: sub.settings };
       case 'admin':
@@ -1927,6 +1994,8 @@ function Shell({
         onToggleCollapsed={() => setPrefs((current) => ({ ...current, sidebarCollapsed: !current.sidebarCollapsed }))}
         onShowView={(next) => {
           setDrawerOpen(false);
+          // The sidebar entry means "all lists", also from inside one.
+          if (next === 'tasklists') setOpenList(null);
           void showView(next);
         }}
         onClose={() => setDrawerOpen(false)}
@@ -2359,6 +2428,64 @@ function Shell({
                     onReplace={(path, file) => void replaceFile(path, file)}
                     onDelete={(file) => void removeFile(file)}
                     onOpenNote={(path) => void openNote(filesOwner, path)}
+                    onOpenList={(path) => openTaskList(filesOwner, path)}
+                  />
+                ))}
+
+              {view === 'tasklists' &&
+                (openList === null ? (
+                  troubleOf(taskListsQuery, online) !== null ? (
+                    <div className="pane padded">
+                      <Trouble
+                        kind={troubleOf(taskListsQuery, online)!}
+                        what={copy.trouble.taskLists}
+                        onRetry={() => askAgain(keys.taskLists)}
+                      />
+                    </div>
+                  ) : taskListsQuery.data === undefined ? (
+                    <p className="empty" style={{ padding: '2rem' }}>{copy.taskLists.reading}</p>
+                  ) : (
+                    <TaskListsView
+                      lists={taskListsQuery.data.lists}
+                      self={user.id}
+                      // Where a new list can go: the own vault, and every vault
+                      // somebody gave write access to. The server decides in
+                      // the end; this only keeps the menu to places that can work.
+                      vaults={[
+                        ...new Set([user.id, ...received.filter((share) => share.canWrite).map((share) => share.owner)]),
+                      ].map((id) => ({ id, label: ownerLabel(owners, id) }))}
+                      busy={taskListBusy}
+                      onOpen={openTaskList}
+                      onCreate={(owner, path) => void createTaskList(owner, path)}
+                    />
+                  )
+                ) : taskListQuery.error instanceof ApiError && taskListQuery.error.code === 'tasklist_invalid' ? (
+                  // The file is there and readable, only not as a list — somebody
+                  // edited it by hand. Said with the place it broke, which is the
+                  // only thing that helps them fix it.
+                  <div className="pane padded">
+                    <p className="warnline" role="alert">{taskListQuery.error.message}</p>
+                  </div>
+                ) : troubleOf(taskListQuery, online) !== null ? (
+                  <div className="pane padded">
+                    <Trouble
+                      kind={troubleOf(taskListQuery, online)!}
+                      what={copy.trouble.taskList}
+                      onRetry={() => askAgain(keys.taskList(openList.owner, openList.path))}
+                    />
+                  </div>
+                ) : taskListQuery.data === undefined ? (
+                  <p className="empty" style={{ padding: '2rem' }}>{copy.taskLists.reading}</p>
+                ) : (
+                  <TaskListView
+                    name={taskListQuery.data.name}
+                    list={taskListQuery.data.list}
+                    canWrite={mayChange(user.id, received, openList.owner, openList.path)}
+                    self={user.id}
+                    people={mentionPeople}
+                    today={isoDate(localDate(new Date()))}
+                    onBack={() => setOpenList(null)}
+                    changes={taskListChanges}
                   />
                 ))}
 

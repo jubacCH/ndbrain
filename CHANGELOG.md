@@ -24,9 +24,15 @@ backup. Take a copy of `data/index/ndbrain.db` before an upgrade, with
   priority, assignees, start and due dates, tags, a description, a parent and
   a position. `GET`/`POST /api/v1/tasklists/*` read and create a list;
   `POST`/`PATCH`/`DELETE /api/v1/tasklist-items/*` add, change and remove
-  tasks, field by field. Folder, vault and space shares cover the lists in
-  them like any other file. No interface yet; that is the next step. Design:
-  `docs/superpowers/specs/2026-10-25-task-lists-design.md`.
+  tasks, field by field; `GET /api/v1/tasklists` names every list the caller
+  can see. Folder, vault and space shares cover the lists in them like any
+  other file. Design: `docs/superpowers/specs/2026-10-25-task-lists-design.md`.
+- **Task lists in the sidebar.** Every list you can see, and a new one at any
+  path. A list opens as a table grouped by status, priority or due date,
+  filtered by words, status, doneness or "assigned to me", and sorted by hand,
+  date, priority, title or last change. Status, priority and due date change
+  in the row; the rest — title, dates, assignees, tags, description, subtasks
+  — in a panel beside it. A `.tasks.json` in Files opens the same way.
 
 ## [0.3.0] — 2026-10-25
 

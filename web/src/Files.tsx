@@ -23,6 +23,7 @@ import { copy } from './copy';
 import { api, type FileRow } from './api';
 import { SpaceIcon } from './icons';
 import { displayName } from './Tree';
+import { isTaskListPath } from '../../shared/tasklist';
 
 /** A vault the browser can show: the caller's own, or a space they are a member of. */
 export interface FilesVault {
@@ -51,6 +52,8 @@ export interface FilesProps {
   onReplace: (path: string, file: File) => void;
   onDelete: (file: FileRow) => void;
   onOpenNote: (path: string) => void;
+  /** Opens a `.tasks.json` as the list it is, rather than offering only its bytes. */
+  onOpenList?: (path: string) => void;
 }
 
 /** Bytes as something a person reads, not as a number of bytes. */
@@ -92,6 +95,7 @@ export function FilesView({
   onReplace,
   onDelete,
   onOpenNote,
+  onOpenList,
 }: FilesProps): React.JSX.Element {
   const importRef = useRef<HTMLInputElement>(null);
   const replaceRef = useRef<HTMLInputElement>(null);
@@ -268,6 +272,10 @@ export function FilesView({
                   <td>
                     {file.isNote ? (
                       <button type="button" className="linky" onClick={() => onOpenNote(file.path)}>
+                        {name}
+                      </button>
+                    ) : onOpenList !== undefined && isTaskListPath(file.path) ? (
+                      <button type="button" className="linky" onClick={() => onOpenList(file.path)}>
                         {name}
                       </button>
                     ) : (
