@@ -617,6 +617,9 @@ export const api = {
 
   taskLists: () => request('/api/v1/tasklists', L.TaskListsResponse),
 
+  /** Open tasks due on or before `to`, across every list the caller can see. */
+  dueTasks: (to: string) => request(`/api/v1/tasklist-due?to=${encodeURIComponent(to)}`, L.DueTasksResponse),
+
   taskList: (owner: string, path: string) =>
     request(`/api/v1/tasklists/${encodePath(path)}?owner=${encodeURIComponent(owner)}`, L.TaskListResponse),
 

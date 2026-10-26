@@ -155,6 +155,7 @@ export function TaskListView({
   today,
   onBack,
   changes,
+  initialSelected = null,
 }: {
   name: string;
   list: TaskListFile;
@@ -166,12 +167,14 @@ export function TaskListView({
   today: string;
   onBack: () => void;
   changes: TaskChanges;
+  /** A task to open in the detail at once — one picked in the journal, say. */
+  initialSelected?: string | null;
 }): React.JSX.Element {
   const [filter, setFilter] = useState<TaskFilter>(NO_FILTER);
   const [grouping, setGrouping] = useState<Grouping>('status');
   const [sorting, setSorting] = useState<Sorting>('order');
   const [layout, setLayout] = useState<'list' | 'board'>('list');
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialSelected);
   const [draft, setDraft] = useState('');
 
   const groups = useMemo(

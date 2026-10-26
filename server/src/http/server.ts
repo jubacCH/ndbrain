@@ -1117,6 +1117,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return { lists };
   });
 
+  fastify.get('/api/v1/tasklist-due', async (request) => {
+    const caller = requireUser(request).id;
+    // A ZodError, so a bad day is the 400 every other malformed field gets.
+    const to = S.IsoDay.parse((request.query as { to?: unknown }).to);
+    return app.dueTasks(caller, to);
+  });
+
   fastify.get('/api/v1/tasklists/*', async (request) => {
     const { owner, path: listPath } = target(request, 'read');
     const list = await app.tasklists.read(owner, listPath);

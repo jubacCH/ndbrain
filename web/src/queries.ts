@@ -81,6 +81,7 @@ export const keys = {
   search: (q: string, filters: unknown) => ['search', q, filters] as const,
   taskLists: ['tasklists'] as const,
   taskList: (owner: string, path: string) => ['tasklists', owner, path] as const,
+  dueTasks: (to: string) => ['tasklist-due', to] as const,
 };
 
 /**
@@ -584,6 +585,16 @@ export function useToggleTask() {
 
 type TaskListData = Awaited<ReturnType<typeof api.taskList>>;
 
+/** Open tasks due by `to`, for the journal calendar. */
+export function useDueTasks(to: string | null): UseQueryResult<Awaited<ReturnType<typeof api.dueTasks>>> {
+  return useQuery({
+    queryKey: keys.dueTasks(to ?? ''),
+    queryFn: () => api.dueTasks(to!),
+    staleTime: FRESH_MS,
+    enabled: to !== null,
+  });
+}
+
 /** Every list the caller can see, across vaults. */
 export function useTaskLists(enabled: boolean): UseQueryResult<Awaited<ReturnType<typeof api.taskLists>>> {
   return useQuery({
@@ -624,6 +635,8 @@ export function useTaskChanges(ref: { owner: string; path: string }) {
   const update = (fn: (data: TaskListData) => TaskListData): void => {
     client.setQueryData<TaskListData>(key, (data) => (data === undefined ? data : fn(data)));
     void client.invalidateQueries({ queryKey: key });
+    // A date, a status or a title may have changed what the journal shows.
+    void client.invalidateQueries({ queryKey: ['tasklist-due'] });
   };
 
   const add = useMutation({

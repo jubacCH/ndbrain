@@ -40,7 +40,7 @@ import type { By, Persisted, Room } from './collab/room.js';
 import type { RoomRegistry } from './collab/rooms.js';
 import type { History } from './vault/history.js';
 import { TaskLists } from './tasklists/service.js';
-import { isTaskListPath } from '../../shared/tasklist.js';
+import { isTaskListPath, type DueTask } from '../../shared/tasklist.js';
 
 export interface RenameResult {
   note: Note;
@@ -754,6 +754,38 @@ export class App {
       }
     }
     return out;
+  }
+
+  /**
+   * Every open task due on or before `to`, across the lists the caller can see.
+   *
+   * Read from the files, one list at a time, because there is no index of
+   * tasks yet; that is a later phase, and the place to change if this ever
+   * gets slow. A list that cannot be read as one is left out rather than
+   * failing the whole answer: the calendar is the wrong place to learn that a
+   * file is broken, and the list view says so where it can be fixed.
+   */
+  async dueTasks(
+    caller: string,
+    to: string,
+    limit = 500,
+  ): Promise<{ tasks: DueTask[]; truncated: boolean }> {
+    const due: DueTask[] = [];
+    for (const { owner, path: listPath } of await this.taskListsVisibleTo(caller)) {
+      let list;
+      try {
+        list = await this.tasklists.read(owner, listPath);
+      } catch {
+        continue;
+      }
+      const done = new Set(list.statuses.filter((status) => status.done).map((status) => status.id));
+      for (const task of list.tasks) {
+        if (task.due === null || task.due > to || done.has(task.status)) continue;
+        due.push({ owner, path: listPath, id: task.id, title: task.title, due: task.due, priority: task.priority });
+      }
+    }
+    due.sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : a.title.localeCompare(b.title)));
+    return { tasks: due.slice(0, limit), truncated: due.length > limit };
   }
 
   async readFile(owner: string, filePath: string): Promise<Buffer> {

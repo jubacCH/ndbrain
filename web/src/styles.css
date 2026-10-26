@@ -7857,3 +7857,50 @@ ul.inspector-links,
   background: var(--bg);
   color: var(--text);
 }
+
+/* ---- journal: what is due ------------------------------------------------ */
+
+/* A count rather than a dot: the note mark is already a dot, and "something is
+   due" without "how much" sends somebody into the list to find out. */
+.journal-due {
+  font-size: var(--t-xs);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--w-strong);
+  color: var(--warn);
+}
+
+.journal-due-list {
+  margin-top: var(--s-4);
+}
+
+.journal-due-group + .journal-due-group {
+  margin-top: var(--s-3);
+}
+
+.journal-due-label {
+  margin: var(--s-2) 0 var(--s-1);
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.journal-due-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.journal-due-list li {
+  padding: var(--s-1) 0;
+}
+
+.journal-due-list .linky {
+  text-align: left;
+}
+
+.journal-due-date {
+  display: inline-block;
+  min-width: 4.5rem;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}

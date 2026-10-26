@@ -37,6 +37,10 @@ backup. Take a copy of `data/index/ndbrain.db` before an upgrade, with
   with its priority, due date, assignees and subtask count. Drag a card to
   another column or to another place in its own; only that card is written.
   The status menu on each card does the same from the keyboard.
+- **What is due, in the journal.** Days with open tasks due carry a count in
+  the calendar, and below it the tasks themselves: what is overdue, then what
+  falls in the month on screen. One opens in its list, with its detail open.
+  `GET /api/v1/tasklist-due?to=` answers for every list the caller can see.
 
 ## [0.3.0] — 2026-10-25
 

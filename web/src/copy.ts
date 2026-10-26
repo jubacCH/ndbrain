@@ -1744,6 +1744,17 @@ export const copy = {
     startDay: (date: string) => `Start the note for ${date}`,
     emptyNotes: 'Nothing under “Notizen” yet.',
     cardNoNote: 'No note for this day.',
+
+    /* Tasks from task lists, by due date. */
+    dueOn: (count: number) => `${count} ${count === 1 ? 'task' : 'tasks'} due`,
+    /** A day's state for a screen reader, with what is due on it when anything is. */
+    withDue: (state: string, count: number) =>
+      count === 0 ? state : `${state}, ${count} ${count === 1 ? 'task' : 'tasks'} due`,
+    dueTitle: 'Due',
+    overdue: 'Overdue',
+    dueEmpty: 'Nothing from your task lists is due this month.',
+    dueTruncated: 'Only the earliest are shown.',
+    openDue: (title: string, list: string) => `Open “${title}” in ${list}`,
   },
 
   /** Brain health: a calm number and what it is made of. Never a reward. */
