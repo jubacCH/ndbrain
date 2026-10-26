@@ -366,3 +366,41 @@ describe('the lists a caller can see', () => {
     expect(granted.body.lists).toEqual([{ owner: julian, path: LIST, canWrite: false }]);
   });
 });
+
+describe('what is due', () => {
+  it('is every open task due by the day asked for, across lists, earliest first', async () => {
+    await create();
+    await add('Später', { due: '2026-12-01' });
+    await add('Bald', { due: '2026-10-28' });
+    await add('Überfällig', { due: '2026-10-01' });
+    await add('Erledigt', { due: '2026-10-20', status: 'done' });
+    await add('Ohne Datum');
+    // A broken list beside it costs its own tasks and nothing else.
+    await fs.writeFile(onDisk(julian, 'Kunden/Kaputt.tasks.json'), '{ not json');
+
+    const reply = await h.as('julian', { url: '/api/v1/tasklist-due?to=2026-10-31' });
+    expect(reply.status).toBe(200);
+    expect(reply.body.tasks.map((task: { title: string }) => task.title)).toEqual(['Überfällig', 'Bald']);
+    expect(reply.body.tasks[0]).toMatchObject({ owner: julian, path: LIST, due: '2026-10-01' });
+  });
+
+  it('says nothing about lists outside a share', async () => {
+    await create();
+    await add('Bald', { due: '2026-10-28' });
+    await h.as('julian', { method: 'POST', url: url('tasklists', 'Privat/Geheim.tasks.json'), payload: {} });
+    await h.as('julian', {
+      method: 'POST',
+      url: url('tasklist-items', 'Privat/Geheim.tasks.json'),
+      payload: { task: { title: 'Geheim', due: '2026-10-28' } },
+    });
+    h.runtime.shares.grant(julian, 'Kunden/', ramona, false);
+
+    const reply = await h.as('ramona', { url: '/api/v1/tasklist-due?to=2026-10-31' });
+    expect(reply.body.tasks.map((task: { title: string }) => task.title)).toEqual(['Bald']);
+  });
+
+  it('refuses a day that is not one', async () => {
+    const reply = await h.as('julian', { url: '/api/v1/tasklist-due?to=31.10.2026' });
+    expect(reply.status).toBe(400);
+  });
+});

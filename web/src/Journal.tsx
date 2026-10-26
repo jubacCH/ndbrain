@@ -13,7 +13,11 @@
  * turns the page with it.
  *
  * Which days exist comes from the note list the shell already holds, so the
- * calendar needs no request of its own.
+ * calendar needs no request of its own. What is due on each day comes from the
+ * task lists, which the shell asks for up to the last day on screen — the
+ * calendar says which day that is whenever the month changes. Below the
+ * calendar, the same tasks as a list: what is overdue, then what falls in the
+ * month on screen.
  *
  * Beside the calendar sit the open tasks, handed in by the shell: the page is
  * where somebody plans the day, and a day is planned against what is still
@@ -22,6 +26,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
+import { taskListName, type DueTask } from '../../shared/tasklist';
 import { copy } from './copy';
 import { ChevronIcon, ChevronLeftIcon } from './icons';
 import {
@@ -44,6 +49,7 @@ const DAY_FORMAT = new Intl.DateTimeFormat(copy.locale, {
 });
 const WEEKDAY_FORMAT = new Intl.DateTimeFormat(copy.locale, { weekday: 'short' });
 const WEEKDAY_LONG = new Intl.DateTimeFormat(copy.locale, { weekday: 'long' });
+const SHORT_DAY = new Intl.DateTimeFormat(copy.locale, { day: 'numeric', month: 'short' });
 
 /** Noon, so no time zone or daylight saving change can move the date. */
 const asDate = (date: JournalDate): Date => new Date(date.year, date.month - 1, date.day, 12);
@@ -61,9 +67,25 @@ export interface JournalViewProps {
   onOpenDay: (date: JournalDate) => void;
   /** Shown to the right of the calendar, or below it where there is no room. */
   aside?: ReactNode;
+  /** Open tasks from task lists, due up to the last day on screen. Absent: not shown. */
+  due?: DueTask[];
+  /** More were due than `due` carries. */
+  dueTruncated?: boolean;
+  /** Told the last day on screen whenever the month changes, so the shell can ask for it. */
+  onRange?: (to: string) => void;
+  onOpenTask?: (owner: string, path: string, id: string) => void;
 }
 
-export function JournalView({ days, now, onOpenDay, aside }: JournalViewProps): React.JSX.Element {
+export function JournalView({
+  days,
+  now,
+  onOpenDay,
+  aside,
+  due,
+  dueTruncated = false,
+  onRange,
+  onOpenTask,
+}: JournalViewProps): React.JSX.Element {
   const today = localDate(new Date(now ?? Date.now()));
   const [cursor, setCursor] = useState<JournalDate>(today);
   /** Only a key press moves focus; a month button must keep its own. */
@@ -73,6 +95,22 @@ export function JournalView({ days, now, onOpenDay, aside }: JournalViewProps): 
   const weeks = useMemo(() => monthGrid(cursor.year, cursor.month), [cursor.year, cursor.month]);
   const inMonth = weeks.flat().filter((cell) => cell.inMonth && days.has(isoDate(cell.date))).length;
   const monthLabel = MONTH_FORMAT.format(asDate({ ...cursor, day: 1 }));
+  const last = weeks.at(-1)?.at(-1);
+  const lastIso = last === undefined ? null : isoDate(last.date);
+
+  useEffect(() => {
+    if (lastIso !== null) onRange?.(lastIso);
+  }, [lastIso, onRange]);
+
+  const dueByDay = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const task of due ?? []) counts.set(task.due, (counts.get(task.due) ?? 0) + 1);
+    return counts;
+  }, [due]);
+  const todayIso = isoDate(today);
+  const monthPrefix = isoDate({ ...cursor, day: 1 }).slice(0, 8);
+  const overdue = (due ?? []).filter((task) => task.due < todayIso);
+  const inThisMonth = (due ?? []).filter((task) => task.due >= todayIso && task.due.startsWith(monthPrefix));
 
   useEffect(() => {
     if (!moveFocus.current) return;
@@ -165,6 +203,7 @@ export function JournalView({ days, now, onOpenDay, aside }: JournalViewProps): 
                 {week.map((cell) => {
                   const iso = isoDate(cell.date);
                   const has = days.has(iso);
+                  const dueCount = dueByDay.get(iso) ?? 0;
                   const isToday = sameDate(cell.date, today);
                   const focused = sameDate(cell.date, cursor);
                   return (
@@ -178,9 +217,10 @@ export function JournalView({ days, now, onOpenDay, aside }: JournalViewProps): 
                         data-outside={!cell.inMonth}
                         tabIndex={focused ? 0 : -1}
                         aria-current={isToday ? 'date' : undefined}
+                        data-due={dueCount > 0}
                         aria-label={copy.journal.dayLabel(
                           dayName(cell.date),
-                          has ? copy.journal.hasNote : copy.journal.noNote,
+                          copy.journal.withDue(has ? copy.journal.hasNote : copy.journal.noNote, dueCount),
                           isToday,
                         )}
                         onFocus={() => {
@@ -192,6 +232,11 @@ export function JournalView({ days, now, onOpenDay, aside }: JournalViewProps): 
                       >
                         <span className="journal-num">{cell.date.day}</span>
                         {has && <i className="journal-mark" aria-hidden="true" />}
+                        {dueCount > 0 && (
+                          <span className="journal-due" aria-hidden="true">
+                            {dueCount}
+                          </span>
+                        )}
                       </button>
                     </span>
                   );
@@ -202,9 +247,66 @@ export function JournalView({ days, now, onOpenDay, aside }: JournalViewProps): 
           <p className="journal-hint" id="journal-hint">
             {copy.journal.hint}
           </p>
+
+          {due !== undefined && (
+            <section className="journal-due-list" aria-labelledby="journal-due-title">
+              <h3 className="filter-label" id="journal-due-title">
+                {copy.journal.dueTitle}
+              </h3>
+              {overdue.length === 0 && inThisMonth.length === 0 ? (
+                <p className="h-sub">{copy.journal.dueEmpty}</p>
+              ) : (
+                <>
+                  {overdue.length > 0 && (
+                    <DueGroup label={copy.journal.overdue} tasks={overdue} onOpenTask={onOpenTask} />
+                  )}
+                  {inThisMonth.length > 0 && (
+                    <DueGroup label={monthLabel} tasks={inThisMonth} onOpenTask={onOpenTask} />
+                  )}
+                </>
+              )}
+              {dueTruncated && <p className="h-sub">{copy.journal.dueTruncated}</p>}
+            </section>
+          )}
         </div>
         {aside}
       </div>
+    </div>
+  );
+}
+
+function DueGroup({
+  label,
+  tasks,
+  onOpenTask,
+}: {
+  label: string;
+  tasks: DueTask[];
+  onOpenTask: ((owner: string, path: string, id: string) => void) | undefined;
+}): React.JSX.Element {
+  return (
+    <div className="journal-due-group">
+      <p className="journal-due-label">{label}</p>
+      <ul>
+        {tasks.map((task) => {
+          const [year, month, day] = task.due.split('-').map(Number) as [number, number, number];
+          const list = taskListName(task.path);
+          return (
+            <li key={`${task.owner}:${task.path}:${task.id}`}>
+              <button
+                type="button"
+                className="linky"
+                aria-label={copy.journal.openDue(task.title, list)}
+                onClick={() => onOpenTask?.(task.owner, task.path, task.id)}
+              >
+                <span className="journal-due-date">{SHORT_DAY.format(asDate({ year, month, day }))}</span>
+                {task.title}
+                <span className="pth"> · {list}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

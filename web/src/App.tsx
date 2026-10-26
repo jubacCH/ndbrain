@@ -98,6 +98,7 @@ import {
   useTagRegistry,
   useTags,
   useTasks,
+  useDueTasks,
   useTaskChanges,
   useTaskList,
   useTaskLists,
@@ -304,8 +305,13 @@ function Shell({
   viewNow.current = view;
   /** Where to place the cursor on the next open — a task's line, or nowhere. */
   const [jumpLine, setJumpLine] = useState<number | null>(null);
-  /** The task list on screen in the task lists view; `null` shows every list. */
-  const [openList, setOpenList] = useState<{ owner: string; path: string } | null>(null);
+  /**
+   * The task list on screen in the task lists view; `null` shows every list.
+   * `task` is one to open in the detail on arrival, from the journal.
+   */
+  const [openList, setOpenList] = useState<{ owner: string; path: string; task?: string } | null>(null);
+  /** The last day the journal calendar has on screen, for what is due up to it. */
+  const [journalTo, setJournalTo] = useState<string | null>(null);
   const [taskListBusy, setTaskListBusy] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   /**
@@ -524,6 +530,7 @@ function Shell({
   const taskListsQuery = useTaskLists(view === 'tasklists' && openList === null);
   const taskListQuery = useTaskList(view === 'tasklists' ? openList : null);
   const taskChanges = useTaskChanges(openList ?? { owner: '', path: '' });
+  const dueQuery = useDueTasks(view === 'journal' ? journalTo : null);
   const adminSpacesQuery = useAdminSpaces(isAdmin && view === 'admin');
   // Keeps the picked space a space that exists. Without it the select shows the
   // first one while `keyOwner` still names something else, and the key is asked
@@ -1682,9 +1689,9 @@ function Shell({
     }
   };
 
-  /** Opens one list in the task lists view, from wherever it was found. */
-  const openTaskList = (owner: string, path: string): void => {
-    setOpenList({ owner, path });
+  /** Opens one list in the task lists view, from wherever it was found, at one task if named. */
+  const openTaskList = (owner: string, path: string, task?: string): void => {
+    setOpenList(task === undefined ? { owner, path } : { owner, path, task });
     void showView('tasklists');
   };
 
@@ -2271,6 +2278,11 @@ function Shell({
                 <JournalView
                   days={journalDays}
                   onOpenDay={(date) => void openDay(date)}
+                  {...(dueQuery.data === undefined
+                    ? {}
+                    : { due: dueQuery.data.tasks, dueTruncated: dueQuery.data.truncated })}
+                  onRange={setJournalTo}
+                  onOpenTask={(owner, path, id) => openTaskList(owner, path, id)}
                   aside={
                     tasksTrouble !== null ? (
                       <section className="journal-tasks" aria-label={copy.tasks.title}>
@@ -2478,6 +2490,10 @@ function Shell({
                   <p className="empty" style={{ padding: '2rem' }}>{copy.taskLists.reading}</p>
                 ) : (
                   <TaskListView
+                    // A fresh view for every list and every task asked for, so
+                    // the detail opens on that task rather than the last one.
+                    key={`${openList.owner}:${openList.path}:${openList.task ?? ''}`}
+                    initialSelected={openList.task ?? null}
                     name={taskListQuery.data.name}
                     list={taskListQuery.data.list}
                     canWrite={mayChange(user.id, received, openList.owner, openList.path)}

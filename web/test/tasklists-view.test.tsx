@@ -232,3 +232,23 @@ describe('the board', () => {
     expect(changes.patch).not.toHaveBeenCalled();
   });
 });
+
+describe('arriving at one task', () => {
+  it('opens the detail on the task it was asked for', () => {
+    render(
+      <TaskListView
+        name="Website"
+        list={list([task('a'), task('b')])}
+        canWrite
+        self="julian"
+        people={[]}
+        today="2026-10-25"
+        onBack={() => undefined}
+        changes={{ add: vi.fn(), patch: vi.fn(), remove: vi.fn() }}
+        initialSelected="b"
+      />,
+    );
+    const detail = screen.getByRole('complementary');
+    expect(within(detail).getByRole('textbox', { name: 'Title' })).toHaveValue('Task b');
+  });
+});

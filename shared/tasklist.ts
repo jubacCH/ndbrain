@@ -183,6 +183,24 @@ export const TaskListsResponse = z.object({ lists: z.array(TaskListRow) });
 
 export type TaskListRow = z.infer<typeof TaskListRow>;
 
+/** An open task with a due date, and the list it is in — for the journal calendar. */
+export const DueTask = z.object({
+  owner: z.string(),
+  path: z.string(),
+  id: TaskId,
+  title: z.string(),
+  due: z.string(),
+  priority: Priority.nullable(),
+});
+
+export const DueTasksResponse = z.object({
+  tasks: z.array(DueTask),
+  /** More were due than the answer carries; the earliest are the ones kept. */
+  truncated: z.boolean(),
+});
+
+export type DueTask = z.infer<typeof DueTask>;
+
 export const RemoveTaskResponse = z.object({ removed: z.array(TaskId) });
 
 /* ---- the file ------------------------------------------------------------- */
