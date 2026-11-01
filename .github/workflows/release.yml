@@ -62,7 +62,7 @@ jobs:
       # that pointed at one architecture while the other was still building
       # would be a tag that works on half the machines that pull it.
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: ${{ matrix.platform }}
