@@ -42,6 +42,13 @@ backup. Take a copy of `data/index/ndbrain.db` before an upgrade, with
   falls in the month on screen. One opens in its list, with its detail open.
   `GET /api/v1/tasklist-due?to=` answers for every list the caller can see.
 
+### Fixed
+
+- The backup of the vaults failed about one run in five: `tar` read each vault's `.git` while
+  `vault-history.sh` committed into it, ended with "file changed as we read it", and the pull
+  discarded the run. `backup-source.sh` now streams a copy taken under a lock that the history
+  commit holds as well (`/run/lock/ndbrain-vaults.lock`).
+
 ## [0.3.0] — 2026-10-25
 
 Tables you can change the shape of, and people you can mention. Both stay
