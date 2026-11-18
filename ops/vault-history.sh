@@ -62,6 +62,16 @@ vgit() {
       -C "$repo" "$@"
 }
 
+# Held for the whole run so that backup-source.sh never copies a .git in the
+# middle of a commit. It waits for us and we wait for it; its hold is a local
+# copy and lasts well under a second.
+LOCK=${NDBRAIN_VAULTS_LOCK:-/run/lock/ndbrain-vaults.lock}
+exec 9>"$LOCK"
+if ! flock -w 300 9; then
+  echo "Sperre $LOCK nach 300 s nicht bekommen, dieser Lauf entfällt" >&2
+  exit 1
+fi
+
 if [ ! -d "$VAULTS" ]; then
   echo "Vault-Verzeichnis $VAULTS existiert nicht" >&2
   exit 1

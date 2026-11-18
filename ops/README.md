@@ -14,7 +14,7 @@ Betreiber, nicht der Compiler, und der Bestand war schon so.
 |---|---|---|---|
 | `vault-history.sh` | CT 132 | alle 2 min | Committet den Vault-Stand ins `.git` **im** Vault. Die einzige Versionsgeschichte, die ndBrain kennt. |
 | `db-snapshot.sh` | CT 132 | täglich 20:30 | `sqlite3 .backup` der Datenbank nach `/srv/ndbrain/backup`, 14 Stände. |
-| `backup-source.sh` | CT 132 | — | Die Leseseite für das Backup. Kennt drei Befehle und schreibt nie. |
+| `backup-source.sh` | CT 132 | — | Die Leseseite für das Backup. Kennt vier Befehle und ändert nichts; für `vaults` legt es unter der Sperre der Historie eine Kopie in `/var/tmp` an und streamt diese. |
 | `ndbrain-pull.sh` | prxmx01 | alle 15 min | Zieht Vaults und Datenbank nach `/mnt/pve/nfs-backup/ndbrain`. |
 | `checkmk-ndbrain-backup.sh` | prxmx01 | jede Abfrage | Checkmk-Check, liegt dort als `/usr/lib/check_mk_agent/local/ndbrain-backup`. |
 
