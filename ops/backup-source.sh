@@ -21,12 +21,31 @@ set -euo pipefail
 
 VAULTS=${NDBRAIN_VAULTS:-/srv/ndbrain/vaults}
 BACKUP=${NDBRAIN_BACKUP:-/srv/ndbrain/backup}
+# Shared with vault-history.sh, which holds it while it commits.
+LOCK=${NDBRAIN_VAULTS_LOCK:-/run/lock/ndbrain-vaults.lock}
 
 case "${1:-}" in
   vaults)
     # Das .git jedes Vaults geht mit: darin steckt die ganze Historie, und
     # damit ist dieser eine Strom ein vollständiges Backup, kein Tagesstand.
-    exec tar -C "$(dirname "$VAULTS")" -czf - "$(basename "$VAULTS")"
+    #
+    # Streamed from a local snapshot, not from the live directory. tar used to
+    # read the vaults directly while vault-history.sh committed every two
+    # minutes; a commit landing mid-read made tar end with "file changed as we
+    # read it" (exit 1) and the whole run was discarded. The stream crosses
+    # pct exec, ssh and an NFS write on the other side, so it can take minutes
+    # and the collision was routine (2026-11-17/18: about one run in five,
+    # three hours in a row on the morning of the 18th).
+    #
+    # The copy is taken under the same lock the history commit holds, so the
+    # .git inside it is never half-written, and the lock is held only for the
+    # local copy (well under a second for ~30 MB), not for the slow stream.
+    # Note writes by the application are not locked out; a note changing
+    # during cp is caught by the next run, and cp does not fail on it.
+    snap=$(mktemp -d /var/tmp/ndbrain-vaults.XXXXXX)
+    trap 'rm -rf "$snap"' EXIT
+    flock -w 300 "$LOCK" cp -a "$VAULTS" "$snap/"
+    tar -C "$snap" -czf - "$(basename "$VAULTS")"
     ;;
 
   db-snapshot)
